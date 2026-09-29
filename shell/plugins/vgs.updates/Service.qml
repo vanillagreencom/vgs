@@ -12,9 +12,14 @@ Item {
     property var shell: null
     property bool registered: false
     property var snapshot: null
+    // Whether the cache read has answered, loaded or failed: until then no
+    // timer is set, so a service rebuilt with a fresh cache does not check
+    // before it reads it.
+    property bool cacheRead: false
     property bool checking: false
     property bool queued: false
-    property var lastTuiState: ({})
+    // The TUI state this instance last read, null before the first read.
+    property var lastTuiState: null
     property string checkFailure: ""
     property double failedAt: -1
     property var reported: ({})
@@ -27,10 +32,17 @@ Item {
 
     onShellChanged: start()
     onCurrentIntervalMsChanged: schedule()
+    // Only a run that ends after this instance first read the state starts
+    // a check: `shell` arrives with every run an earlier instance saw end,
+    // and this handler can run before onShellChanged does, so the first read
+    // is recorded and judged by nothing (UpdatesLogic.tuiRunEnded). It reads
+    // the state from its source, since the binding may not have followed a
+    // new `shell` yet (docs/architecture/runtime-qml.md).
     onCurrentTuiStateChanged: {
-        if (shell === null || shell.tui === undefined) return;
-        if (Logic.tuiRunEnded(lastTuiState, currentTuiState)) requestCheck("tui");
-        lastTuiState = currentTuiState;
+        if (shell === null) return;
+        const state = shell.tui.state;
+        if (Logic.tuiRunEnded(lastTuiState, state)) requestCheck("tui");
+        lastTuiState = state;
     }
 
     function start() {
@@ -39,8 +51,7 @@ Item {
         shell.ipc.handle("check", () => root.requestCheck("ipc"));
         shell.ipc.handle("status", () => JSON.stringify(shell.status.values));
         cacheReader.path = statusPath;
-        cacheReader.reload();
-        lastTuiState = currentTuiState;
+        if (lastTuiState === null) lastTuiState = shell.tui.state;
         publishNow();
     }
 
@@ -62,7 +73,11 @@ Item {
     }
 
     function schedule() {
-        const delay = Logic.nextTimerDelay(snapshot, checking, Date.now(), currentIntervalMs, failedAt < 0 ? null : failedAt);
+        const delay = Logic.nextTimerDelay(snapshot, checking, Date.now(), currentIntervalMs, failedAt < 0 ? null : failedAt, cacheRead);
+        if (delay === null) {
+            cadence.stop();
+            return;
+        }
         cadence.interval = Math.max(1000, Math.min(delay, 2147483647));
         cadence.restart();
     }
@@ -95,15 +110,18 @@ Item {
         reported = next;
     }
 
+    // Reads the cache once, when start() sets its path; without `preload` it
+    // would never read (docs/architecture/runtime-qml.md).
     FileView {
         id: cacheReader
-        preload: false
         printErrors: false
         onLoaded: {
+            root.cacheRead = true;
             root.acceptText(text());
             root.maybeCheck();
         }
         onLoadFailed: error => {
+            root.cacheRead = true;
             if (error !== FileViewError.FileNotFound) console.warn("updates: cache unreadable: " + error);
             root.publishNow();
             root.maybeCheck();

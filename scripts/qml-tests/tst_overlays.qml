@@ -288,6 +288,23 @@ Item {
             mouseMove(root, root.width - 1, root.height - 1);
         }
 
+        // A press closes the tooltip and it stays closed while the pointer
+        // rests, so it never covers what the press opened; it opens again
+        // once the pointer left the item and came back.
+        function test_tooltip_stays_closed_after_a_press_until_the_pointer_leaves() {
+            compare(UnitTheme.override({ tooltip: { delay: 50 } }), "ok");
+            mouseMove(host, host.width / 2, host.height / 2);
+            tryCompare(tip, "opened", true, 2000);
+            mouseClick(host, host.width / 2, host.height / 2);
+            compare(tip.opened, false);
+            wait(200);
+            compare(tip.opened, false);
+            mouseMove(root, root.width - 1, root.height - 1);
+            mouseMove(host, host.width / 2, host.height / 2);
+            tryCompare(tip, "opened", true, 2000);
+            mouseMove(root, root.width - 1, root.height - 1);
+        }
+
         function test_toast_draws_its_tone_and_dismisses() {
             compare(toast.tokens.foreground, Theme.badge.tone.success.foreground);
             compare(toast.width, Theme.toast.width);

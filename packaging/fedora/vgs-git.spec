@@ -36,6 +36,7 @@ Requires:       util-linux-core
 Recommends:     xdg-terminal-exec
 Recommends:     gum
 Recommends:     fzf
+Recommends:     less
 Conflicts:      vgs-shell
 # end runtime dependencies
 

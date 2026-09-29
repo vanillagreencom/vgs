@@ -7,8 +7,9 @@ import qs.Ui
 // the pointer resting on the item it opens in its own surface under the
 // item and takes no focus. It closes when the pointer leaves, on a press
 // on the item, when the item hides, and it does not open while another
-// overlay is open. The declaring item is an invisible, sizeless member of
-// its parent.
+// overlay is open. After a press it stays closed until the pointer leaves
+// the item, so it never covers what the press opened. The declaring item
+// is an invisible, sizeless member of its parent.
 Item {
     id: root
 
@@ -21,10 +22,12 @@ Item {
     // is still null.
     property var hover: null
     property var press: null
-    readonly property Component hoverComponent: Component { HoverHandler {} }
+    // A press on the item since the pointer last entered it.
+    property bool pressedHere: false
+    readonly property Component hoverComponent: Component { HoverHandler { onHoveredChanged: if (!hovered) root.pressedHere = false } }
     // pointer-cursor-exempt: it watches a press on the anchor to close the tooltip; the anchor's own control owns the cursor
-    readonly property Component pressComponent: Component { TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds } }
-    readonly property bool resting: hover !== null && hover.hovered && !(press !== null && press.pressed)
+    readonly property Component pressComponent: Component { TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds; onPressedChanged: if (pressed) root.pressedHere = true } }
+    readonly property bool resting: hover !== null && hover.hovered && !(press !== null && press.pressed) && !pressedHere
 
     visible: false
 

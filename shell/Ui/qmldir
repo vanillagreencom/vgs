@@ -25,6 +25,7 @@ CodeLine 1.0 feedback/CodeLine.qml
 ScrollArea 1.0 layout/ScrollArea.qml
 Tabs 1.0 layout/Tabs.qml
 ListItem 1.0 layout/ListItem.qml
+Disclosure 1.0 layout/Disclosure.qml
 SectionHeader 1.0 layout/SectionHeader.qml
 AngledCard 1.0 layout/AngledCard.qml
 CardCarousel 1.0 layout/CardCarousel.qml

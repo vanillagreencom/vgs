@@ -100,6 +100,7 @@ f share/vgs/shell/Ui/icons/LICENSE
 f share/vgs/shell/Ui/icons/Lucide.js
 f share/vgs/shell/Ui/layout/AngledCard.qml
 f share/vgs/shell/Ui/layout/CardCarousel.qml
+f share/vgs/shell/Ui/layout/Disclosure.qml
 f share/vgs/shell/Ui/layout/ListItem.qml
 f share/vgs/shell/Ui/layout/ScrollArea.qml
 f share/vgs/shell/Ui/layout/ScrollBar.qml
@@ -218,11 +219,14 @@ f share/vgs/shell/plugins/vgs.themes/WallpaperView.qml
 f share/vgs/shell/plugins/vgs.themes/Widget.qml
 f share/vgs/shell/plugins/vgs.themes/manifest.json
 f share/vgs/shell/plugins/vgs.updates/NormalizeCheck.js
+f share/vgs/shell/plugins/vgs.updates/Panel.qml
 f share/vgs/shell/plugins/vgs.updates/Service.qml
 f share/vgs/shell/plugins/vgs.updates/UpdatesLogic.js
+f share/vgs/shell/plugins/vgs.updates/Widget.qml
 f share/vgs/shell/plugins/vgs.updates/bin/check
 f share/vgs/shell/plugins/vgs.updates/bin/facts
 f share/vgs/shell/plugins/vgs.updates/manifest.json
+f share/vgs/shell/plugins/vgs.updates/tui/log.sh
 f share/vgs/shell/plugins/vgs.updates/tui/pipeline.sh
 f share/vgs/shell/plugins/vgs.updates/tui/update-source.sh
 f share/vgs/shell/plugins/vgs.updates/tui/update.sh

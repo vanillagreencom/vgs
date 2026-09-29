@@ -5,12 +5,24 @@ import "PluginLogic.js" as Logic
 
 // One command target per plugin. Instance lifetimes own its registrations;
 // removing the last function releases the target before a replacement builds.
+// `call` reaches the calling plugin's own target in this process, as
+// `vgsh ipc call <id> invoke` does from outside, so a panel asks the
+// plugin's service for work the service owns. It registers nothing.
 Scope {
     id: root
     property var ipcTargets: ({})
 
     function provider(ctx) {
-        return { handle: (name, fn) => root.handleIpc(ctx, name, fn) };
+        return {
+            handle: (name, fn) => root.handleIpc(ctx, name, fn),
+            call: (name, arg) => root.callIpc(ctx, name, arg)
+        };
+    }
+
+    function callIpc(ctx, name, arg) {
+        if (typeof arg !== "string")
+            throw new Error("refused: ipc=" + name + " arg=not-a-string");
+        return invokeIpc(ctx.id, name, arg);
     }
 
     // ipc: one IpcHandler per plugin, target named for the plugin id, with

@@ -280,7 +280,7 @@ Item {
                 }
             }
 
-            SectionHeader { text: "Lists"; description: "Tabs, list items and dividers" }
+            SectionHeader { text: "Lists"; description: "Tabs, list items, a disclosure row open on its content, and dividers" }
             Tabs { model: ["Installed", "Available", "Updates"] }
             Column {
                 width: parent.width
@@ -288,6 +288,16 @@ Item {
                 Divider { width: parent.width }
                 ListItem { text: "Workspaces"; secondary: "up to date"; iconName: "layout-grid"; highlighted: true; width: parent.width }
                 ListItem { text: "Clock"; iconName: "clock"; width: parent.width; trailing: [ Switch { checked: true } ] }
+                Disclosure {
+                    width: parent.width
+                    text: "System"
+                    secondary: "2 updates"
+                    iconName: "package"
+                    expanded: true
+                    trailing: [ Badge { text: "2"; tone: "accent"; anchors.verticalCenter: parent.verticalCenter } ]
+                    Label { x: Theme.row.paddingX; role: "code"; text: "linux 6.1 → 6.2" }
+                    Label { x: Theme.row.paddingX; role: "code"; text: "mesa 25.1 → 25.2" }
+                }
                 Divider { width: parent.width }
                 MenuItem { text: "A menu entry, as the menu draws it"; iconName: "check"; shortcut: "Enter" }
                 MenuItem { text: "The checked entry of a menu"; iconName: "palette"; checked: true }

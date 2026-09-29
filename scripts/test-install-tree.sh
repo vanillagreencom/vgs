@@ -39,6 +39,7 @@ check "the installed command reads VERSION from the install tree" test "$("$dest
 check "shell AGENTS.md is not installed" test ! -e "$dest/usr/share/vgs/shell/AGENTS.md"
 check "shell CLAUDE.md is not installed" test ! -e "$dest/usr/share/vgs/shell/CLAUDE.md"
 check "shell plugin README.md is not installed" test ! -e "$dest/usr/share/vgs/shell/plugins/vgs.bar/README.md"
+check "a plugin's other Markdown is not installed" test ! -e "$dest/usr/share/vgs/shell/plugins/vgs.updates/pipeline.md"
 check "root README.md is installed under doc" test -e "$dest/usr/share/doc/vgs/README.md"
 check "LICENSE is installed under licenses" test -e "$dest/usr/share/licenses/vgs/LICENSE"
 

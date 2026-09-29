@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Controls for the vgs.updates update pipeline: tui/update.sh and
-# tui/update-source.sh over tui/pipeline.sh and bin/facts. Each row runs a
+# tui/update-source.sh over tui/pipeline.sh and bin/facts, and tui/log.sh,
+# which shows the log the pipeline writes. Each row runs a
 # copy of the plugin on a pseudo-terminal script(1) opens, as
 # `vgsh-tui present` runs it, under an explicit environment whose PATH
 # holds only stand-ins and the few tools the pipeline runs. VGS_TUI_LIB
@@ -97,6 +98,7 @@ stub "$stubs" uname "echo $kernel"
 stub "$stubs" systemctl ''
 # paru authorizes through sudo and fails with 7 while $FIX/fail-paru exists.
 stub "$stubs" paru '[ ! -e "$FIX/fail-paru" ] || { sudo /usr/bin/true; exit 7; }'
+stub "$stubs" less ''
 for tool in bash env readlink dirname mkdir mv rm script flock sleep cat id; do
   found="$(command -v "$tool")" || { echo "test-updates-pipeline: status=not-measured missing=$tool"; exit 77; }
   ln -s -- "$(readlink -f -- "$found")" "$tools/$tool"
@@ -341,17 +343,32 @@ row_source() {
   pipeline update-source.sh
   assert "a missing source is refused" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "2:updates: refused: source=missing"
 }
+# tui/log.sh opens the log the pipeline wrote, at its end, and refuses
+# before any run wrote one.
+row_log() {
+  reset_fix
+  pipeline log.sh
+  assert "the log TUI before any run is refused" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "1:updates: refused: log=absent path=$log"
+  assert "the log TUI before any run opens no pager" test ! -s "$tmp/seq"
+  pipeline update.sh
+  pipeline log.sh
+  assert "the log TUI opens the log the pipeline wrote, at its end" seq_is "less -R +G -- $log"
+  assert "the log TUI exits with the pager's status" test "$status" == 0
+  pipeline log.sh extra
+  assert "the log TUI refuses an argument" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "2:updates: refused: argument=extra"
+}
 
 row_full; row_trusted; row_snapshot; row_failure; row_reboot; row_orphans; row_yes
-row_declined; row_busy; row_aur_command; row_aur_failure; row_doas; row_vgs_only; row_vgs_git; row_source
+row_declined; row_busy; row_aur_command; row_aur_failure; row_doas; row_vgs_only; row_vgs_git; row_source; row_log
 
-# Controls: each runs one row against a plugin copy whose pipeline drops
-# one rule, quietly, and that row must turn red.
-control() { # NAME NEEDLE REPLACEMENT ROW
-  local copy_dir="$tmp/plugin-$1"
+# Controls: each runs one row against a plugin copy whose tui/FILE,
+# pipeline.sh unless named, drops one rule, quietly, and that row must turn
+# red.
+control() { # NAME NEEDLE REPLACEMENT ROW [FILE]
+  local copy_dir="$tmp/plugin-$1" file="${5:-pipeline.sh}"
   cp -R -- "$plugin" "$copy_dir"
-  copy_with "$1" "$plugin/tui/pipeline.sh" "$2" "$3"
-  cp -- "$copy" "$copy_dir/tui/pipeline.sh"
+  copy_with "$1" "$plugin/tui/$file" "$2" "$3"
+  cp -- "$copy" "$copy_dir/tui/$file"
   red=0
   PLUGIN="$copy_dir" QUIET=1 "$4"
   check "the $1 mutant fails $4" test "$red" -gt 0
@@ -368,5 +385,7 @@ control no-reboot-check '  _updates_reboot' '  :' row_reboot
 control orphans-default-yes '--default=false || status=$?' '|| status=$?' row_orphans
 control log-clobbers 'vgs_tui_log "$UPDATES_LOG_PART"' 'vgs_tui_log "$_updates_log"' row_busy
 control unasked-start 'vgs_tui_confirm "Start the update?" || status=$?' 'true || status=$?' row_declined
+control log-elsewhere 'printf '"'"'%s\n'"'"' "$(updates_state_dir)/update.log"' 'printf '"'"'%s\n'"'"' "$(updates_state_dir)/other.log"' row_log
+control log-absent-opens '[[ -f $log ]] || _updates_refuse 1' '[[ -n $log ]] || _updates_refuse 1' row_log log.sh
 
 rows_done test-updates-pipeline

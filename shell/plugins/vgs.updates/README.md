@@ -1,6 +1,6 @@
 # Updates
 
-`vgs.updates` is the service that owns update checks for VGS, and the floating TUIs that run the updates ([§ Update pipeline](#update-pipeline)).
+`vgs.updates` is the service that owns update checks for VGS, the bar widget and flyout that show them ([§ Bar widget and flyout](#bar-widget-and-flyout)), and the floating TUIs that run the updates ([pipeline.md](pipeline.md)).
 
 ## Sources
 
@@ -83,7 +83,7 @@ It schedules the next check from `checkedAt`.
 
 It accepts `vgsh ipc call vgs.updates invoke check ''` for an on-demand check.
 
-It checks again when one of its own TUI runs records a new end in `shell.tui.state`.
+It checks again when one of its own TUI runs records a new end in `shell.tui.state` after the service started. A service rebuilt after a run does not check again for it.
 
 A cache older than twice the interval reports a stale check state.
 
@@ -102,17 +102,20 @@ The service publishes these status keys:
 - `pending`: total updates with numeric counts.
 - `lastCheck`: the last successful snapshot time.
 - `checkState`: `ok`, `info`, `warning` or `danger`, with a short reason.
-- `sources`: the source rows for the later bar widget and flyout.
+- `checking`: whether a check process runs. It is the widget's spinner, since `info` also means "not checked".
+- `sources`: the source rows for the bar widget and the flyout.
 
 The Settings page shows the first three rows as read-only status.
 
-`sources` is data for the later widget and panel.
+`checking` and `sources` are data for the widget and the flyout.
 
 ## IPC
 
 `check` starts a check.
 
 It returns `started` or `queued`.
+
+The flyout's Refresh reaches the same handler through `shell.ipc.call("check", "")`, so the service stays the one owner of every probe.
 
 `status` returns the values currently published through plugin status.
 
@@ -139,56 +142,48 @@ Omarchy checks only whether Omarchy itself has an update.
 
 VGS counts every source because the badge represents the whole system.
 
-## Update pipeline
+## Bar widget and flyout
 
-The plugin declares two floating TUIs.
+The widget and the flyout read the status values alone. `UpdatesLogic.js` decides what each draws, and neither runs a check.
 
-- `update` runs `tui/update.sh`: every source in one run. Its launcher entry is in the `Update` group, so the launcher's Update row opens it.
-- `update-source` runs `tui/update-source.sh <source>`: one source. `<source>` is a status row's `source`: the primary package manager's id, `aur`, `flatpak`, `mise`, `vgs`, `plugins` or `themes`. It is not listed, because it needs its argument: `shell.tui.run("update-source", [source])` opens it.
+The widget has five states:
 
-Both take `-y`, which skips the start question only. They share `tui/pipeline.sh`, whose header is the full contract. A run takes these steps in this order:
+| State | When | Draws |
+|---|---|---|
+| Current | The last check succeeded and nothing waits. | The calm `refresh-cw` icon in the bar's colour, with no badge. |
+| Pending | The last check succeeded and updates wait. | The icon and a count badge in the accent tone. |
+| Attention | The check failed, a source failed, or the snapshot is older than twice the interval. | The `triangle-alert` icon and the count in the warning tone. |
+| Checking | A check process runs. | A spinner in place of the icon, with the last count. |
+| Unchecked | No check has published a state yet. | The calm `circle-dashed` icon. |
 
-1. The log and the lock. `script` writes the run to `${XDG_STATE_HOME}/vgs/updates/update.log`. The lock is `${XDG_RUNTIME_DIR}/vgs-tui-updates.lock`. A second run exits 75 and leaves the first run's log as it is.
-2. A warning when `/` has less than 10 GiB free.
-3. The plan box: the snapshot tool, each source with the commands it runs, and the log path. Then `Start the update?`, unless `-y`.
-4. One sudo session, when a snapshot or the system step needs root and the elevation command is `sudo`. `vgsh pkg run` joins it, so the password is asked once. The elevation command is the one `vgsh pkg plan upgrade <primary>` names: `packages.elevate` in `shell.json`, else the first of `sudo`, `doas` and `run0` on `PATH`. `doas` and `run0` ask as their own rules say.
-5. A snapshot through snapper, else timeshift, behind the elevation command. It comes before any step that replaces a package: the system upgrade, the AUR upgrade or the `vgs-git` rebuild. No snapshot is taken when the `snapshot` setting is `off`, when neither tool is on `PATH` or when no elevation command resolves. The plan box says which. A tool that fails or has no configuration prints a warning, and the update continues without a snapshot.
-6. VGS itself: `vgsh self update` for a checkout or a curl install. It restarts a running shell. The `vgs` package updates with its package manager, and a Nix tree with its flake.
-7. The system: `vgsh pkg run upgrade --manager <primary>`.
-8. Flatpak and mise: `vgsh pkg run upgrade --manager flatpak`, then `--manager mise`.
-9. Each plugin, then each theme, that is behind its upstream: `vgsh plugin update <id>` and `vgsh theme update <name>`. Each shows its diff and asks `[y/N]`. The pipeline passes `--yes` only when `trustPluginUpdates` is on. A declined or failed update prints a warning and the run continues.
-10. The end of the sudo session. The credential is dropped.
-11. The AUR, last: the `aurCommand` setting's words, else `vgsh pkg run upgrade --manager aur` (`paru -Sua` or `yay -Sua`). No AUR build runs under the update's credential. When VGS is the `vgs-git` package and behind, `<helper> -S vgs-git` follows, because an AUR helper rebuilds a `-git` package only when its recipe's version changes. The helper asks `sudo` itself. The credential it caches is dropped when this step ends, fails or is interrupted.
-12. On pacman, after a system or AUR upgrade, the orphaned packages from `pacman -Qtdq`, with `Remove N orphaned package(s)?`, default no. A yes runs `vgsh pkg run remove --manager pacman`.
-13. A shell restart, when a package step or the `vgs-git` rebuild replaced the VGS package.
-14. A reboot question, when the kernel or the running Hyprland binary was replaced (`vgs_tui_reboot_check`).
+The count badge shows at most `99+`.
 
-Every package step is the package table's own plan, from `vgsh pkg plan upgrade <id>`. The steps take no `-y`, so each manager asks its own questions in the terminal. A package source without an upgrade plan, such as `nix`, is left out of the run with the reason in the plan box.
+The tooltip lists the state, each source's count and the time of the last check.
 
-With `-y`, the orphan list and the reboot reason are printed instead of asked.
+A left click opens or closes the flyout under the widget. A middle click opens the `update` TUI for every source.
 
-A failing step stops the run. The terminal then shows `updates: failed exit=<n> log=<file>` and how to recover. The sudo session, or the guard around the AUR, drops the credential on the way out.
+The flyout has one row per source, in the order the service publishes them. Each row shows its count badge and its error, if it has one. A source with updates has its own **Update**, which opens `update-source` with the row's source. A click on a row lists its packages as `name old → new`, or `name: N commits behind` for a plugin or theme. The list holds the twelve packages the shared status keeps and a `+N more` line for the rest.
 
-The TUIs read the plugin's settings with `vgsh plugin settings vgs.updates`, since `shell.tui.open` hands a script no arguments. `bin/facts` reads each `vgsh` JSON answer for the shell script. It decides whether VGS, a plugin or a theme is behind through `UpdatesLogic.js`, as the service does.
+**Update everything** opens `update`. The footer has **Refresh**, the time of the last check, and **Open last log**. **Open last log** opens the `log` TUI, `tui/log.sh`. It shows the last run's log in `less -R`, from its end, and names the path when no run has written a log. The flyout has no command text field.
 
-When a run ends, the service checks again ([§ Cadence](#cadence)).
+### Visibility
+
+The widget is always visible by default. `hideWhenCurrent`, off by default, hides it only in the current state.
+
+The reason is that a hidden icon makes "up to date" look the same as "never checked" or "check failed". The widget is also the way to Refresh and to the time of the last check. The count stays quiet because it has no colour when nothing needs action, not because it disappears. A failed, stale, running or missing check always shows, with `hideWhenCurrent` on too.
 
 ### Omarchy comparison
 
-`bin/omarchy-update` (basecamp/omarchy `e332dc97`) is the model. VGS takes its order and its safety steps: the `script` log, the lock, the free-space check, the confirm box, one sudo authorization with a keepalive, the snapshot with a missing tool as a quiet skip, mise with `MISE_MINIMUM_RELEASE_AGE=0`, the credential dropped before the AUR, the orphan question with default no, and the reboot question for a new kernel or a replaced Hyprland. `OMARCHY_UPDATE_SUDO_SESSION` is the model for the nested session that `vgsh pkg run` joins.
+Omarchy's `shell/plugins/bar/widgets/SystemUpdate.qml` (basecamp/omarchy `e332dc97`) sets `visible: updateAvailable`. The icon appears only when Omarchy itself has an update, and a click runs `omarchy-update`. A failed or never-run check is hidden the same way as "up to date". VGS keeps the icon visible and calm, so the user never takes a failed check for an up-to-date system. `hideWhenCurrent` gives Omarchy's quiet bar to a user who wants it.
 
-VGS differs in these ways:
+Omarchy's one click runs the update. VGS puts that click on the middle button and opens the flyout on the left button. Omarchy has no flyout.
 
-- Low free space is a warning, not a refusal, so a user with a small disk can still update. Omarchy refuses below 10 GiB.
-- The package steps are the package table's plans, with no `--noconfirm`, so each manager asks its own questions.
-- Each plugin and theme update shows its diff and asks.
-- The AUR runs after the credential is dropped, and it is dropped again after. The `sudo-no-update` wrapper is not copied.
-- Not copied: migrations, the keyring step, channels and the ALPM guard. These are distribution work, and VGS is not the distribution. The stay-awake step is not copied yet. A later `systemd-inhibit` step can add it.
+Omarchy's `omarchy-debug` shows its log with `less`. The `log` TUI does the same for the update log. Nothing in Omarchy opens its update log, `/tmp/omarchy-update.log`, for the user: only `omarchy-update-analyze-logs` reads it, for known failures.
+
+## Update pipeline
+
+The update TUIs, the steps a run takes in order and how they compare with Omarchy's are in [pipeline.md](pipeline.md).
 
 ## Validation
 
-`scripts/test-updates-logic.js` pins every decision in `UpdatesLogic.js` with a control. `scripts/test-updates-check.sh` pins `bin/check`'s argv, concurrency and signal handling. `scripts/test-updates-pipeline.sh` runs the update TUIs on a pseudo-terminal against stand-in commands. It pins the order and argv of every step, `--yes` only with `trustPluginUpdates`, the quiet skip with no snapshot tool, the recovery message, the credential dropped after a failed AUR step, the `doas` path with no sudo session, the snapshot and restart around a `vgs-git` rebuild alone, the orphan and reboot questions, and the busy lock. Its controls include a copy that runs the AUR before the sudo session ends, a copy that always passes `--yes`, a copy with no guard around the AUR, copies that ignore the elevation command, and a copy that leaves the rebuild out of the snapshot and restart checks. `scripts/smoke/rows/updates.sh` runs the service in the nested sandbox against stand-in package managers and git.
-
-## Later issues
-
-VGS-553 adds the bar widget and flyout kinds.
+`scripts/test-updates-logic.js` pins every decision in `UpdatesLogic.js` with a control. `scripts/test-updates-check.sh` pins `bin/check`'s argv, concurrency and signal handling. `scripts/test-updates-pipeline.sh` runs the update TUIs on a pseudo-terminal against stand-in commands. It pins the order and argv of every step, `--yes` only with `trustPluginUpdates`, the quiet skip with no snapshot tool, the recovery message, the credential dropped after a failed AUR step, the `doas` path with no sudo session, the snapshot and restart around a `vgs-git` rebuild alone, the orphan and reboot questions, and the busy lock. Its controls include a copy that runs the AUR before the sudo session ends, a copy that always passes `--yes`, a copy with no guard around the AUR, copies that ignore the elevation command, and a copy that leaves the rebuild out of the snapshot and restart checks. `scripts/test-updates-logic.js` also pins what the widget and the flyout draw for each state. `scripts/test-updates-pipeline.sh` also runs `tui/log.sh`: it opens the pipeline's log in `less` and refuses before any run wrote one. `scripts/smoke/rows/updates.sh` runs the service, the widget and the flyout in the nested sandbox against stand-in package managers and git. It reads back the widget's icon, colour, spinner and badge for pending, checking, failed, stale and current values, `hideWhenCurrent` hiding the widget only while current, the flyout's rows, the argv each button opens, and Refresh starting one check. Its control is a copy of the widget's judge that hides on a failed check.

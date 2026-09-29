@@ -4,20 +4,23 @@
   "name": "Updates",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Checks system, VGS, plugin, theme and mise updates from one service, publishes their shared status and runs every update in one floating TUI.",
+  "description": "Checks system, VGS, plugin, theme and mise updates from one service, shows them in a bar widget and its flyout, and runs every update in one floating TUI.",
   "license": "MIT",
   "icon": "refresh-cw",
-  "kinds": ["service"],
-  "entryPoints": { "service": "Service.qml" },
-  "capabilities": ["ipc", "status", "tui"],
+  "kinds": ["service", "bar-widget", "panel"],
+  "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml", "panel": "Panel.qml" },
+  "capabilities": ["ipc", "status", "surfaces", "tui"],
+  "defaultSection": "right",
   "requirements": [
     { "command": "checkupdates", "packages": { "pacman": "pacman-contrib" }, "optional": true, "purpose": "Counts Arch repository updates without root" },
     { "command": "snapper", "packages": { "pacman": "snapper" }, "optional": true, "purpose": "Takes a snapshot before the update TUI changes system packages" },
-    { "command": "timeshift", "packages": { "pacman": "timeshift" }, "optional": true, "purpose": "Takes a snapshot before the update TUI changes system packages when snapper is absent" }
+    { "command": "timeshift", "packages": { "pacman": "timeshift" }, "optional": true, "purpose": "Takes a snapshot before the update TUI changes system packages when snapper is absent" },
+    { "command": "less", "packages": { "pacman": "less", "apt": "less", "dnf": "less", "xbps": "less", "emerge": "sys-apps/less", "nix": "less" }, "optional": true, "purpose": "Shows the last update log from the flyout" }
   ],
   "tui": {
     "update": { "script": "tui/update.sh", "title": "Update everything", "size": "tall", "entry": { "label": "Update everything", "icon": "refresh-cw", "group": "Update" } },
-    "update-source": { "script": "tui/update-source.sh", "title": "Update one source", "size": "tall" }
+    "update-source": { "script": "tui/update-source.sh", "title": "Update one source", "size": "tall" },
+    "log": { "script": "tui/log.sh", "title": "Last update log", "size": "tall", "presentation": "plain" }
   },
   "settings": {
     "intervalHours": 6,
@@ -29,16 +32,17 @@
   },
   "schema": {
     "intervalHours": { "type": "number", "label": "Check interval", "description": "Hours between automatic update checks", "min": 1, "max": 48, "step": 1, "group": "Cadence" },
-    "hideWhenCurrent": { "type": "boolean", "label": "Hide when current", "description": "Hide the later bar widget when no source has updates", "group": "Display" },
+    "hideWhenCurrent": { "type": "boolean", "label": "Hide when current", "description": "Hide the bar icon while the last check succeeded and no source has updates; a failed, stale or running check still shows", "group": "Display" },
     "aurCommand": { "type": "string", "label": "AUR command", "description": "Blank lets the update TUI choose paru -Sua or yay -Sua", "group": "Update TUI" },
     "snapshot": { "type": "enum", "label": "Snapshot", "description": "Automatic snapshots when the update TUI can find a snapshot tool", "options": ["auto", "off"], "group": "Update TUI" },
     "trustPluginUpdates": { "type": "boolean", "label": "Trust plugin updates", "description": "Let the update TUI pass --yes to plugin and theme updates, so it shows their diffs without asking", "group": "Update TUI" },
-    "placement": { "type": "enum", "label": "Flyout placement", "description": "Default placement for the later updates panel", "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"], "group": "Display" }
+    "placement": { "type": "enum", "label": "Flyout placement", "description": "Where the updates flyout opens when summoned without its bar icon", "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"], "group": "Display" }
   },
   "status": {
     "pending": { "type": "count", "label": "Updates waiting" },
     "lastCheck": { "type": "time", "label": "Last checked" },
     "checkState": { "type": "state", "label": "Check" },
+    "checking": { "type": "data", "label": "Checking" },
     "sources": { "type": "data", "label": "Sources" }
   }
 }

@@ -8,8 +8,9 @@
 # $DESTDIR$PREFIX/share/vgs. The command link lands at
 # $DESTDIR$PREFIX/bin/vgsh and points to ../share/vgs/bin/vgsh. Root README.md
 # and LICENSE land under share/doc/vgs and share/licenses/vgs.
-# The installed shell tree drops developer-only AGENTS.md, CLAUDE.md and
-# README.md files under shell/. Install into a fresh DESTDIR, or remove an
+# The installed shell tree drops every Markdown file under shell/: the
+# AGENTS.md, CLAUDE.md, README.md and other plugin documents are for
+# developers. Install into a fresh DESTDIR, or remove an
 # old runtime tree before running this script. Refusals print one keyed first
 # line.
 set -euo pipefail
@@ -52,10 +53,7 @@ runtime_root="$install_root/share/vgs"
 
 skip_shell_markdown() { # RELATIVE_PATH
   [[ $1 == shell/* ]] || return 1
-  case "${1##*/}" in
-    AGENTS.md|CLAUDE.md|README.md) return 0 ;;
-    *) return 1 ;;
-  esac
+  [[ $1 == *.md ]]
 }
 
 refuse() { # STATUS KEY [DETAIL...]

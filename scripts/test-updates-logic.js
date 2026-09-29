@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Table-driven checks for vgs.updates pure decisions: probe normalization,
-// snapshot judging, status values, cadence, staleness and TUI end detection.
+// snapshot judging, status values, cadence, staleness, TUI end detection, and
+// what the bar widget and the flyout draw from the published values.
 // Controls edit a copy of the logic and require this suite to fail.
 "use strict";
 const assert = require("node:assert/strict");
@@ -58,7 +59,9 @@ function verify(logic) {
   same(logic.statusWrites({ pending: 1 }, { pending: 1, checkState: { tone: "ok", text: "Up to date" } }).map(w => w.key), ["checkState"]);
   assert.equal(logic.nextCheckDelay(snapshot, false, now + 1000, 99999999, now), logic.RETRY_AFTER_FAILURE_MS - 1000);
   assert.equal(logic.nextCheckDelay(snapshot, false, now + logic.RETRY_AFTER_FAILURE_MS, 6, now), 0);
-  assert.equal(logic.nextTimerDelay({ checkedAt: now - 7, sources: [], error: null }, false, now, 6, null), 0);
+  assert.equal(logic.nextTimerDelay({ checkedAt: now - 7, sources: [], error: null }, false, now, 6, null, true), 0);
+  assert.equal(logic.nextTimerDelay(null, false, now, 6, null, true), 0);
+  assert.equal(logic.nextTimerDelay(null, false, now, 6, null, false), null);
   const many = logic.normalizeSnapshot({
     pkg: probe([{ source: "pacman", count: 3000, packages: Array.from({ length: 3000 }, (_, i) => ({ name: "pkg-" + i + "-".repeat(120), old: "1".repeat(120), new: "2".repeat(120) })), checkedAt: now, error: null }]),
     self: probe({ behind: false, error: null }),
@@ -90,10 +93,79 @@ function verify(logic) {
   same(failedPkg.sources[0], { source: "packages", label: "Packages", count: null, packages: [], checkedAt: null, error: "exit=1 lock=failed" });
 
   assert.equal(logic.tuiRunEnded({}, {}), false);
+  assert.equal(logic.tuiRunEnded(null, { update: { running: false, code: 0, endedAt: 10 } }), false);
   assert.equal(logic.tuiRunEnded({}, { update: { running: false, code: 0, endedAt: 10 } }), true);
   assert.equal(logic.tuiRunEnded({ update: { running: true, endedAt: null } }, { update: { running: false, code: 0, endedAt: 11 } }), true);
   assert.equal(logic.tuiRunEnded({ update: { running: false, endedAt: 12 } }, { update: { running: false, endedAt: 12 } }), false);
   assert.equal(logic.tuiRunEnded({ update: { running: false, endedAt: 12 } }, { update: { running: false, endedAt: 13 } }), true);
+
+  same([logic.publishValues(snapshot, true, now, 6, "").checking, logic.publishValues(snapshot, false, now, 6, "").checking], [true, false]);
+  same(logic.statusWrites({ checking: true }, { checking: false }), [{ key: "checking", value: false }]);
+  verifyView(logic);
+}
+
+// The widget and the flyout, from published values as the service writes
+// them. Each row: [name, values, hideWhenCurrent, the widget's view].
+function verifyView(logic) {
+  const ok = { tone: "ok", text: "Up to date" };
+  const widgetRows = [
+    ["current", { pending: 0, checkState: ok, checking: false }, false, { state: "current", icon: "refresh-cw", tone: "calm", spinning: false, badge: "", badgeTone: "neutral", hidden: false }],
+    ["current hidden", { pending: 0, checkState: ok, checking: false }, true, { state: "current", icon: "refresh-cw", tone: "calm", spinning: false, badge: "", badgeTone: "neutral", hidden: true }],
+    ["pending", { pending: 7, checkState: { tone: "ok", text: "Updates waiting" }, checking: false }, true, { state: "pending", icon: "refresh-cw", tone: "accent", spinning: false, badge: "7", badgeTone: "accent", hidden: false }],
+    ["pending past the badge", { pending: 150, checkState: { tone: "ok", text: "Updates waiting" } }, false, { state: "pending", icon: "refresh-cw", tone: "accent", spinning: false, badge: "99+", badgeTone: "accent", hidden: false }],
+    ["failed source", { pending: 3, checkState: { tone: "warning", text: "AUR: exit=1 network down" }, checking: false }, true, { state: "attention", icon: "triangle-alert", tone: "warning", spinning: false, badge: "3", badgeTone: "warning", hidden: false }],
+    ["failed check", { pending: 0, checkState: { tone: "danger", text: "exit=2 lock" }, checking: false }, true, { state: "attention", icon: "triangle-alert", tone: "warning", spinning: false, badge: "", badgeTone: "warning", hidden: false }],
+    ["stale", { pending: 0, checkState: { tone: "warning", text: "Check stale" }, checking: false }, true, { state: "attention", icon: "triangle-alert", tone: "warning", spinning: false, badge: "", badgeTone: "warning", hidden: false }],
+    ["checking", { pending: 2, checkState: { tone: "info", text: "Checking" }, checking: true }, true, { state: "checking", icon: "refresh-cw", tone: "calm", spinning: true, badge: "2", badgeTone: "accent", hidden: false }],
+    ["not checked", { checkState: { tone: "info", text: "Not checked" }, checking: false }, true, { state: "unchecked", icon: "circle-dashed", tone: "calm", spinning: false, badge: "", badgeTone: "neutral", hidden: false }],
+    ["nothing published", {}, true, { state: "unchecked", icon: "circle-dashed", tone: "calm", spinning: false, badge: "", badgeTone: "neutral", hidden: false }]
+  ];
+  for (const [name, values, hide, want] of widgetRows) same(logic.widgetView(values, hide), want, "widget " + name);
+  assert.throws(() => logic.widgetView({ checkState: { tone: "loud", text: "x" } }, false), /checkState tone "loud"/);
+
+  const summaryRows = [
+    [{ pending: 0, checkState: ok }, "Up to date"],
+    [{ pending: 1, checkState: ok }, "1 update waiting"],
+    [{ pending: 7, checkState: ok }, "7 updates waiting"],
+    [{ pending: 7, checkState: { tone: "warning", text: "Check stale" } }, "Check stale"],
+    [{ checking: true }, "Checking for updates"],
+    [{}, "Not checked yet"]
+  ];
+  for (const [values, want] of summaryRows) assert.equal(logic.summaryText(values), want);
+
+  const now = new Date(2026, 8, 29, 14, 30).getTime();
+  const today = new Date(2026, 8, 29, 14, 2).getTime();
+  const yesterday = new Date(2026, 8, 28, 23, 59).getTime();
+  const when = (ms, withDate) => (withDate ? "date+" : "") + (ms === today ? "14:02" : "23:59");
+  assert.equal(logic.checkedText(today, now, when), "Checked 14:02");
+  assert.equal(logic.checkedText(yesterday, now, when), "Checked date+23:59");
+  assert.equal(logic.checkedText(undefined, now, when), "Never checked");
+
+  const sources = [
+    { source: "pacman", label: "System", count: 2, packages: [{ name: "linux", old: "6.1", new: "6.2" }, { name: "mesa", old: null, new: "25.2" }], checkedAt: today, error: null, more: 3 },
+    { source: "aur", label: "AUR", count: null, packages: [], checkedAt: null, error: "exit=1 network down", more: 0 },
+    { source: "flatpak", label: "Flatpak", count: 0, packages: [], checkedAt: today, error: null, more: 0 },
+    { source: "plugins", label: "Plugins", count: 1, packages: [{ name: "acme.one", old: "a".repeat(40), new: "b".repeat(40), behind: 2 }], checkedAt: today, error: "bad: fetch=bad", more: 0 },
+    { source: "later", label: "later", count: 1, packages: [{ name: "x", old: null, new: null }], checkedAt: today, error: null, more: 0 }
+  ];
+  const values = { pending: 4, lastCheck: today, checkState: { tone: "warning", text: "AUR: exit=1 network down" }, checking: false, sources };
+  assert.equal(logic.widgetTooltip(values, now, when), ["AUR: exit=1 network down", "System: 2", "AUR: check failed", "Flatpak: 0", "Plugins: 1", "later: 1", "Checked 14:02"].join("\n"));
+  assert.equal(logic.widgetTooltip({}, now, when), "Not checked yet\nNever checked");
+  same(logic.panelRows(values), [
+    { key: "pacman", source: "pacman", label: "System", icon: "package", secondary: "2 updates", badge: "2", badgeTone: "accent", updatable: true, lines: ["linux 6.1 → 6.2", "mesa → 25.2"], more: "+3 more" },
+    { key: "aur", source: "aur", label: "AUR", icon: "package-open", secondary: "exit=1 network down", badge: "Failed", badgeTone: "warning", updatable: false, lines: [], more: "" },
+    { key: "flatpak", source: "flatpak", label: "Flatpak", icon: "boxes", secondary: "Up to date", badge: "0", badgeTone: "neutral", updatable: false, lines: [], more: "" },
+    { key: "plugins", source: "plugins", label: "Plugins", icon: "puzzle", secondary: "bad: fetch=bad", badge: "1", badgeTone: "warning", updatable: true, lines: ["acme.one: 2 commits behind"], more: "" },
+    { key: "later", source: "later", label: "later", icon: "package", secondary: "1 update", badge: "1", badgeTone: "accent", updatable: true, lines: ["x"], more: "" }
+  ]);
+  same(logic.panelRows({}), []);
+
+  same(logic.tuiRequest("all"), { name: "update", args: [] });
+  same(logic.tuiRequest("source", "aur"), { name: "update-source", args: ["aur"] });
+  same(logic.tuiRequest("log"), { name: "log", args: [] });
+  assert.throws(() => logic.tuiRequest("source", ""), /needs a source/);
+  assert.throws(() => logic.tuiRequest("everything"), /is not one of all, source, log/);
+  same(["ok", "started", "queued", "refused: tui=update reason=busy"].map(logic.replyLine), ["", "", "", "refused: tui=update reason=busy"]);
 }
 
 verify(load(file));
@@ -115,6 +187,21 @@ const controls = [
   ["outdated error makes a source error", "if (!UNTRACKED_REFUSAL.test(String(row.error))) errors.push(row.id + \": \" + row.error);", "count += 0;"],
   ["an untracked directory is not a source error", "var UNTRACKED_REFUSAL = /^not-a-checkout=/;", "var UNTRACKED_REFUSAL = /^$never/;"],
   ["one failing checkout keeps the others' count", "return sourceRow(source, count, packages, checkedAt, errors.length > 0 ? errors.join(\"; \") : null);", "return sourceRow(source, errors.length > 0 ? null : count, packages, checkedAt, errors.length > 0 ? errors.join(\"; \") : null);"],
+  ["only a current widget hides", "hidden: hideWhenCurrent === true && state === \"current\"", "hidden: hideWhenCurrent === true && state !== \"checking\""],
+  ["a warning or danger check draws attention", "case \"danger\": return \"attention\";", "case \"danger\": return \"current\";"],
+  ["a running check spins", "if (v.checking === true) return \"checking\";", "if (false) return \"checking\";"],
+  ["pending needs a count", "case \"ok\": return pendingOf(v) > 0 ? \"pending\" : \"current\";", "case \"ok\": return \"pending\";"],
+  ["the badge is capped", "return count > BADGE_COUNT_MAX ? BADGE_COUNT_MAX + \"+\" : String(count);", "return String(count);"],
+  ["the checked line dates another day", "formatWhen(lastCheck, !sameLocalDay(lastCheck, now))", "formatWhen(lastCheck, false)"],
+  ["a source with no count reads failed in the tooltip", "(sources[i].count === null ? \"check failed\" : sources[i].count)", "sources[i].count"],
+  ["a failed source keeps its badge", "badge: failed ? \"Failed\" : badgeText(row.count),", "badge: badgeText(row.count),"],
+  ["only a source with updates offers Update", "updatable: !failed && row.count > 0,", "updatable: true,"],
+  ["the omitted packages read +N more", "more: typeof row.more === \"number\" && row.more > 0 ? \"+\" + row.more + \" more\" : \"\"", "more: \"\""],
+  ["a checkout reads its commits behind", "if (typeof pkg.behind === \"number\") return", "if (false) return"],
+  ["one source's update names its source", "return { name: \"update-source\", args: [source] };", "return { name: \"update-source\", args: [] };"],
+  ["a first TUI state read counts no ended run", "if (previous === null) return false;", "if (false) return false;"],
+  ["no timer before the cache read answers", "if (cacheRead !== true) return null;", "if (false) return null;"],
+  ["the service publishes whether it checks", "checking: checking === true,", "checking: false,"],
   ["failed probe is reported", "if (!probe || probe.status !== 0) return { ok: false, error: commandError(name, probe || { status: null, stderr: \"\" }) };", "if (!probe || probe.status !== 0) return { ok: true, value: [] };"],
 ];
 

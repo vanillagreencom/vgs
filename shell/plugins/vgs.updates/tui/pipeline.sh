@@ -91,6 +91,15 @@ _updates_run() { # LABEL ARGV...
   (cd -- "$HOME" && "$@")
 }
 
+# The directory a run writes its log in, and the last run's log in it,
+# which tui/log.sh shows.
+updates_state_dir() {
+  printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/vgs/updates"
+}
+updates_log_file() {
+  printf '%s\n' "$(updates_state_dir)/update.log"
+}
+
 # bin/facts VERB [SOURCE] on the answer on stdin.
 _updates_facts() {
   "$_updates_facts_bin" "$_updates_loader" "$@"
@@ -302,8 +311,9 @@ updates_main() {
   _updates_loader="$_updates_tree/bin/lib/qml-library.js"
   _updates_facts_bin="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)/bin/facts"
 
-  local state="${XDG_STATE_HOME:-$HOME/.local/state}/vgs/updates"
-  _updates_log="$state/update.log"
+  local state
+  state="$(updates_state_dir)"
+  _updates_log="$(updates_log_file)"
   if [[ ${VGS_TUI_LOGGED:-} != 1 ]]; then
     mkdir -p -- "$state"
     export UPDATES_LOG_PART="$state/.update.$$.log"
