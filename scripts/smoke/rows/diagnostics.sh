@@ -3,7 +3,7 @@
 set -euo pipefail
 check_unexpected_log "shell log" "$instance_log"
 
-echo "  latency_first_bar_ms=${first_bar_ms:-unmeasured} budget_ms=$first_bar_budget_ms"
+echo "  latency_first_bar_ms=${first_bar_ms:-unmeasured} budget_ms=$first_bar_budget_ms cpu_some_pct=$first_bar_cpu_some_pct"
 if [[ -n $first_bar_ms && $first_bar_ms -le $first_bar_budget_ms ]]; then ok "the first bar maps within its budget"; else fail "first bar latency ${first_bar_ms:-unmeasured} ms over budget $first_bar_budget_ms ms"; fi
 echo "  latency_reconcile_ms=${reconcile_ms:-unmeasured} budget_ms=$reconcile_budget_ms"
 if [[ -n $reconcile_ms && $reconcile_ms -le $reconcile_budget_ms ]]; then ok "a disable reaches the build records within its budget"; else fail "reconcile latency ${reconcile_ms:-unmeasured} ms over budget $reconcile_budget_ms ms"; fi

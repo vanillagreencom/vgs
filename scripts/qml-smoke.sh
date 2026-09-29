@@ -2,6 +2,7 @@
 # Run the shell inside a nested Hyprland sandbox and check it end to end.
 #
 # Usage: scripts/qml-smoke.sh [--timeout SECONDS] [--keep]
+#        scripts/qml-smoke.sh --first-bar-runs N [--timeout SECONDS]
 #
 # The sandbox is built from the repository alone: its own HOME, XDG dirs and
 # runtime dir, a minimal compositor config, no user state. It never touches
@@ -22,6 +23,15 @@
 # every failure came after the nested output left a mode a row held,
 # nested-output=mode-reset, is not a pass either.
 # scripts/smoke/verdict.sh holds the verdict. Exit 1 when a check failed.
+#
+# --first-bar-runs N, N a positive integer, measures the first bar alone:
+# it starts the sandbox N times, runs no row, and prints one line per run,
+# `run=<i> latency_first_bar_ms=<ms> cpu_some_pct=<pct>`, or
+# `run=<i> status=not-measured exit=<status> log=<path>` for a run whose
+# harness exited non-zero or read no bar. The last line is
+# `qml-smoke: first-bar runs=<N> measured=<M> highest_ms=<H> budget_ms=<2H>`.
+# Exit 0 when every run measured; otherwise a line naming how many did not
+# and where their logs are, then exit 77. One run takes about 2 s.
 #
 # VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
 # the end of the run. It catches a startup allocation blow-up and nothing
@@ -44,10 +54,14 @@ set -euo pipefail
 
 timeout_s=60
 keep=false
+first_bar_runs=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
+    --first-bar-runs)
+      if [[ $# -lt 2 || ! $2 =~ ^[1-9][0-9]*$ ]]; then printf 'qml-smoke: refused: argument=--first-bar-runs value=%s\n' "${2-}" >&2; exit 2; fi
+      first_bar_runs="$2"; shift 2 ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) printf 'qml-smoke: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
@@ -58,6 +72,51 @@ repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-574064}"
 first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-254}"
 reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
+
+# The measurement mode. Each run sources the harness in its own subshell,
+# so its teardown runs when the subshell exits, and the harness's output
+# goes to that run's log. The subshell is no operand of || or &&, where
+# bash would ignore the harness's set -e.
+if [[ -n $first_bar_runs ]]; then
+  if ! first_bar_logs="$(mktemp -d "${TMPDIR:-/tmp}/qml-smoke-first-bar.XXXXXX")"; then
+    printf 'qml-smoke: refused: scratch=%s\n' "${TMPDIR:-/tmp}" >&2
+    exit 1
+  fi
+  measured=0
+  highest=0
+  for ((run = 1; run <= first_bar_runs; run++)); do
+    log="$first_bar_logs/run-$run.log"
+    result="$first_bar_logs/run-$run.result"
+    set +e
+    (
+      source "$repo/scripts/smoke/harness.sh"
+      printf '%s %s\n' "${first_bar_ms:-unmeasured}" "$first_bar_cpu_some_pct" >"$result"
+    ) >"$log" 2>&1 </dev/null
+    status=$?
+    set -e
+    ms=""
+    pct=""
+    if [[ $status -eq 0 && -f $result ]]; then read -r ms pct <"$result"; fi
+    if [[ $status -eq 0 && $ms =~ ^[0-9]+$ ]]; then
+      measured=$((measured + 1))
+      if ((ms > highest)); then highest=$ms; fi
+      printf 'run=%d latency_first_bar_ms=%d cpu_some_pct=%s\n' "$run" "$ms" "$pct"
+    else
+      printf 'run=%d status=not-measured exit=%d log=%s\n' "$run" "$status" "$log"
+    fi
+  done
+  if ((measured > 0)); then
+    printf 'qml-smoke: first-bar runs=%d measured=%d highest_ms=%d budget_ms=%d\n' "$first_bar_runs" "$measured" "$highest" $((highest * 2))
+  else
+    printf 'qml-smoke: first-bar runs=%d measured=0 highest_ms=unmeasured budget_ms=unmeasured\n' "$first_bar_runs"
+  fi
+  if ((measured < first_bar_runs)); then
+    printf 'qml-smoke: status=not-measured first-bar-unmeasured=%d logs=%s\n' $((first_bar_runs - measured)) "$first_bar_logs"
+    exit 77
+  fi
+  rm -rf -- "$first_bar_logs"
+  exit 0
+fi
 
 
 source "$repo/scripts/smoke/harness.sh"

@@ -302,6 +302,17 @@ cat >"$home/.config/vgs/shell.json" <<'JSON'
 JSON
 
 now_ms() { echo $(( $(date +%s%N) / 1000000 )); }
+# The host's CPU pressure stall total in microseconds: the `total=` field of
+# the `some` line of /proc/pressure/cpu, the time in which at least one
+# runnable task on the host waited for a CPU. Prints nothing when pressure
+# stall information is unreadable.
+cpu_some_us() {
+  local kind rest
+  { while read -r kind rest; do
+      if [[ $kind == some && $rest =~ total=([0-9]+) ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return 0; fi
+    done </proc/pressure/cpu; } 2>/dev/null || true
+}
+start_cpu_some_us="$(cpu_some_us)"
 start_ms="$(now_ms)"
 spawn "$sandbox/qs.log" "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$repo/bin/vgsh" run
 shell_pid="$spawn_pid"
@@ -406,10 +417,26 @@ expect_cursor_at() { # LABEL SHAPE X Y
 # Latency from the runner's exec to the first bar surface with a client,
 # polled every 10 ms from the compositor's layer list, which answers in a
 # few milliseconds; the reading carries at most one poll interval.
+# first_bar_cpu_some_pct records beside it the percent of that window in
+# which some runnable task on the host waited for a CPU, from the host-wide
+# pressure stall `some` totals read before the spawn and at the reading,
+# with one decimal; `unmeasured` when either total is unreadable. It is a
+# record for reading a slow start, not a gate. The load average is no
+# measure of this: it counts tasks running on a CPU and tasks in
+# uninterruptible sleep, so on a host with many CPUs a high load can mean
+# no task waited at all.
 first_bar_ms=""
+first_bar_cpu_some_pct=unmeasured
 for _ in $(seq 1 $((timeout_s * 100))); do
   if layers_text="$(hypr layers 2>/dev/null)" && [[ $layers_text =~ namespace:\ vgs:bar,\ pid:\ [1-9] ]]; then
     first_bar_ms=$(( $(now_ms) - start_ms ))
+    bar_cpu_some_us="$(cpu_some_us)"
+    if [[ -n $start_cpu_some_us && -n $bar_cpu_some_us && $first_bar_ms -gt 0 ]]; then
+      # Stalled microseconds over the window's milliseconds is the percent
+      # in tenths.
+      tenths=$(( (bar_cpu_some_us - start_cpu_some_us) / first_bar_ms ))
+      first_bar_cpu_some_pct="$((tenths / 10)).$((tenths % 10))"
+    fi
     break
   fi
   kill -0 "$shell_pid" 2>/dev/null || break
