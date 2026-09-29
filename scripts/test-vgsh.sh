@@ -640,7 +640,7 @@ check "a declined update runs no post-merge hook" test ! -e "$hooks/post-merge.m
 
 # The must-fail control: a copy of vgsh that never asks fast-forwards both
 # without a terminal and on a terminal that answers no.
-ask='  confirm_update "$label"'
+ask='      confirm_update "$label"'
 check "the update asks once in bin/vgsh" test "$(grep -c -x -F -- "$ask" "$repo/bin/vgsh")" == 1
 noask="$tmp/noask"; mkdir -p "$noask/bin"
 grep -v -x -F -- "$ask" "$repo/bin/vgsh" >"$noask/bin/vgsh" || true
