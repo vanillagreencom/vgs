@@ -322,7 +322,11 @@ function addReadabilityOverrides(theme, shell) {
         fixed = chosen;
     }
 
-    if (roleShortfall(initialShortfalls, "accent") !== undefined) {
+    // The lift moves every role and surface that mixes from the
+    // foreground, so the later families fix what fails in the lifted theme.
+    const shortfalls = shortfallsFor(theme, fixed);
+
+    if (roleShortfall(shortfalls, "accent") !== undefined) {
         let chosen = null;
         for (let step = 1; step <= 100; step++) {
             const candidate = withPaletteOverride(fixed, "accent", liftedPaletteLiteral(theme, fixed, "accent", step));
@@ -331,12 +335,12 @@ function addReadabilityOverrides(theme, shell) {
                 break;
             }
         }
-        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, "accent") };
+        if (chosen === null) return { held: true, shortfall: roleShortfall(shortfalls, "accent") };
         fixed = chosen;
     }
 
     let faintAmount = defaults.textFaint;
-    if (roleShortfall(initialShortfalls, "textFaint") !== undefined) {
+    if (roleShortfall(shortfalls, "textFaint") !== undefined) {
         let chosen = null;
         const start = stepBelow(defaults.textFaint);
         for (let step = start; step >= 0; step--) {
@@ -346,12 +350,12 @@ function addReadabilityOverrides(theme, shell) {
                 break;
             }
         }
-        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, "textFaint") };
+        if (chosen === null) return { held: true, shortfall: roleShortfall(shortfalls, "textFaint") };
         fixed = chosen.shell;
         faintAmount = chosen.amount;
     }
 
-    if (roleShortfall(initialShortfalls, "textMuted") !== undefined) {
+    if (roleShortfall(shortfalls, "textMuted") !== undefined) {
         let chosen = null;
         const cap = proportionalMutedCap(defaults, faintAmount);
         for (let step = Math.floor(cap * 100 + 0.0000001); step >= 0; step--) {
@@ -361,13 +365,13 @@ function addReadabilityOverrides(theme, shell) {
                 break;
             }
         }
-        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, "textMuted") };
+        if (chosen === null) return { held: true, shortfall: roleShortfall(shortfalls, "textMuted") };
         fixed = chosen;
     }
 
     for (const role of STATUS_ROLES) {
         const pathName = `color.${role}`;
-        if (initialShortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;
+        if (shortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;
         let chosen = null;
         for (let step = 1; step <= 100; step++) {
             const candidate = withColorOverride(fixed, role, contrastMixExpression(role, step));
@@ -376,7 +380,7 @@ function addReadabilityOverrides(theme, shell) {
                 break;
             }
         }
-        if (chosen === null) return { held: true, shortfall: roleShortfall(initialShortfalls, role) };
+        if (chosen === null) return { held: true, shortfall: roleShortfall(shortfalls, role) };
         fixed = chosen;
     }
 

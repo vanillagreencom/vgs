@@ -23,8 +23,10 @@ const NODE = process.execPath;
 const MAGICK = findOnPath("magick");
 const FLOCK = findOnPath("flock");
 const TEST_PATH = Array.from(new Set([path.dirname(NODE), path.dirname(MAGICK), path.dirname(FLOCK)])).join(path.delimiter);
-// The text fixture's palette.foreground after the smallest passing lift.
-const TEXT_LIFTED = "#669afd";
+// The text fixture's palette.foreground after the smallest passing lift,
+// 0.27. The lift lightens the surfaces enough that the fixture's info,
+// which passes before it, fails after it.
+const TEXT_LIFTED = "#7f9cdd";
 // Converter text the text-family controls edit.
 const TEXT_SEARCH = "for (let step = 1; step / 100 < headingAmount; step++)";
 const HEADING_RETURN = "reason=heading-shape value=${JSON.stringify(value)}`);\n    return parsed.args[2].value;";
@@ -340,8 +342,8 @@ try {
         assert.equal(mismatch.status, 1, mismatch.stdout + mismatch.stderr);
         assert.match(mismatch.stderr, /catalog-palette-mismatch/);
 
-        const smallestNeedle = "if (roleShortfall(initialShortfalls, \"accent\") !== undefined) {\n        let chosen = null;\n        for (let step = 1; step <= 100; step++)";
-        const largestAccent = converterCopy(path.join(dir, "largest-accent"), smallestNeedle, "if (roleShortfall(initialShortfalls, \"accent\") !== undefined) {\n        let chosen = null;\n        for (let step = 100; step >= 1; step--)");
+        const smallestNeedle = "if (roleShortfall(shortfalls, \"accent\") !== undefined) {\n        let chosen = null;\n        for (let step = 1; step <= 100; step++)";
+        const largestAccent = converterCopy(path.join(dir, "largest-accent"), smallestNeedle, "if (roleShortfall(shortfalls, \"accent\") !== undefined) {\n        let chosen = null;\n        for (let step = 100; step >= 1; step--)");
         const mutantDir = path.join(dir, "largest-accent-run");
         freshRoot(mutantDir);
         copyFixtureArchives(mutantDir);
@@ -356,7 +358,7 @@ try {
         copyFixtureArchives(dir);
         const proc = runThemes(dir, ["text"]);
         assert.equal(proc.status, 0, proc.stdout + proc.stderr);
-        assert.match(proc.stdout, /overrides=palette\.foreground,color\.textMuted,color\.textFaint$/m);
+        assert.match(proc.stdout, /overrides=palette\.foreground,color\.textMuted,color\.textFaint,color\.info$/m);
         const theme = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "text", "theme.json"), "utf8"));
         const index = JSON.parse(fs.readFileSync(path.join(dir, "themes", "catalog", "index.json"), "utf8"));
         assert.equal(theme.tokens.palette.foreground, TEXT_LIFTED);
@@ -376,7 +378,7 @@ try {
             const file = path.join(runDir, "themes", "catalog", "text", "theme.json");
             return { stdout: proc.stdout, theme: fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null };
         };
-        const heldText = /held-back theme=text text=color\.text surface=color\.surfaceRaised ratio=4\.33 floor=4\.5/;
+        const heldText = /held-back theme=text text=color\.text surface=color\.background ratio=3\.28 floor=4\.5/;
 
         const noText = run("no-text", converterCopy(path.join(dir, "no-text"), "const PALETTE_OVERRIDE_ROLES = { text: \"foreground\", accent: \"accent\" };", "const PALETTE_OVERRIDE_ROLES = { accent: \"accent\" };"));
         assert.match(noText.stdout, heldText, "text was still fixable without its role");
@@ -389,6 +391,9 @@ try {
         assert.match(capped.stdout, heldText, "a lift at the heading amount was admitted");
         const uncapped = run("uncapped", converterCopy(path.join(dir, "uncapped"), ...lowHeading, [[TEXT_SEARCH, "for (let step = 1; step <= 100; step++)"]]));
         assert.equal(uncapped.theme.tokens.palette.foreground, TEXT_LIFTED, "without the cap the planted heading amount still held the theme back");
+
+        const unlifted = run("unlifted-gate", converterCopy(path.join(dir, "unlifted-gate"), "const shortfalls = shortfallsFor(theme, fixed);", "const shortfalls = initialShortfalls;"));
+        assert.match(unlifted.stdout, /held-back theme=text text=color\.info /, "families gated on the unlifted theme still fixed info");
     });
 
     row("heading default shape refusal names the token", dir => {
@@ -595,9 +600,9 @@ try {
     row("terminal overlay control", dir => assertMutantFails(dir, "terminal overlay", "slots[slot] = terminalOverrides[slot] || colors[slot];", "slots[slot] = colors[slot];"));
     row("first image control", dir => assertMutantFails(dir, "first image", "const first = backgrounds.firstImageName(entries);", "const first = entries.map(entry => entry.name).sort().pop() || null;"));
     row("deterministic index control", dir => assertMutantFails(dir, "deterministic index", "entries: Array.from(byName.values()).sort((a, b) => codeUnitCompare(a.name, b.name))", "entries: Array.from(byName.values())"));
-    row("override only on failure control", dir => assertMutantFails(dir, "override only on failure", "if (roleShortfall(initialShortfalls, \"textFaint\") !== undefined) {", "if (true) {"));
+    row("override only on failure control", dir => assertMutantFails(dir, "override only on failure", "if (roleShortfall(shortfalls, \"textFaint\") !== undefined) {", "if (true) {"));
     row("largest textFaint control", dir => assertMutantFails(dir, "largest textFaint", "for (let step = start; step >= 0; step--)", "for (let step = 0; step <= start; step++)"));
-    row("smallest status control", dir => assertMutantFails(dir, "smallest status", "for (const role of STATUS_ROLES) {\n        const pathName = `color.${role}`;\n        if (initialShortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;\n        let chosen = null;\n        for (let step = 1; step <= 100; step++)", "for (const role of STATUS_ROLES) {\n        const pathName = `color.${role}`;\n        if (initialShortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;\n        let chosen = null;\n        for (let step = 100; step >= 1; step--)"));
+    row("smallest status control", dir => assertMutantFails(dir, "smallest status", "for (const role of STATUS_ROLES) {\n        const pathName = `color.${role}`;\n        if (shortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;\n        let chosen = null;\n        for (let step = 1; step <= 100; step++)", "for (const role of STATUS_ROLES) {\n        const pathName = `color.${role}`;\n        if (shortfalls.find(shortfall => shortfall.text === pathName) === undefined) continue;\n        let chosen = null;\n        for (let step = 100; step >= 1; step--)"));
     row("unfixable hold-back control", dir => {
         freshRoot(dir);
         const copy = converterCopy(dir, "if (firstUnfixable !== undefined) return { held: true, shortfall: firstUnfixable };", "if (false) return { held: true, shortfall: firstUnfixable };");
