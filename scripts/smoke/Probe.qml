@@ -552,6 +552,16 @@ Scope {
         // Whether an item under the instance holds keyboard focus in an
         // active window, so a row types only once the compositor gave the
         // surface the keyboard.
+        // PROPERTY of the first item named TYPE under an instance, in tree
+        // order, as JSON: a view a Loader holds inside an overlay.
+        function readDescendant(hostKey: string, id: string, type: string, property: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const found = root.descendants(item).find(child => root.typeName(child) === type);
+            if (found === undefined) return "absent";
+            const json = JSON.stringify(found[property]);
+            return json === undefined ? "undefined" : json;
+        }
         function activeFocusIn(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);
             return item !== null && root.descendants(item).some(child => child.activeFocus);

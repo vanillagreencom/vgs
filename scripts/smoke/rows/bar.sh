@@ -82,7 +82,7 @@ PY
 geometry expect_poll "the workspace pills and the clock share the bar's centre" '[]' bar_alignment
 bar_font_family() { ipc smoke readInstance "$(bar_key)" vgs.bar fontFamily; }
 expect "the bar API names the family of the bar role" '"JetBrains Mono"' bar_font_family
-expect "the core built the bar, its placed widget and the vgs.themes background per screen, and no built-in" "$((3 * monitors))" builds
+expect "the core built the bar, its placed widget and the vgs.themes background per screen, the vgs.themes service once, and no built-in" "$((3 * monitors + 1))" builds
 
 # Disable only lists the id: the layout entry and its settings stay, so
 # re-enabling restores the exact screen. The effective configuration is

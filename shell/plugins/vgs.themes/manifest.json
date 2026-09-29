@@ -4,20 +4,25 @@
   "name": "Themes",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A bar button that opens a panel listing every theme package and the wallpaper; a click applies a package or steps to the next or previous wallpaper, and the applied theme's wallpaper is drawn under every window.",
+  "description": "A bar button that opens a panel listing every theme package and the wallpaper, and a full-screen theme browser on SUPER+T that lists every shipped, installed and catalog theme, installs and applies one, and offers its wallpapers; the applied theme's wallpaper is drawn under every window.",
   "license": "MIT",
   "icon": "palette",
   "kinds": [
     "bar-widget",
     "panel",
-    "background"
+    "background",
+    "overlay",
+    "service"
   ],
   "entryPoints": {
     "bar-widget": "Widget.qml",
     "panel": "ThemesPanel.qml",
-    "background": "Background.qml"
+    "background": "Background.qml",
+    "overlay": "Browser.qml",
+    "service": "Service.qml"
   },
   "capabilities": [
+    "shortcut",
     "surfaces",
     "theme"
   ],
@@ -32,5 +37,10 @@
       "description": "Where the themes panel opens on its monitor when summoned without its bar button",
       "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"]
     }
+  },
+  "hyprland": {
+    "binds": [
+      { "shortcut": "themes", "key": "SUPER+T" }
+    ]
   }
 }

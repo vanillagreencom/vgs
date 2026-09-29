@@ -18,7 +18,7 @@ for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == False ]]; then 
 if [[ $got == False ]]; then ok "the service host destroyed the disabled service"; else fail "service still built: $got"; fi
 fixture_holds() { ipc shell lent | python3 -c 'import json,sys; print(sorted(k for k,v in json.load(sys.stdin)["holders"].items() if "acme.probe" in v))'; }
 expect_poll "disable released every capability hold" '[]' fixture_holds
-expect "disable released the shortcut" '[]' lent shortcuts
+expect "disable released the fixture's shortcut" '[]' fixture_shortcuts
 expect "disable released the IPC target" '[]' lent ipcTargets
 expect "disable released the notification subscriber" '[]' lent subscribers
 expect "disable destroyed the notification server" false lent notificationServer

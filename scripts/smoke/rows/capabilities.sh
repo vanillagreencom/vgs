@@ -16,7 +16,8 @@ for cap in compositor configure ipc lock notifications polkit run screens shortc
   expect "the $cap capability is lent to the fixture and not the bare plugin" True lent_holds "$cap"
 done
 
-expect "the fixture's shortcut is registered under its id" '["acme.probe:ping"]' lent shortcuts
+fixture_shortcuts() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps([s for s in json.load(sys.stdin)["shortcuts"] if s.startswith("acme.")]))'; }
+expect "the fixture's shortcut is registered under its id" '["acme.probe:ping"]' fixture_shortcuts
 count_lines() { python3 -c 'import sys; print(sum(1 for line in sys.stdin if sys.argv[1] in line))' "$1"; }
 hypr_shortcuts() { hypr globalshortcuts | count_lines 'acme.probe:ping'; }
 expect_poll "the compositor lists the fixture's shortcut" 1 hypr_shortcuts

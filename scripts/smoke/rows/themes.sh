@@ -348,8 +348,8 @@ expect_poll "the row names the file its apply dropped" '[["smoke", "installed", 
 # file for the same result, which a panel built after the apply reads from
 # `last`; the restored panel names it again.
 # Every vgs.themes instance a rescan rebuilds with the panel closed: the
-# background and the placed widget on every screen.
-themes_instances=$((2 * monitors))
+# background and the placed widget on every screen, and the service.
+themes_instances=$((2 * monitors + 1))
 panel_qml="$repo/shell/plugins/vgs.themes/ThemesPanel.qml"
 drop_read='target.dropped === undefined ? [] : target.dropped'
 cp -p -- "$panel_qml" "$sandbox/ThemesPanel.qml.real"

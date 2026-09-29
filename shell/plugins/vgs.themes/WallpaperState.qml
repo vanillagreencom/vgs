@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Io
 import qs.Commons
+import "Files.js" as Files
 
 // The wallpapers backgrounds.json in the state directory names: `current`
 // and the `screens` map, the plugin's one reading of that file. The
@@ -30,8 +31,10 @@ Item {
         return Object.prototype.hasOwnProperty.call(screens, name) ? screens[name] : source;
     }
 
+    // The image's URL with its entry's stamp as the query, so a new stamp
+    // is a new source.
     function fileUrl(path, stamp) {
-        return "file://" + path.split("/").map(encodeURIComponent).join("/") + "?" + encodeURIComponent(stamp);
+        return Files.fileUrl(path) + "?" + encodeURIComponent(stamp);
     }
 
     // The `screens` map of a document as sources, {} for an absent key, or
