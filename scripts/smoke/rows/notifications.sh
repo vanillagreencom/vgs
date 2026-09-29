@@ -629,12 +629,19 @@ expect "the inbox closes after header geometry" ok notes close
 # other card the regular one, and every card of a tier starts its text at
 # the same x, whatever its media: an image, one person or a group. The
 # people fit the slot, two to four as a cluster and seven as three faces
-# and a chip. The fixture set runs on a clear screen.
+# and a chip. The fixture set runs on a clear screen. Summary-only cards
+# reach the title measure the tier is judged from: a title that fits the
+# compact text width stays compact, and one that wraps there or holds a
+# line break is regular.
 tier_image="$repo/themes/catalog/thumbnails/akane.jpg"
+tier_fits_person="[acme] from Edsger Dijkstra"
+tier_wraps_image="Tier wrapping title: a screenshot saved to the clipboard and to the pictures folder"
+tier_wraps_person="[acme] from Barbara Liskov, Frances Allen and Margaret Hamilton at the design review"
+tier_break_image=$'Tier break\nsecond line'
 expect "clearing the screen before the media tiers is allowed" ok notes dismiss-all
 expect_poll "the screen is clear before the media tiers" 0 note_status onScreen
-tier_compact=("Tier image" "[acme] from Grace Hopper" "[acme] in edsger, barbara")
-tier_regular=("Tier image saved" "[acme] from Alan Turing" "[acme] in ada, grace" "[acme] in ada, grace, alan" "[acme] in ada, grace, alan, edsger" "[acme] in ada, grace, alan, edsger, barbara, ken, linus" "New message in tier-room")
+tier_compact=("Tier image" "[acme] from Grace Hopper" "[acme] in edsger, barbara" "$tier_fits_person")
+tier_regular=("$tier_wraps_image" "$tier_wraps_person" "$tier_break_image" "Tier image saved" "[acme] from Alan Turing" "[acme] in ada, grace" "[acme] in ada, grace, alan" "[acme] in ada, grace, alan, edsger" "[acme] in ada, grace, alan, edsger, barbara, ken, linus" "New message in tier-room")
 notify smoke-shot 0 "Tier image" "" '[]' "{\"image-path\": <\"$tier_image\">}" 0 >/dev/null
 notify Slack 0 "[acme] from Grace Hopper" "" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
 notify Slack 0 "[acme] in edsger, barbara" "" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
@@ -644,6 +651,10 @@ for tier_group in "ada, grace" "ada, grace, alan" "ada, grace, alan, edsger" "ad
   notify Slack 0 "[acme] in $tier_group" "ada: the notes are up" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
 done
 notify "" 0 "New message in tier-room" $'app.slack.com\n\nada: the notes are up' '[]' '{}' 0 >/dev/null
+notify Slack 0 "$tier_fits_person" "" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+notify smoke-shot 0 "$tier_wraps_image" "" '[]' "{\"image-path\": <\"$tier_image\">}" 0 >/dev/null
+notify Slack 0 "$tier_wraps_person" "" '[]' '{"desktop-entry": <"slack">}' 0 >/dev/null
+notify smoke-shot 0 "$tier_break_image" "" '[]' "{\"image-path\": <\"$tier_image\">}" 0 >/dev/null
 # One card's tier, where its text block starts and its slot's size, as
 # `tier=<tier> left=<px> slot=<px>x<px>`: the block starts at its title,
 # its body or the workspace icon before the title, whichever is leftmost.
@@ -737,6 +748,17 @@ expect "the tier predicate rejects a card of another tier" "violation tier" tier
 expect "the group predicate rejects a face outside the slot" "violation outside" group_fit_value 2 "" '{"slot": [0, 0, 40, 40], "faces": [[[0, 0, 24, 24], "A"], [[30, 16, 24, 24], "B"]]}'
 expect "the group predicate rejects a missing face" "violation count" group_fit_value 3 "" '{"slot": [0, 0, 40, 40], "faces": [[[0, 0, 24, 24], "A"], [[16, 16, 24, 24], "B"]]}'
 expect "the group predicate rejects a chip that counts wrong" "violation chip" group_fit_value 4 "+4" '{"slot": [0, 0, 40, 40], "faces": [[[0, 0, 24, 24], "A"], [[16, 0, 24, 24], "B"], [[16, 16, 24, 24], "C"], [[0, 16, 24, 24], "+3"]]}'
+# A card's tier and slot size alone, from tier_reading.
+tier_and_slot() { # SUMMARY
+  local t
+  t="$(tier_reading "$1")" || return
+  [[ $t == tier=* ]] || { echo "$t"; return; }
+  echo "${t%% left=*} slot=${t##* slot=}"
+}
+expect_poll "a summary-only person card whose title fits the compact width is compact" "tier=compact slot=28x28" tier_and_slot "$tier_fits_person"
+expect_poll "a summary-only image card whose title wraps at the compact width is regular" "tier=regular slot=40x40" tier_and_slot "$tier_wraps_image"
+expect_poll "a summary-only person card whose title wraps at the compact width is regular" "tier=regular slot=40x40" tier_and_slot "$tier_wraps_person"
+expect_poll "a summary-only image card whose short title holds a line break is regular" "tier=regular slot=40x40" tier_and_slot "$tier_break_image"
 expect_poll "every compact card starts its text at one x, whatever its media" ok checked_tier compact "${tier_compact[@]}"
 expect_poll "every regular card starts its text at one x, whatever its media" ok checked_tier regular "${tier_regular[@]}"
 expect_poll "two people fit the slot on its diagonal" ok checked_group 2 "" "[acme] in ada, grace"
