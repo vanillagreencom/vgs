@@ -37,6 +37,7 @@ Recommends:     xdg-terminal-exec
 Recommends:     gum
 Recommends:     fzf
 Recommends:     less
+Recommends:     libnotify
 Conflicts:      vgs-shell
 # end runtime dependencies
 

@@ -37,6 +37,8 @@ const REFUSED = [
     ["a newer major", edited("calm", d => { d.schema = "2.0"; }), { kind: "schema", schema: "2.0" }],
     ["an older major", edited("calm", d => { d.schema = "0.9"; }), { kind: "schema", schema: "0.9" }],
     ["a time that is a string", edited("calm", d => { d.time = "1700000000"; }), { kind: "unreadable", cause: "field=time" }],
+    ["no interval", edited("calm", d => { delete d.interval; }), { kind: "unreadable", cause: "field=interval" }],
+    ["an interval of zero", edited("calm", d => { d.interval = 0; }), { kind: "unreadable", cause: "field=interval" }],
     ["an error that is a number", edited("calm", d => { d.error = 1; }), { kind: "unreadable", cause: "field=error" }],
     ["a slice that is a list", edited("calm", d => { d.slice = []; }), { kind: "unreadable", cause: "field=slice" }],
     ["a slice limit that is a word", edited("calm", d => { d.slice.high = "big"; }), { kind: "unreadable", cause: "field=slice.high" }],
@@ -49,7 +51,8 @@ const REFUSED = [
     ["an outside tree without a pid", edited("holding-off", d => { delete d.outside[0].pid; }), { kind: "unreadable", cause: "field=outside[0].pid" }],
     ["an orphan with negative processes", edited("calm", d => { d.orphans = [Object.assign({}, ORPHAN, { processes: -1 })]; }), { kind: "unreadable", cause: "field=orphans[0].processes" }],
     ["events that are null", edited("calm", d => { d.events = null; }), { kind: "unreadable", cause: "field=events" }],
-    ["an event without a time", edited("reaped", d => { delete d.events[0].time; }), { kind: "unreadable", cause: "field=events[0].time" }]
+    ["an event without a time", edited("reaped", d => { delete d.events[0].time; }), { kind: "unreadable", cause: "field=events[0].time" }],
+    ["an event scope that is a number", edited("reaped", d => { d.events[0].scope = 7; }), { kind: "unreadable", cause: "field=events[0].scope" }]
 ];
 
 const T = 1700000000;

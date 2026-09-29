@@ -4,7 +4,7 @@
   "name": "Agent Warden",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A shield in the bar that shows whether the agent warden vsys ships keeps your AI agents within their memory and task limits, and a small panel with what needs a look and a link that opens vsys. It reads the warden's status and never changes an agent itself.",
+  "description": "A shield in the bar that shows whether the agent warden vsys ships keeps your AI agents within their memory and task limits, a small panel with what needs a look and a link that opens vsys, and one notification when something starts to need a look. It reads the warden's status and never changes an agent itself.",
   "license": "MIT",
   "icon": "shield-check",
   "kinds": [
@@ -23,12 +23,14 @@
     "run",
     "status",
     "surfaces",
+    "toasts",
     "tui"
   ],
   "defaultSection": "right",
   "settings": {
     "showCount": true,
-    "hideWhenIdle": false
+    "hideWhenIdle": false,
+    "notify": "problems"
   },
   "schema": {
     "showCount": {
@@ -42,6 +44,13 @@
       "label": "Hide when idle",
       "description": "Hide the shield while no agent runs and nothing needs a look",
       "group": "Display"
+    },
+    "notify": {
+      "type": "enum",
+      "label": "Notifications",
+      "description": "Which notifications Agent Warden sends: problems only, also each move back into limits, or none",
+      "options": ["problems", "everything", "off"],
+      "group": "Notifications"
     }
   },
   "requirements": [
@@ -57,6 +66,15 @@
       "command": "systemctl",
       "optional": true,
       "purpose": "Starts the warden's timer again from the panel when it has stopped checking"
+    },
+    {
+      "command": "notify-send",
+      "packages": {
+        "pacman": "libnotify",
+        "dnf": "libnotify"
+      },
+      "optional": true,
+      "purpose": "Sends Agent Warden's desktop notifications, with a button that opens vsys"
     }
   ],
   "status": {

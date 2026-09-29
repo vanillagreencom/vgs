@@ -104,6 +104,7 @@ function sliceError(slice) {
 // the contract gives it, or "" when every field this file reads has.
 function shapeError(doc) {
     if (typeof doc.time !== "number" || !isFinite(doc.time)) return "time";
+    if (typeof doc.interval !== "number" || !isFinite(doc.interval) || doc.interval <= 0) return "interval";
     if (!stringOrNull(doc.error)) return "error";
     var checks = [
         function () { return sliceError(doc.slice); },
@@ -128,7 +129,7 @@ function shapeError(doc) {
                 return firstFailing(e, [
                     ["time", function (v) { return typeof v === "number" && isFinite(v); }],
                     ["kind", function (v) { return typeof v === "string"; }],
-                    ["pid", countOrNull], ["processes", countOrNull]
+                    ["scope", stringOrNull], ["pid", countOrNull], ["processes", countOrNull]
                 ]);
             });
         }
@@ -229,6 +230,11 @@ function agentLanes(doc) {
     });
 }
 
+// The ceilings LANE is near that this plugin knows, in the warden's order.
+function nearOf(lane) {
+    return lane.near.filter(function (n) { return NEAR_IDS.indexOf(n) !== -1; });
+}
+
 // The items a fresh status holds, most serious first. Each is
 // { kind, level, ... } with numbers and names only: no pid and no scope
 // unit, which the flyout never shows.
@@ -262,7 +268,7 @@ function itemsOf(doc, now) {
     if (reaped.length > 0) items.push({ kind: "reaped", level: "problem", count: reaped.length, processes: sum(reaped, "processes") });
     if (doc.lanes !== null) {
         agentLanes(doc).forEach(function (lane) {
-            var near = lane.near.filter(function (n) { return NEAR_IDS.indexOf(n) !== -1; });
+            var near = nearOf(lane);
             if (near.length > 0)
                 items.push({ kind: "near", level: "look", tool: lane.label.tool, worktree: lane.label.worktree, near: near, memory: lane.memory, memoryHigh: numberOrNull(lane.memoryHigh), tasks: lane.tasks, tasksMax: numberOrNull(lane.tasksMax) });
         });

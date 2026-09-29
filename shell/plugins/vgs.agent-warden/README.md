@@ -31,6 +31,7 @@ A count of zero is not drawn. A click opens or closes the panel under the shield
 |---|---|---|
 | `showCount` | `true` | Draws the count beside the shield. |
 | `hideWhenIdle` | `false` | Hides the shield while the state is `calm` and no agent runs. |
+| `notify` | `problems` | Which notices go out: `problems`, `everything` or `off`. [§ Notifications](#notifications) lists each one. |
 
 ## The panel
 
@@ -49,35 +50,21 @@ A state that needs a setup step shows one button in place of the items:
 
 A press that hands off closes the panel. A refusal stays in the panel as one sentence, such as "No terminal was found to open it in.", and is logged as `agent-warden: action=<action> <reply>`.
 
-## What the service reads
+## Notifications
 
-The service is the plugin's one reader of `$XDG_RUNTIME_DIR/agent-warden/status.json`, which the warden replaces on every tick. The file holds numbers and ids only; vsys's [warden-status.md](https://github.com/vanillagreencom/vsys/blob/main/docs/architecture/warden-status.md) is its contract. The service reads it again on every change and derives one state from it in `WardenLogic.js`:
+The service sends one desktop notification when something starts to need a look, and again only after it has cleared and comes back. It takes over from the warden's own notices and words them for people. The service's contract, the heartbeat that takes the notices over and the rules for each episode are [agent-warden.md § Notifications](../../../docs/architecture/agent-warden.md#notifications).
 
-| State | When |
-|---|---|
-| `calm` | A fresh status with nothing below. |
-| `working` | The warden moved an agent back into its limits in the last 5 minutes, and nothing else needs attention. |
-| `look` | An agent is near its task or memory ceiling, the agent group is above its slowdown point, or leftover work from a finished agent remains. |
-| `problem` | The warden's last scan failed, moves wait for memory headroom, or in the last 5 minutes a move failed, a move was partial, or the warden stopped leftover work. |
-| `not-checking` | The status is more than 90 seconds from now (`stale`), cannot be read (`unreadable`), or has a schema major other than 1 (`schema`). |
-| `not-set-up` | Neither `status.json` nor `state.json` exists. |
-| `update-warden` | `state.json` exists and `status.json` does not: an older warden, which writes no status. |
+| Kind | Scope | Opens when | Title, for example | Urgency | Open vsys |
+|---|---|---|---|---|---|
+| `tasks` | the lane's unit | an agent's lane is near its task ceiling | An agent is starting a lot of processes | normal | yes |
+| `memory` | the lane's unit | an agent's lane is near its memory ceiling | An agent is using a lot of memory | normal | yes |
+| `not-moving` | `agents.slice` | moves wait for memory headroom | Agents are close to their memory limit | critical | yes |
+| `move-failure` | the tree's unit | a move failed or left part behind in the last 5 minutes | Couldn't fully move an agent | normal | yes |
+| `reaped` | the leftover unit | leftover work was stopped in the last 5 minutes | Cleaned up after a finished agent | low | no |
+| `not-checking` | `agent-warden` | the status is stale | Agent Warden has stopped checking | normal | no |
+| `moved` | the tree's unit | an agent was moved back into its limits in the last 5 minutes | Moved an agent back into its limits | toast | no |
 
-The state is also derived again, with no file change, at the moment `WardenLogic.nextChange` names: 90 seconds after the status's time, when it turns stale, or the end of a recent event's 5-minute window, whichever comes first. The service holds one single-shot timer to that moment. A warden that stops writing therefore reads as `not-checking` 90 seconds after its last tick. The service makes the warden's directory at start, so that a warden set up while the shell runs is seen.
-
-## Published status
-
-The service publishes these values through the core `status` capability ([status.md](../../../docs/architecture/status.md)). The first four are the plugin's read-only rows on its Settings page.
-
-| Key | Type | Value |
-|---|---|---|
-| `warden` | state | Checking, Last scan failed, Stopped checking, Status unreadable, Status format not supported, Not set up, or Update the warden. The row shows `vsys warden install` to copy. |
-| `agents` | count | The agents running at the last check: lanes with an identified agent that are not leftover work. Not reported until a status lists them. |
-| `lastCheck` | time | The time of the last status the warden wrote. |
-| `vsys` | presence | `present` or `absent`, as the shell's last plugin scan found `vsys` on PATH. The row shows the vsys installer to copy. |
-| `detail` | data | `{ state, reason, checkedAt, agents, issues, items, memory }`, which the plugin's widget and flyout read: the state and its reason, the check time in milliseconds, the agent count, the number of `problem` and `look` items, the items most serious first, and the agent group's memory in bytes, `{ used, high, max }`, or null when unknown. Each item is `{ kind, level, ... }` with numbers and tool names, and never a process id or a scope name. `WardenLogic.itemsOf` lists the kinds. |
-
-`WardenLogic.gib` turns a byte count into the figure the plugin's copy shows with "GB": gibibytes, one decimal below 10 and whole from 10.
+`problems`, the default, sends every kind but `moved`, which the panel shows. `everything` also shows each move as a toast, the only toast the plugin shows. `off` sends nothing. The cleanups and the moves one status opens go out as one notice. The body gives the numbers from `status.json`, GB for GiB values through `WardenLogic.gib`, and the tool and worktree as the panel names them, and never a process id or a scope unit.
 
 ## IPC
 
@@ -89,6 +76,4 @@ The service publishes these values through the core `status` capability ([status
 
 ## Validation
 
-- `scripts/test-agent-warden-logic.js` reads vsys's fixtures and pins every refusal, every state, the next moment each state can change, the Settings row and the published keys, with a control per rule.
-- `scripts/test-agent-warden-view.js` pins the shield, the panel's sentence, items, meter, buttons and check time for each fixture and each other state, the words for each reply, and the summary reading. It checks that no text names a fixture's scope unit or process id. Its controls include a logic copy that hands the view a scope name.
-- `scripts/smoke/rows/agent-warden.sh` writes each fixture into the sandbox's runtime directory by rename, as the warden does, and reads the published status and the Settings rows back. A status written 85 seconds back and left unchanged turns stale on the service's timer. It reads the shield's icon, tone, count and tooltip and every text of the panel back for each state, and checks that none names a scope unit or a process id. Set up and Open vsys hand a stand-in terminal their TUI's argv, Start it hands a stand-in `systemctl` its arguments, and Get vsys raises the shell's notice on a host without vsys. A summary that fails when the open panel is summoned again leaves no earlier line. Its controls are a copy of the plugin whose logic ignores staleness, which reads a stale status as calm, a copy whose timer derives nothing, which keeps the unchanged status calm past its stale moment, a copy whose logic hands the view each lane's scope unit, which the panel then draws, and a panel copy that keeps its last summary line when a new run starts, which still draws it after a failed run.
+The service's reading, notices and their checks: [agent-warden.md § Validation](../../../docs/architecture/agent-warden.md#validation).
