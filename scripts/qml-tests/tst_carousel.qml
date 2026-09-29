@@ -348,6 +348,8 @@ Item {
 
         // Each broken card is named once and left empty, and the carousel
         // still steps.
+        // expected-log: Setting initial properties failed: Rectangle does not have a property called decodeSize -- missingSize takes no decodeSize, on purpose
+        // expected-log: Required property extra was not initialized -- extraRequired requires a property the carousel never sets, on purpose
         function test_a_delegate_that_cannot_build_leaves_its_card_empty() {
             for (const broken of [missingSize, extraRequired]) {
                 for (let i = 0; i < 3; i++)

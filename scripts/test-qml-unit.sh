@@ -3,8 +3,10 @@
 # scripts/qml-tests/: a table of mutations, one per guarantee a test pins,
 # each applied to a copy of shell/Ui with its match counted, and the runner
 # is required to fail on every copy and to pass on the unmutated copy. Two
-# rows pin the runner itself: a missing qmltestrunner is not a pass, and an
-# unknown argument is refused.
+# rows pin the runner's arguments: a missing qmltestrunner is not a pass,
+# and an unknown argument is refused. A second table plants one test file
+# per rule of the runner's log check and pins the exit and the line each
+# prints.
 #
 # Exit 0 when every row holds, 1 otherwise, 77 when qmltestrunner is absent,
 # since a mutation nothing runs proves nothing.
@@ -326,8 +328,40 @@ else
 fi
 if out="$("$runner" --nope 2>&1)"; then fail "an unknown argument passed"; elif [[ $out == "qml-unit: refused: argument=--nope" ]]; then ok "an unknown argument is refused"; else fail "an unknown argument: got $out"; fi
 
+# Rows: label | name of the planted tst_<name>.qml | the runner's exit |
+# the line it must print | the file's lines after the planted head, whose
+# body starts at line 6; printf %b expands the \n.
+planted_head='import QtQuick\nimport QtTest\nTestCase {\n    id: planted\n    name: "planted"\n'
+logs=(
+  "an unexpected console.error fails|error|1|qml-unit: unexpected-log file=tst_error.qml line=QCRITICAL: qmltestrunner::planted::test_a() critical: qml: planted log|    function test_a() { console.error(\"planted log\"); }\n"
+  "an unexpected console.warn fails|warn|1|qml-unit: unexpected-log file=tst_warn.qml line=QWARN  : qmltestrunner::planted::test_a() warning: qml: planted log|    function test_a() { console.warn(\"planted log\"); }\n"
+  "a declared log passes|declared|0|qml-unit: ok files=1|    // expected-log: planted log -- the row plants it\n    function test_a() { console.error(\"planted log\"); }\n"
+  "a declaration that matches nothing fails|stale|1|qml-unit: expected-log unmatched file=tst_stale.qml line=6 message=planted log|    // expected-log: planted log -- the row plants it\n    function test_a() { verify(true); }\n"
+  "a declaration covers no other function|other|1|qml-unit: unexpected-log file=tst_other.qml line=QCRITICAL: qmltestrunner::planted::test_b() critical: qml: planted log|    // expected-log: planted log -- the row plants it\n    function test_a() { console.error(\"planted log\"); }\n    function test_b() { console.error(\"planted log\"); }\n"
+  "a declaration with no reason is refused|noreason|2|qml-unit: refused: expected-log=no-reason file=tst_noreason.qml line=6|    // expected-log: planted log\n    function test_a() { console.error(\"planted log\"); }\n"
+  "a declaration with no function under it is refused|nofunction|2|qml-unit: refused: expected-log=no-function file=tst_nofunction.qml line=6|    // expected-log: planted log -- the row plants it\n    property int n: 0\n    function test_a() { console.error(\"planted log\"); }\n"
+  "a log at load fails|load|1|qml-unit: unexpected-log file=tst_load.qml line=critical: qml: planted log|    Component.onCompleted: console.error(\"planted log\")\n    function test_a() { verify(true); }\n"
+  "a declaration does not excuse a script error|script|1|qml-unit: warnings file=tst_script.qml|    // expected-log: ReferenceError -- the row plants it\n    function test_a() { Qt.createQmlObject(\"import QtQuick; Item { property int n: noSuchName.x }\", planted); }\n"
+)
+mkdir -p "$tmp/logs"
+for row in "${logs[@]}"; do
+  IFS='|' read -r label name want_status want_line body <<<"$row"
+  printf '%b%b}\n' "$planted_head" "$body" >"$tmp/logs/tst_$name.qml"
+  got_status=0
+  out="$("$runner" --tests "$repo/scripts/qml-tests" "$tmp/logs/tst_$name.qml" 2>&1)" || got_status=$?
+  if [[ $got_status -ne $want_status ]]; then
+    fail "$label: exit $got_status, want $want_status"
+    printf '%s\n' "$out" | tail -n 20
+  elif ! grep -qFx -- "$want_line" <<<"$out"; then
+    fail "$label: no line: $want_line"
+    printf '%s\n' "$out" | tail -n 20
+  else
+    ok "$label"
+  fi
+done
+
 if [[ $failures -eq 0 ]]; then
-  echo "test-qml-unit: ok mutations=${#mutations[@]}"
+  echo "test-qml-unit: ok mutations=${#mutations[@]} logs=${#logs[@]}"
   exit 0
 fi
 echo "test-qml-unit: failed=$failures"

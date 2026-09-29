@@ -65,6 +65,7 @@ Item {
             mirroredBar.value = 0.25;
         }
 
+        // expected-log: Badge: no tone named "loud" -- the test names an unknown tone on purpose
         function test_badge_draws_its_tone() {
             compare(String(badge.color), String(Qt.color(Theme.badge.tone.success.background)));
             compare(badge.height, Theme.badge.height);

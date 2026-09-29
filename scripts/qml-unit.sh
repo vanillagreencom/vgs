@@ -21,9 +21,29 @@
 # modules' plugins do not load outside the shell. Nothing under the
 # repository is written.
 #
+# A test file fails on any warning or error it logs, console.warn and
+# console.error included, unless a declaration in that file expects it:
+#   // expected-log: <message> -- <reason>
+# in the comment block directly above `function <name>(`. It covers the
+# lines qmltestrunner attributes to that function (`::<name>(`) whose
+# message holds <message> as a literal substring: a log line holds
+# absolute file:// paths and quotes, and a literal needs no escaping.
+# Several may stack above one function. A declaration that matches no line
+# of its function in the run fails the file as stale:
+#   qml-unit: unexpected-log file=<name> line=<log line>
+#   qml-unit: expected-log unmatched file=<name> line=<n> message=<message>
+# A declaration with no reason, or with no function under its block, is
+# refused (exit 2). A warning or error logged outside a test function, at
+# load or at teardown, has no declaration and always fails. QtTest drops
+# those from its log, so the run forces Qt's own handler to stderr and
+# marks their level with QT_MESSAGE_PATTERN, which also adds `warning: ` or
+# `critical: ` to the message of an attributed line. Debug and info lines
+# are not judged, and no declaration excuses a script error.
+#
 # QML_UNIT_RUNNER names the qmltestrunner binary; unset, the one on PATH
 # or under /usr/lib/qt6/bin is used. Exit 0 when every test passed, 1 when
-# one failed or a test file could not load, 77 when no runner was found:
+# one failed, logged an unexpected line or could not load, 2 on a refusal,
+# 77 when no runner was found:
 #   qml-unit: status=not-measured missing=qmltestrunner
 set -euo pipefail
 
@@ -99,6 +119,62 @@ if [[ ${#files[@]} -eq 0 ]]; then
   exit 2
 fi
 
+# Judge one file's logged lines against its declarations, as the header
+# states. Exit 0 when every line is expected and every declaration matched,
+# 1 on a finding, 2 on a refused declaration.
+judge_log() { # TEST_FILE OUTPUT_FILE
+  python3 - "$1" "$2" <<'PY'
+import os, re, sys
+
+test_path, out_path = sys.argv[1], sys.argv[2]
+name = os.path.basename(test_path)
+DECLARATION = re.compile(r"^\s*//\s*expected-log:(.*)$")
+FUNCTION = re.compile(r"^\s*function\s+(\w+)\s*\(")
+ATTRIBUTED = re.compile(r"^(?:QWARN  |QCRITICAL): [^( ]*::(\w+)\([^)]*\) (.*)$")
+LOGGED = re.compile(r"^(?:QWARN  |QCRITICAL): ")
+OUTSIDE = re.compile(r"^(?:warning|critical): ")
+
+lines = open(test_path, encoding="utf-8").read().splitlines()
+declarations = []
+for index, text in enumerate(lines):
+    found = DECLARATION.match(text)
+    if not found:
+        continue
+    message, separator, reason = found.group(1).rpartition(" -- ")
+    message, reason = message.strip(), reason.strip()
+    if not separator or not message or not reason:
+        print(f"qml-unit: refused: expected-log=no-reason file={name} line={index + 1}")
+        print("  the declaration reads `// expected-log: <message> -- <reason>`")
+        sys.exit(2)
+    below = index + 1
+    while below < len(lines) and lines[below].lstrip().startswith("//"):
+        below += 1
+    function = FUNCTION.match(lines[below]) if below < len(lines) else None
+    if not function:
+        print(f"qml-unit: refused: expected-log=no-function file={name} line={index + 1}")
+        print("  the comment block holding the declaration sits directly above a function")
+        sys.exit(2)
+    declarations.append({"line": index + 1, "message": message, "function": function.group(1), "hits": 0})
+
+status = 0
+for line in open(out_path, encoding="utf-8", errors="replace").read().splitlines():
+    if not (LOGGED.match(line) or OUTSIDE.match(line)):
+        continue
+    attributed = ATTRIBUTED.match(line)
+    covering = [d for d in declarations if attributed and d["function"] == attributed.group(1) and d["message"] in attributed.group(2)]
+    for declaration in covering:
+        declaration["hits"] += 1
+    if not covering:
+        print(f"qml-unit: unexpected-log file={name} line={line}")
+        status = 1
+for declaration in declarations:
+    if declaration["hits"] == 0:
+        print(f"qml-unit: expected-log unmatched file={name} line={declaration['line']} message={declaration['message']}")
+        status = 1
+sys.exit(status)
+PY
+}
+
 # Every test file runs in its own process, so a file that fails to load
 # names itself, and one file's singleton state never reaches another.
 status=0
@@ -107,6 +183,7 @@ for file in "${files[@]}"; do
   file_status=0
   out="$(env -i HOME="$root/home" PATH="/usr/bin:/usr/lib/qt6/bin" LC_ALL=C.UTF-8 \
     QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR="$root/runtime" QML_XHR_ALLOW_FILE_READ=1 \
+    QT_FORCE_STDERR_LOGGING=1 QT_MESSAGE_PATTERN='%{if-warning}warning: %{endif}%{if-critical}critical: %{endif}%{if-category}%{category}: %{endif}%{message}' \
     "$runner" -import "$imports" -input "$file" 2>&1)" || file_status=$?
   # grep exits 1 when every line was filtered, which is the quiet pass.
   filtered=0
@@ -121,6 +198,14 @@ for file in "${files[@]}"; do
     echo "qml-unit: warnings file=$(basename -- "$file")"
     file_status=1
   fi
+  printf '%s\n' "$out" >"$root/out"
+  judged=0
+  judge_log "$file" "$root/out" || judged=$?
+  case $judged in
+    0) ;;
+    1) file_status=1 ;;
+    *) exit 2 ;;
+  esac
   if [[ $file_status -ne 0 ]]; then
     status=1
     echo "qml-unit: failed file=$(basename -- "$file") status=$file_status"

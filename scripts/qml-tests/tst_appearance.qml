@@ -88,6 +88,7 @@ Item {
             compare(root.look.motion.open, 400);
         }
 
+        // expected-log: appearance: refused: token=palette.accent reason=appearance-input -- the light overrides set the accent, an input the theme owns, on purpose
         function test_a_refused_table_answers_null() {
             compare(Theme.appearance(root.table, { palette: { accent: "#ffffff" } }), null);
         }

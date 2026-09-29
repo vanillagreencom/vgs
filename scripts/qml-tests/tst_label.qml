@@ -115,6 +115,8 @@ Item {
             fuzzyCompare(bar.implicitHeight, barMetrics.height, 1);
         }
 
+        // expected-log: theme: font=No Such Family VGS unavailable; drawing JetBrains Mono -- the eyebrow names an absent family on purpose
+        // expected-log: theme: font=No Such Family VGS unavailable; drawing Inter Variable -- the body names an absent family on purpose
         function test_theme_change_moves_the_role() {
             compare(UnitTheme.override({ text: { body: { size: 20, family: "No Such Family VGS", uppercase: true }, eyebrow: { family: "No Such Family VGS" } } }), "ok");
             compare(body.font.pixelSize, 20);
@@ -125,6 +127,7 @@ Item {
             compare(eyebrow.font.family, "JetBrains Mono");
         }
 
+        // expected-log: Label: no text role named "heading" -- the test names an unknown role on purpose
         function test_unknown_role_is_logged_and_drawn_as_body() {
             const label = Qt.createQmlObject("import qs.Ui\nLabel { role: \"heading\"; text: \"x\" }", root);
             compare(label.font.pixelSize, Theme.text.body.size);

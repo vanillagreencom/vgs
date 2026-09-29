@@ -71,12 +71,14 @@ Item {
             compare(primary.opacity, 1);
         }
 
+        // expected-log: Button: no variant named "loud" -- the test names an unknown variant on purpose
         function test_unknown_variant_is_logged_and_drawn_primary() {
             const button = Qt.createQmlObject("import qs.Ui\nButton { variant: \"loud\"; text: \"x\" }", root);
             compare(String(button.fill), String(Qt.color(Theme.button.variant.primary.background)));
             button.destroy();
         }
 
+        // expected-log: IconButton: label is required, icon="x" -- the test builds an icon button with no label on purpose
         function test_icon_button_is_square_and_named() {
             compare(iconOnly.width, iconOnly.height);
             fuzzyCompare(iconOnly.contentItem.y, (iconOnly.height - iconOnly.contentItem.height) / 2, 1);

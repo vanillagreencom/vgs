@@ -95,6 +95,7 @@ Item {
             compare(String(divider.color), String(Qt.color(Theme.divider.color)));
         }
 
+        // expected-log: Surface: no level named "floating" -- the test names an unknown level on purpose
         function test_surface_draws_its_level() {
             compare(String(surface.color), String(Qt.color(Theme.surface.level.raised.background)));
             compare(surface.radius, Theme.surface.radius);

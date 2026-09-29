@@ -40,6 +40,7 @@ Item {
             compare(String(themed.color), String(Qt.color(Theme.color.text)));
         }
 
+        // expected-log: Icon: no icon named "no-such-icon" -- the test names an unknown icon on purpose
         function test_unknown_name_is_logged_and_draws_nothing() {
             const icon = Qt.createQmlObject("import qs.Ui\nIcon { name: \"no-such-icon\" }", root);
             compare(icon.paths[0], "");

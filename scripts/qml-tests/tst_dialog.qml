@@ -160,6 +160,7 @@ Item {
             tryCompare(remove.background, "color", Qt.color(Theme.button.variant.danger.background));
         }
 
+        // expected-log: Dialog: no action role named "confirm" -- the test names an unknown action role on purpose
         function test_unknown_role_is_read_as_cancel() {
             const odd = Qt.createQmlObject("import qs.Ui\nDialog { actions: [{ label: \"Go\", role: \"confirm\" }] }", root);
             const spy = Qt.createQmlObject("import QtTest\nSignalSpy { signalName: \"rejected\" }", root);

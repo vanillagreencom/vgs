@@ -23,7 +23,7 @@ Item {
         ScrollArea {
             id: scroller
             x: 130; y: 10; width: 100; height: 100
-            Rectangle { width: 100; height: 400; color: "gray" }
+            Column { Rectangle { width: 100; height: 400; color: "gray" } }
         }
         Scrim { id: scrim }
     }
