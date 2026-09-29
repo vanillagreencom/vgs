@@ -9,7 +9,10 @@ revisions, snapshots and pruning. The probe rows run the scanner with a PATH
 of one stub directory and read each plugin's `missing` list; their control
 runs them against a copy of the scanner that finds every command. The core
 rows probe a --core requirements file beside a plugin; their control reads
-that file as a manifest. Permission rows need a uid that
+that file as a manifest. The URL rows publish a snapshot under a root whose
+path needs quoting, and run a scan in a child interpreter that reports
+whether urllib.request was imported; their controls quote nothing and spell
+the URL through pathlib's as_uri. Permission rows need a uid that
 permissions bind; under euid 0 the script reports status=not-measured and
 exits 77 instead of passing vacuously."""
 import json
@@ -223,19 +226,25 @@ def probe_rows(script=SCAN, quiet=False):
     return results
 
 
-def probe_control():
-    """The probe rows must fail on a copy of the scanner that answers every
-    command present."""
+def mutant_control(label, needle, replacement, rows):
+    """The rows ROWS(script, quiet) runs must fail on a copy of the scanner
+    with NEEDLE, which occurs once, replaced by REPLACEMENT."""
     with open(SCAN, encoding="utf-8") as fh:
         source = fh.read()
-    needle = "probed[command] = shutil.which(command) is not None"
     if source.count(needle) != 1:
-        return report("control: the probe's text occurs once", False, f" (count={source.count(needle)})")
+        return report(f"control: {needle!r} occurs once in the scanner", False, f" (count={source.count(needle)})")
     with tempfile.TemporaryDirectory() as tmp:
         mutant = os.path.join(tmp, "vgsh-scan")
         with open(mutant, "w", encoding="utf-8") as fh:
-            fh.write(source.replace(needle, "probed[command] = True"))
-        return report("control: the probe rows fail on a scanner that finds every command", not all(probe_rows(mutant, quiet=True)))
+            fh.write(source.replace(needle, replacement))
+        return report(f"control: {label}", not all(rows(mutant, quiet=True)))
+
+
+def probe_control():
+    """The probe rows must fail on a copy of the scanner that answers every
+    command present."""
+    return mutant_control("the probe rows fail on a scanner that finds every command",
+                          "probed[command] = shutil.which(command) is not None", "probed[command] = True", probe_rows)
 
 
 # core rows: name, the --core file's text (None: no file), {plugin dir:
@@ -278,16 +287,73 @@ def core_rows(script=SCAN, quiet=False):
 def core_control():
     """The core rows must fail on a copy of the scanner that reads the core
     file as a manifest."""
-    with open(SCAN, encoding="utf-8") as fh:
-        source = fh.read()
-    needle = "missing_commands(text, probed, core=True)"
-    if source.count(needle) != 1:
-        return report("control: the core probe's text occurs once", False, f" (count={source.count(needle)})")
+    return mutant_control("the core rows fail on a scanner that reads the core list as a manifest",
+                          "missing_commands(text, probed, core=True)", "missing_commands(text, probed)", core_rows)
+
+
+# A snapshot root whose path holds every character class the URL must
+# quote: a space, a percent sign that reads as an escape, a fragment mark
+# and a non-ASCII letter.
+AWKWARD_ROOT = "snap shots %41 #1 \u00e9"
+
+# Runs the scanner as its own entry point would, then prints on stderr
+# whether urllib.request is loaded and the scanner's exit status.
+IMPORT_PROBE = """
+import json, runpy, sys
+script = sys.argv[1]
+sys.argv = [script, *sys.argv[2:]]
+status = 0
+try:
+    runpy.run_path(script, run_name="__main__")
+except SystemExit as exc:
+    status = exc.code
+sys.stderr.write(json.dumps({"status": status, "urllib.request": "urllib.request" in sys.modules}) + "\\n")
+"""
+
+
+def url_spelling_rows(script=SCAN, quiet=False):
+    """The URL spelling row, run against SCRIPT: pathlib's as_uri, which the
+    scanner must not call, is the oracle."""
     with tempfile.TemporaryDirectory() as tmp:
-        mutant = os.path.join(tmp, "vgsh-scan")
-        with open(mutant, "w", encoding="utf-8") as fh:
-            fh.write(source.replace(needle, "missing_commands(text, probed)"))
-        return report("control: the core rows fail on a scanner that reads the core list as a manifest", not all(core_rows(mutant, quiet=True)))
+        plant(tmp, {"plugins/a/manifest.json": MANIFEST})
+        root = os.path.join(tmp, AWKWARD_ROOT)
+        entry = one_entry(scan("--snapshot-dir", root, os.path.join(tmp, "plugins"), script=script))
+        want = None if entry is None else pathlib.Path(os.path.join(root, entry["revision"])).as_uri()
+        good = entry is not None and entry.get("loadUrl") == want
+        return [good if quiet else report("loadUrl spells a root that needs quoting as pathlib's as_uri does", good, f" (got={entry and entry.get('loadUrl')} want={want})")]
+
+
+def url_import_rows(script=SCAN, quiet=False):
+    """The import row, run against SCRIPT in a child interpreter."""
+    with tempfile.TemporaryDirectory() as tmp:
+        plant(tmp, {"plugins/a/manifest.json": MANIFEST})
+        base = os.path.join(tmp, "plugins")
+        # -I keeps the child's imports to the interpreter's own: no user
+        # site directory and no PYTHON* variable.
+        proc = subprocess.run([sys.executable, "-I", "-c", IMPORT_PROBE, script, "--snapshot-dir", os.path.join(tmp, "snapshots"), base],
+                              capture_output=True, text=True, check=False, env={"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"})
+        try:
+            probe = json.loads(proc.stderr.splitlines()[-1])
+            published = [e for e in json.loads(proc.stdout) if "loadUrl" in e]
+        except (ValueError, IndexError):
+            probe, published = None, []
+        good = proc.returncode == 0 and probe is not None and probe["status"] == 0 and len(published) == 1 and probe["urllib.request"] is False
+        return [good if quiet else report("a scan that publishes a snapshot leaves urllib.request unimported", good, f" (probe={probe} published={len(published)})\n{proc.stderr}")]
+
+
+def url_quote_control():
+    """The URL spelling row must fail on a scanner that quotes nothing."""
+    return mutant_control("the URL spelling row fails on a scanner that quotes nothing",
+                          'return "file://" + urllib.parse.quote(path, encoding=sys.getfilesystemencoding(), errors=sys.getfilesystemencodeerrors())',
+                          'return "file://" + path', url_spelling_rows)
+
+
+def url_import_control():
+    """The import row must fail on a scanner that spells the URL through
+    as_uri."""
+    return mutant_control("the import row fails on a scanner that calls as_uri",
+                          "return file_url(str(pathlib.Path(destination).absolute()))",
+                          "return pathlib.Path(destination).absolute().as_uri()", url_import_rows)
 
 
 def main():
@@ -300,6 +366,10 @@ def main():
     results.append(probe_control())
     results += core_rows()
     results.append(core_control())
+    results += url_spelling_rows()
+    results += url_import_rows()
+    results.append(url_quote_control())
+    results.append(url_import_control())
     if all(results):
         print("test-vgsh-scan: ok")
         return 0
