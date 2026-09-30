@@ -10,6 +10,7 @@ PointerCursor 1.0 foundation/PointerCursor.qml
 ImageText 1.0 foundation/ImageText.qml
 Button 1.0 controls/Button.qml
 IconButton 1.0 controls/IconButton.qml
+BarItem 1.0 controls/BarItem.qml
 ToggleButton 1.0 controls/ToggleButton.qml
 SegmentedControl 1.0 controls/SegmentedControl.qml
 Switch 1.0 controls/Switch.qml

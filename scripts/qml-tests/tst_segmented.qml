@@ -24,6 +24,23 @@ Item {
 
         function segment(index) { return control.children[0].children[index]; }
 
+        // A segment that is not chosen fills on hover and more on a press;
+        // its corner nests inside the control's inset; a disabled control
+        // fades.
+        function test_segments_draw_hover_press_and_nest() {
+            mouseMove(segment(2), 5, 5);
+            tryCompare(segment(2).background, "color", Qt.color(Theme.segmented.hover));
+            mousePress(segment(2), 5, 5);
+            tryCompare(segment(2).background, "color", Qt.color(Theme.segmented.pressed));
+            mouseRelease(segment(2), 5, 5);
+            mouseMove(after, 2, 2);
+            compare(UnitTheme.override({ segmented: { radius: 10 } }), "ok");
+            compare(segment(0).background.radius, 10 - Theme.segmented.padding);
+            control.enabled = false;
+            compare(control.opacity, Theme.opacity.disabled);
+            control.enabled = true;
+        }
+
         function test_click_chooses() {
             compare(control.model.length, 3);
             mouseClick(segment(1));

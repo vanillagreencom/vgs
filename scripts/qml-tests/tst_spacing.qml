@@ -14,7 +14,7 @@ import qs.Unit
 Item {
     id: root
     width: 400
-    height: 600
+    height: 820
 
     Button { id: button; text: "Publish"; iconName: "check" }
     TextField { id: input; width: 200; y: 40 }
@@ -27,6 +27,27 @@ Item {
     Badge { id: badge; text: "new"; iconName: "check"; y: 340 }
     Toast { id: toast; title: "Saved"; iconName: "check"; y: 370 }
     Checkbox { id: check; text: "Pin"; y: 470 }
+    Kbd { id: key; text: "Ctrl"; x: 300; y: 340 }
+    ListItem { id: twoLine; text: "Two lines"; secondary: "detail"; width: 300; y: 500 }
+    CodeLine { id: code; text: "vgsh plugin enable acme.weather"; width: 300; y: 560 }
+    Section {
+        id: section
+        title: "Section"
+        y: 620
+        width: 300
+        Rectangle { width: 10; height: 10 }
+        Rectangle { width: 10; height: 10 }
+    }
+    Disclosure {
+        id: disclosure
+        text: "System"
+        iconName: "package"
+        expanded: true
+        width: 300
+        y: 680
+        Rectangle { id: disclosed; width: parent.width; height: 10 }
+    }
+    Field { id: compactField; label: "Version"; inline: true; compact: true; width: 300; y: 760; Label { role: "item"; text: "0.1.0" } }
     Text {
         id: clearingProbeText
         text: "A message long enough to wrap after the inset grows and makes the line narrower."
@@ -89,7 +110,7 @@ Item {
 
             const gap = Theme.control.gap;
             same(() => gapOf(button.contentItem), gap, "button icon gap");
-            same(() => iconed.leftPadding, pad + Theme.icon.size.sm + gap, "text field icon gap");
+            same(() => iconed.leftPadding, pad + Theme.icon.size.md + gap, "text field icon gap");
             same(() => gapOf(item.contentItem), Theme.listItem.iconGap, "list item icon gap");
             same(() => gapOf(entry.contentItem), gap, "menu item icon gap");
             same(() => badgeGap(badge), Theme.badge.gap, "badge icon gap");
@@ -124,6 +145,57 @@ Item {
             for (let x = pad; x < corner + step; x++)
                 if (corner - Math.hypot(Math.max(0, corner - x), Math.max(0, corner - top)) >= step) return x;
             return Math.ceil(corner + step);
+        }
+
+        // The toast's icon and close button centre on the title's first
+        // capital centre on whole pixels.
+        function test_toast_icon_and_close_centre_on_the_title() {
+            const row = toast.children[0];
+            const icon = row.children[0];
+            const title = row.children[1].children[0];
+            const close = row.children[2];
+            for (const item of [icon, close]) {
+                compare(item.y, Math.round(item.y));
+                verify(Math.abs(item.y + item.height / 2 - title.capCentre) <= 0.5, "centre " + (item.y + item.height / 2) + ", capital centre " + title.capCentre);
+            }
+        }
+
+        // Under a pill theme with small pads, each one-line component's side
+        // padding grows past its pad until its content clears the round
+        // end, and never past the end's centre and a step.
+        function test_rounded_components_clear_their_corners() {
+            compare(UnitTheme.override({ radius: { sm: 4096 }, badge: { size: { sm: { paddingX: 2 } } }, kbd: { paddingX: 2 }, listItem: { paddingX: 4 }, menu: { item: { paddingX: 4 } }, textField: { paddingX: 4 }, segmented: { paddingX: 4, radius: 4096 }, codeLine: { padding: 2 } }), "ok");
+            const cases = [
+                ["badge", () => badge.children.find(child => child.role === "label").x - (badge.iconName !== "" ? Theme.icon.size.xs + Theme.badge.gap : 0), 2, badge.height],
+                ["kbd", () => key.sidePadding, 2, key.height],
+                ["two-line list item", () => twoLine.leftPadding, 4, twoLine.height],
+                ["menu item", () => entry.leftPadding, 4, entry.height],
+                ["text field", () => input.leftPadding, 4, input.height],
+                ["select", () => select.leftPadding, 4, select.height],
+                ["segment", () => segment(0).leftPadding, 4, segment(0).height],
+                ["code line", () => code.children.find(child => child.role === "code").x, 2, code.height]
+            ];
+            for (const [what, read, pad, height] of cases) {
+                tryVerify(() => read() > pad, 1000, what + " padding " + read() + " grew past its pad " + pad);
+                verify(read() <= height / 2 + Theme.space.xs, what + " padding " + read() + " stays within its round end");
+            }
+        }
+
+        // A section's heading sits on the content edge and its rows take
+        // its row spacing; a disclosure's content starts at the row's text
+        // column; a compact inline field is `row.compactHeight` tall.
+        function test_section_disclosure_and_compact_field() {
+            compare(section.children[0].leftPadding, 0);
+            const rows = section.children[1];
+            compare(rows.spacing, Theme.stack.row);
+            section.rowSpacing = Theme.stack.group;
+            compare(rows.spacing, Theme.stack.group);
+            section.rowSpacing = Theme.stack.row;
+            const inset = Theme.listItem.paddingX + Theme.icon.size.md + Theme.listItem.iconGap;
+            compare(disclosed.parent.x, inset);
+            compare(disclosed.width, disclosure.width - inset - Theme.listItem.paddingX);
+            compare(compactField.children[1].height, Theme.row.compactHeight);
+            compare(compactField.height, Theme.row.compactHeight);
         }
 
         function test_toast_text_clears_a_rounded_corner() {

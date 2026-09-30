@@ -70,6 +70,23 @@ Item {
             verify(line.height > short.height, "the wrapped line is taller");
         }
 
+        // The text breaks between words: the first line of the command,
+        // whose next word does not fit, ends more than one glyph short of
+        // the line's width, where a break inside the word would fill it.
+        function test_a_wrap_lands_between_words() {
+            const text = label(line);
+            verify(text.lineCount > 1, "the command wraps");
+            wait(50);
+            const img = grabImage(text);
+            let right = -1;
+            for (let x = 0; x < img.width; x++)
+                for (let y = 0; y < text.lineBox; y++)
+                    if (img.red(x, y) > 96) right = Math.max(right, x);
+            const glyph = text.font.pixelSize * 0.6;
+            verify(right > 0, "the first line drew");
+            verify(right < text.width - glyph, "the first line's ink ends at " + right + " of " + text.width + ", a break between words");
+        }
+
         function test_geometry_uses_equal_padding_and_optical_placement() {
             compare(label(short).x, Theme.codeLine.padding);
             compare(button(short).x + button(short).width, short.width - Theme.codeLine.padding);

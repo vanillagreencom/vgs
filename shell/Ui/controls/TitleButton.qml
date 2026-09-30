@@ -4,11 +4,13 @@ import qs.Commons
 import qs.Ui
 
 // A title that names the current choice and opens a menu of the others:
-// its text in `role` over an underline, with a down caret after it. A
-// click, Space, Enter or Down toggles `menu`, a Menu the author declares
-// inside the button, so the menu opens under the title. The text and the
-// caret take `titleButton.hover` while hovered or open. The template owns
-// the click, hover and focus.
+// its text in `role` with a down caret after it, centred on the text's
+// capital centre on a whole pixel. A click, Space, Enter or Down toggles
+// `menu`, a Menu the author declares inside the button, so the menu opens
+// under the title. The text and the caret take `titleButton.hover` while
+// hovered or open, and the underline under the text shows then and while
+// the button holds keyboard focus; at rest the caret alone marks the menu.
+// The template owns the click, hover and focus.
 T.AbstractButton {
     id: root
 
@@ -18,6 +20,7 @@ T.AbstractButton {
     property Item menu: null
     readonly property bool menuOpen: menu !== null && menu.opened
     readonly property color foreground: hovered || menuOpen ? Theme.titleButton.hover : Theme.titleButton.foreground
+    readonly property bool engaged: hovered || menuOpen || visualFocus
 
     function toggleMenu() { if (menu !== null) menu.toggle(); }
 
@@ -56,6 +59,7 @@ T.AbstractButton {
             width: label.width
             height: Theme.titleButton.underline
             color: root.hovered || root.menuOpen ? root.foreground : Theme.titleButton.underlineColor
+            visible: root.engaged
         }
         Icon {
             id: caret
@@ -63,7 +67,7 @@ T.AbstractButton {
             size: Theme.icon.size.sm
             color: root.hovered || root.menuOpen ? root.foreground : Theme.titleButton.caret
             x: label.width + root.spacing
-            y: (label.height - height) / 2
+            y: Math.round(label.capCentre - height / 2)
         }
     }
 

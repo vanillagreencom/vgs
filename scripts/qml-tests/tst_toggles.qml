@@ -10,15 +10,15 @@ import qs.Unit
 Item {
     id: root
     width: 300
-    height: 200
+    height: 240
 
     Switch { id: sw; text: "Notifications" }
-    Switch { id: bare; y: 20 }
-    Switch { id: small; size: "sm"; y: 40 }
-    Switch { id: mirrored; y: 60; LayoutMirroring.enabled: true }
-    Checkbox { id: box; text: "Verified"; y: 80 }
+    Switch { id: bare; y: 30 }
+    Switch { id: small; size: "sm"; y: 60 }
+    Switch { id: mirrored; y: 90; LayoutMirroring.enabled: true }
+    Checkbox { id: box; text: "Verified"; y: 120 }
     Column {
-        y: 120
+        y: 160
         Radio { id: one; text: "One"; checked: true }
         Radio { id: two; text: "Two" }
     }
@@ -36,6 +36,7 @@ Item {
             tryCompare(knob(), "x", Theme.toggle.inset);
             mouseClick(sw.indicator);
             compare(sw.checked, true);
+            mouseMove(root, root.width - 1, root.height - 1);
             tryCompare(sw.indicator, "color", Qt.color(Theme.toggle.on));
             tryCompare(knob(), "x", sw.indicator.width - knob().width - Theme.toggle.inset);
             compare(String(knob().color), String(Qt.color(Theme.toggle.knobOn)));
@@ -98,12 +99,54 @@ Item {
             compare(one.indicator.children[0].visible, false);
         }
 
+        // Hover and press differ from rest on each indicator.
+        function test_indicators_draw_hover_and_press() {
+            sw.checked = false;
+            mouseMove(sw.indicator, 4, sw.indicator.height / 2);
+            tryCompare(sw.indicator, "color", Qt.color(Theme.toggle.offHover));
+            const rest = knob().width;
+            mousePress(sw.indicator, 4, sw.indicator.height / 2);
+            tryVerify(() => knob().width > rest, 1000, "a press widens the knob");
+            mouseRelease(sw.indicator, 4, sw.indicator.height / 2);
+            sw.checked = false;
+            mouseMove(box.indicator, 4, 4);
+            tryCompare(box.indicator.border, "color", Qt.color(Theme.checkbox.hoverBorder));
+            mousePress(box.indicator, 4, 4);
+            tryCompare(box.indicator, "color", Qt.color(Theme.checkbox.pressed));
+            mouseRelease(box.indicator, 4, 4);
+            box.checked = false;
+            mouseMove(two.indicator, 4, 4);
+            tryCompare(two.indicator.border, "color", Qt.color(Theme.radio.hoverBorder));
+            mouseMove(root, root.width - 1, root.height - 1);
+            tryCompare(box.indicator.border, "color", Qt.color(Theme.checkbox.borderColor));
+        }
+
+        // Each indicator centres on its label's capital centre on a whole
+        // pixel, and a compact control keeps a `size.control.sm` input area.
+        function test_indicators_centre_on_the_label_and_keep_an_input_area() {
+            for (const control of [sw, box, one]) {
+                const label = control.contentItem;
+                const centre = control.indicator.y + control.indicator.height / 2;
+                compare(control.indicator.y, Math.round(control.indicator.y), control.text + " indicator y");
+                verify(Math.abs(centre - (label.lineTop + label.capCentre)) <= 0.5, control.text + ": indicator centre " + centre + ", capital centre " + (label.lineTop + label.capCentre));
+                compare(label.role, "item");
+            }
+            compare(small.height, Theme.size.control.sm);
+            verify(small.indicator.height < small.height, "the compact track is smaller than its input area");
+            const was = small.checked;
+            mouseClick(small, small.indicator.width / 2, small.height - 1);
+            compare(small.checked, !was, "a click beside the compact track toggles it");
+            small.checked = was;
+            mouseMove(root, root.width - 1, root.height - 1);
+        }
+
         function test_theme_change_moves_the_indicators() {
             compare(UnitTheme.override({ toggle: { size: { md: { width: 50 }, sm: { width: 32, height: 18 } }, on: "#00ff00" }, checkbox: { size: 24 }, radio: { size: 24, dot: 10 } }), "ok");
             compare(sw.indicator.width, 50);
             compare(small.indicator.width, 32);
             compare(small.indicator.height, 18);
             sw.checked = true;
+            mouseMove(root, root.width - 1, root.height - 1);
             tryCompare(sw.indicator, "color", Qt.color("#00ff00"));
             compare(box.indicator.width, 24);
             compare(one.indicator.width, 24);

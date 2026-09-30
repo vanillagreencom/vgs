@@ -18,10 +18,9 @@ BarWidget {
         return reply;
     }
 
-    IconButton {
+    BarItem {
         id: button
         anchors.centerIn: parent
-        size: "sm"
         iconName: "settings"
         label: "Settings"
         onClicked: root.toggle()

@@ -253,25 +253,25 @@ expect_poll "the updates widget is built on the bar" '"vgs.updates"' ipc smoke r
 # The widget as it judges itself: [state, icon, tone, badge, badge tone].
 widget_view() { ipc smoke readInstance "$widget_key" vgs.updates view | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps([v["state"], v["icon"], v["tone"], v["badge"], v["badgeTone"]]))'; }
 # The widget as drawn: [the icon it shows, or `spinner`, the tone its
-# colour is, the badge it shows, or ""]. A colour is read as the theme
+# colour is, the count it shows beside the icon, or ""]. A colour is read as the theme
 # writes it and matched against the three the widget draws with.
 widget_drawn() {
-  local colours accent warning calm icon spinning badge shown
-  colours="$(ipc smoke itemColours "$widget_key" vgs.updates Button Icon)" && accent="$(ipc smoke themeValue color.accent)" \
-    && warning="$(ipc smoke themeValue color.warning)" && calm="$(ipc smoke themeValue button.variant.ghost.foreground)" \
+  local colours accent warning calm icon spinning badge
+  colours="$(ipc smoke itemColours "$widget_key" vgs.updates BarItem Icon)" && accent="$(ipc smoke themeValue color.accent)" \
+    && warning="$(ipc smoke themeValue color.warning)" && calm="$(ipc smoke themeValue bar.foreground)" \
     && icon="$(ipc smoke readDescendant "$widget_key" vgs.updates Icon name)" && spinning="$(ipc smoke readDescendant "$widget_key" vgs.updates Spinner visible)" \
-    && badge="$(ipc smoke readDescendant "$widget_key" vgs.updates Badge text)" && shown="$(ipc smoke readDescendant "$widget_key" vgs.updates Badge visible)" || return
+    && badge="$(ipc smoke readDescendant "$widget_key" vgs.updates BarItem count)" || return
   python3 -c '
 import json, sys
-colours, accent, warning, calm, icon, spinning, badge, shown = (json.loads(a) for a in sys.argv[1:])
+colours, accent, warning, calm, icon, spinning, badge = (json.loads(a) for a in sys.argv[1:])
 portable = lambda c: "#" + c[3:] + c[1:3]
 tones = {portable(accent): "accent", portable(warning): "warning", portable(calm): "calm"}
 drawn = [c for button in colours for c in button]
 if spinning:
-    print(json.dumps(["spinner", None if not drawn else drawn, badge if shown else ""]))
+    print(json.dumps(["spinner", None if not drawn else drawn, badge]))
 else:
-    print(json.dumps([icon, tones.get(drawn[0], drawn[0]) if len(drawn) == 1 else drawn, badge if shown else ""]))' \
-    "$colours" "$accent" "$warning" "$calm" "$icon" "$spinning" "$badge" "$shown"
+    print(json.dumps([icon, tones.get(drawn[0], drawn[0]) if len(drawn) == 1 else drawn, badge]))' \
+    "$colours" "$accent" "$warning" "$calm" "$icon" "$spinning" "$badge"
 }
 widget_visible() { ipc smoke readInstance "$widget_key" vgs.updates visible; }
 # The tooltip's lines but the last, the check's time, which moves; and

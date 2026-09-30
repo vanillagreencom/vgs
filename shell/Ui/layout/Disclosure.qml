@@ -9,7 +9,9 @@ import qs.Ui
 // height while hidden. A control among the trailing items takes its own
 // click, so pressing it toggles nothing. While `expandable` is false, as
 // for a row with nothing to show, the row draws no chevron and a click
-// toggles nothing. The caller sets the width.
+// toggles nothing. The content starts at the row's text column, the row's
+// padding plus its icon and icon gap, and ends at the row's padding. The
+// caller sets the width.
 Column {
     id: root
 
@@ -43,7 +45,9 @@ Column {
 
     Column {
         id: body
-        width: root.width
+        readonly property real inset: row.leftPadding + (root.iconName !== "" ? Theme.icon.size.md + Theme.listItem.iconGap : 0)
+        x: inset
+        width: Math.max(0, root.width - inset - row.rightPadding)
         visible: root.expandable && root.expanded
     }
 }

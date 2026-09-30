@@ -238,7 +238,7 @@ Item {
             verify(top >= message.y + message.height, "the content starts under the message");
             const actions = dialog.buttons()[0].mapToItem(dialog, 0, 0).y;
             verify(top + extra.height <= actions, "the content ends above the actions");
-            compare(pane(three).scrollArea.contentItem.children[0].children[0].visible, false);
+            compare(pane(three).scrollArea.contentItem.children[0].children[0].children[0].visible, false);
         }
 
         function test_actions_keep_one_gap_under_the_header_when_the_body_is_empty() {

@@ -14,3 +14,11 @@ function clearing(pad, radius, width, height, step, top) {
     if (dy > reach) return Math.max(pad, corner + step);
     return Math.max(pad, corner - Math.sqrt(reach * reach - dy * dy));
 }
+
+// The side padding of a one-line control whose content, `contentHeight`
+// tall, centres in its `height`: the least whole inset from `pad` that
+// keeps the content's corners `step` inside the drawn corner, which the
+// control's height bounds, since a one-line control is wider than tall.
+function controlPadding(pad, radius, height, contentHeight, step) {
+    return Math.ceil(clearing(pad, radius, 2 * height, height, step, (height - contentHeight) / 2));
+}

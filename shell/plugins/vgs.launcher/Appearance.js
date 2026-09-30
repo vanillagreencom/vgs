@@ -252,13 +252,6 @@ var TOKENS = {
         strengthA: number(1.25, 0, 8),
         strengthB: number(0.7, 0, 8),
         base: share(0.1)
-    },
-
-    // The launcher's bar entry, drawn in the bar's own colour.
-    bar: {
-        icon: length(14),
-        stroke: number(1.5, 0, 8),
-        paddingX: number(7.5, 0, 64)
     }
 };
 

@@ -18,6 +18,7 @@ Item {
     Icon { id: circle; name: "circle"; size: 24; color: "white"; x: 80; y: 10 }
     Icon { id: themed; name: "check" }
     Icon { id: cross; name: "x"; size: 24; color: "white"; x: 120; y: 10 }
+    Icon { id: chevron; name: "chevron-left"; size: 24; color: "white"; x: 160; y: 10 }
 
     TestCase {
         name: "icon"
@@ -32,6 +33,28 @@ Item {
             for (let y = 0; y < img.height; y++)
                 if (img.red(x, y) > 128) n++;
             return n;
+        }
+
+        // The painted extent of chevron-left, M15 18 l-6-6 6-6: x 9 to 15
+        // and y 6 to 18 of the 24 unit box, grown by half the stroke.
+        function test_painted_extent_reads_the_path() {
+            const half = Theme.icon.stroke / 2;
+            compare(chevron.painted, [9 - half, 6 - half, 15 + half, 18 + half]);
+            const box = circle.painted;
+            verify(box[0] >= 0 && box[1] >= 0 && box[2] <= circle.size && box[3] <= circle.size, "an arc's extent stays in the box: " + box);
+        }
+
+        // No ink lies outside the painted extent.
+        function test_painted_extent_holds_the_ink() {
+            wait(100);
+            const img = grabImage(chevron);
+            let left = chevron.size, right = -1;
+            for (let x = 0; x < img.width; x++)
+                for (let y = 0; y < img.height; y++)
+                    if (img.red(x, y) > 40) { left = Math.min(left, x); right = Math.max(right, x); }
+            verify(right >= 0, "the chevron drew");
+            verify(left >= Math.floor(chevron.painted[0]), "ink at " + left + " starts before the extent " + chevron.painted[0]);
+            verify(right <= Math.ceil(chevron.painted[2]), "ink at " + right + " ends after the extent " + chevron.painted[2]);
         }
 
         function test_name_resolves() {

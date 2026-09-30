@@ -32,10 +32,10 @@ expect_widgets "every bar mounted the placed plugin widget" '["acme.tick"]'
 expect_builtins "every bar registered its built-in workspaces and clock" '["vgs.bar/center-clock","vgs.bar/left-workspaces"]'
 
 # The built-ins share one vertical centre, the bar's, and draw in the
-# `text.bar` role alone. A workspace pill is its label plus
-# `bar.item.paddingX` a side with `size.control.sm` as its floor, and its
-# label's line height plus `space.xs` tall, with the label at its centre;
-# pills stand `bar.item.gap` apart. The sandbox keeps workspaces 1, 2 and
+# `text.bar` role alone. A workspace pill is a BarItem: its label plus
+# `bar.item.paddingX` a side, never narrower than it is tall, and
+# `bar.item.height` tall, with the label at its centre; pills stand
+# `bar.item.gap` apart. The sandbox keeps workspaces 1, 2 and
 # 100, so three pills stand in a row and the last is wider than the floor.
 # Read from the first bar's items, each within one pixel; the answer is
 # the list of misplaced items, so `[]` is the pass.
@@ -47,11 +47,10 @@ bar_alignment() {
   clock="$(ipc smoke descendantGeometry "$key" vgs.bar/center-clock)" || return
   pad="$(ipc smoke themeValue bar.item.paddingX)" || return
   gap="$(ipc smoke themeValue bar.item.gap)" || return
-  floor="$(ipc smoke themeValue size.control.sm)" || return
-  xs="$(ipc smoke themeValue space.xs)" || return
-  python3 - "$bar_box" "$ws" "$clock" "$pad" "$gap" "$floor" "$xs" <<'PY'
+  floor="$(ipc smoke themeValue bar.item.height)" || return
+  python3 - "$bar_box" "$ws" "$clock" "$pad" "$gap" "$floor" <<'PY'
 import json, sys
-bar, ws, clock, pad, gap, floor, xs = (json.loads(a) for a in sys.argv[1:])
+bar, ws, clock, pad, gap, floor = (json.loads(a) for a in sys.argv[1:])
 out = []
 def near(a, b): return abs(a - b) <= 1
 def mid_x(r): return r["box"][0] + r["box"][2] / 2
@@ -59,16 +58,25 @@ def mid_y(r): return r["box"][1] + r["box"][3] / 2
 def check(name, got, want):
     if not near(got, want): out.append("%s=%.2f want=%.2f" % (name, got, want))
 def children(rows, i, kind): return [c for c in rows if c["parent"] == i and c["type"] == kind]
+def within(rows, i, kind):
+    found, frontier = [], [i]
+    while frontier:
+        at = frontier.pop()
+        for j, c in enumerate(rows):
+            if c["parent"] == at:
+                frontier.append(j)
+                if c["type"] == kind and c.get("visible", True): found.append(c)
+    return found
 centre = bar[1] + bar[3] / 2
 for name, rows in (("workspaces", ws), ("clock", clock)):
     roles = sorted({str(r.get("role")) for r in rows if r["type"] == "Label"})
     if roles != ["bar"]: out.append("%s roles=%s" % (name, roles))
-pills = sorted(((r, children(ws, i, "Label")) for i, r in enumerate(ws) if r["type"] == "QQuickRectangle" and children(ws, i, "Label")), key=lambda p: p[0]["box"][0])
+pills = sorted(((r, [l for l in within(ws, i, "Label") if l["box"][2] > 0]) for i, r in enumerate(ws) if r["type"] == "BarItem"), key=lambda p: p[0]["box"][0])
 if len(pills) != 3: out.append("workspaces pills=%d want=3" % len(pills))
 if not any(pill["box"][2] > floor + 1 for pill, _ in pills): out.append("workspaces wide=0")
 for n, (pill, (label,)) in enumerate(pills):
     check("pill%d.width" % n, pill["box"][2], max(floor, label["implicit"][0] + 2 * pad))
-    check("pill%d.height" % n, pill["box"][3], label["implicit"][1] + xs)
+    check("pill%d.height" % n, pill["box"][3], floor)
     check("pill%d.label.x" % n, mid_x(label), mid_x(pill))
     check("pill%d.label.y" % n, mid_y(label), mid_y(pill))
     check("pill%d.y" % n, mid_y(pill), centre)

@@ -5,20 +5,34 @@ import qs.Ui
 // One inset box for a container: optional header, scrolling body and
 // optional footer all start at the same content edge. The scroll bar lives
 // in the right inset strip, outside the body's content width, so content
-// never moves when it overflows.
+// never moves when it overflows. The footer stays outside the scrolling
+// body, so its actions stay in view while the body scrolls. While the body
+// is scrolled, a divider spans the inset box under the header. `padding`
+// and `cornerRadius` default to the container class's tokens; a plugin that
+// owns its look (appearance.md) hands its own. The viewport reaches the
+// focus ring's room past the content's left, top and bottom edges, so a
+// ring drawn around a row on an edge is never clipped.
 Item {
     id: root
 
     property string container: "panel"
+    property real padding: paddingOf(container)
+    property real cornerRadius: radiusOf(container)
     property bool fitToContent: false
     property real maximumHeight: 0
     property real gap: Theme.stack.group
     property real bodySpacing: Theme.stack.group
+    // The width of a divider under the header while the body is scrolled,
+    // and its colour.
+    property real dividerWidth: Theme.divider.thickness
+    property color dividerColor: Theme.divider.color
     property alias header: headerSlot.data
     default property alias body: bodyColumn.data
     property alias footer: footerSlot.data
-    readonly property real basePadding: paddingOf(container)
-    readonly property real baseRadius: radiusOf(container)
+    readonly property real basePadding: padding
+    readonly property real baseRadius: cornerRadius
+    // The room a focus ring takes outside its row.
+    readonly property real ringRoom: Theme.focusRing.width + Theme.focusRing.offset
     readonly property real contentInset: clearingInset.inset
     readonly property real contentWidth: Math.max(0, width - 2 * contentInset)
     readonly property real bodyContentHeight: bodyColumn.implicitHeight
@@ -41,6 +55,7 @@ Item {
         width: root.width
         height: root.fitToContent ? root.implicitHeight : root.height
         step: Theme.space.xs
+        top: root.basePadding
     }
 
     function paddingOf(name) {
@@ -75,28 +90,51 @@ Item {
         implicitWidth: childrenRect.width
     }
 
+    // The viewport starts `ringRoom` left of and above the content edge and
+    // ends that far below it; the body sits `ringRoom` into the content, so
+    // the visible edges are the inset box's.
     ScrollArea {
         id: scroll
-        x: root.contentInset
-        y: root.contentInset + root.headerHeight + root.headerGap
-        width: Math.max(0, root.width - root.contentInset)
-        rightInset: root.contentInset
-        height: root.fitToContent ? Math.max(0, root.cappedHeight - 2 * root.contentInset - root.headerHeight - root.headerGap - root.footerGap - root.footerHeight) : Math.max(0, root.height - y - root.contentInset - root.footerGap - root.footerHeight)
+        x: root.contentInset - root.ringRoom
+        y: root.contentInset + root.headerHeight + root.headerGap - root.ringRoom
+        width: Math.max(0, root.width - root.contentInset + root.ringRoom)
+        // A container inset narrower than the bar's gutter still leaves the
+        // gutter, so the bar never covers the content.
+        rightInset: Math.max(root.contentInset, Theme.scrollArea.gutter)
+        height: root.ringRoom * 2 + (root.fitToContent ? Math.max(0, root.cappedHeight - 2 * root.contentInset - root.headerHeight - root.headerGap - root.footerGap - root.footerHeight) : Math.max(0, root.height - root.contentInset - root.headerHeight - root.headerGap - root.contentInset - root.footerGap - root.footerHeight))
 
-        Column {
-            id: bodyColumn
+        Item {
             width: scroll.contentWidth
-            spacing: root.bodySpacing
+            implicitHeight: bodyColumn.implicitHeight + 2 * root.ringRoom
+            height: implicitHeight
+
+            Column {
+                id: bodyColumn
+                x: root.ringRoom
+                y: root.ringRoom
+                width: parent.width - root.ringRoom
+                spacing: root.bodySpacing
+            }
         }
     }
 
     Item {
         id: footerSlot
         x: root.contentInset
-        y: scroll.y + scroll.height + root.footerGap
+        y: scroll.y + scroll.height - root.ringRoom + root.footerGap
         width: root.contentWidth
         height: root.footerHeight
         implicitHeight: childrenRect.height
         implicitWidth: childrenRect.width
+    }
+
+    Rectangle {
+        id: headerDivider
+        x: root.contentInset
+        y: root.contentInset + root.headerHeight + Math.round((root.headerGap - height) / 2)
+        width: root.contentWidth
+        height: root.dividerWidth
+        color: root.dividerColor
+        visible: root.headerHeight > 0 && scroll.contentY > 0
     }
 }

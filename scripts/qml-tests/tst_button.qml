@@ -22,6 +22,9 @@ Item {
     IconButton { id: pressedIcon; iconName: "mouse-pointer-click"; label: "Pressed"; y: 230; down: true }
     IconButton { id: checkedIcon; iconName: "check"; label: "Checked"; y: 260; checkable: true; checked: true }
     IconButton { id: disabledIcon; iconName: "ban"; label: "Disabled"; y: 290; enabled: false }
+    Button { id: small; text: "Small"; iconName: "check"; size: "sm"; y: 320 }
+    Button { id: large; text: "Large"; iconName: "check"; size: "lg"; y: 350 }
+    IconButton { id: smallIcon; iconName: "chevron-left"; label: "Back"; size: "sm"; y: 400 }
     SignalSpy { id: clicks; target: primary; signalName: "clicked" }
 
     TestCase {
@@ -68,6 +71,58 @@ Item {
             tryCompare(toggle.background, "color", Qt.color(Theme.button.checked.background));
             mouseClick(toggle);
             compare(toggle.checked, false);
+        }
+
+        // Each size draws its own height, padding, gap and icon, Radix
+        // Themes' button sizes 1, 2 and 3 on the 4 px unit.
+        function test_each_size_draws_its_rhythm_data() {
+            return [
+                { tag: "sm", height: 24, pad: 8, gap: 4, icon: 14 },
+                { tag: "md", height: 32, pad: 12, gap: 8, icon: 16 },
+                { tag: "lg", height: 40, pad: 16, gap: 12, icon: 16 }
+            ];
+        }
+        function test_each_size_draws_its_rhythm(data) {
+            const button = data.tag === "sm" ? small : data.tag === "lg" ? large : Qt.createQmlObject("import qs.Ui\nButton { text: \"Medium\"; iconName: \"check\" }", root);
+            tryCompare(button, "height", data.height);
+            compare(button.leftPadding, data.pad);
+            compare(button.rightPadding, data.pad);
+            const row = button.contentItem;
+            compare(row.children[0].size, data.icon);
+            tryVerify(() => row.children[1].x - (row.children[0].x + row.children[0].width) === data.gap, 1000, "gap " + (row.children[1].x - row.children[0].width));
+            if (data.tag === "md") button.destroy();
+        }
+
+        function test_checked_button_shows_hover_and_press() {
+            mouseClick(toggle);
+            compare(toggle.checked, true);
+            mouseMove(toggle, toggle.width / 2, toggle.height / 2);
+            tryCompare(toggle.background, "color", Qt.color(Theme.button.checked.hover));
+            mousePress(toggle, toggle.width / 2, toggle.height / 2);
+            tryCompare(toggle.background, "color", Qt.color(Theme.button.checked.pressed));
+            mouseRelease(toggle, toggle.width / 2, toggle.height / 2);
+            compare(toggle.checked, false);
+            mouseMove(root, 0, root.height - 1);
+        }
+
+        // The ring follows the button's own corner under a rounded theme,
+        // and the side padding grows until the label clears the round end.
+        function test_rounded_button_clears_its_corner_and_rings_it() {
+            compare(UnitTheme.override({ button: { radius: 4096 } }), "ok");
+            const want = Inset.controlPadding(Theme.button.size.sm.paddingX, 4096, small.height, small.implicitContentHeight, Theme.space.xs);
+            verify(want > Theme.button.size.sm.paddingX, "the sm pill's label needs more than its pad: " + want);
+            tryCompare(small, "leftPadding", want);
+            const ring = small.background.children[small.background.children.length - 1];
+            compare(ring.radius, 4096 + Theme.focusRing.offset);
+        }
+
+        // An icon button's glyph insets reach the ink: chevron-left's ink
+        // starts 9 of 24 units in, less half the stroke.
+        function test_icon_button_reads_its_glyph_insets() {
+            compare(smallIcon.contentItem.size, Theme.icon.size.sm);
+            compare(smallIcon.leftPadding, Math.floor((Theme.size.control.sm - Theme.icon.size.sm) / 2));
+            fuzzyCompare(smallIcon.glyphStart, smallIcon.leftPadding + 9 * Theme.icon.size.sm / 24 - Theme.icon.stroke / 2, 0.01);
+            fuzzyCompare(smallIcon.glyphEnd, smallIcon.rightPadding + smallIcon.contentItem.size - (15 * Theme.icon.size.sm / 24 + Theme.icon.stroke / 2), 0.01);
         }
 
         function test_disabled_fades() {

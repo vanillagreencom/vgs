@@ -38,9 +38,14 @@ Item {
     // The default plate's fill and corner; a replaced `background` draws
     // its own.
     property color color: Theme.listItem.selected
+    // The plate's fill while the row it holds is pressed.
+    property color pressedColor: Theme.listItem.selectedPressed
     property real radius: Theme.listItem.radius
+    // Whether the row that holds the cursor is pressed: its template's
+    // `down`, which a release outside the row clears.
+    readonly property bool pressed: state.target !== null && state.target.down === true
     // What the plate draws. The cursor parents it and fills itself with it.
-    property Item background: Rectangle { color: root.color; radius: root.radius }
+    property Item background: Rectangle { color: root.pressed ? root.pressedColor : root.color; radius: root.radius }
     // The row that holds the selection; null for none.
     readonly property alias target: state.target
     // Whether a hover moves the selection: the pointer has moved since the

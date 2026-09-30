@@ -35,6 +35,12 @@ function verify(inset) {
     assert.equal(inset.clearing(8, 4096, 420, 40, 4, 0), 24, "content on the edge clears the whole corner");
     assert.equal(inset.clearing(14, 4096, 420, 94, 4, 2), 51, "content within one step of the edge clears the whole corner");
     assert.equal(inset.clearing(80, 4096, 420, 94, 4, 14), 80, "a pad past the corner stays");
+    // A 20 px pill with 11 px content: corner 10, top 4.5, dy 5.5, reach 6:
+    // 10 - sqrt(36 - 30.25) = 7.60, rounded up.
+    assert.equal(inset.controlPadding(4, 4096, 20, 11, 4), 8, "a pill's label clears its round end");
+    // A 32 px pill with 11 px content: 16 - sqrt(144 - 30.25) = 5.33, under the pad.
+    assert.equal(inset.controlPadding(12, 4096, 32, 11, 4), 12, "a pad that already clears the round end stays");
+    assert.equal(inset.controlPadding(9, 0, 32, 11, 4), 9, "a square control keeps its pad");
 }
 
 verify(load(file));
@@ -44,7 +50,9 @@ const CONTROLS = [
     ["drawn corner clamp", "var corner = Math.min(radius, width / 2, height / 2);", "var corner = radius;"],
     ["content top", "var dy = Math.max(0, corner - top);", "var dy = corner;"],
     ["content at the edge", "if (dy > reach) return Math.max(pad, corner + step);", "if (false) return pad;"],
-    ["corner inside the curve", "return Math.max(pad, corner - Math.sqrt(reach * reach - dy * dy));", "return Math.max(pad, corner + step);"]
+    ["corner inside the curve", "return Math.max(pad, corner - Math.sqrt(reach * reach - dy * dy));", "return Math.max(pad, corner + step);"],
+    ["control content centred", "step, (height - contentHeight) / 2));", "step, 0));"],
+    ["control inset whole", "return Math.ceil(clearing(pad, radius, 2 * height", "return (clearing(pad, radius, 2 * height"]
 ];
 
 const source = fs.readFileSync(file, "utf8");

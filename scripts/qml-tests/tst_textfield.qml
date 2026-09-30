@@ -26,6 +26,7 @@ Item {
         Field { id: labelField; label: "Text"; inline: true; width: parent.width; Label { id: inlineLabel; role: "item"; text: "Value"; width: parent.width } }
         Field { id: badgeField; label: "Badge"; inline: true; width: parent.width; Badge { id: inlineBadge; text: "Ready"; tone: "success" } }
         Field { id: textFieldRow; label: "Text field"; inline: true; width: parent.width; TextField { id: inlineText; width: parent.width; text: "abc" } }
+        Field { id: longLabel; label: "Single-workspace token state"; inline: true; width: parent.width; Label { role: "item"; text: "Present" } }
         Field { id: buttonField; label: "Button"; inline: true; width: parent.width; Button { id: inlineButton; text: "Open"; size: "sm"; variant: "secondary" } }
         Field { id: selectField; label: "Select"; hint: "Shown below the value."; inline: true; width: parent.width; Select { id: inlineSelect; width: parent.width; model: ["Default", "Ocean"] } }
     }
@@ -69,8 +70,11 @@ Item {
             plain.forceActiveFocus();
             compare(String(plain.outline), String(Qt.color(Theme.textField.focus)));
             compare(ring.visible, true);
+            compare(String(ring.border.color), String(Qt.color(Theme.focusRing.color)));
             plain.error = true;
             compare(String(plain.outline), String(Qt.color(Theme.textField.error)));
+            // A focused field in error keeps the error cue on its ring.
+            compare(String(ring.border.color), String(Qt.color(Theme.textField.error)));
             plain.error = false;
             plain.focus = false;
             compare(ring.visible, false);
@@ -82,6 +86,8 @@ Item {
 
         function test_leading_icon_and_actions() {
             verify(iconed.leftPadding > plain.leftPadding, "a leading icon moves the text in");
+            compare(iconed.background.children[0].size, Theme.icon.size.md);
+            compare(iconed.leftPadding, Theme.textField.paddingX + Theme.icon.size.md + Theme.textField.gap);
             compare(iconed.actions.length, 1);
             verify(iconed.rightPadding > plain.rightPadding, "an action reserves space at the end");
             iconed.text = "abc";
@@ -116,6 +122,16 @@ Item {
             compare(inner.width, field.width - inset - pad);
             tryVerify(() => hint.mapToItem(field, 0, 0).x === inset);
             compare(hint.width, field.width - inset - pad);
+        }
+
+        // A label too long for its column wraps to a second line, whole,
+        // and the value column starts where `valueX` says.
+        function test_a_long_inline_label_wraps_and_the_value_column_is_published() {
+            const label = longLabel.children[1].children[0];
+            compare(label.lineCount, 2);
+            compare(label.truncated, false);
+            compare(longLabel.valueX, Theme.field.labelWidth + Theme.field.labelGap);
+            verify(longLabel.children[1].height >= label.implicitHeight, "the row holds both lines");
         }
 
         function test_inline_fields_share_row_height_and_value_column() {

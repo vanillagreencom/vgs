@@ -224,6 +224,32 @@ Item {
             compare(plate.background.width, plate.width);
         }
 
+        // The plate draws the pressed fill while the row it holds is
+        // pressed, and its resting fill again after a release outside the
+        // row; a loose row draws its own pressed fill, apart from hover.
+        function test_a_pressed_row_presses_the_plate() {
+            root.current = 0;
+            tryCompare(plate, "target", row(0));
+            mousePress(row(0), 20, row(0).height / 2);
+            tryCompare(plate, "pressed", true);
+            compare(String(plate.background.color), String(Qt.color(Theme.listItem.selectedPressed)));
+            mouseMove(root, root.width - 2, root.height - 2);
+            mouseRelease(root, root.width - 2, root.height - 2);
+            tryCompare(plate, "pressed", false);
+            compare(String(plate.background.color), String(Qt.color(Theme.listItem.selected)));
+            mouseMove(loose, 20, loose.height / 2);
+            tryCompare(loose.background, "color", Qt.color(Theme.listItem.hover));
+            mousePress(loose, 20, loose.height / 2);
+            tryCompare(loose.background, "color", Qt.color(Theme.listItem.pressed));
+            mouseRelease(loose, 20, loose.height / 2);
+            loose.highlighted = true;
+            mousePress(loose, 20, loose.height / 2);
+            tryCompare(loose.background, "color", Qt.color(Theme.listItem.selectedPressed));
+            mouseRelease(loose, 20, loose.height / 2);
+            loose.highlighted = false;
+            mouseMove(root, root.width - 2, root.height - 2);
+        }
+
         function test_rows_enter_staggered() {
             compare(UnitTheme.override({ motion: { list: { enter: { duration: 2000 }, stagger: 400 } } }), "ok");
             root.count = 0;

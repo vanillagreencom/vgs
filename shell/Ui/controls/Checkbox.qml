@@ -5,13 +5,17 @@ import qs.Ui
 
 // A checkbox with an optional text after it. The template holds `checked`
 // and toggles it on a click, Space or Enter; the box fills with the
-// checked colour and draws the check icon on it.
+// checked colour and draws the check icon on it. Hover strengthens the
+// outline, or the checked fill, and a press fills the box. The text draws
+// in `item`; the box centres on its capital centre on a whole pixel, and
+// the control is never shorter than `size.control.sm`, so a click just
+// beside the box still reaches it.
 T.CheckBox {
     id: root
 
     // The content's left padding already holds the indicator and the gap.
     implicitWidth: text !== "" ? implicitContentWidth : implicitIndicatorWidth
-    implicitHeight: Math.max(implicitIndicatorHeight, implicitContentHeight)
+    implicitHeight: Math.max(Theme.size.control.sm, implicitIndicatorHeight, implicitContentHeight)
     spacing: Theme.checkbox.gap
     hoverEnabled: true
     PointerCursor {}
@@ -21,11 +25,11 @@ T.CheckBox {
     indicator: Rectangle {
         implicitWidth: Theme.checkbox.size
         implicitHeight: Theme.checkbox.size
-        y: (root.height - height) / 2
+        y: root.text !== "" ? Math.round(root.contentItem.lineTop + root.contentItem.capCentre - height / 2) : Math.round((root.height - height) / 2)
         radius: Theme.checkbox.radius
-        color: root.checked ? Theme.checkbox.checked : Theme.checkbox.background
+        color: root.checked ? (root.hovered || root.down ? Theme.checkbox.checkedHover : Theme.checkbox.checked) : root.down ? Theme.checkbox.pressed : Theme.checkbox.background
         border.width: Theme.checkbox.border
-        border.color: root.checked ? Theme.checkbox.checked : Theme.checkbox.borderColor
+        border.color: root.checked ? color : root.hovered || root.down ? Theme.checkbox.hoverBorder : Theme.checkbox.borderColor
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
 
         Icon {
@@ -36,13 +40,16 @@ T.CheckBox {
             visible: root.checked
         }
 
-        FocusRing { target: root }
+        FocusRing { target: root; targetRadius: Theme.checkbox.radius }
     }
 
+    // The label's line box on a whole pixel, centred in the control.
     contentItem: Label {
-        role: "body"
+        readonly property real lineTop: Math.round((root.height - lineBox) / 2)
+        role: "item"
         text: root.text
         leftPadding: root.indicator.width + root.spacing
-        verticalAlignment: Text.AlignVCenter
+        topPadding: lineTop
+        verticalAlignment: Text.AlignTop
     }
 }

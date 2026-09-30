@@ -154,7 +154,9 @@ Item {
         grabFocus: true
         visible: false
         color: "transparent"
-        implicitWidth: Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding + Theme.scrollArea.gutter)
+        // As wide as the widest entry, never wider than `menu.maxWidth` or
+        // the output allows; a longer entry elides.
+        implicitWidth: Math.min(OverlayState.widthFor(root.anchorItem, Theme.menu.maxWidth), Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding))
         implicitHeight: Math.max(1, Math.min(column.implicitHeight, root.maxHeight) + 2 * Theme.menu.padding)
         onVisibleChanged: root.share(visible)
 
@@ -183,16 +185,20 @@ Item {
                 border.color: Theme.menu.border
             }
 
+            // The entries sit `menu.padding` in from every side; the scroll
+            // area reaches the right edge, and its bar sits in that strip.
             ScrollArea {
                 id: scroll
                 x: Theme.menu.padding
                 y: Theme.menu.padding
-                width: parent.width - 2 * Theme.menu.padding
+                width: parent.width - Theme.menu.padding
                 height: parent.height - 2 * Theme.menu.padding
+                rightInset: Theme.menu.padding
 
                 ListCursor {
                     id: plate
                     color: Theme.menu.item.hover
+                    pressedColor: Theme.menu.item.pressed
                     radius: Theme.menu.item.radius
                 }
 

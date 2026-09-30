@@ -65,8 +65,22 @@ Item {
         grabFocus: false
         visible: false
         color: "transparent"
-        implicitWidth: Math.max(1, label.implicitWidth + 2 * Theme.tooltip.paddingX)
-        implicitHeight: Math.max(1, label.implicitHeight + 2 * Theme.tooltip.paddingY)
+        // One line up to `tooltip.maxWidth`, then the text wraps; never
+        // wider than the output less its gutters.
+        implicitWidth: Math.max(1, Math.min(Math.ceil(label.implicitWidth) + 2 * sideInset.inset, OverlayState.widthFor(root.anchorItem, Theme.tooltip.maxWidth + 2 * sideInset.inset)))
+        implicitHeight: Math.max(1, label.height + 2 * Theme.tooltip.paddingY)
+
+        // Under a rounded theme the text sits in from the sides until it
+        // clears the drawn corner.
+        ClearingInset {
+            id: sideInset
+            pad: Theme.tooltip.paddingX
+            radius: Theme.tooltip.radius
+            width: window.width
+            height: window.height
+            step: Theme.space.xs
+            top: Theme.tooltip.paddingY
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -79,7 +93,10 @@ Item {
             role: "tooltip"
             text: root.text
             color: Theme.tooltip.foreground
-            anchors.centerIn: parent
+            x: sideInset.inset
+            y: Theme.tooltip.paddingY
+            width: window.width - 2 * sideInset.inset
+            wrapMode: Text.Wrap
         }
     }
 

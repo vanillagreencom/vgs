@@ -36,10 +36,8 @@ Item {
     function close() { window.visible = false; }
     function toggle() { if (opened) close(); else open(); }
     function screenHeight() {
-        if (anchorItem === null || anchorItem === undefined) return 0;
-        const window = anchorItem.Window.window;
-        if (window === null || window === undefined || window.screen === null || window.screen === undefined) return 0;
-        return window.screen.height;
+        const output = OverlayState.outputOf(anchorItem);
+        return output === null ? 0 : output.height;
     }
 
     PopupWindow {

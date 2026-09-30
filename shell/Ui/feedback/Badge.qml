@@ -7,7 +7,8 @@ import qs.Ui
 // so tracked text has equal left and right ink insets. `tone` names a
 // group of `Theme.badge.tone`: `neutral`, `accent`, `success`, `warning`,
 // `danger` or `info`; an unknown tone is logged and drawn neutral.
-// `iconName` draws a Lucide icon before the text.
+// `iconName` draws a Lucide icon before the text. Under a rounded theme
+// the side padding grows until the content clears the drawn corner.
 Rectangle {
     id: root
 
@@ -17,6 +18,7 @@ Rectangle {
     property string tone: "neutral"
     readonly property var tokens: toneOf(tone)
     readonly property var sizeTokens: sizeOf(size)
+    readonly property real sidePadding: Inset.controlPadding(sizeTokens.paddingX, Theme.badge.radius, sizeTokens.height, Math.max(icon.visible ? icon.height : 0, label.lineBox), Theme.space.xs)
 
     function toneOf(name) {
         const found = Theme.badge.tone[name];
@@ -32,7 +34,7 @@ Rectangle {
         return Theme.badge.size.sm;
     }
 
-    implicitWidth: 2 * sizeTokens.paddingX + label.opticalWidth + (icon.visible ? icon.width + Theme.badge.gap : 0)
+    implicitWidth: 2 * sidePadding + label.opticalWidth + (icon.visible ? icon.width + Theme.badge.gap : 0)
     implicitHeight: sizeTokens.height
     radius: Theme.badge.radius
     color: tokens.background
@@ -43,7 +45,7 @@ Rectangle {
         name: root.iconName
         size: Theme.icon.size.xs
         color: root.tokens.foreground
-        x: root.sizeTokens.paddingX
+        x: root.sidePadding
         y: Math.round(root.height / 2 - height / 2)
     }
 
@@ -52,7 +54,7 @@ Rectangle {
         role: "label"
         text: root.text
         color: root.tokens.foreground
-        x: root.sizeTokens.paddingX + (icon.visible ? icon.width + Theme.badge.gap : 0)
+        x: root.sidePadding + (icon.visible ? icon.width + Theme.badge.gap : 0)
         y: topForCapCenter(root.height)
     }
 }

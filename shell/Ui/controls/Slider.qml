@@ -7,12 +7,13 @@ import qs.Ui
 // and the arithmetic of a drag, the arrow keys and a click on the track;
 // this file draws the track, the filled part and the handle. The fill is
 // `position` long and starts from the right when mirrored, as the handle
-// does through `visualPosition`.
+// does through `visualPosition`. The control is never shorter than
+// `size.control.sm`, so the thin track keeps a larger input area.
 T.Slider {
     id: root
 
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset, implicitHandleWidth + leftPadding + rightPadding)
-    implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset, implicitHandleHeight + topPadding + bottomPadding)
+    implicitHeight: Math.max(Theme.size.control.sm, implicitBackgroundHeight + topInset + bottomInset, implicitHandleHeight + topPadding + bottomPadding)
     hoverEnabled: true
     PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
@@ -45,6 +46,6 @@ T.Slider {
         color: Theme.slider.handleColor
         border.width: Theme.border.thick
         border.color: root.pressed ? Theme.slider.fill : Theme.slider.handleBorder
-        FocusRing { target: root; radius: Theme.slider.radius }
+        FocusRing { target: root; targetRadius: Theme.slider.radius }
     }
 }

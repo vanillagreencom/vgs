@@ -5,14 +5,17 @@ import qs.Ui
 // A titled block of rows. The space above the heading is `stack.section`
 // no matter which Column owns it: the section subtracts the parent's
 // spacing, and the first item takes no top padding. Rows inside the section
-// are spaced by `stack.row`. The header inset matches row padding by
-// default, so headings align with row content.
+// are spaced by `rowSpacing`, `stack.row`; a section of blocks, such as a
+// line of buttons and a code line, sets it to `stack.group`. The heading
+// sits on the content edge, as D050 puts unboxed text; `headerInset`
+// indents it for a surface whose rows inset their text.
 Column {
     id: root
 
     property string title: ""
     property string description: ""
-    property real headerInset: Theme.row.paddingX
+    property real headerInset: 0
+    property real rowSpacing: Theme.stack.row
     default property alias rows: content.data
 
     readonly property real parentSpacing: parent && parent.spacing !== undefined ? parent.spacing : 0
@@ -32,6 +35,6 @@ Column {
     Column {
         id: content
         width: root.width
-        spacing: Theme.stack.row
+        spacing: root.rowSpacing
     }
 }

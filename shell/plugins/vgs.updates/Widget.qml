@@ -11,7 +11,8 @@ import "UpdatesLogic.js" as Logic
 // `hideWhenCurrent` setting hides it only while the last check succeeded
 // and nothing waits. A left click opens or closes the flyout under it; a
 // middle click opens the `update` TUI for every source. The tooltip lists
-// each source's count and when the last check ran.
+// each source's count and when the last check ran. It is one BarItem, the
+// count drawn beside the icon in the icon's tone.
 BarWidget {
     id: root
 
@@ -32,7 +33,7 @@ BarWidget {
 
     function toneColor(tone) {
         switch (tone) {
-        case "calm": return button.foreground;
+        case "calm": return Theme.bar.foreground;
         case "accent": return Theme.color.accent;
         case "warning": return Theme.color.warning;
         default: throw new Error("updates widget: tone " + JSON.stringify(tone) + " is not one of calm, accent, warning");
@@ -56,44 +57,15 @@ BarWidget {
         return reply;
     }
 
-    Button {
+    BarItem {
         id: button
         anchors.centerIn: parent
-        variant: "ghost"
-        size: "sm"
-        text: "Updates"
-        leftPadding: (controlHeight - Theme.icon.size.md) / 2
-        rightPadding: leftPadding
+        label: "Updates"
+        iconName: root.view.icon
+        spinning: root.view.spinning
+        count: root.view.badge
+        tone: root.toneColor(root.view.tone)
         onClicked: root.toggle()
-
-        contentItem: Row {
-            spacing: Theme.bar.item.iconGap
-
-            Item {
-                width: Theme.icon.size.md
-                height: Theme.icon.size.md
-                anchors.verticalCenter: parent.verticalCenter
-
-                Icon {
-                    anchors.centerIn: parent
-                    visible: !root.view.spinning
-                    name: root.view.icon
-                    size: Theme.icon.size.md
-                    color: root.toneColor(root.view.tone)
-                }
-                Spinner {
-                    anchors.centerIn: parent
-                    visible: root.view.spinning
-                    size: Theme.icon.size.md
-                }
-            }
-            Badge {
-                visible: root.view.badge !== ""
-                text: root.view.badge
-                tone: root.view.badgeTone
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
 
         // pointer-cursor-exempt: it adds the middle click to the Button it sits in, whose own PointerCursor shows the hand
         TapHandler {

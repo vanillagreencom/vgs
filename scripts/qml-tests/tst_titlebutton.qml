@@ -72,6 +72,23 @@ Item {
             mouseMove(root, root.width - 1, root.height - 1);
         }
 
+        // At rest the caret alone marks the menu: the underline shows on
+        // hover and while the menu is open. The caret centres on the
+        // text's capital centre on a whole pixel.
+        function test_the_underline_shows_only_while_engaged_and_the_caret_centres() {
+            compare(underline(title).visible, false);
+            menu.open();
+            compare(underline(title).visible, true);
+            menu.close();
+            compare(underline(title).visible, false);
+            mouseMove(title, 5, 5);
+            tryCompare(underline(title), "visible", true);
+            mouseMove(root, root.width - 1, root.height - 1);
+            tryCompare(underline(title), "visible", false);
+            compare(caret(title).y, Math.round(caret(title).y));
+            verify(Math.abs(caret(title).y + caret(title).height / 2 - label(title).capCentre) <= 0.5, "caret centre " + (caret(title).y + caret(title).height / 2) + ", capital centre " + label(title).capCentre);
+        }
+
         function test_a_narrow_title_elides_and_keeps_its_caret_inside() {
             verify(label(narrow).implicitWidth > narrow.width, "the text is wider than the button");
             compare(label(narrow).width, narrow.width - Theme.titleButton.gap - caret(narrow).width);

@@ -7,7 +7,10 @@ import qs.Ui
 // segment texts and `currentIndex` the chosen one. A click or the left and
 // right keys move it; `activated` fires on a change the user made. The
 // control is one tab stop: the segments take no focus of their own, so the
-// ring draws around the whole control and the keys act on it.
+// ring draws around the whole control and the keys act on it. A segment
+// that is not chosen fills on hover and more on a press; a segment's
+// corner is the control's less its inset, so it nests in a rounded
+// control, and a disabled control fades.
 Rectangle {
     id: root
 
@@ -28,6 +31,7 @@ Rectangle {
     border.width: Theme.border.thin
     border.color: Theme.segmented.border
     activeFocusOnTab: true
+    opacity: enabled ? 1 : Theme.opacity.disabled
     Keys.onLeftPressed: choose(currentIndex - 1)
     Keys.onRightPressed: choose(currentIndex + 1)
 
@@ -49,8 +53,8 @@ Rectangle {
                 height: row.height
                 focusPolicy: Qt.NoFocus
                 implicitWidth: implicitContentWidth + leftPadding + rightPadding
-                leftPadding: Theme.segmented.paddingX
-                rightPadding: Theme.segmented.paddingX
+                leftPadding: Inset.controlPadding(Theme.segmented.paddingX, Math.max(0, Theme.segmented.radius - Theme.segmented.padding), row.height, implicitContentHeight, Theme.space.xs)
+                rightPadding: leftPadding
                 hoverEnabled: true
                 PointerCursor {}
                 text: String(modelData)
@@ -65,13 +69,13 @@ Rectangle {
                 }
 
                 background: Rectangle {
-                    radius: Theme.segmented.radius
-                    color: segment.current ? Theme.segmented.selected : "transparent"
+                    radius: Math.max(0, Theme.segmented.radius - Theme.segmented.padding)
+                    color: segment.current ? Theme.segmented.selected : segment.down ? Theme.segmented.pressed : segment.hovered ? Theme.segmented.hover : "transparent"
                     Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
                 }
             }
         }
     }
 
-    FocusRing { target: root }
+    FocusRing { target: root; targetRadius: Theme.segmented.radius }
 }

@@ -30,6 +30,16 @@ Item {
             compare(slider.handle.width, Theme.slider.handle);
         }
 
+        // The thin track keeps a `size.control.sm` input area: a press a
+        // few pixels above the track still moves the value.
+        function test_the_slider_keeps_an_input_area() {
+            compare(slider.height, Theme.size.control.sm);
+            verify(slider.background.height < slider.height, "the track is thinner than its input area");
+            mouseClick(slider, slider.width - 4, 1);
+            verify(slider.value > 50, "a press above the track moves the value: " + slider.value);
+            slider.value = 50;
+        }
+
         function test_right_key_steps() {
             slider.forceActiveFocus();
             keyClick(Qt.Key_Right);

@@ -11,10 +11,12 @@ import qs.Ui
 // press outside or Escape closes it. One ListCursor draws the highlight
 // and travels between entries, and a hover moves it once the pointer moves
 // (ListCursor). With the list closed, Up and Down on the focused control
-// move the choice. A list taller than
-// `menu.maxHeight` scrolls under the module's embedded bar, which its
-// entries leave a gutter for. The control draws like a text field; the
-// template owns its click, hover and focus.
+// move the choice. A list taller than `menu.maxHeight` scrolls under the
+// module's embedded bar, which sits in the list's right inset, so the
+// entries never move when they overflow. The list opens `menu.padding`
+// left of the control and that much wider on each side, so its entries'
+// text starts where the control's does. The control draws like a text
+// field; the template owns its click, hover and focus.
 T.AbstractButton {
     id: root
 
@@ -35,6 +37,7 @@ T.AbstractButton {
     }
     Component.onDestruction: share(false)
     readonly property color outline: activeFocus || list.visible ? Theme.textField.focus : hovered ? Theme.textField.hover : Theme.textField.borderColor
+    readonly property real sidePadding: Inset.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, height), implicitContentHeight, Theme.space.xs)
 
     function textAt(index) {
         if (index < 0 || index >= count) return "";
@@ -73,8 +76,8 @@ T.AbstractButton {
 
     implicitWidth: Theme.size.panel.sm / 2
     implicitHeight: Theme.textField.height
-    leftPadding: Theme.textField.paddingX
-    rightPadding: Theme.textField.paddingX + Theme.icon.size.sm + Theme.textField.gap
+    leftPadding: sidePadding
+    rightPadding: sidePadding + Theme.icon.size.sm + Theme.textField.gap
     hoverEnabled: true
     PointerCursor {}
     focusPolicy: Qt.StrongFocus
@@ -97,7 +100,7 @@ T.AbstractButton {
         name: "chevron-down"
         size: Theme.icon.size.sm
         color: Theme.textField.icon
-        x: root.width - width - Theme.textField.paddingX
+        x: root.width - width - root.sidePadding
         y: (root.height - height) / 2
     }
 
@@ -107,7 +110,7 @@ T.AbstractButton {
         border.width: Theme.textField.border
         border.color: root.outline
         Behavior on border.color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
-        FocusRing { target: root }
+        FocusRing { target: root; targetRadius: Theme.textField.radius }
     }
 
     PopupWindow {
@@ -118,10 +121,11 @@ T.AbstractButton {
         anchor.gravity: Edges.Bottom | Edges.Right
         anchor.adjustment: PopupAdjustment.Flip | PopupAdjustment.Slide
         anchor.margins.bottom: -Theme.select.gap
+        anchor.margins.left: -Theme.menu.padding
         grabFocus: true
         visible: false
         color: "transparent"
-        implicitWidth: Math.max(1, root.width)
+        implicitWidth: Math.max(1, root.width + 2 * Theme.menu.padding)
         implicitHeight: Math.max(1, Math.min(Theme.menu.maxHeight, entries.contentHeight) + 2 * Theme.menu.padding)
         onVisibleChanged: root.share(visible)
 
@@ -136,7 +140,9 @@ T.AbstractButton {
         ListView {
             id: entries
             anchors.fill: parent
-            anchors.margins: Theme.menu.padding
+            anchors.topMargin: Theme.menu.padding
+            anchors.bottomMargin: Theme.menu.padding
+            anchors.leftMargin: Theme.menu.padding
             model: root.model
             clip: true
             focus: true
@@ -156,10 +162,10 @@ T.AbstractButton {
                 required property int index
                 readonly property bool chosen: index === root.currentIndex
 
-                width: ListView.view.width - (entries.overflowing ? Theme.scrollArea.gutter : 0)
+                width: ListView.view.width - Theme.menu.padding
                 implicitHeight: Theme.menu.item.height
-                leftPadding: Theme.menu.item.paddingX
-                rightPadding: Theme.menu.item.paddingX
+                leftPadding: root.sidePadding
+                rightPadding: root.sidePadding
                 text: root.textAt(index)
                 highlighted: ListView.isCurrentItem
                 hoverEnabled: true
@@ -191,6 +197,7 @@ T.AbstractButton {
                 id: plate
                 parent: entries.contentItem
                 color: Theme.select.highlight
+                pressedColor: Theme.menu.item.pressed
                 radius: Theme.menu.item.radius
             }
 

@@ -7,7 +7,8 @@ import "ViewLogic.js" as View
 // the service publishes as `detail`, an optional count, and a tooltip
 // sentence. A click opens or closes the flyout under it. Entering Working
 // pulses the shield once. With `hideWhenIdle` the widget takes no room
-// while no agent runs and all is good.
+// while no agent runs and all is good. It is one BarItem, the count drawn
+// beside the shield in its tone.
 BarWidget {
     id: root
 
@@ -19,7 +20,7 @@ BarWidget {
     readonly property color tone: Theme.badge.tone[view.tone].foreground
 
     visible: !hidden
-    implicitWidth: hidden ? 0 : content.implicitWidth + 2 * Theme.bar.item.paddingX
+    implicitWidth: hidden ? 0 : item.implicitWidth
     implicitHeight: barSize
 
     onWardenStateChanged: if (wardenState === "working") pulse.restart()
@@ -32,38 +33,21 @@ BarWidget {
         return reply;
     }
 
-    Row {
-        id: content
+    BarItem {
+        id: item
         anchors.centerIn: parent
-        spacing: Theme.bar.item.iconGap
+        label: "Agent Warden"
+        iconName: root.view.icon
+        count: root.view.count
+        tone: root.tone
+        onClicked: root.toggle()
 
-        Icon {
-            id: shield
-            anchors.verticalCenter: parent.verticalCenter
-            name: root.view.icon
-            size: Theme.icon.size.md
-            color: root.tone
-        }
-        Label {
-            anchors.verticalCenter: parent.verticalCenter
-            role: "bar"
-            visible: text !== ""
-            text: root.view.count
-            color: root.tone
-        }
+        Tooltip { text: root.view.tooltip }
     }
 
     SequentialAnimation {
         id: pulse
-        NumberAnimation { target: shield; property: "opacity"; to: Theme.opacity.disabled; duration: Theme.motion.duration.slow; easing.type: Theme.motion.easing.standard }
-        NumberAnimation { target: shield; property: "opacity"; to: 1; duration: Theme.motion.duration.slow; easing.type: Theme.motion.easing.standard }
+        NumberAnimation { target: item.contentItem; property: "opacity"; to: Theme.opacity.disabled; duration: Theme.motion.duration.slow; easing.type: Theme.motion.easing.standard }
+        NumberAnimation { target: item.contentItem; property: "opacity"; to: 1; duration: Theme.motion.duration.slow; easing.type: Theme.motion.easing.standard }
     }
-
-    MouseArea {
-        anchors.fill: parent
-        PointerCursor {}
-        onClicked: root.toggle()
-    }
-
-    Tooltip { text: root.view.tooltip }
 }

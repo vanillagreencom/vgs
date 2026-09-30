@@ -100,7 +100,7 @@ import json, sys
 bar, rows = (json.loads(a) for a in sys.argv[1:])
 centre = bar[1] + bar[3] / 2
 out = []
-for kind in ("IconButton", "Icon"):
+for kind in ("BarItem", "Icon"):
     found = [r for r in rows if r["type"] == kind]
     if len(found) != 1: out.append("%s=%d" % (kind, len(found)))
     for r in found:

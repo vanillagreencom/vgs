@@ -5,7 +5,9 @@ import qs.Ui
 
 // A row of tabs: `model` lists the tab texts and `currentIndex` the open
 // one. The template owns the index, the left and right keys and the click;
-// this file draws each tab and the indicator under the open one.
+// this file draws each tab, its label centred `tabs.paddingX` in from each
+// side, and the indicator under the open one. Hover lifts a closed tab's
+// label, a press fills the tab, and a disabled row fades.
 T.TabBar {
     id: root
 
@@ -14,6 +16,7 @@ T.TabBar {
     implicitWidth: contentItem.implicitWidth
     implicitHeight: Theme.tabs.height
     spacing: Theme.tabs.gap
+    opacity: enabled ? 1 : Theme.opacity.disabled
 
     contentItem: ListView {
         model: root.contentModel
@@ -46,8 +49,8 @@ T.TabBar {
             text: String(modelData)
             implicitWidth: implicitContentWidth + leftPadding + rightPadding
             implicitHeight: Theme.tabs.height
-            leftPadding: Theme.space.xs
-            rightPadding: Theme.space.xs
+            leftPadding: Theme.tabs.paddingX
+            rightPadding: Theme.tabs.paddingX
             hoverEnabled: true
             PointerCursor {}
             Accessible.name: text
@@ -55,12 +58,14 @@ T.TabBar {
             contentItem: Label {
                 role: "button"
                 text: tab.text
-                color: tab.checked || tab.hovered ? Theme.tabs.active : Theme.tabs.foreground
+                color: tab.checked ? Theme.tabs.active : tab.hovered || tab.down ? Theme.tabs.hover : Theme.tabs.foreground
+                horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
             }
 
-            background: Item {
+            background: Rectangle {
+                color: tab.down ? Theme.tabs.pressed : "transparent"
                 Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right

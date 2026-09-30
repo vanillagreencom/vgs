@@ -5,11 +5,15 @@ import qs.Ui
 
 // A push button. `variant` names a group of `Theme.button.variant`:
 // `primary`, `secondary`, `tertiary`, `ghost` or `danger`; `size` names a
-// control height of `Theme.size.control`. An unknown name is logged and
-// drawn as the default. `iconName` draws a Lucide icon before the text.
-// The template supplies press, hover, focus, keyboard activation and the
-// checked state; a checkable button draws `Theme.button.checked` while
-// checked. The fill animates between states on `motion.duration.fast`.
+// control height of `Theme.size.control` and a group of
+// `Theme.button.size`, which holds that size's padding, gap and icon. An
+// unknown name is logged and drawn as the default. `iconName` draws a
+// Lucide icon before the text. The template supplies press, hover, focus,
+// keyboard activation and the checked state; a checkable button draws
+// `Theme.button.checked` while checked, with its own hover and press. The
+// fill animates between states on `motion.duration.fast`. Under a rounded
+// theme the side padding grows until the content clears the drawn corner
+// (Inset.controlPadding).
 T.Button {
     id: root
 
@@ -18,7 +22,8 @@ T.Button {
     property string iconName: ""
     readonly property var tokens: variantOf(variant)
     readonly property int controlHeight: sizeOf(size)
-    readonly property color fill: checked ? Theme.button.checked.background : down ? tokens.pressed : hovered ? tokens.hover : tokens.background
+    readonly property var sizeTokens: Theme.button.size[size] !== undefined ? Theme.button.size[size] : Theme.button.size.md
+    readonly property color fill: checked ? (down ? Theme.button.checked.pressed : hovered ? Theme.button.checked.hover : Theme.button.checked.background) : down ? tokens.pressed : hovered ? tokens.hover : tokens.background
     readonly property color foreground: checked ? Theme.button.checked.foreground : tokens.foreground
 
     function variantOf(name) {
@@ -37,9 +42,9 @@ T.Button {
 
     implicitWidth: implicitContentWidth + leftPadding + rightPadding
     implicitHeight: Math.max(controlHeight, implicitContentHeight + topPadding + bottomPadding)
-    leftPadding: Theme.button.paddingX
-    rightPadding: Theme.button.paddingX
-    spacing: Theme.button.gap
+    leftPadding: Inset.controlPadding(sizeTokens.paddingX, Theme.button.radius, controlHeight, implicitContentHeight, Theme.space.xs)
+    rightPadding: leftPadding
+    spacing: sizeTokens.gap
     hoverEnabled: true
     PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
@@ -50,7 +55,7 @@ T.Button {
         Icon {
             visible: root.iconName !== ""
             name: root.iconName
-            size: Theme.icon.size.sm
+            size: root.sizeTokens.icon
             color: root.foreground
             anchors.verticalCenter: parent.verticalCenter
         }
@@ -71,6 +76,6 @@ T.Button {
         border.width: Theme.button.border
         border.color: root.checked ? Theme.button.checked.border : root.tokens.border
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
-        FocusRing { target: root }
+        FocusRing { target: root; targetRadius: Theme.button.radius }
     }
 }

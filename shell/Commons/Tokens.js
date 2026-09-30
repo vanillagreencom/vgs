@@ -367,6 +367,13 @@ var TOKENS = {
         border: length("{border.thin}"),
         paddingX: length("{control.paddingX}"),
         gap: length("{control.gap}"),
+        // Per size: the side padding, the icon-to-text gap and the icon.
+        // `md` is the button's own `paddingX` and `gap`.
+        size: {
+            sm: { paddingX: length("{control.sm.paddingX}"), gap: length("{control.sm.gap}"), icon: length("{icon.size.sm}") },
+            md: { paddingX: length("{button.paddingX}"), gap: length("{button.gap}"), icon: length("{icon.size.md}") },
+            lg: { paddingX: length("{control.lg.paddingX}"), gap: length("{control.lg.gap}"), icon: length("{icon.size.md}") }
+        },
         variant: {
             primary: variant("button.variant.primary", "{color.accent}", 700, "palette.foreground", "palette.background"),
             secondary: variant("button.variant.secondary", "{color.inverse}", 500, "palette.background", "palette.background"),
@@ -384,6 +391,8 @@ var TOKENS = {
         },
         checked: {
             background: color("{color.accentSubtle}"),
+            hover: color("alpha({palette.accent}, 0.22)"),
+            pressed: color("alpha({palette.accent}, 0.3)"),
             foreground: color("{color.accent}"),
             border: color("{color.accent}")
         }
@@ -399,7 +408,9 @@ var TOKENS = {
         border: color("{color.border}"),
         foreground: color("{color.textMuted}"),
         selected: color("{color.surfaceRaised}"),
-        selectedForeground: color("{color.text}")
+        selectedForeground: color("{color.text}"),
+        hover: color("{color.surfaceHover}"),
+        pressed: color("{color.border}")
     },
 
     toggle: {
@@ -410,6 +421,8 @@ var TOKENS = {
         inset: length("{space.xxs}"),
         radius: length("{radius.full}"),
         on: color("{color.accent}"),
+        onHover: color("{color.accentHover}"),
+        offHover: color("mix({toggle.off}, {palette.foreground}, 0.15)"),
         // The off track: the raised surface's colour moved 46% toward the
         // colour the background contrasts with, then 8% toward black. It
         // holds 3:1 on every resting surface, and in a dark theme it stays
@@ -426,7 +439,10 @@ var TOKENS = {
         border: length("{border.thin}"),
         background: color("{color.surfaceSunken}"),
         borderColor: color("{color.borderControl}"),
+        hoverBorder: color("{color.textFaint}"),
+        pressed: color("{color.surfaceHover}"),
         checked: color("{color.accent}"),
+        checkedHover: color("{color.accentHover}"),
         mark: color("contrast({checkbox.checked})"),
         gap: length("{control.gap}")
     },
@@ -436,7 +452,10 @@ var TOKENS = {
         border: length("{border.thin}"),
         background: color("{color.surfaceSunken}"),
         borderColor: color("{color.borderControl}"),
+        hoverBorder: color("{color.textFaint}"),
+        pressed: color("{color.surfaceHover}"),
         checked: color("{color.accent}"),
+        checkedHover: color("{color.accentHover}"),
         dot: length(6),
         gap: length("{control.gap}")
     },
@@ -588,6 +607,8 @@ var TOKENS = {
         indicator: length("{border.thick}"),
         indicatorColor: color("{color.accent}"),
         foreground: color("{color.textMuted}"),
+        hover: color("mix({color.textMuted}, {color.text}, 0.5)"),
+        pressed: color("{color.surfaceHover}"),
         active: color("{color.text}"),
         border: color("{color.border}")
     },
@@ -602,7 +623,9 @@ var TOKENS = {
         iconGap: length("{space.lg}"),
         radius: length("{radius.sm}"),
         hover: color("{color.surfaceHover}"),
+        pressed: color("{color.border}"),
         selected: color("{color.accentSubtle}"),
+        selectedPressed: color("alpha({palette.accent}, 0.24)"),
         selectedForeground: color("{color.accent}")
     },
 
@@ -645,7 +668,9 @@ var TOKENS = {
         maxHeight: length("mul({menu.item.height}, 9)"),
         typeahead: number(1000, 0, 5000),
         radius: length("{radius.md}"),
-        padding: length("{space.xs}"),
+        // The inset of the entries on every side; the scroll bar sits in
+        // the right one, so the entries never move when they overflow.
+        padding: length("{space.md}"),
         gap: length("{space.xs}"),
         // A menu never grows wider than `maxWidth`, nor wider than its
         // output less `size.window.gutter` a side; a longer entry elides.
@@ -658,6 +683,7 @@ var TOKENS = {
             gap: length("{control.gap}"),
             radius: length("{radius.sm}"),
             hover: color("{color.surfaceHover}"),
+            pressed: color("{color.border}"),
             foreground: color("{color.text}"),
             shortcut: color("{color.textFaint}"),
             check: color("{color.accent}")
@@ -798,14 +824,16 @@ var TOKENS = {
         // One item of the bar, a workspace pill or a widget's BarItem: its
         // height, its horizontal padding, the gap between items of one
         // widget, its icon's size, the gap between that icon and its text,
-        // and its corner.
+        // its corner, and its fills under hover and a press.
         item: {
             height: length("{size.control.sm}"),
             paddingX: length("{space.sm}"),
             icon: length("{icon.size.md}"),
             gap: length("{space.xs}"),
             iconGap: length("{control.gap}"),
-            radius: length("{radius.sm}")
+            radius: length("{radius.sm}"),
+            hover: color("{color.surfaceHover}"),
+            pressed: color("{color.border}")
         }
     }
 };

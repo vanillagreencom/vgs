@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Shapes
 import qs.Commons
 import "../icons/Lucide.js" as Lucide
+import "IconBounds.js" as IconBounds
 
 // One Lucide icon by name, drawn from its path data with the curve
 // renderer. The stroke is `stroke` in absolute pixels whatever the size,
@@ -21,6 +22,19 @@ Item {
     property real stroke: Theme.icon.stroke
     readonly property var paths: pathsOf(name)
     readonly property real factor: size / Lucide.VIEWBOX
+    // The ink's extent in the item, [left, top, right, bottom] in pixels:
+    // the paths' extent (IconBounds.js) held inside the data's box, grown
+    // by half the stroke. A header aligns a glyph by it, since each Lucide
+    // shape sits differently in its box.
+    readonly property var painted: paintedOf(paths)
+
+    function paintedOf(data) {
+        const box = IconBounds.bounds(data[0] + " " + data[1]);
+        if (box === null) return [0, 0, 0, 0];
+        const clamp = value => Math.max(0, Math.min(Lucide.VIEWBOX, value)) * factor;
+        const half = stroke / 2;
+        return [Math.max(0, clamp(box.left) - half), Math.max(0, clamp(box.top) - half), Math.min(size, clamp(box.right) + half), Math.min(size, clamp(box.bottom) + half)];
+    }
 
     function pathsOf(wanted) {
         const found = Lucide.ICONS[wanted];

@@ -29,6 +29,7 @@ Item {
             MenuItem { id: wide; text: "An entry far wider than the menu's minimum width, with a shortcut"; shortcut: "Ctrl+Shift+W" }
         }
         Tooltip { id: tip; text: "hint" }
+        Tooltip { id: longTip; text: "method=unknown path=/home/user/.local/share/vgs/repo is where VGS runs from, and no package manager owns it" }
         Menu { id: long
             Repeater {
                 model: ["Bar", "Gallery", "Launcher", "Notifications", "Settings", "Themes", "Beta", "Clock", "Dock", "Echo", "Files", "Grid", "Help", "Inbox", "Jobs"]
@@ -123,9 +124,18 @@ Item {
             verify(window !== null, "the menu holds a popup window");
             verify(wide.implicitWidth > Theme.menu.minWidth, "the wide entry passes the minimum: " + wide.implicitWidth);
             menu.open();
-            // The window's width is whole pixels.
-            verify(window.width + 1 >= wide.implicitWidth + 2 * Theme.menu.padding, "the window holds the widest entry: " + window.width + " for " + wide.implicitWidth);
-            compare(wide.width, window.width - 2 * Theme.menu.padding - Theme.scrollArea.gutter);
+            // Past `menu.maxWidth` the window stops growing; the entries fill
+            // it less the padding on each side, the scroll bar's strip being
+            // the right padding.
+            verify(wide.implicitWidth + 2 * Theme.menu.padding > Theme.menu.maxWidth, "the wide entry passes the cap: " + wide.implicitWidth);
+            compare(window.width, Theme.menu.maxWidth);
+            compare(wide.width, window.width - 2 * Theme.menu.padding);
+            // The long text elides and the shortcut keeps its trailing column.
+            const title = wide.contentItem.children[1];
+            const hint = wide.contentItem.children[2];
+            compare(title.truncated, true);
+            compare(hint.x + hint.width, wide.contentItem.width);
+            verify(title.x + title.width <= hint.x - wide.spacing, "the text stops before the shortcut column");
             menu.close();
         }
 
@@ -326,6 +336,26 @@ Item {
             select.choose(0);
         }
 
+        // The list opens `menu.padding` left of the control and that much
+        // wider on each side, so an entry's text starts where the field's
+        // does; every entry leaves the right padding for the scroll bar,
+        // overflowing or not.
+        function test_select_list_text_lines_up_with_the_field() {
+            select.openList();
+            const list = selectList(select);
+            tryVerify(() => list.itemAtIndex(0) !== null, 1000, "the list builds its entries");
+            const entry = list.itemAtIndex(0);
+            let popup = null;
+            for (let i = 0; i < select.resources.length; i++)
+                if (select.resources[i].anchor !== undefined) popup = select.resources[i];
+            compare(popup.anchor.margins.left, -Theme.menu.padding);
+            compare(popup.width, select.width + 2 * Theme.menu.padding);
+            compare(list.x, Theme.menu.padding);
+            compare(entry.leftPadding, select.leftPadding);
+            compare(entry.width, list.width - Theme.menu.padding);
+            select.choose(select.currentIndex);
+        }
+
         function test_select_chooses_and_reads_its_role() {
             compare(select.count, 3);
             compare(select.currentText, "one");
@@ -393,6 +423,30 @@ Item {
             compare(select.currentIndex, 1);
             keyClick(Qt.Key_Up);
             compare(select.currentIndex, 0);
+        }
+
+        function tipWindow(owner) {
+            for (let i = 0; i < owner.resources.length; i++)
+                if (owner.resources[i].anchor !== undefined) return owner.resources[i];
+            return null;
+        }
+
+        // A short tip is its text's width; a long one stops at
+        // `tooltip.maxWidth` and wraps inside the padding.
+        function test_tooltip_wraps_past_its_maximum_width() {
+            const short = tipWindow(tip);
+            const long = tipWindow(longTip);
+            const shortLabel = short.contentItem.children[1];
+            const longLabel = long.contentItem.children[1];
+            compare(short.width, Math.ceil(shortLabel.implicitWidth) + 2 * Theme.tooltip.paddingX);
+            compare(long.width, Theme.tooltip.maxWidth + 2 * Theme.tooltip.paddingX);
+            verify(longLabel.lineCount > 1, "the long tip wraps: " + longLabel.lineCount);
+            compare(long.height, longLabel.height + 2 * Theme.tooltip.paddingY);
+            compare(longLabel.x, Theme.tooltip.paddingX);
+            // Under a pill theme with a small pad the text moves in until it
+            // clears the round end.
+            compare(UnitTheme.override({ tooltip: { radius: 4096, paddingX: 2 } }), "ok");
+            tryVerify(() => shortLabel.x > 2, 1000, "the rounded tip's text moved in: " + shortLabel.x);
         }
 
         function test_tooltip_opens_after_the_delay_and_not_under_an_overlay() {

@@ -8,7 +8,10 @@ import qs.Ui
 // toggles it on a click, Space or Enter, and moves `position` under a drag;
 // the knob follows `visualPosition`, so it drags and mirrors, and slides
 // on `motion.duration.fast` when not dragged. The knob colour follows the
-// track it sits on.
+// track it sits on. Hover lightens the track and a press widens the knob.
+// The text draws in `item`; the track centres on its capital centre on a
+// whole pixel, and the control is never shorter than `size.control.sm`,
+// so a compact track keeps a larger input area.
 // Its tokens are `Theme.toggle`, since `switch` is a JavaScript keyword.
 T.Switch {
     id: root
@@ -25,7 +28,7 @@ T.Switch {
 
     // The content's left padding already holds the indicator and the gap.
     implicitWidth: text !== "" ? implicitContentWidth : implicitIndicatorWidth
-    implicitHeight: Math.max(implicitIndicatorHeight, implicitContentHeight)
+    implicitHeight: Math.max(Theme.size.control.sm, implicitIndicatorHeight, implicitContentHeight)
     spacing: Theme.toggle.gap
     hoverEnabled: true
     PointerCursor {}
@@ -35,15 +38,15 @@ T.Switch {
     indicator: Rectangle {
         implicitWidth: root.sizeTokens.width
         implicitHeight: root.sizeTokens.height
-        y: (root.height - height) / 2
+        y: root.text !== "" ? Math.round(root.contentItem.lineTop + root.contentItem.capCentre - height / 2) : Math.round((root.height - height) / 2)
         radius: Theme.toggle.radius
-        color: root.checked ? Theme.toggle.on : Theme.toggle.off
+        color: root.checked ? (root.hovered || root.down ? Theme.toggle.onHover : Theme.toggle.on) : root.hovered || root.down ? Theme.toggle.offHover : Theme.toggle.off
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
 
         Rectangle {
             readonly property int inset: Theme.toggle.inset
-            width: parent.height - 2 * inset
-            height: width
+            width: parent.height - 2 * inset + (root.down ? 2 * inset : 0)
+            height: parent.height - 2 * inset
             y: inset
             x: inset + root.visualPosition * (parent.width - width - 2 * inset)
             radius: Theme.toggle.radius
@@ -51,13 +54,16 @@ T.Switch {
             Behavior on x { enabled: !root.down; NumberAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
         }
 
-        FocusRing { target: root }
+        FocusRing { target: root; targetRadius: Theme.toggle.radius }
     }
 
+    // The label's line box on a whole pixel, centred in the control.
     contentItem: Label {
-        role: "body"
+        readonly property real lineTop: Math.round((root.height - lineBox) / 2)
+        role: "item"
         text: root.text
         leftPadding: root.indicator.width + root.spacing
-        verticalAlignment: Text.AlignVCenter
+        topPadding: lineTop
+        verticalAlignment: Text.AlignTop
     }
 }

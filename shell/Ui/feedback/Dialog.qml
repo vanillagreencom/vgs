@@ -58,9 +58,8 @@ FocusScope {
     }
 
     function screenHeight() {
-        const window = root.Window.window;
-        if (window === null || window === undefined || window.screen === null || window.screen === undefined) return 0;
-        return window.screen.height;
+        const output = OverlayState.outputOf(root);
+        return output === null ? 0 : output.height;
     }
 
     // The action buttons, in order.

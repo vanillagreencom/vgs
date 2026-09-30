@@ -4,8 +4,9 @@ import qs.Commons
 import qs.Ui
 
 // One entry of a Menu: an optional icon, the text, an optional key
-// shortcut hint, and a check mark at the end while `checked` holds, which
-// marks the current choice. The template owns the click, `triggered` and
+// shortcut hint in a trailing column, and a check mark at the end while
+// `checked` holds, which marks the current choice. The text elides when
+// the menu is narrower than the entry, and the shortcut keeps its column. The template owns the click, `triggered` and
 // the hover; the menu sets `highlighted` for the keyboard. `shortcut` is a
 // hint drawn after the text, not a binding; a click never toggles
 // `checked`, which the author binds. The menu hands every entry its
@@ -23,8 +24,11 @@ T.MenuItem {
     width: parent ? parent.width : implicitWidth
     implicitWidth: implicitContentWidth + leftPadding + rightPadding
     implicitHeight: Math.max(Theme.menu.item.height, implicitContentHeight + topPadding + bottomPadding)
-    leftPadding: Theme.menu.item.paddingX
-    rightPadding: Theme.menu.item.paddingX + (checked ? Theme.icon.size.sm + spacing : 0)
+    // Under a rounded theme the side padding grows until the content
+    // clears the drawn corner.
+    readonly property real sidePadding: Inset.controlPadding(Theme.menu.item.paddingX, Theme.menu.item.radius, Math.max(Theme.menu.item.height, height), implicitContentHeight, Theme.space.xs)
+    leftPadding: sidePadding
+    rightPadding: sidePadding + (checked ? Theme.icon.size.sm + spacing : 0)
     spacing: Theme.menu.item.gap
     hoverEnabled: true
     PointerCursor {}
@@ -38,26 +42,37 @@ T.MenuItem {
         onPointed: root.pointed()
     }
 
-    contentItem: Row {
-        spacing: root.spacing
+    contentItem: Item {
+        readonly property real lead: icon.visible ? icon.width + root.spacing : 0
+        readonly property real tail: hint.visible ? hint.implicitWidth + 2 * root.spacing : 0
+        implicitWidth: lead + title.implicitWidth + tail
+        implicitHeight: Math.max(icon.visible ? icon.height : 0, title.implicitHeight, hint.visible ? hint.implicitHeight : 0)
+
         Icon {
+            id: icon
             visible: root.iconName !== ""
             name: root.iconName
-            size: Theme.icon.size.sm
+            size: Theme.icon.size.md
             color: Theme.menu.item.foreground
             anchors.verticalCenter: parent.verticalCenter
         }
         Label {
+            id: title
             role: "item"
             text: root.text
             color: Theme.menu.item.foreground
+            x: parent.lead
+            width: Math.max(0, parent.width - parent.lead - parent.tail)
+            elide: Text.ElideRight
             anchors.verticalCenter: parent.verticalCenter
         }
         Label {
-            role: "hint"
+            id: hint
+            role: "itemHint"
             text: root.shortcut
             visible: root.shortcut !== ""
             color: Theme.menu.item.shortcut
+            x: parent.width - width
             anchors.verticalCenter: parent.verticalCenter
         }
     }
@@ -69,12 +84,12 @@ T.MenuItem {
         visible: root.checked
         size: Theme.icon.size.sm
         color: Theme.menu.item.check
-        x: root.width - Theme.menu.item.paddingX - width
-        y: (root.height - height) / 2
+        x: root.width - root.sidePadding - width
+        y: Math.round((root.height - height) / 2)
     }
 
     background: Rectangle {
         radius: Theme.menu.item.radius
-        color: root.cursor === null && (root.highlighted || root.hovered || root.down) ? Theme.menu.item.hover : "transparent"
+        color: root.cursor !== null ? "transparent" : root.down ? Theme.menu.item.pressed : root.highlighted || root.hovered ? Theme.menu.item.hover : "transparent"
     }
 }

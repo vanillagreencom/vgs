@@ -11,7 +11,12 @@ import qs.Ui
 // inline hint starts under the value column. Width comes from the parent;
 // the label, the control and the hint sit `field.paddingX` in from each
 // side. The default is zero, so a field's unboxed label sits on the
-// container's content edge and its control ends on that edge.
+// container's content edge and its control ends on that edge. An inline
+// label too long for its column wraps to a second line before it elides.
+// `valueX` is where the value column starts, for content that belongs
+// under it. A `compact`
+// inline row is `row.compactHeight` tall, for a read-only value that holds
+// text alone.
 Column {
     id: root
 
@@ -19,11 +24,13 @@ Column {
     property string hint: ""
     property string error: ""
     property bool inline: Theme.field.inline
+    property bool compact: false
     default property alias control: slot.data
     // The width the label, the control's row and the hint share: the
     // column's own, less its padding, since a positioner does not narrow
     // its children.
     readonly property real bodyWidth: width - leftPadding - rightPadding
+    readonly property real valueX: leftPadding + (inline ? Theme.field.labelWidth + Theme.field.labelGap : 0)
 
     leftPadding: Theme.field.paddingX
     rightPadding: Theme.field.paddingX
@@ -40,7 +47,7 @@ Column {
     Row {
         id: controlRow
         width: root.bodyWidth
-        height: root.inline ? Math.max(Theme.row.height, inlineLabel.implicitHeight, slot.childrenRect.height) : slot.childrenRect.height
+        height: root.inline ? Math.max(root.compact ? Theme.row.compactHeight : Theme.row.height, inlineLabel.implicitHeight, slot.childrenRect.height) : slot.childrenRect.height
         spacing: Theme.field.labelGap
 
         Label {
@@ -49,8 +56,10 @@ Column {
             text: root.label
             visible: root.inline
             width: Theme.field.labelWidth
+            wrapMode: Text.Wrap
+            maximumLineCount: 2
             elide: Text.ElideRight
-            y: root.inline ? topForCapCenter(controlRow.height) : 0
+            y: !root.inline ? 0 : lineCount > 1 ? Math.round((controlRow.height - implicitHeight) / 2) : topForCapCenter(controlRow.height)
         }
 
         Item {

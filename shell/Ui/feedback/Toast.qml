@@ -54,16 +54,20 @@ Rectangle {
         width: parent.width - 2 * contentInset.inset
         spacing: Theme.toast.contentGap
 
+        // The icon and the close button centre on the title's first
+        // capital centre, on whole pixels.
         Icon {
             visible: root.iconName !== ""
             name: root.iconName
             size: Theme.icon.size.md
             color: root.tokens.foreground
+            y: Math.round(titleLabel.capCentre - height / 2)
         }
         Column {
             width: parent.width - (parent.children[0].visible ? parent.children[0].width + parent.spacing : 0) - close.width - parent.spacing
             spacing: Theme.space.xxs
             Label {
+                id: titleLabel
                 role: "bodyStrong"
                 text: root.title
                 width: parent.width
@@ -82,6 +86,7 @@ Rectangle {
             iconName: "x"
             label: "Dismiss"
             size: "sm"
+            y: Math.round(titleLabel.capCentre - implicitHeight / 2)
             onClicked: root.dismissed()
         }
     }

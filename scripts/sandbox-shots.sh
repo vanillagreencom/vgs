@@ -418,7 +418,7 @@ scene_settings() { # MODE
   expect_poll "the Settings window holds the keyboard" true ipc smoke activeFocusIn "$settings_kind" vgs.settings
   take "settings-$1-list"
   # The gear draws no text, so it is found by its label.
-  if at="$(centre_of "$(ipc smoke labelledGeometry "$(bar_key)" vgs.settings IconButton Settings)")" && [[ $at != none ]]; then
+  if at="$(centre_of "$(ipc smoke labelledGeometry "$(bar_key)" vgs.settings BarItem Settings)")" && [[ $at != none ]]; then
     read -r x y <<<"$at"
     if hover "$((x - 6))" "$y" && hover "$x" "$y"; then take "settings-$1-gear"; else fail "the hover on the gear failed"; fi
   else

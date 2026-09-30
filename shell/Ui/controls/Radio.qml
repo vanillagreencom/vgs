@@ -11,7 +11,7 @@ T.RadioButton {
 
     // The content's left padding already holds the indicator and the gap.
     implicitWidth: text !== "" ? implicitContentWidth : implicitIndicatorWidth
-    implicitHeight: Math.max(implicitIndicatorHeight, implicitContentHeight)
+    implicitHeight: Math.max(Theme.size.control.sm, implicitIndicatorHeight, implicitContentHeight)
     spacing: Theme.radio.gap
     hoverEnabled: true
     PointerCursor {}
@@ -21,11 +21,11 @@ T.RadioButton {
     indicator: Rectangle {
         implicitWidth: Theme.radio.size
         implicitHeight: Theme.radio.size
-        y: (root.height - height) / 2
+        y: root.text !== "" ? Math.round(root.contentItem.lineTop + root.contentItem.capCentre - height / 2) : Math.round((root.height - height) / 2)
         radius: Theme.radius.full
-        color: Theme.radio.background
+        color: root.down ? Theme.radio.pressed : Theme.radio.background
         border.width: Theme.radio.border
-        border.color: root.checked ? Theme.radio.checked : Theme.radio.borderColor
+        border.color: root.checked ? (root.hovered || root.down ? Theme.radio.checkedHover : Theme.radio.checked) : root.hovered || root.down ? Theme.radio.hoverBorder : Theme.radio.borderColor
 
         Rectangle {
             anchors.centerIn: parent
@@ -36,13 +36,16 @@ T.RadioButton {
             visible: root.checked
         }
 
-        FocusRing { target: root; radius: Theme.radius.full }
+        FocusRing { target: root; targetRadius: Theme.radius.full }
     }
 
+    // The label's line box on a whole pixel, centred in the control.
     contentItem: Label {
-        role: "body"
+        readonly property real lineTop: Math.round((root.height - lineBox) / 2)
+        role: "item"
         text: root.text
         leftPadding: root.indicator.width + root.spacing
-        verticalAlignment: Text.AlignVCenter
+        topPadding: lineTop
+        verticalAlignment: Text.AlignTop
     }
 }

@@ -73,6 +73,29 @@ Item {
             compare(tabs.height, Theme.tabs.height);
         }
 
+        // A tab's label centres `tabs.paddingX` in from each side; hover
+        // lifts a closed tab's label short of the open one's, a press fills
+        // the tab, and a disabled row fades.
+        function test_tabs_centre_and_draw_their_states() {
+            const tab = tabs.itemAt(1);
+            compare(tab.leftPadding, Theme.tabs.paddingX);
+            compare(tab.rightPadding, Theme.tabs.paddingX);
+            compare(tab.contentItem.horizontalAlignment, Text.AlignHCenter);
+            compare(tab.contentItem.x, Theme.tabs.paddingX);
+            compare(tab.contentItem.width, tab.width - 2 * Theme.tabs.paddingX);
+            tabs.currentIndex = 0;
+            mouseMove(tab, tab.width / 2, tab.height / 2);
+            tryCompare(tab.contentItem, "color", Qt.color(Theme.tabs.hover));
+            verify(String(Qt.color(Theme.tabs.hover)) !== String(Qt.color(Theme.tabs.active)), "hover differs from the open tab");
+            mousePress(tab, tab.width / 2, tab.height / 2);
+            tryCompare(tab.background, "color", Qt.color(Theme.tabs.pressed));
+            mouseRelease(tab, tab.width / 2, tab.height / 2);
+            mouseMove(root, root.width - 1, root.height - 1);
+            tabs.enabled = false;
+            compare(tabs.opacity, Theme.opacity.disabled);
+            tabs.enabled = true;
+        }
+
         function test_list_item_highlights_and_clicks() {
             compare(String(row.background.color), "#00000000");
             row.highlighted = true;
