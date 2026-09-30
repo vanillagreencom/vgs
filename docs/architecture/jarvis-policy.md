@@ -38,7 +38,7 @@ The exact read-only argv table belongs to `Tools.js`. Extra options, an absolute
 | `input.key` | J47's `{ request, chord, effective }`. `request` must equal the call's chord. `chord` and every effective Jarvis chord are `{ modifiers, keycode }` records resolved against the live keymap. |
 | `grants` | J19's conversation-local list of application or site scope ids. It is required when the standard input rule needs a grant. A missing list refuses. |
 
-The model produces only the call. It cannot supply this context. Key parsing remains with the core key judge. J47 must then resolve both keysyms and keycodes to the same physical identity. An unresolved key or effective binding refuses. The current skeleton has no keys, and this change adds no parser or input executor.
+The model produces only the call. It cannot supply this context. Key parsing remains with the core key judge. J47 must then resolve both keysyms and keycodes to the same physical identity. An unresolved key or effective binding refuses. Jarvis declares [Talk, Mute and Stop](jarvis-controls.md) through the existing core shortcut capability. The policy adds no key parser or input executor; J47 owns them.
 
 A grant scope is `application:<id>` or `site:<id>`. Standard input without a matching grant returns that scope for J19's user prompt. Another application or site does not inherit it. Cautious input confirms each call. Tainted input requires confirmation even with a grant. A terminal has no grant scope.
 

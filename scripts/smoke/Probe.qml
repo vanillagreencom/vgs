@@ -865,6 +865,10 @@ Scope {
             return JSON.stringify({ pid: process.processId, lifetime: service.lifetime, retries: service.retries,
                 status: service.shell.status.values });
         }
+        function jarvisMuteNotices(title: string, cause: string): int {
+            return Toasts.visible.concat(Toasts.waiting).filter(entry =>
+                entry.pluginId === "vgs.jarvis" && entry.title === title && entry.message.indexOf(cause) !== -1).length;
+        }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
         // Every item under an instance, the instance first, breadth first:
         // its type name as typeName writes it, its box in screen

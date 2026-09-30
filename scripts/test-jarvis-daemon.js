@@ -289,13 +289,59 @@ async function inside() {
     const count = kind => fs.readFileSync(path.join(gates, "effects.jsonl"), "utf8").trim().split("\n")
         .filter(line => JSON.parse(line).kind === kind).length;
     const gate = name => fs.writeFileSync(path.join(gates, name), "");
+    const activeStop = async (file, phase) => conversation(file, async w => {
+        w.send("talk-down");
+        await w.wait(m => m.phase === "listening");
+        w.send("talk-up");
+        await w.wait(m => m.phase === "thinking");
+        if (phase === "speaking") {
+            const starts = count("playback-start");
+            gate("brain");
+            await w.wait(m => m.phase === "speaking" && count("playback-start") === starts + 1);
+        }
+        const effect = phase === "thinking" ? "brain-cancel" : "playback-flush";
+        const before = count(effect);
+        const playback = count("playback-start");
+        w.send("stop");
+        const ended = await w.wait(m => m.state.conversation.kind === "ended" && m.phase === "idle");
+        assert.equal(count(effect), before + 1, "active Stop delivers " + effect);
+        assert.equal(ended.state.capture.kind, "closed");
+        assert.equal(ended.state.playback.kind, "idle");
+        assert.equal(ended.state.brain.kind, "closed");
+        assert.equal(ended.state.turn.kind, "none");
+        gate(phase === "thinking" ? "late-brain" : "late-played");
+        const late = await w.wait(m => m.state.stale > ended.state.stale);
+        assert.equal(late.phase, "idle", "late callback cannot restart the stopped turn");
+        assert.equal(late.state.conversation.kind, "ended");
+        assert.equal(late.state.capture.kind, "closed");
+        assert.equal(late.state.playback.kind, "idle");
+        assert.equal(count("playback-start"), playback);
+    });
+    for (const phase of ["thinking", "speaking"]) await activeStop(scripted, phase);
+    const stopControl = daemonCopy("stop-routing");
+    instrument(stopControl, gates);
+    const dispatch = 'runner.dispatch({ type: message.intent === "mute" ? "mute-toggle" : message.intent });';
+    const stopSource = fs.readFileSync(stopControl, "utf8");
+    assert.equal(stopSource.split(dispatch).length - 1, 1);
+    const misrouted = stopSource.replace(dispatch, 'if (message.intent === "stop") message.intent = "talk-up";\n                    ' + dispatch);
+    assert.notEqual(misrouted, stopSource);
+    fs.writeFileSync(stopControl, misrouted);
+    for (const phase of ["thinking", "speaking"]) {
+        await assert.rejects(() => activeStop(stopControl, phase), assert.AssertionError,
+            "Stop-to-talk-up must fail the same " + phase + " assertion");
+        for (const name of ["brain", "played", "late-brain", "late-played"])
+            fs.rmSync(path.join(gates, name), { force: true });
+        controls++;
+        console.log("test-jarvis-daemon: control=stop-to-talk-up phase=" + phase + " killed");
+    }
+    const initialOpens = count("capture-open");
     await conversation(scripted, async w => {
         w.send("talk-down");
         const listening = await w.wait(m => m.phase === "listening");
-        assert.equal(count("capture-open"), 1);
+        assert.equal(count("capture-open"), initialOpens + 1);
         w.send("talk-down");
         await w.wait(m => m.seq > listening.seq);
-        assert.equal(count("capture-open"), 1, "repeat opens no second scripted capture");
+        assert.equal(count("capture-open"), initialOpens + 1, "repeat opens no second scripted capture");
         w.send("talk-up");
         await w.wait(m => m.phase === "thinking");
         gate("brain");
@@ -311,7 +357,7 @@ async function inside() {
         gate("close");
         await w.wait(m => m.state.mute.kind === "on");
         assert.equal(w.last().state.capture.kind, "closed");
-        assert.equal(count("capture-open"), 2);
+        assert.equal(count("capture-open"), initialOpens + 2);
         fs.unlinkSync(path.join(gates, "hold-close"));
     });
     await conversation(scripted, async w => {

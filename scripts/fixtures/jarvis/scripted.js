@@ -9,7 +9,7 @@ function ports(root) {
     const waiting = new Map();
     let collect = null;
     const record = (kind, values) => fs.appendFileSync(path.join(root, "effects.jsonl"),
-        JSON.stringify({ kind, ...values }) + "\n");
+        JSON.stringify({ ...values, kind }) + "\n");
     const wait = (gate, done) => waiting.set(gate, done);
     const timer = setInterval(() => {
         for (const [gate, done] of waiting) {
@@ -45,15 +45,33 @@ function ports(root) {
         brain: {
             send: (e, done) => {
                 record("brain-send", e);
-                wait("brain", () => { done("play", { interruptible: true }); done("brain-done"); });
+                wait("brain", () => {
+                    record("brain-callback", e);
+                    done("play", { interruptible: true }); done("brain-done");
+                });
             },
-            cancel: (e, done) => { record("brain-cancel", e); waiting.delete("brain"); done(); },
+            cancel: (e, done) => {
+                record("brain-cancel", e);
+                const late = waiting.get("brain");
+                waiting.delete("brain");
+                if (late !== undefined) wait("late-brain", late);
+                done();
+            },
             close: e => { record("brain-close", e); waiting.delete("brain"); },
             outcome: () => { throw new Error("scripted: unexpected-tool"); }
         },
         playback: {
-            start: (e, done) => { record("playback-start", e); wait("played", done); },
-            flush: (e, done) => { record("playback-flush", e); waiting.delete("played"); done(); }
+            start: (e, done) => {
+                record("playback-start", e);
+                wait("played", () => { record("playback-callback", e); done(); });
+            },
+            flush: (e, done) => {
+                record("playback-flush", e);
+                const late = waiting.get("played");
+                waiting.delete("played");
+                if (late !== undefined) wait("late-played", late);
+                done();
+            }
         },
         tools: {
             start: () => { throw new Error("scripted: unexpected-tool"); },

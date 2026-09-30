@@ -8,7 +8,7 @@ import "JarvisProtocol.js" as Protocol
 Item {
     id: root
     property var shell: null
-    property var lifetime: ({ kind: "new" })
+    property var lifetime: ({ kind: "new", pendingMute: "none" })
     property int retries: 0
     property string outputTail: ""
     property string errorTail: ""
@@ -42,7 +42,7 @@ Item {
     }
 
     function start() {
-        lifetime = { kind: "starting" };
+        lifetime = { kind: "starting", pendingMute: lifetime.pendingMute === "none" ? "none" : "waiting" };
         outputTail = "";
         errorTail = "";
         cause = "";
@@ -83,7 +83,27 @@ Item {
     }
 
     function intent(name) {
-        if (shell === null || lifetime.kind !== "ready" || cause !== "" || !child.running) return;
+        if (shell === null || lifetime.kind === "stopped") return;
+        if (name === "mute") {
+            if (lifetime.kind === "problem") {
+                refuseMute(cause);
+                return;
+            }
+            if (lifetime.pendingMute !== "none") return;
+            if (lifetime.kind !== "ready" || sessionState === null || cause !== "" || !child.running) {
+                lifetime = { kind: lifetime.kind, pendingMute: "waiting" };
+                publish("warning", "Mute pending; disabling Jarvis cancels the request");
+                shell.toasts.show({ title: "Jarvis mute pending",
+                    message: "Waiting for daemon; disabling Jarvis cancels this request.",
+                    tone: "warning", icon: "mic" });
+                return;
+            }
+        }
+        if (lifetime.kind !== "ready" || cause !== "" || !child.running) return;
+        sendIntent(name);
+    }
+
+    function sendIntent(name) {
         try {
             const wire = JSON.stringify({ v: 1, type: "intent",
                 gen: sessionState === null ? 0 : sessionState.gen,
@@ -91,6 +111,24 @@ Item {
             Protocol.accept(wire, "shell");
             child.write(wire + "\n");
         } catch (error) { broken(error.message); }
+    }
+
+    function deliverMute() {
+        if (lifetime.kind !== "ready" || lifetime.pendingMute === "none" || sessionState === null) return;
+        // An unavailable daemon has no current toggle state. Pending presses
+        // request mute on; retries must never toggle a restored mute off.
+        if (sessionState.mute.kind === "on") {
+            lifetime = { kind: "ready", pendingMute: "none" };
+        } else if (sessionState.mute.kind === "off" && lifetime.pendingMute === "waiting") {
+            lifetime = { kind: "ready", pendingMute: "sent" };
+            sendIntent("mute");
+        }
+    }
+
+    function refuseMute(reason) {
+        shell.toasts.show({ title: "Jarvis mute not saved",
+            message: "Mute request could not be saved: " + reason.slice(0, 180),
+            tone: "danger", icon: "mic" });
     }
 
     function broken(reason) {
@@ -116,12 +154,13 @@ Item {
                     sessionState = message.state;
                     const result = shell.status.set("detail", { phase: message.phase, seq: message.seq, state: message.state });
                     if (result !== "ok") throw new Error("jarvis: " + result);
+                    deliverMute();
                     continue;
                 }
                 // An earlier snapshot can answer after the observed lock
                 // changed. Wait for the current snapshot's ordered reply.
                 if (message.daemon !== (lockObservation() ? "locked" : "ready")) continue;
-                lifetime = { kind: "ready" };
+                lifetime = { kind: "ready", pendingMute: lifetime.pendingMute };
                 helloDeadline.stop();
                 publish("info", message.daemon === "locked" ? "Locked; no capture" : "Ready; no capture");
             }
@@ -136,7 +175,8 @@ Item {
         if (cause === "") cause = "jarvis: daemon=ended";
         const permanent = completion !== null && completion.status === 0 && completion.code === 78;
         if (permanent || retries === 5) {
-            lifetime = { kind: "problem" };
+            if (lifetime.pendingMute !== "none") refuseMute(cause);
+            lifetime = { kind: "problem", pendingMute: "none" };
             publish("danger", "Problem: " + cause.slice(0, 180));
             shell.toasts.show({ title: "Jarvis daemon stopped", message: cause.slice(0, 180), tone: "danger", icon: "mic" });
             return;
@@ -145,13 +185,13 @@ Item {
         // repeatedly answers then dies cannot restart forever.
         retry.interval = 250 * Math.pow(2, retries);
         retries++;
-        lifetime = { kind: "retry" };
+        lifetime = { kind: "retry", pendingMute: lifetime.pendingMute };
         publish("warning", "Restarting: " + cause.slice(0, 170));
         retry.start();
     }
 
     Component.onDestruction: {
-        lifetime = { kind: "stopped" };
+        lifetime = { kind: "stopped", pendingMute: "none" };
         retry.stop();
         helloDeadline.stop();
         child.stdinEnabled = false;
