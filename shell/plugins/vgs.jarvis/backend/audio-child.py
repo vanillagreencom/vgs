@@ -14,17 +14,16 @@ import sys
 
 def main():
     mode, parent, *command = sys.argv[1:]
-    if mode == "outer":
+    if mode in ("outer", "exec"):
         if os.getppid() != int(parent):
             raise RuntimeError("parent-ended")
+    if mode == "outer":
         os.set_inheritable(3, True)
         os.set_inheritable(4, True)
         os.execvp("unshare", ["unshare", "--map-current-user", "--pid", "--fork",
                              "--kill-child=KILL", "--", sys.executable, "-I",
                              __file__, "init", "0", *command])
     if mode == "exec":
-        if os.getppid() != int(parent):
-            raise RuntimeError("parent-ended")
         os.write(4, b"R")
         os.close(4)
         os.execvp(command[0], command)

@@ -23,7 +23,7 @@ if name == "pw-dump":
              "node.description": "Fixture microphone " + "b" * 35}}} for i in range(32)]
         for _ in range(100):
             print(json.dumps(snapshot), flush=True)
-    elif (home / "no-devices").exists():
+    elif (home / "no-devices").exists() or (home / "lost-before-monitor").exists():
         print("[]")
     elif (home / "huge-devices").exists():
         print('["' + "a" * 1048576 + '"]')
@@ -60,6 +60,9 @@ subprocess.Popen([sys.executable, "-I", __file__, "descendant", lockname],
                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                  start_new_session=True, env=dict(os.environ))
 if name == "pw-record":
+    if (home / "lost-before-monitor-trigger").exists():
+        (home / "lost-before-monitor").touch()
+        sys.exit(1)
     if (home / "capture-exits").exists():
         sys.exit(1)
     if (home / "capture-overflow").exists():
@@ -72,6 +75,8 @@ if name == "pw-record":
     except BrokenPipeError:
         sys.exit(0)
 elif name == "pw-cat":
+    if (home / "playback-exits").exists():
+        sys.exit(1)
     while os.read(0, 4096):
         pass
 elif name == "pw-cli":

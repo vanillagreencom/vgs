@@ -9,6 +9,7 @@ const { once } = require("node:events");
 const PCM_RATE = 24000;
 const BUFFER_BYTES = 64 * 1024;
 const DISCOVERY_BYTES = 1024 * 1024;
+const STREAM_PROPERTIES = JSON.stringify({ "node.dont-fallback": true, "node.dont-reconnect": true });
 
 class Audio {
     constructor({ session, environment, clock, offers, level, fault, captureSink, playbackSource, echo }) {
@@ -31,6 +32,7 @@ class Audio {
         this.discovery = null;
         this.nodes = new Map();
         this.capture = null;
+        this.playback = null;
         this.feed = null;
         this.playbackFeed = null;
         this.lastLevel = -Infinity;
@@ -85,6 +87,7 @@ class Audio {
         owner.closed = closed;
         child.stdio[3].write("S");
         const ready = new Promise((resolve, reject) => {
+            child.stdio[4].once("error", reject);
             child.stdio[4].once("data", data => data.equals(Buffer.from("R"))
                 ? resolve() : reject(new Error("audio-readiness")));
             closed.then(() => reject(new Error("audio-child: " + owner.diagnostic.trim())));
@@ -152,8 +155,9 @@ class Audio {
         });
     }
 
-    snapshot(snapshot) {
+    snapshot(snapshot, mode = "delta") {
         if (!Array.isArray(snapshot) || snapshot.length > 4096) throw new Error("discovery-shape");
+        if (mode === "full") this.nodes.clear();
         for (const node of snapshot) {
             if (!Number.isSafeInteger(node.id)) throw new Error("discovery-id");
             if (node.info === null) this.nodes.delete(node.id);
@@ -187,8 +191,11 @@ class Audio {
         }
         this.devices = devices;
         this.offers(devices);
-        if (this.capture !== null && !devices.microphones.some(item => item.value === this.capture.target))
+        if (this.capture !== null && this.capture.target !== null
+                && !devices.microphones.some(item => item.value === this.capture.target))
             this.failCapture("device-lost", "");
+        if (this.playback !== null && !devices.speakers.some(item => item.value === this.playback.target))
+            this.failPlayback("device-lost");
     }
 
     selected(group, setting) {
@@ -200,35 +207,45 @@ class Audio {
     }
 
     async openCapture(e, done, failed) {
+        let capture = null;
         try {
             await this.release;
             if (!this.allowed("capture")) throw new Error("capture-refused");
+            capture = { kind: "opening", owner: null, e, failed, target: null };
+            this.capture = capture;
             await this.discover();
-            if (!this.allowed("capture")) return;
+            if (!this.allowed("capture") || this.capture !== capture) return;
             const target = this.selected("microphones", "microphone");
+            capture.target = target;
             if (this.captureSink === null) throw new Error("speech-unavailable");
-            this.feed = this.captureSink(e);
-            if (this.feed === null) throw new Error("speech-unavailable");
-            this.feed.on("error", error => this.failCapture("provider-disconnected", error.message));
+            const feed = this.captureSink(e);
+            this.feed = feed;
+            if (feed === null) throw new Error("speech-unavailable");
+            feed.on("error", error => {
+                if (this.capture === capture) this.failCapture("provider-disconnected", error.message);
+            });
             if (this.state.duplex.kind === "echo") {
                 if (this.echo === null) throw new Error("echo-unavailable");
                 const loader = await this.spawn("echo", "pw-cli");
                 loader.child.stdout.resume();
                 loader.child.stdin.write("load-module libpipewire-module-echo-cancel " + this.echo.arguments + "\n");
                 loader.closed.then(() => {
-                    if (!loader.stopping) this.failCapture("echo-exit", loader.diagnostic);
+                    if (this.capture === capture && !loader.stopping) this.failCapture("echo-exit", loader.diagnostic);
                 });
             }
-            if (!this.allowed("capture")) { await this.teardown("capture-refused"); return; }
+            if (!this.allowed("capture") || this.capture !== capture) return;
             const owner = await this.spawn("capture", "pw-record", [
                 "--raw", "--rate", String(PCM_RATE), "--channels", "1", "--format", "s16",
-                "--target", this.state.duplex.kind === "echo" ? this.echo.target : target, "-"
+                "--target", this.state.duplex.kind === "echo" ? this.echo.target : target,
+                "--properties", STREAM_PROPERTIES, "-"
             ]);
-            this.capture = { owner, e, failed, target };
+            if (this.capture !== capture) return;
+            capture.owner = owner;
+            capture.kind = "open";
             let tail = Buffer.alloc(0);
             let opened = false;
             owner.child.stdout.on("data", data => {
-                if (owner.stopping) return;
+                if (owner.stopping || this.capture !== capture) return;
                 const frame = Buffer.concat([tail, data]);
                 tail = frame.subarray(frame.length - frame.length % 2);
                 const pcm = frame.subarray(0, frame.length - frame.length % 2);
@@ -236,27 +253,69 @@ class Audio {
                     opened = true;
                     if (this.allowed("capture")) done();
                 }
-                if (pcm.length > BUFFER_BYTES || this.feed.writableLength + pcm.length > BUFFER_BYTES) {
+                if (pcm.length > BUFFER_BYTES || feed.writableLength + pcm.length > BUFFER_BYTES) {
                     this.failCapture("capture-overflow", "");
                     return;
                 }
-                if (!this.feed.write(pcm)) owner.child.stdout.pause();
+                if (!feed.write(pcm)) owner.child.stdout.pause();
                 this.reportLevel(e.gen, "capture", pcm);
             });
-            this.feed.on("drain", () => { if (!owner.stopping) owner.child.stdout.resume(); });
+            feed.on("drain", () => { if (!owner.stopping) owner.child.stdout.resume(); });
             owner.closed.then(() => {
-                if (!owner.stopping) this.failCapture("capture-exit-" + owner.exit.code, owner.diagnostic);
+                if (this.capture === capture && !owner.stopping) void this.captureExited(capture, owner);
             });
             if (!this.allowed("capture")) await this.teardown("capture-refused");
         } catch (error) {
+            if (capture !== null && this.capture !== capture) return;
+            if (capture !== null) capture.kind = "failed";
             await this.teardown("capture-failed");
             failed(error.message === "device-lost" ? "device-lost" : "audio-start: " + error.message);
         }
     }
 
+    // A stream exit and a node-removal message arrive on separate pipes.
+    // Read a fresh snapshot before deciding whether the selected device was
+    // lost. This one-shot read belongs to the same discovery owner.
+    async captureExited(capture, owner) {
+        await this.teardown("capture-failed");
+        if (!this.session.live(this.state, capture.e, "capture", ["opening", "open"])) return;
+        try {
+            await this.refreshDevices();
+            if (!this.session.live(this.state, capture.e, "capture", ["opening", "open"])) return;
+            capture.failed(this.devices.microphones.some(item => item.value === capture.target)
+                ? "capture-exit-" + (owner.exit.signal || owner.exit.code) : "device-lost");
+        } catch (error) {
+            this.nodes.clear();
+            this.devices = { microphones: [], speakers: [] };
+            this.offers(this.devices);
+            this.fault("device-probe: " + error.message);
+            if (this.session.live(this.state, capture.e, "capture", ["opening", "open"]))
+                capture.failed("device-probe: " + error.message);
+        }
+    }
+
+    async refreshDevices() {
+        const owner = await this.spawn("discovery", "pw-dump");
+        const chunks = [];
+        let bytes = 0, overflow = false;
+        owner.child.stdout.on("data", data => {
+            bytes += data.length;
+            if (bytes > DISCOVERY_BYTES) {
+                overflow = true;
+                void this.teardown("discovery-overflow", ["discovery"]);
+            } else chunks.push(data);
+        });
+        await owner.closed;
+        if (overflow) throw new Error("discovery-overflow");
+        if (owner.stopping) throw new Error("discovery-ended");
+        if (owner.exit.code !== 0) throw new Error("discovery-exit: " + owner.diagnostic.trim());
+        this.snapshot(JSON.parse(Buffer.concat(chunks).toString("utf8")), "full");
+    }
+
     failCapture(reason, diagnostic) {
         const capture = this.capture;
-        if (capture === null || capture.owner.stopping) return;
+        if (capture === null || capture.kind === "failed" || (capture.owner !== null && capture.owner.stopping)) return;
+        capture.kind = "failed";
         void this.teardown(reason).then(() => capture.failed(reason));
         if (diagnostic !== "") this.fault(reason + ": " + diagnostic.slice(0, 200));
     }
@@ -274,20 +333,34 @@ class Audio {
     }
 
     async startPlayback(e, done, failed) {
+        let playback = null;
         try {
             await this.release;
             if (!this.allowed("playback")) throw new Error("playback-refused");
             if (this.playbackSource === null) throw new Error("playback-source-unavailable");
+            const target = this.selected("speakers", "speaker");
             const source = this.playbackSource(e.source);
+            playback = { kind: "starting", e, failed, target };
+            this.playback = playback;
             this.playbackFeed = source;
+            source.on("error", error => {
+                if (this.playback === playback) this.fault("playback-source: " + error.message);
+            });
             const owner = await this.spawn("playback", "pw-cat", [
                 "--playback", "--raw", "--latency", "20ms", "--rate", String(PCM_RATE),
-                "--channels", "1", "--format", "s16", "--target", this.selected("speakers", "speaker"), "-"
+                "--channels", "1", "--format", "s16", "--target", target,
+                "--properties", STREAM_PROPERTIES, "-"
             ]);
             owner.child.stdout.resume();
+            if (this.playback !== playback) return;
             if (!this.allowed("playback")) { await this.teardown("playback-refused"); return; }
+            playback.kind = "feeding";
+            owner.closed.then(() => {
+                if (this.playback === playback && playback.kind === "feeding" && !owner.stopping)
+                    source.destroy(new Error("playback-exit-" + (owner.exit.signal || owner.exit.code)));
+            });
             for await (const frame of source) {
-                if (owner.stopping) return;
+                if (owner.stopping || this.playback !== playback) return;
                 if (!Buffer.isBuffer(frame) || frame.length > BUFFER_BYTES || frame.length % 2 !== 0)
                     throw new Error("playback-frame");
                 if (owner.child.stdin.writableLength + frame.length > BUFFER_BYTES)
@@ -295,20 +368,30 @@ class Audio {
                 if (!owner.child.stdin.write(frame)) {
                     await Promise.race([once(owner.child.stdin, "drain"), owner.closed]);
                     if (owner.stopping) return;
+                    if (owner.exit !== null) throw new Error("playback-exit-" + (owner.exit.signal || owner.exit.code));
                 }
                 this.reportLevel(e.gen, "playback", frame);
             }
+            playback.kind = "draining";
             owner.child.stdin.end();
             await owner.closed;
             if (!owner.stopping) {
-                if (owner.exit.code !== 0) throw new Error("playback-exit");
+                if (owner.exit.code !== 0) throw new Error("playback-exit-" + (owner.exit.signal || owner.exit.code));
                 await this.teardown("playback-complete", ["playback"]);
                 done();
             }
         } catch (error) {
+            if (playback !== null && this.playback !== playback) return;
             await this.teardown("playback-failed");
             failed(error.message);
         }
+    }
+
+    failPlayback(reason) {
+        const playback = this.playback;
+        if (playback === null || playback.kind === "failed") return;
+        playback.kind = "failed";
+        void this.teardown("playback-failed").then(() => playback.failed(reason));
     }
 
     // The only release path. Mark owners before closing pipes so callbacks
@@ -325,6 +408,7 @@ class Audio {
         }
         if (kinds.includes("capture")) {
             this.levels.capture = 0;
+            if (this.capture !== null && this.capture.kind !== "failed") this.capture.kind = "retired";
             this.capture = null;
             if (this.feed !== null) {
                 if (!this.feed.closed) feeds.push(new Promise(resolve => this.feed.once("close", resolve)));
@@ -334,6 +418,8 @@ class Audio {
         }
         if (kinds.includes("playback") && this.playbackFeed) {
             this.levels.playback = 0;
+            if (this.playback !== null && this.playback.kind !== "failed") this.playback.kind = "retired";
+            this.playback = null;
             if (!this.playbackFeed.closed) feeds.push(new Promise(resolve => this.playbackFeed.once("close", resolve)));
             this.playbackFeed.destroy();
             this.playbackFeed = null;

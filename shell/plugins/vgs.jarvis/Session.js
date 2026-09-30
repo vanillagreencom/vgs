@@ -211,6 +211,9 @@ function reduce(state, e) {
     switch (e.type) {
     case "snapshot": {
         var settingsChanged = changedSettings(s.settings, e.settings);
+        var devicesChanged = s.settings.microphone !== e.settings.microphone || s.settings.speaker !== e.settings.speaker;
+        if (devicesChanged && s.fault.kind === "error" && s.fault.reason === "device-lost")
+            s.fault = { kind: "none" };
         if (settingsChanged) {
             var before = s.gen;
             end(s, effects, e.at, "settings", false);

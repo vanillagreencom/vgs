@@ -79,6 +79,22 @@ const table = [
         s = step(logic, active, snapshot({ at: 30, settings: { mode: "toggle" } })).state;
         assert.equal(s.conversation.kind, "ended", "mode change ends capture demand");
     }],
+    ["device-choice-recovery", logic => {
+        let s = listening(logic);
+        for (let attempt = 0; attempt <= 3; attempt++) {
+            s = step(logic, s, callback("capture-failed", s.capture, 50 + attempt, { reason: "device-lost" })).state;
+            s = step(logic, s, callback("capture-closed", s.capture, 60 + attempt)).state;
+        }
+        assert.equal(s.capture.kind, "closed");
+        const changed = step(logic, s, snapshot({ at: 70, settings: { microphone: "replacement", speaker: "" } }));
+        assert.equal(changed.state.fault.kind, "none");
+        assert.equal(changed.state.capture.kind, "opening");
+        assert.equal(changed.state.gen, s.gen, "a device selection does not replace the conversation");
+        assert.equal(changed.state.settings.microphone, "replacement");
+        const provider = { ...s, fault: { kind: "error", reason: "provider-disconnected", retry: 0 } };
+        assert.equal(step(logic, provider, snapshot({ at: 70, settings: { microphone: "replacement", speaker: "" } })).state.fault.reason,
+            "provider-disconnected", "a device choice cannot clear another owner's fault");
+    }],
     ["device-retries", logic => {
         let s = listening(logic);
         for (let attempt = 0; attempt <= 3; attempt++) {
@@ -750,6 +766,8 @@ try {
             's.mute.kind === "off" && (true || s.fault.kind !== "error");', "fault-gate"],
         ["device-retry-limit", 'e.reason === "device-lost" && retry < 3',
             'e.reason === "device-lost" && retry < 4', "device-retries"],
+        ["device-choice-recovery", 'if (devicesChanged && s.fault.kind === "error" && s.fault.reason === "device-lost")',
+            'if (false && devicesChanged && s.fault.kind === "error" && s.fault.reason === "device-lost")', "device-choice-recovery"],
         ["capture-fault", 'reason: e.reason, retry: retry };',
             'reason: "wrong-cause", retry: retry };', "capture-fault"],
         ["playback-fault", 'end(s, effects, e.at, "playback-failed", false);',

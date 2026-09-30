@@ -87,14 +87,52 @@ async function inside() {
     });
     assert.equal(result.status, 70);
     assert.equal(result.stderr.trim(), "jarvis: audio-child=parent-ended");
+    async function wrongParent(file) {
+        const child = cp.spawn("setpriv", ["--pdeathsig", "KILL", "--", "python3", "-I",
+            file, "outer", "99999999", "pw-record"], {
+            env: { PATH: process.env.PATH, HOME: process.env.HOME },
+            stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"]
+        });
+        let error = "";
+        child.stdout.resume();
+        child.stdio[4].resume();
+        child.stderr.on("data", data => { error += data; });
+        child.stdio[3].on("error", e => { if (!["EPIPE", "ECONNRESET"].includes(e.code)) throw e; });
+        const closed = once(child, "close");
+        // Bound a bootstrap that wrongly starts audio instead of refusing.
+        const timeout = setTimeout(() => child.kill("SIGKILL"), 2000);
+        try {
+            child.stdio[3].write("S");
+            const [code, signal] = await closed;
+            assert.equal(signal, null);
+            assert.equal(code, 70);
+            assert.equal(error.trim(), "jarvis: audio-child=parent-ended");
+        } finally {
+            clearTimeout(timeout);
+            child.stdio[3].destroy();
+            child.stdin.destroy();
+            if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        }
+    }
+    await wrongParent(bootstrap);
+    const parentFolder = path.join(process.env.JARVIS_TEST_ROOT, "parent-control");
+    copyBackend(parentFolder);
+    const parentFile = path.join(parentFolder, "audio-child.py");
+    const source = fs.readFileSync(parentFile, "utf8");
+    const parentNeedle = "if os.getppid() != int(parent):";
+    assert.equal(source.split(parentNeedle).length - 1, 1);
+    const changed = source.replace(parentNeedle, "if False and os.getppid() != int(parent):");
+    assert.notEqual(changed, source);
+    fs.writeFileSync(parentFile, changed);
+    await assert.rejects(() => wrongParent(parentFile), assert.AssertionError);
 
     const mutant = daemonCopy("no-pid-namespace", [
         ['"--pid", "--fork",', '"--fork",'],
-        ['mode != "init" or os.getpid() != 1', 'mode != "init"']
+        ['mode != "init" or os.getpid() != 1', 'mode != "init" or (False and os.getpid() != 1)']
     ]);
     // Let the same commands run without the PID boundary. The detached lock
     // survives daemon death, and the unchanged lifetime assertion turns red.
     await assert.rejects(() => run(mutant, "kill"), assert.AssertionError);
-    console.log("test-jarvis-audio-daemon: ok triggers=3 controls=1 startup-race=refused");
+    console.log("test-jarvis-audio-daemon: ok triggers=3 controls=2 startup-race=refused");
 }
 world(inside).catch(error => { console.error(error); process.exitCode = 1; });

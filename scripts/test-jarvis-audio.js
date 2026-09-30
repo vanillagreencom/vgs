@@ -19,7 +19,8 @@ function setup(Implementation = Audio, echo = null, sink = null, source = null) 
         clock: { now: () => at }, offers: value => offers.push(value),
         level: (gen, value) => levels.push({ gen, value, at }),
         fault: value => faults.push(value),
-        captureSink: () => sink || new Writable({ write(frame, encoding, done) { frames++; at += 10; done(); } }),
+        captureSink: e => typeof sink === "function" ? sink(e)
+            : sink || new Writable({ write(frame, encoding, done) { frames++; at += 10; done(); } }),
         playbackSource: () => source || new PassThrough(), echo
     });
     const ports = unavailable();
@@ -86,6 +87,9 @@ async function inside() {
             assert.ok(w.levels[i].at - w.levels[i - 1].at >= 1000 / 30);
         const argv = fs.readFileSync(path.join(process.env.HOME, "audio-argv"), "utf8").trim().split("\n").map(JSON.parse);
         assert.ok(argv.some(row => row.command === "pw-record" && row.argv.includes("fixture.mic")));
+        const record = argv.find(row => row.command === "pw-record");
+        assert.deepEqual(JSON.parse(record.argv[record.argv.indexOf("--properties") + 1]),
+            { "node.dont-fallback": true, "node.dont-reconnect": true });
         for (const row of argv) {
             assert.equal(row.env.VGSH_RUNNER_PID, undefined);
             assert.equal(row.env.OPENAI_API_KEY, undefined);
@@ -123,6 +127,59 @@ async function inside() {
     await failed.audio.close("test-end");
     fs.unlinkSync(path.join(process.env.HOME, "capture-exits"));
 
+    async function startupFailure(Implementation = Audio) {
+        const w = setup(Implementation, null, () => {
+            const sink = new Writable({ write(frame, encoding, done) { done(); } });
+            queueMicrotask(() => sink.destroy(new Error("synthetic provider disconnect")));
+            return sink;
+        });
+        try {
+            w.dispatch("talk-down");
+            await until(() => w.runner.state.fault.kind === "error" && w.runner.state.capture.kind === "closed",
+                "provider loss during startup ends the capture set");
+            assert.equal(w.runner.state.fault.reason, "provider-disconnected");
+            assert.equal([...w.audio.children.values()].filter(owner => owner.kind !== "discovery").length, 0);
+        } finally { w.runner.close(); await w.audio.close("test-end"); }
+    }
+    await startupFailure();
+
+    async function retiredSink(Implementation = Audio) {
+        const sinks = [];
+        const w = setup(Implementation, null, () => {
+            const sink = new Writable({ write(frame, encoding, done) { done(); } });
+            sinks.push(sink);
+            return sink;
+        });
+        try {
+            await capture(w);
+            w.dispatch("talk-up");
+            await until(() => w.runner.state.capture.kind === "closed", "first capture exits");
+            await capture(w);
+            const before = w.runner.state.capture.op;
+            sinks[0].emit("error", new Error("late retired provider callback"));
+            await w.audio.release;
+            assert.equal(w.runner.state.capture.kind, "open");
+            assert.equal(w.runner.state.capture.op, before);
+            assert.equal(w.runner.state.fault.kind, "none");
+        } finally { w.runner.close(); await w.audio.close("test-end"); }
+    }
+    await retiredSink();
+
+    fs.writeFileSync(path.join(process.env.HOME, "lost-before-monitor-trigger"), "");
+    const earlyLoss = setup();
+    try {
+        earlyLoss.dispatch("talk-down");
+        await until(() => earlyLoss.runner.state.fault.kind === "error" && earlyLoss.runner.state.capture.kind === "closed",
+            "a stream exit before monitor removal still gets three device retries");
+        assert.equal(earlyLoss.runner.state.fault.reason, "device-lost");
+        assert.equal(earlyLoss.runner.state.fault.retry, 3);
+    } finally {
+        earlyLoss.runner.close();
+        await earlyLoss.audio.close("test-end");
+        for (const name of ["lost-before-monitor-trigger", "lost-before-monitor"])
+            fs.rmSync(path.join(process.env.HOME, name), { force: true });
+    }
+
     async function playback(Implementation = Audio) {
         const source = new PassThrough();
         const w = setup(Implementation, null, null, source);
@@ -149,9 +206,42 @@ async function inside() {
             const calls = fs.readFileSync(path.join(process.env.HOME, "audio-argv"), "utf8").trim().split("\n").map(JSON.parse);
             assert.ok(calls.some(row => row.command === "pw-cat" && row.argv.includes("fixture.speaker")
                 && row.argv.includes("20ms") && row.argv.includes("24000")));
+            const cat = calls.filter(row => row.command === "pw-cat").at(-1);
+            assert.deepEqual(JSON.parse(cat.argv[cat.argv.indexOf("--properties") + 1]),
+                { "node.dont-fallback": true, "node.dont-reconnect": true });
         } finally { w.runner.close(); await w.audio.close("test-end"); }
     }
     await playback();
+
+    async function playbackExit(Implementation = Audio) {
+        fs.writeFileSync(path.join(process.env.HOME, "playback-exits"), "");
+        const source = new PassThrough();
+        const w = setup(Implementation, null, null, source);
+        try {
+            await capture(w);
+            w.dispatch("final", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op, text: "fixture" });
+            await until(() => w.runner.state.capture.kind === "closed", "capture closes before speech");
+            w.dispatch("play", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op, interruptible: true });
+            source.write(Buffer.alloc(480));
+            try {
+                await until(() => w.runner.state.fault.kind === "error" && w.runner.state.playback.kind === "idle",
+                    "an exited player ends a provider feed that stays open");
+            } catch (error) {
+                assert.fail(error.message + " state=" + JSON.stringify(w.runner.state) + " children=" +
+                    JSON.stringify([...w.audio.children.values()].map(owner => ({ kind: owner.kind, exit: owner.exit }))) +
+                    " feed=" + JSON.stringify({ closed: source.closed, destroyed: source.destroyed }) +
+                    " faults=" + JSON.stringify(w.faults));
+            }
+            assert.equal(w.runner.state.fault.reason, "playback-exit-1");
+            assert.equal(source.destroyed, true);
+            assert.equal(unlocked(), true);
+        } finally {
+            w.runner.close();
+            await w.audio.close("test-end");
+            fs.unlinkSync(path.join(process.env.HOME, "playback-exits"));
+        }
+    }
+    await playbackExit();
 
     async function overflow(Implementation = Audio) {
         const sink = new Writable({ highWaterMark: 1048576, write() {} });
@@ -252,8 +342,8 @@ async function inside() {
             assert.equal(lines.at(-1).env.OPENAI_API_KEY, undefined);
         } finally { w.runner.close(); await w.audio.close("test-end"); }
     });
-    await control("capture-bound", "pcm.length > BUFFER_BYTES || this.feed.writableLength + pcm.length > BUFFER_BYTES",
-        "false && (pcm.length > BUFFER_BYTES || this.feed.writableLength + pcm.length > BUFFER_BYTES)", overflow);
+    await control("capture-bound", "pcm.length > BUFFER_BYTES || feed.writableLength + pcm.length > BUFFER_BYTES",
+        "false && (pcm.length > BUFFER_BYTES || feed.writableLength + pcm.length > BUFFER_BYTES)", overflow);
     await control("discovery-bound", "const DISCOVERY_BYTES = 1024 * 1024;",
         "const DISCOVERY_BYTES = 2 * 1024 * 1024;", discoveryOverflow);
     await control("playback-release", 'kinds.includes("playback") && this.playbackFeed',
@@ -270,6 +360,14 @@ async function inside() {
         try { await assert.rejects(w.audio.discover(), { message: "audio-start-refused" }); }
         finally { await w.audio.close("test-end"); }
     });
+    await control("startup-provider", 'if (this.capture === capture) this.failCapture("provider-disconnected", error.message);',
+        'if (false && this.capture === capture) this.failCapture("provider-disconnected", error.message);', startupFailure);
+    await control("retired-provider", 'if (this.capture === capture) this.failCapture("provider-disconnected", error.message);',
+        'if (true || this.capture === capture) this.failCapture("provider-disconnected", error.message);', retiredSink);
+    await control("player-exit", 'source.destroy(new Error("playback-exit-" + (owner.exit.signal || owner.exit.code)));',
+        'if (false) source.destroy(new Error("playback-exit-" + (owner.exit.signal || owner.exit.code)));', playbackExit);
+    await control("device-fallback", '"node.dont-fallback": true', '"node.dont-fallback": false', playback);
+    await control("device-reconnect", '"node.dont-reconnect": true', '"node.dont-reconnect": false', playback);
     console.log("test-jarvis-audio: ok triggers=6 controls=" + controls);
 }
 
