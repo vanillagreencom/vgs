@@ -2615,7 +2615,7 @@ async function wallpapersLand(format, configDir, stage, lock, name, mode) {
 // is, as apply's enablement decides (render.detected, render.setupDone). A
 // shipped target.json the judge refuses refuses the report, since its
 // setup is then unknown. The vgs.themes Settings page reads the JSON form
-// and offers each `absent` step as a button (D059).
+// and offers each `absent` step as a button (D061).
 function setups(format) {
     const base = path.join(SHIPPED, TARGETS);
     const names = childDirs(base);

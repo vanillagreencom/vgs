@@ -7,7 +7,7 @@ import qs.Ui
 // icons drawn inside the field; `actions` holds buttons drawn after the
 // trailing icon, such as a clear or a submit button; `error` colours the
 // outline with the error colour; `password` masks what is typed, for a
-// secret the shell stores (D059), and Qt then keeps it off the clipboard. The template owns the text, the cursor,
+// secret the shell stores (D061), and Qt then keeps it off the clipboard. The template owns the text, the cursor,
 // the selection, `validator` and `acceptableInput`; the outline follows
 // hover, focus and error, in that order of precedence reversed, and the
 // focus ring of a field in error draws in the error colour, so the cue

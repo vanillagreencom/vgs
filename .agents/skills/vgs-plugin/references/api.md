@@ -170,7 +170,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `VoiceOrb` | `Item` | decorative `tone` (`accent`, `info`, `success`, `warning`, `danger`, `muted`), `level`, `secondaryLevel` (bounded shares), `active`; [`docs/architecture/components-media.md` § VoiceOrb](../../../../docs/architecture/components-media.md#voiceorb) |
 | `Badge`, `Kbd` | `Rectangle` | `text`, `iconName`, `tone` (`neutral`, `accent`, `success`, `warning`, `danger`, `info`); `text` |
 | `CodeLine` | `Rectangle` | `text`, a command or path, wrapped whole; `copyLabel`, the Copy button's label; `copy()`, `copied()`, `confirming` while the button shows its check mark |
-| `CommandDisclosure` | `Column` | `command`; `expanded`; `copyLabel`: the "Show command" disclosure of a step's command, beside the button that runs the step, never alone (D059) |
+| `CommandDisclosure` | `Column` | `command`; `expanded`; `copyLabel`: the "Show command" disclosure of a step's command, beside the button that runs the step, never alone (D061) |
 | `ScrollArea` | `Flickable` | its children; `overflowing`, and `bar`, the embedded bar, which a gutter keeps clear of the content |
 | `Pane` | `Item` | one inset box for a container: `header`, body children and `footer`; `container` (`window`, `dialog`, `popover`, `panel`); `padding`, `cornerRadius`, `gap`, `bodySpacing` for a plugin that owns its look; `fitToContent`, `maximumHeight` |
 | `SlimScrollBar` | `Item` | a slim bar beside a plugin's own `Flickable`, for a plugin that owns its look: `flickable` and every look value it draws with; the caller places it and sets its width |

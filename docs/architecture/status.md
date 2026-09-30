@@ -2,7 +2,7 @@
 
 Covers: shell/Core/PluginStatus.qml, shell/plugins/vgs.settings/StatusRow.qml, shell/plugins/vgs.settings/StatusLine.qml, shell/plugins/vgs.notifications/token-status.sh, scripts/smoke/rows/status.sh, scripts/smoke/fixtures/plugins/acme.status/**, scripts/test-plugin-status.js, scripts/test-notifications-token-status.sh
 
-The runtime values a plugin publishes for its own instances and for its Settings page: a pending count, whether a check runs, whether a credential is stored. A plugin declares each value in its manifest, one instance writes it through the `status` capability, the core holds one record per plugin, and every instance of the plugin and the Settings window read that record. [D037](../decisions/D037-plugin-status.md) records the choice and refines [D032](../decisions/D032-settings-plugin-and-manifest-settings-convention.md); [D046](../decisions/D046-slack-tokens-per-workspace-and-one-card-per-message.md) adds the `presenceList` type, and [D059](../decisions/D059-no-manual-commands.md) the actions and secrets that make a setup step one click.
+The runtime values a plugin publishes for its own instances and for its Settings page: a pending count, whether a check runs, whether a credential is stored. A plugin declares each value in its manifest, one instance writes it through the `status` capability, the core holds one record per plugin, and every instance of the plugin and the Settings window read that record. [D037](../decisions/D037-plugin-status.md) records the choice and refines [D032](../decisions/D032-settings-plugin-and-manifest-settings-convention.md); [D046](../decisions/D046-slack-tokens-per-workspace-and-one-card-per-message.md) adds the `presenceList` type, and [D061](../decisions/D061-no-manual-commands.md) the actions and secrets that make a setup step one click.
 
 ## Declared
 
@@ -80,4 +80,4 @@ A string schema entry's `optionsFrom` names a `choices` status key of the same p
 
 ## Decisions
 
-[D037](../decisions/D037-plugin-status.md), [D059](../decisions/D059-no-manual-commands.md), [D046](../decisions/D046-slack-tokens-per-workspace-and-one-card-per-message.md), [D032](../decisions/D032-settings-plugin-and-manifest-settings-convention.md), [D012](../decisions/D012-core-owns-lent-objects.md).
+[D037](../decisions/D037-plugin-status.md), [D061](../decisions/D061-no-manual-commands.md), [D046](../decisions/D046-slack-tokens-per-workspace-and-one-card-per-message.md), [D032](../decisions/D032-settings-plugin-and-manifest-settings-convention.md), [D012](../decisions/D012-core-owns-lent-objects.md).

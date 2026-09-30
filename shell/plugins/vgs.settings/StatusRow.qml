@@ -12,7 +12,7 @@ import qs.Ui
 // detected" while the list is empty, then one line per item: the item's
 // label beside a Badge of its presence, its hint, Connect or Disconnect for
 // an item that is a secret's presence, and its command. No row takes an
-// edit of a value: a step goes to the manager through `panel` (D059).
+// edit of a value: a step goes to the manager through `panel` (D061).
 Column {
     id: row
 

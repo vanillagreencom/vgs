@@ -17,4 +17,4 @@ The one-click setup steps a plugin's status entries offer on its Settings page, 
 
 ## Decisions
 
-[D059](../decisions/D059-no-manual-commands.md), [D037](../decisions/D037-plugin-status.md), [D033](../decisions/D033-floating-tuis-are-core.md), [D035](../decisions/D035-manifest-requirements.md).
+[D061](../decisions/D061-no-manual-commands.md), [D037](../decisions/D037-plugin-status.md), [D033](../decisions/D033-floating-tuis-are-core.md), [D035](../decisions/D035-manifest-requirements.md).

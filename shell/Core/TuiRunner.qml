@@ -73,7 +73,7 @@ Scope {
     }
 
     // runFor: plugin ID's own declared script NAME, with no arguments and no
-    // `done`, for the `manager` capability's act on a status action (D059):
+    // `done`, for the `manager` capability's act on a status action (D061):
     // judged as the plugin's own run, so a disabled plugin's or an
     // undeclared script is refused. Answers `ok` when the request starts
     // the TUI or focuses its live window, as PluginLogic.tuiShownAnswer

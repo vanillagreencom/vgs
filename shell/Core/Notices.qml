@@ -179,7 +179,7 @@ Singleton {
     }
 
     // The `manager` capability's act on a status action that installs
-    // plugin ID's own COMMANDS (D059), a press on the Settings page: the
+    // plugin ID's own COMMANDS (D061), a press on the Settings page: the
     // user chose them, so no offer's rest holds it back. The plugin's value
     // said they were missing at the last scan, so no new scan waits first;
     // commands that scan found answer

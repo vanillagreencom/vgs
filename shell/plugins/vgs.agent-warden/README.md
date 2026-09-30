@@ -15,7 +15,7 @@ The plugin's Settings page and its panel offer each setup step as a button, show
 1. **Install vsys** raises the shell's install notice for the vsys package, which installs it in a floating terminal. The panel names it Get vsys.
 2. **Set up** opens a floating terminal that writes the warden's systemd user units and starts its timer. It asks for no password.
 
-Beside each button, Show command reveals the command it runs, for a system with no vsys package ([D059](../../../docs/decisions/D059-no-manual-commands.md)).
+Beside each button, Show command reveals the command it runs, for a system with no vsys package ([D061](../../../docs/decisions/D061-no-manual-commands.md)).
 
 ## The shield
 

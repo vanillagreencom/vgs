@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "PluginLogic.js" as Logic
 
-// Owns every libsecret write the core makes for a plugin (D059): one
+// Owns every libsecret write the core makes for a plugin (D061): one
 // `secret-tool store` or `secret-tool clear` at a time, from the argv
 // PluginLogic.secretRequest builds for the `manager` capability's
 // storeSecret and clearSecret. A store hands the secret to secret-tool on

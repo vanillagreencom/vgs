@@ -3,7 +3,7 @@ import qs.Commons
 import qs.Ui
 
 // One read-only line of a Status row: `label` beside its value, `hint`
-// under it, then the line's one-click setup step (D059), and last the
+// under it, then the line's one-click setup step (D061), and last the
 // `command` behind it, in a CommandDisclosure the reader opens to copy it
 // and the page never runs. The value is a Badge reading `text` in `tone`;
 // with `tone` "", `text` as one line of text, in the itemHint role while
