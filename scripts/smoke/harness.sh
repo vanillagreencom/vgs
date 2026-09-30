@@ -1453,6 +1453,31 @@ core_words() { # KEY TITLE APP_ID ARGS...
   words "--app-id=$app" "--title=VGS · $title" -- "$tui_self" present --presentation full \
     --record "$key" --run RUN --record-dir "$rt_dir/vgs/tui" --app-id "$app" --window-title "VGS · $title" -- "$core_vgsh" "$@"
 }
+# The agent warden's runtime dir and vsys's own status fixtures, which
+# rows/agent-warden.sh and scripts/sandbox-shots.sh write from.
+warden_dir="$rt_dir/agent-warden"
+warden_fixtures="$repo/scripts/smoke/fixtures/agent-warden"
+# warden_put NAME AGE [KIND]: status-NAME.json with its time and every
+# event's set AGE seconds before now, and every event's kind set to KIND
+# when given, replaced into place by rename; prints the time.
+warden_put() {
+  python3 - "$warden_fixtures/status-$1.json" "$warden_dir" "$2" "${3:-}" <<'PY'
+import json, os, sys, time
+source, target, age, kind = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+doc = json.load(open(source))
+moment = int(time.time()) - age
+doc["time"] = moment
+for event in doc["events"]:
+    event["time"] = moment
+    if kind:
+        event["kind"] = kind
+tmp = os.path.join(target, "status.tmp.%d" % os.getpid())
+with open(tmp, "w") as out:
+    json.dump(doc, out)
+os.replace(tmp, os.path.join(target, "status.json"))
+print(moment)
+PY
+}
 # The requirement notice the core shows as [plugin, commands, required,
 # installing], or null.
 notice_shown() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else [s["plugin"], s["commands"], s["required"], s["installing"]]))'; }

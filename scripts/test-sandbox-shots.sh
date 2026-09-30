@@ -288,8 +288,9 @@ window_controls=(
 run_controls "$window_helper" window_cases window_controls
 
 # The scene choice of scripts/sandbox-shots.sh, before any sandbox starts:
-# a tree ships either the Settings plugin or the bar's manager built-in, and
-# a scene the tree does not ship is refused with exit 2. A scratch git
+# a tree ships either the Settings plugin or the bar's manager built-in, a
+# plugin scene needs its plugins' manifests, and a scene the tree does not
+# ship is refused with exit 2. A scratch git
 # repository holds the script, a link to the smoke directory, a revision
 # with the bar's manager and a later one with vgs.settings, so --rev reads
 # an older tree. A scene the tree ships passes the choice and reaches the
@@ -330,10 +331,11 @@ scene_cases=(
   "scale 2 is taken" 77 "qml-smoke: status=not-measured" --scale 2 settings
   "a theme card that is no catalog name is refused" 2 "sandbox-shots: refused: theme-card=../x" --theme-card ../x settings
   "a theme card the catalog lacks is refused" 2 "sandbox-shots: refused: theme-card=nosuch tree=checkout" --theme-card nosuch theme-browser
+  "a checkout without the Dev Tools plugin refuses the devtools scene" 2 "sandbox-shots: refused: scene=devtools tree=checkout" devtools
 )
 # Each case is label, status, line, then its arguments up to the next case,
 # counted by the arguments each row above carries.
-scene_arity=(1 3 3 1 3 3 3 3)
+scene_arity=(1 3 3 1 3 3 3 3 1)
 # Where each case starts in scene_cases and how many arguments it takes, by
 # label, for the controls below.
 declare -A scene_at scene_argc
@@ -352,8 +354,14 @@ done
 # them, or fails for another reason, leaves the control red.
 shots_controls=(
   "an unshipped scene is not refused"
-  "if [[ (\$scene == settings || \$scene == manager) && \$scene != \"\$manager_scene\" ]]; then" "if false; then"
+  "  if ! scene_ships \"\$scene\"; then" "  if false; then"
   "a checkout with the Settings plugin refuses the manager scene"
+  "the manager's scene is not read"
+  "    settings|manager) [[ \$1 == \"\$manager_scene\" ]] ;;" "    settings|manager) true ;;"
+  "a checkout with the Settings plugin refuses the manager scene"
+  "a scene's plugin is not looked for"
+  "[[ -f \$tree/shell/plugins/\$id/manifest.json ]] || return 1" "true || return 1"
+  "a checkout without the Dev Tools plugin refuses the devtools scene"
   "a refused scale goes on to the harness"
   "refused: scale=%s\\n' \"\$scale\" >&2; exit 2; }" "refused: scale=%s\\n' \"\$scale\" >&2; }"
   "a scale other than 1 or 2 is refused"

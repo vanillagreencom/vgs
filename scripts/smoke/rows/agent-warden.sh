@@ -42,31 +42,8 @@
 # The harness starts the plugin disabled; the row ends with it disabled,
 # its runtime files gone and no stub on PATH.
 set -euo pipefail
-warden_dir="$rt_dir/agent-warden"
-warden_fixtures="$repo/scripts/smoke/fixtures/agent-warden"
 warden_copy="$home/.config/vgs/plugins/vgs.agent-warden"
 rm -rf -- "$warden_dir"
-# warden_put NAME AGE [KIND]: status-NAME.json with its time and every
-# event's set AGE seconds before now, and every event's kind set to KIND
-# when given, replaced into place by rename; prints the time.
-warden_put() {
-  python3 - "$warden_fixtures/status-$1.json" "$warden_dir" "$2" "${3:-}" <<'PY'
-import json, os, sys, time
-source, target, age, kind = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
-doc = json.load(open(source))
-moment = int(time.time()) - age
-doc["time"] = moment
-for event in doc["events"]:
-    event["time"] = moment
-    if kind:
-        event["kind"] = kind
-tmp = os.path.join(target, "status.tmp.%d" % os.getpid())
-with open(tmp, "w") as out:
-    json.dump(doc, out)
-os.replace(tmp, os.path.join(target, "status.json"))
-print(moment)
-PY
-}
 # warden_raw TEXT: TEXT as status.json, replaced into place by rename.
 warden_raw() { printf '%s' "$1" >"$warden_dir/status.tmp.raw" && mv -T -- "$warden_dir/status.tmp.raw" "$warden_dir/status.json"; }
 warden_values() { ipc vgs.agent-warden invoke status ''; }

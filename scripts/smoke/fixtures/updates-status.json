@@ -1,0 +1,23 @@
+{
+  "checkedAt": 0,
+  "error": null,
+  "sources": [
+    { "source": "pacman", "count": 3, "checkedAt": 0, "error": null, "packages": [
+      { "name": "linux", "old": "6.16.8.arch1-1", "new": "6.16.9.arch1-1" },
+      { "name": "mesa", "old": "1:25.2.3-1", "new": "1:25.2.4-1" },
+      { "name": "hyprland", "old": "0.56.1-1", "new": "0.56.2-1" }
+    ] },
+    { "source": "aur", "count": 1, "checkedAt": 0, "error": null, "packages": [
+      { "name": "vsys-bin", "old": "0.9.0-1", "new": "0.9.1-1" }
+    ] },
+    { "source": "flatpak", "count": 0, "checkedAt": 0, "error": null, "packages": [] },
+    { "source": "mise", "count": 1, "checkedAt": 0, "error": null, "packages": [
+      { "name": "node", "old": "22.19.0", "new": "22.20.0" }
+    ] },
+    { "source": "vgs", "count": 1, "checkedAt": 0, "error": null, "packages": [
+      { "name": "vgs", "old": "95f5c27", "new": "a1b2c3d", "behind": 3 }
+    ] },
+    { "source": "plugins", "count": 0, "checkedAt": 0, "error": null, "packages": [] },
+    { "source": "themes", "count": 0, "checkedAt": 0, "error": null, "packages": [] }
+  ]
+}

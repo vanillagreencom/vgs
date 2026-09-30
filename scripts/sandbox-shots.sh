@@ -13,13 +13,20 @@
 # or started on the live desktop. It needs the smoke's prerequisites,
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
-# SCENE is gallery, settings, manager, launcher, notifications,
-# theme-browser or wallpaper-browser. The
-# default is gallery, the plugin manager's scene, the launcher and the
-# notifications, or gallery and the manager's scene with --rev; the
-# manager's scene is `settings` for a tree that ships vgs.settings and
-# `manager`, the bar's manager panel, for one that ships the bar's manager
-# built-in. A scene the tree does not ship is refused as
+# SCENE is gallery, settings, manager, launcher, notifications, bar,
+# panels, devtools, dialog, narrow, theme-browser or wallpaper-browser. bar
+# is the bar with every first-party widget but the themes' and each
+# widget's tooltip; panels is the Agent Warden panel and the updates
+# flyout, each opened from its widget over planted status; devtools is the
+# Dev Tools window; dialog is the core's requirement notice; narrow holds a
+# monitor 480 by 720 logical pixels and takes the bar, panels, devtools,
+# dialog, launcher, notifications and the first gallery pages again, each
+# shot named <scene>-<mode>-narrow-*; theme-browser and wallpaper-browser
+# are the vgs.themes browsers, taken only when named. The default is every
+# other scene the tree ships, or gallery and the manager's scene with
+# --rev; the manager's scene is `settings` for a tree that ships
+# vgs.settings and `manager`, the bar's manager panel, for one that ships
+# the bar's manager built-in. A scene the tree does not ship is refused as
 # `sandbox-shots: refused: scene=<scene> tree=<rev or checkout>`. --modes is a comma list of dark
 # and light, dark by default with --rev and both otherwise: dark is the
 # defaults (theme `vgs`), light is this checkout's themes/light package.
@@ -89,7 +96,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|settings|manager|launcher|notifications|theme-browser|wallpaper-browser) scenes+=("$1"); shift ;;
+    gallery|settings|manager|launcher|notifications|bar|panels|devtools|dialog|narrow|theme-browser|wallpaper-browser) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -136,13 +143,35 @@ manager_scene=""
 if [[ -f $tree/shell/plugins/vgs.settings/manifest.json ]]; then manager_scene=settings
 elif [[ -f $tree/shell/plugins/vgs.bar/Manager.qml ]]; then manager_scene=manager
 fi
+# scene_ships SCENE: whether the tree ships what SCENE draws. The dialog is
+# the core's notice, raised for the checkout's acme.needs fixture.
+ships_plugin() { local id; for id; do [[ -f $tree/shell/plugins/$id/manifest.json ]] || return 1; done; }
+scene_ships() {
+  case $1 in
+    settings|manager) [[ $1 == "$manager_scene" ]] ;;
+    gallery) ships_plugin vgs.gallery ;;
+    launcher|notifications) ships_plugin "vgs.$1" ;;
+    bar) ships_plugin vgs.bar vgs.launcher vgs.agent-warden vgs.updates ;;
+    panels) ships_plugin vgs.agent-warden vgs.updates ;;
+    devtools) ships_plugin vgs.devtools ;;
+    theme-browser|wallpaper-browser) ships_plugin vgs.themes ;;
+    dialog) [[ -f $tree/shell/Hosts/NoticeHost.qml ]] ;;
+    narrow) scene_ships bar && scene_ships panels && scene_ships devtools && scene_ships dialog && scene_ships launcher && scene_ships notifications && scene_ships gallery ;;
+    *) printf 'sandbox-shots: refused: scene=%s reason=unknown\n' "$1" >&2; exit 2 ;;
+  esac
+}
 if [[ ${#scenes[@]} -eq 0 ]]; then
-  scenes=(gallery)
-  [[ -z $manager_scene ]] || scenes+=("$manager_scene")
-  [[ -n $rev ]] || scenes+=(launcher notifications)
+  if [[ -n $rev ]]; then
+    scenes=(gallery)
+    [[ -z $manager_scene ]] || scenes+=("$manager_scene")
+  else
+    for scene in gallery settings launcher notifications bar panels devtools dialog narrow; do
+      if scene_ships "$scene"; then scenes+=("$scene"); fi
+    done
+  fi
 fi
 for scene in "${scenes[@]}"; do
-  if [[ ($scene == settings || $scene == manager) && $scene != "$manager_scene" ]]; then
+  if ! scene_ships "$scene"; then
     printf 'sandbox-shots: refused: scene=%s tree=%s\n' "$scene" "${rev:-checkout}" >&2
     exit 2
   fi
@@ -222,6 +251,7 @@ fi
 # The monitor's logical size, the layout coordinates the pointer helper
 # takes, and the space the bar reserves at its top.
 read -r mon_w mon_h bar_reserved < <(hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]), round(m["height"] / m["scale"]), m["reserved"][1])')
+run_w="$mon_w" run_h="$mon_h"
 
 undrawn=0
 # hold_left: what the output reads in place of the held mode.
@@ -263,6 +293,29 @@ hover_on() {
   ok "$label"
 }
 park_pointer() { hover "$((mon_w - 2))" "$((mon_h - 2))" || fail "parking the pointer failed"; }
+# narrow_begin: the nested output holds a mode 480 by 720 logical pixels at
+# the run's scale, and the pointer helpers take that size, until
+# narrow_end gives the run's mode back. At scale 2 the run's mode is the
+# one the harness held before the shell started, since the monitor may
+# read a reset one by now; at scale 1 it is the monitor's own mode.
+narrow_main_mode=""
+narrow_begin() {
+  if [[ $scale == 2 ]]; then
+    narrow_main_mode="$shell_output_mode"
+  else
+    narrow_main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
+  fi
+  [[ $scale == 1 ]] || release_mode "the run's scale-2 hold ends for the narrow monitor" "$main_name" "$narrow_main_mode" "$scale"
+  hold_mode "the monitor is made narrower than the window" "$main_name" "$((480 * scale))x$((720 * scale))" "$scale"
+  expect_poll "the monitor is 480 logical pixels wide" 480 first_width
+  mon_w=480 mon_h=720
+}
+narrow_end() {
+  release_mode "the run's mode is restored" "$main_name" "$narrow_main_mode" "$scale"
+  [[ $scale == 1 ]] || hold_mode "the monitor holds its scale-2 mode again" "$main_name" "$narrow_main_mode" "$scale"
+  expect_poll "the monitor has its width back" "$run_w" first_width
+  mon_w="$run_w" mon_h="$run_h"
+}
 
 theme_file="$home/.config/vgs/theme.json"
 set_mode() { # dark|light
@@ -276,13 +329,15 @@ set_mode() { # dark|light
 }
 
 # One shot per page of the gallery's scrolling list, a page's height less
-# 40 px apart so each page repeats the last lines of the one before.
+# 40 px apart so each page repeats the last lines of the one before, up to
+# gallery_pages pages.
+gallery_pages=12
 scene_gallery() { # MODE
   local page=1 y=0 at cy ch h
   expect "the gallery summons" ok ipc shell summon "$gallery_kind" vgs.gallery '{}'
   expect_poll "the gallery maps its surface" 1 surface_count "$gallery_surface"
   expect_poll "the gallery draws every component" '[]' ipc smoke galleryMissing "$gallery_kind" vgs.gallery
-  while (( page <= 12 )); do
+  while (( page <= gallery_pages )); do
     at="$(ipc smoke scrollTo "$gallery_kind" vgs.gallery "$y")" || at=""
     if [[ $at != "["* ]]; then fail "the gallery did not scroll: ${at:-no reply}"; break; fi
     read -r cy ch h < <(python3 -c 'import json,sys; print(*(int(v) for v in json.loads(sys.argv[1])))' "$at")
@@ -351,9 +406,9 @@ print(0 if most <= 0 or travel <= 0 else round((max(0, min(want, most)) - a["con
 # Whether every status row of the notifications' page is reported.
 notifications_reported() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"]; print(len(r) == 1 and len(r[0]["status"]) > 0 and all(s["report"] == "reported" for s in r[0]["status"]))'; }
 # The Settings window: the list opened from the gear, the pointer on the
-# gear; a plugin page with many grouped settings at its top and dragged
-# down its scroll bar; a plugin with keys; the title's menu open with its
-# scroll bar under the pointer; the notifications' page scrolled to its
+# gear; a plugin page with many grouped settings at its top, dragged down
+# its scroll bar, and with its Mode select open; a plugin with keys; the
+# title's menu open with its scroll bar under the pointer; the notifications' page scrolled to its
 # Slack token rows, over two shots when they are taller than the page; and
 # the list and a page on a monitor narrower than the window's width token.
 scene_settings() { # MODE
@@ -373,6 +428,7 @@ scene_settings() { # MODE
   expect "the window opens the probe's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin acme.probe
   expect_poll "the probe's page is shown" '"acme.probe"' settings_page
   take "settings-$1-page"
+  park_pointer
   if area="$(settings_scroll)" && [[ $area == \{* ]]; then
     read -r tx ty < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")")
     drag "$tx" "$ty" "$tx" "$((ty + 120))" || fail "the drag on the page's thumb failed"
@@ -380,6 +436,23 @@ scene_settings() { # MODE
     take "settings-$1-page-scrolled"
   else
     fail "the probe's page scroll area is unreadable: ${area:-}"
+  fi
+  park_pointer
+  # The probe's Mode select, scrolled into view and opened by a click on
+  # its chevron end: the inline row's right 40 px, one row height tall.
+  local field
+  if field="$(ipc smoke windowGeometry "$settings_kind" vgs.settings SettingField Mode)" && [[ $field == \[* ]] \
+    && area="$(settings_scroll)" && [[ $area == \{* ]] \
+    && settings_scroll_to "$(python3 -c 'import json,sys; f, a = json.loads(sys.argv[1]), json.loads(sys.argv[2]); print(int(f[1] - a["bar"][1] + a["contentY"]) - 60)' "$field" "$area")" \
+    && field="$(ipc smoke windowGeometry "$settings_kind" vgs.settings SettingField Mode)" && [[ $field == \[* ]] \
+    && read -r x y < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); h=json.loads(sys.argv[2]); print(json.dumps([r[0] + r[2] - 40, r[1], 40, h]))' "$field" "$(ipc smoke themeValue row.height)")") \
+    && hover "$((x - 1))" "$y" && click "$x" "$y"; then
+    expect_poll "the Mode select opens its list" true ipc smoke readShownDescendant "$settings_kind" vgs.settings Select listOpen
+    take "settings-$1-select"
+    type_keys -k Escape || fail "sending Escape to the Mode select failed"
+    expect_poll "the Mode select closes its list" false ipc smoke readShownDescendant "$settings_kind" vgs.settings Select listOpen
+  else
+    fail "the probe's Mode field is unreadable: ${field:-}"
   fi
   park_pointer
   expect "the window opens the launcher's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
@@ -441,21 +514,9 @@ scene_settings() { # MODE
     fail "the notifications' Slack section is unreadable: $section"
   fi
   settings_close
-  # The monitor made narrower than the window: the nested output holds a
-  # mode 480 by 720 logical pixels at the run's scale for the shot, then
-  # the run's mode again. The gear opens the window on its bar's monitor,
-  # the list first and then a page. At scale 2 the run's mode is the one
-  # the harness held before the shell started, since the monitor may read
-  # a reset one by now; at scale 1 it is the monitor's own mode.
-  local main_mode narrow_mode="$((480 * scale))x$((720 * scale))"
-  if [[ $scale == 2 ]]; then
-    main_mode="$shell_output_mode"
-  else
-    main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
-  fi
-  [[ $scale == 1 ]] || release_mode "the run's scale-2 hold ends for the narrow monitor" "$main_name" "$main_mode" "$scale"
-  hold_mode "the monitor is made narrower than the window" "$main_name" "$narrow_mode" "$scale"
-  expect_poll "the monitor is 480 logical pixels wide" 480 first_width
+  # The monitor made narrower than the window (narrow_begin): the gear
+  # opens the window on its bar's monitor, the list first and then a page.
+  narrow_begin
   expect "the gear opens the window on the narrow monitor" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
   expect_poll "the narrow window maps" 1 settings_count
   take "settings-$1-narrow-list"
@@ -463,9 +524,7 @@ scene_settings() { # MODE
   expect_poll "the probe's page is shown on the narrow monitor" '"acme.probe"' settings_page
   take "settings-$1-narrow-page"
   settings_close
-  release_mode "the run's mode is restored" "$main_name" "$main_mode" "$scale"
-  [[ $scale == 1 ]] || hold_mode "the monitor holds its scale-2 mode again" "$main_name" "$main_mode" "$scale"
-  expect_poll "the monitor has its width back" "$mon_w" first_width
+  narrow_end
 }
 
 scene_theme-browser() { # MODE
@@ -684,8 +743,195 @@ scene_notifications() { # MODE
   expect_poll "no toast is left" 0 on_screen
 }
 
+# hover_widget LABEL ID: the pointer on the centre of bar widget ID,
+# arriving by two motions.
+hover_widget() {
+  local at x y
+  at="$(centre_of "$(ipc smoke instanceGeometry "$(bar_key)" "$2")")" || at=none
+  if [[ $at == none ]]; then fail "$1: widget $2 has no box"; return 1; fi
+  read -r x y <<<"$at"
+  if ! hover "$((x - 6))" "$y" || ! hover "$x" "$y"; then fail "$1: the hover failed"; return 1; fi
+}
+tooltip_opened() { ipc smoke readDescendant "$(bar_key)" "$1" Tooltip opened; }
+warden_detail_state() { ipc vgs.agent-warden invoke status '' | python3 -c 'import json,sys; d=json.load(sys.stdin).get("detail"); print(d["state"] if d else "unpublished")'; }
+# warden_status NAME STATE: the warden's status-NAME.json written fresh,
+# read back as STATE, so a surface never shows the status gone stale.
+warden_status() {
+  warden_put "$1" 0 >/dev/null || fail "writing the warden's $1 status failed"
+  expect_poll "the warden reads its $1 status as $2" "$2" warden_detail_state
+}
+# The pointer on each bar widget: the tooltip of each widget that declares
+# one, open, and the hover of the launcher's, which declares none; then
+# the bar at rest, which a run that starts with this scene has drawn since
+# before its first shot.
+scene_bar() { # MODE
+  local id
+  warden_status calm calm
+  for id in vgs.agent-warden vgs.updates; do
+    hover_widget "the pointer rests on $id" "$id" || continue
+    expect_poll "the $id tooltip opens" true tooltip_opened "$id"
+    take "bar-$1-tip-${id#vgs.}"
+    park_pointer
+    expect_poll "the $id tooltip closes" false tooltip_opened "$id"
+  done
+  hover_widget "the pointer rests on the launcher's widget" vgs.launcher && take "bar-$1-hover-launcher"
+  park_pointer
+  take "bar-$1"
+}
+
+# The Agent Warden panel opened from its shield over a calm status and then
+# a problem one, and the updates flyout opened from its widget over the
+# planted snapshot, with its System row expanded and then the pointer on
+# a row. Nothing presses Refresh, so no check runs.
+warden_panel_texts() { ipc smoke itemTexts panel vgs.agent-warden Panel; }
+warden_panel_lines() { warden_panel_texts | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(t != "absent" and sys.argv[1] in json.loads(t)[0])' "$shots_vsys_line"; }
+updates_flyout() { [[ $(ipc smoke readInstance panel vgs.updates rows) != absent ]] && echo open || echo closed; }
+updates_pending() { ipc vgs.updates invoke status '' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pending"))'; }
+updates_checking() { ipc vgs.updates invoke status '' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("checking"))'; }
+scene_panels() { # MODE
+  warden_status calm calm
+  click_centre "$(bar_key)" vgs.agent-warden || fail "the click on the shield failed"
+  expect_poll "the shield opens the warden's panel" True warden_panel_lines
+  park_pointer
+  take "panels-$1-warden-calm"
+  warden_status holding-off problem
+  take "panels-$1-warden-problem"
+  hover_on "the pointer rests on the panel's Open vsys" panel vgs.agent-warden Button "Open vsys" && take "panels-$1-warden-hover"
+  park_pointer
+  expect "the warden's panel hides" ok ipc shell hide panel vgs.agent-warden
+  expect_poll "the warden's panel is gone" False warden_panel_lines
+  warden_status calm calm
+  click_centre "$(bar_key)" vgs.updates || fail "the click on the updates widget failed"
+  expect_poll "the widget opens the updates flyout" open updates_flyout
+  park_pointer
+  take "panels-$1-updates"
+  click_item panel vgs.updates ListItem System || fail "the click on the flyout's System row failed"
+  park_pointer
+  take "panels-$1-updates-open"
+  hover_on "the pointer rests on the flyout's VGS row" panel vgs.updates ListItem VGS && take "panels-$1-updates-hover"
+  park_pointer
+  expect "the updates flyout hides" ok ipc shell hide panel vgs.updates
+  expect_poll "the updates flyout is gone" closed updates_flyout
+  expect "the flyout started no check" False updates_checking
+}
+
+# The Dev Tools window: its top, the pointer on an Install button, and one
+# shot per page down its list, at most four.
+devtools_shown() { [[ $(ipc smoke instanceGeometry window vgs.devtools) != absent ]] && echo shown || echo hidden; }
+devtools_sections() { ipc smoke itemTexts window vgs.devtools SectionHeader | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(t.startswith("[") and len(json.loads(t)) > 1)'; }
+scene_devtools() { # MODE
+  local page=1 y=0 at cy ch h
+  expect "the Dev Tools window summons" ok ipc vgs.devtools invoke open ''
+  expect_poll "the Dev Tools window is shown" shown devtools_shown
+  expect_poll "the Dev Tools window draws its sections" True devtools_sections
+  park_pointer
+  take "devtools-$1-top"
+  hover_on "the pointer rests on an Install button" window vgs.devtools Button Install && take "devtools-$1-hover"
+  park_pointer
+  while (( page <= 4 )); do
+    at="$(ipc smoke scrollTo window vgs.devtools "$y")" || at=""
+    if [[ $at != "["* ]]; then fail "the Dev Tools window did not scroll: ${at:-no reply}"; break; fi
+    read -r cy ch h < <(python3 -c 'import json,sys; print(*(int(v) for v in json.loads(sys.argv[1])))' "$at")
+    (( page == 1 )) || take "devtools-$1-p$page"
+    (( cy + h < ch )) || break
+    y=$(( cy + h - 40 )); page=$(( page + 1 ))
+  done
+  expect "the Dev Tools window hides" ok ipc shell hide window vgs.devtools
+  expect_poll "the Dev Tools window is gone" hidden devtools_shown
+}
+
+# The core's requirement notice, raised by enabling the acme.needs
+# fixture, which misses a command it needs; Escape closes it, and the
+# fixture is disabled again so the next mode raises it anew.
+notice_plugin() { notice_shown | python3 -c 'import json,sys; s=json.load(sys.stdin); print(json.dumps(s[0] if s else None))'; }
+scene_dialog() { # MODE
+  expect "enabling acme.needs is allowed" ok ipc shell setPluginEnabled acme.needs true
+  expect_poll "the notice shows for acme.needs" '"acme.needs"' notice_plugin
+  expect_poll "the notice maps its surface" 1 layer_count vgs:notice
+  park_pointer
+  take "dialog-$1"
+  type_keys -k Escape || fail "sending Escape to the notice failed"
+  expect_poll "Escape closes the notice" 0 layer_count vgs:notice
+  expect "disabling acme.needs is allowed" ok ipc shell setPluginEnabled acme.needs false
+}
+
+# Every surface class again on a monitor 480 by 720 logical pixels.
+scene_narrow() { # MODE
+  narrow_begin
+  gallery_pages=2
+  scene_bar "$1-narrow"
+  scene_panels "$1-narrow"
+  scene_devtools "$1-narrow"
+  scene_dialog "$1-narrow"
+  scene_launcher "$1-narrow"
+  scene_notifications "$1-narrow"
+  scene_gallery "$1-narrow"
+  gallery_pages=12
+  narrow_end
+}
+
+# The setup each scene needs, once each, in the order the scenes first
+# need them: the bar draws the launcher's and the panels' widgets, and the
+# narrow pass takes every other scene's surfaces again.
+setups=()
+need_setup() { local s; for s in "${setups[@]}"; do [[ $s == "$1" ]] && return 0; done; setups+=("$1"); }
 for scene in "${scenes[@]}"; do
   case $scene in
+    bar) need_setup launcher; need_setup panels; need_setup bar ;;
+    narrow) for s in launcher panels bar devtools dialog notifications gallery; do need_setup "$s"; done ;;
+    *) need_setup "$scene" ;;
+  esac
+done
+# What vsys's summary reads as in the warden's panel: one warning, as
+# rows/agent-warden.sh's stand-in answers.
+shots_vsys_line='vsys sees one thing worth a look on this computer.'
+for scene in "${setups[@]}"; do
+  case $scene in
+    gallery|manager|theme-browser|wallpaper-browser) ;;
+    bar)
+      # The gear, the Settings plugin's widget.
+      expect "enabling vgs.settings is allowed" ok ipc shell setPluginEnabled vgs.settings true
+      expect_poll "vgs.settings is built" True record_exists vgs.settings ;;
+    panels)
+      # The warden reads a fresh status from its runtime dir, with a vsys
+      # whose summary names one warning and a notify-send that sends
+      # nothing; the updates service reads the planted snapshot, checked
+      # now, so no check runs while it is younger than the interval.
+      printf '#!/usr/bin/env bash\nexit 0\n' >"$shim/notify-send"
+      cat >"$shim/vsys" <<'SH'
+#!/usr/bin/env bash
+[[ "$*" == "--once --summary" ]] || exit 0
+printf '%s\n' '{"schema": "vsys.summary.v1", "time": 1, "verdict": [{"cause": "memory-high", "level": "warn", "subject": "/agents.slice"}], "meters": [], "errors": []}'
+SH
+      chmod 755 "$shim/notify-send" "$shim/vsys"
+      mkdir -p -- "$warden_dir" "$home/.local/state/vgs/updates"
+      warden_put calm 0 >/dev/null || fail "writing the warden's calm status failed"
+      python3 - "$checkout/scripts/smoke/fixtures/updates-status.json" "$home/.local/state/vgs/updates/status.json" <<'PY2' || fail "planting the updates snapshot failed"
+import json, sys, time
+doc = json.load(open(sys.argv[1]))
+now = int(time.time() * 1000)
+doc["checkedAt"] = now
+for source in doc["sources"]:
+    source["checkedAt"] = now
+json.dump(doc, open(sys.argv[2], "w"))
+PY2
+      expect "the panels' stand-ins are scanned" ok ipc shell rescanPlugins
+      for id in vgs.agent-warden vgs.updates; do
+        expect "enabling $id is allowed" ok ipc shell setPluginEnabled "$id" true
+        expect_poll "$id is built" True record_exists "$id"
+      done
+      expect_poll "the updates service reads the planted snapshot" 6 updates_pending
+      expect "the updates service runs no check" False updates_checking ;;
+    devtools)
+      devtools_stand_ins
+      expect "the Dev Tools stand-ins are scanned" ok ipc shell rescanPlugins
+      expect "enabling vgs.devtools is allowed" ok ipc shell setPluginEnabled vgs.devtools true
+      expect_poll "vgs.devtools is built" True record_exists vgs.devtools ;;
+    dialog)
+      mkdir -p "$home/.config/vgs/plugins/acme.needs"
+      cp -R -- "$fixtures/acme.needs/." "$home/.config/vgs/plugins/acme.needs/"
+      expect "the needs fixture is scanned" ok ipc shell rescanPlugins
+      expect_poll "the needs fixture is listed" True plugin_known acme.needs ;;
     launcher|notifications)
       # The notifications read the synthetic Slack's workspace list once,
       # when they start, beside a stub libsecret that holds no token: the
