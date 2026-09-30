@@ -51,4 +51,4 @@ One line per decision record that shapes the architecture; the full log with dat
 - [D056](../decisions/D056-read-only-session-state.md): plugins read session lock state through a shared capability without lock authority. Refines D012.
 - [D057](../decisions/D057-setting-options-from-status.md): string settings take options from their plugin's choices status and keep unavailable configured ids. Refines D032 and D037.
 - [D058](../decisions/D058-layer-input-union.md): passive layers take pointer input on the union of their `inputItems`; `LayerHost` shares the core notice surface's mask mechanism. Refines D026.
-- [D059](../decisions/D059-passive-voice-orb.md): `VoiceOrb` is a generic passive ring in `qs.Ui`; its tokens and gated driver own the visual, and labelled actions stay outside it. Refines D015 and D026.
+- [D060](../decisions/D060-passive-voice-orb.md): `VoiceOrb` is a generic passive ring in `qs.Ui`; its tokens and gated driver own the visual, and labelled actions stay outside it. Refines D015 and D026.

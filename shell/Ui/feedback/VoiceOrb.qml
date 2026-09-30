@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Window
 import qs.Commons
 
-// A passive voice-level ring. D059 keeps actions outside this decoration.
+// A passive voice-level ring. D060 keeps actions outside this decoration.
 // Item.visible includes hidden ancestors; Window covers an unmapped host.
 Item {
     id: root

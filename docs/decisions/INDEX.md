@@ -61,7 +61,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D056 | VGS-617 | Plugins read session lock state without receiving lock authority | One owner, shared readers, immutable providers, no polling | A reader must observe a lock another process owns | Active | [Full](D056-read-only-session-state.md) |
 | 2026-09-30 | D057 | VGS-616 | String settings take runtime options from their plugin's status | One discovery owner; publication keeps unavailable configured ids | Multiple selected values or discovery beyond the bounded list | Active | [Full](D057-setting-options-from-status.md) |
 | 2026-09-30 | D058 | VGS-619 | Passive layers take input on the union of their items | Shared notice mask keeps gaps available to applications below | A layer needs non-rectangular input or items outside its tree | Active | [Full](D058-layer-input-union.md) |
-| 2026-09-30 | D059 | [Jarvis plan §10](../plans/v2-jarvis-plan.md#10-decisions-to-record) | A generic passive voice ring belongs to qs.Ui | Shared tokens and animation lifetime; actions stay outside the decoration | An interactive visual is needed or GPU readings change the mechanism | Active | [Full](D059-passive-voice-orb.md) |
+| 2026-09-30 | D060 | [Jarvis plan §10](../plans/v2-jarvis-plan.md#10-decisions-to-record) | A generic passive voice ring belongs to qs.Ui | Shared tokens and animation lifetime; actions stay outside the decoration | An interactive visual is needed or GPU readings change the mechanism | Active | [Full](D060-passive-voice-orb.md) |
 
 ---
 

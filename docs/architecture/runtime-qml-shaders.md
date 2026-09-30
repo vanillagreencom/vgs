@@ -24,4 +24,4 @@ The Qt facts the passive shader component rests on. Its component contract is in
 
 ## Decisions
 
-- A generic passive visual belongs to `qs.Ui`: [D059](../decisions/D059-passive-voice-orb.md).
+- A generic passive visual belongs to `qs.Ui`: [D060](../decisions/D060-passive-voice-orb.md).

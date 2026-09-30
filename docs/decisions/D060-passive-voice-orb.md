@@ -1,4 +1,4 @@
-# D059: VoiceOrb is a generic passive visual in qs.Ui
+# D060: VoiceOrb is a generic passive visual in qs.Ui
 
 [← Decision Index](INDEX.md)
 

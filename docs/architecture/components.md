@@ -34,7 +34,7 @@ What each component of `qs.Ui` guarantees. The tokens they draw from and the lay
 
 ## VoiceOrb
 
-`VoiceOrb` is a decorative ring with fine concentric arcs, not a control ([D059](../decisions/D059-passive-voice-orb.md)). Its `tone` names a colour in `voiceOrb.tone`; an unknown tone logs its name and draws accent. `level` and `secondaryLevel` are shares from 0 to 1, bounded before they reach the shader; a nonfinite input becomes 0. `active` defaults false. The caller owns voice state and maps it to a tone. The component opens no audio device, creates no window, and takes no pointer input or keyboard focus.
+`VoiceOrb` is a decorative ring with fine concentric arcs, not a control ([D060](../decisions/D060-passive-voice-orb.md)). Its `tone` names a colour in `voiceOrb.tone`; an unknown tone logs its name and draws accent. `level` and `secondaryLevel` are shares from 0 to 1, bounded before they reach the shader; a nonfinite input becomes 0. `active` defaults false. The caller owns voice state and maps it to a tone. The component opens no audio device, creates no window, and takes no pointer input or keyboard focus.
 
 The `voiceOrb` group owns its size, line geometry, amplitude, arc coverage, colours and timings. The fragment shader draws one ring from the primary level and concentric arcs from the secondary level. The active driver smooths both levels with attack and release timings. It runs only while the item and its ancestors are visible, its host window is visible and not minimized, `active` holds, `motion.scale` is above 0 and its period is above 0. A stopped driver holds its phase; levels and tone still update without a tick. A theme change rebuilds no component.
 
