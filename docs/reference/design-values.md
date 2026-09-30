@@ -1,6 +1,6 @@
 # Design reference values
 
-The rule of the reference stylesheet each typography role and each component's spacing is read from, and where the shell departs from it. The stylesheet is plugins.omarchy.org `assets/css/style.css?v=20260923-01`, fetched with curl on 2026-09-27. The rules these values follow are [design-system.md § Text stack](../architecture/design-system.md#text-stack) and [§ Component spacing](../architecture/design-system.md#component-spacing).
+The rule of the reference stylesheet each typography role and each component's spacing is read from, and where the shell departs from it. The stylesheet is plugins.omarchy.org `assets/css/style.css?v=20260923-01`, fetched with curl on 2026-09-27. The rules these values follow are [design-system.md § Text stack](../architecture/design-system.md#text-stack) and [design-layout.md § Component spacing](../architecture/design-layout.md#component-spacing).
 
 ## Text roles
 

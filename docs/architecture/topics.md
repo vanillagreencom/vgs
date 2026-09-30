@@ -19,6 +19,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the Settings window.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
+- [design-layout.md](design-layout.md): read before touching a container's inset, the corner-clearing rule, a component's spacing or the notification media tiers.
 - [components.md](components.md): read before adding or changing a component of `qs.Ui`.
 - [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
 - [theme-apply.md](theme-apply.md) and [theme-reload.md](theme-reload.md): read before touching the apply, a reload hook or `vgsh theme reload`.

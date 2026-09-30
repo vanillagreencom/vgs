@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.notifications/NotificationCard.qml, shell/plugins/vgs.notifications/MediaSlot.qml
 
-Where a notification card's text and media sit. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees, and [design-system.md](design-system.md) § Component spacing holds the corner-clearing rule and the media tiers.
+Where a notification card's text and media sit. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees, and [design-layout.md § Component spacing](design-layout.md#component-spacing) holds the corner-clearing rule and the media tiers.
 
 A card keeps `card.pad` above and below its content. A card without media starts its text on the stack's one text column: the inset that keeps the text's corners one clearance step inside the rounded ends of the tallest card, `card.maxHeight`. The inbox header's title starts on the same column, so it lines up with a card's text. Every text ends on that column at the right.
 
