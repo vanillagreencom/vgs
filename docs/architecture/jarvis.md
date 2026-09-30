@@ -2,7 +2,7 @@
 
 Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
 
-The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health. This skeleton captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice.
+The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health. This skeleton captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
 
 ## Local speech inputs
 
@@ -44,7 +44,7 @@ Both endpoints frame chunks before retaining an unfinished line. QML uses `Split
 
 ## Boundaries still owned by later rows
 
-J13 owns audio process lifetime, forced daemon death ending its children, and capture refusal during lock, mute or unknown lock state. J16 owns the mapped indicator handshake. This skeleton has no audio or indicator implementation. The region state, modes, policy, engines, accounts and user interfaces stay with their assigned issues.
+J13 owns audio process lifetime, forced daemon death ending its children, and capture refusal during lock, mute or unknown lock state. J16 owns the mapped indicator handshake. This skeleton has no audio or indicator implementation. The region state, modes, engines, accounts and user interfaces stay with their assigned issues. [The action policy](jarvis-policy.md) names the separate routing, approval, audit, release and confinement owners.
 
 ## Evidence
 

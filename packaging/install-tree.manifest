@@ -186,6 +186,9 @@ f share/vgs/shell/plugins/vgs.gallery/sample-emoji.png
 f share/vgs/shell/plugins/vgs.jarvis/JarvisProtocol.js
 f share/vgs/shell/plugins/vgs.jarvis/Service.qml
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
+f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Policy.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/jarvisd.js
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/PROVENANCE
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/probe.txt

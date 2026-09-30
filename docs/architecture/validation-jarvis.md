@@ -1,6 +1,6 @@
 # Jarvis test environment
 
-Covers: scripts/lib/jarvis-env.sh, scripts/test-jarvis-env.js, scripts/fixtures/jarvis-env/
+Covers: scripts/lib/jarvis-env.sh, scripts/test-jarvis-env.js, scripts/fixtures/jarvis-env/, scripts/test-jarvis-tools.js, scripts/test-jarvis-denied.js, scripts/test-jarvis-policy.js, scripts/fixtures/jarvis/policy.js
 
 The shared test world implements the isolation boundary in [the Jarvis plan § Testing strategy](../plans/v2-jarvis-plan.md#9-testing-strategy). It contains no installed runtime code. The [Jarvis service](jarvis.md) and its tests consume this owner. [Validation](validation.md) owns row selection.
 
@@ -29,6 +29,7 @@ The independent local-model consumer and its actual-model row are in [Jarvis loc
 
 ## Evidence
 
+- The [action policy suites](jarvis-policy.md#evidence) use the same world for typed calls, real scratch paths and the complete profile matrix. Their mutants never open the developer's files or run an executor. The shared policy fixture gives every child an explicit environment.
 - `scripts/test-jarvis-env.js` uses Node's strict assertion library. It exercises the real helper, services and child processes. It tests stand-in removal, environment scrubbing, private directories, host-tool selection, loopback traffic, outbound refusal, both buses, disabled service activation, private tmux, absent audio endpoints, child teardown and exit status propagation.
 - Scratch cases prove the default location, an explicit parent, a parent alias, a path with spaces, empty/file refusals and a refused allocated symlink. Controls change the selected parent, accept an empty setting or symlink, and leak the launcher setting to the child.
 - The socket-refusal control removes the pathname bound. A harness control changes a real helper failure to 77; the status assertion rejects it. The protocol and daemon suites run private fresh-source exports with no `tmp/` parent and controls that remove parent creation. They never delete a lane's existing `tmp/`.
