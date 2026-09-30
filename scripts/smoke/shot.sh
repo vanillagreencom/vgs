@@ -26,7 +26,10 @@
 # the file, the previous shot's name, `settled` or `animated`, and the
 # nested window's state on the host: the word SHOT_WINDOW_READER prints
 # when it reads the same before the first capture and after the last,
-# `changed` when it does not, `-` when no reader is set.
+# `changed` when it does not, `-` when no reader is set. With
+# SHOT_WINDOW_REQUIRE set, a shot whose state is another word is refused
+# after its capture, its PNG removed and no line written, so every line of
+# shots.tsv was taken in that state.
 
 shot_refuse() { # REASON VALUE
   printf 'shot: refused: reason=%s value=%s\n' "$1" "$2" >&2
@@ -105,8 +108,8 @@ shot_window() {
 
 # shot NAME: SHOT_DIR/NAME.png, proved current against the previous shot.
 # Needs SHOT_DIR, SHOT_SOCKET, SHOT_RUNTIME_DIR and SHOT_OUTPUT. Returns 1
-# for a stale or failed capture, 2 when grim timed out; prints what it
-# wrote.
+# for a stale or failed capture or one refused for its window state, 2 when
+# grim timed out; prints what it wrote.
 shot() {
   local name="$1" file part hash stable="" last="" kind="" deadline status window_before window_after window
   [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { shot_refuse name "$name"; return 1; }
@@ -143,6 +146,12 @@ shot() {
   window_after="$(shot_window)"
   window="$window_before"
   [[ $window_after == "$window_before" ]] || window=changed
+  if [[ -n ${SHOT_WINDOW_REQUIRE:-} && $window != "$SHOT_WINDOW_REQUIRE" ]]; then
+    rm -f -- "${file:?}"
+    shot_refuse window-state "$window" || true
+    printf 'the shot %s needs the nested window %s on the host\n' "$name" "$SHOT_WINDOW_REQUIRE" >&2
+    return 1
+  fi
   printf '%s\t%s\t%s\t%s\t%s\n' "$name" "${stable:-$last}" "${shot_last_name:--}" "$kind" "$window" >>"$SHOT_DIR/shots.tsv"
   shot_last_name="$name"
   shot_last_hash="${stable:-$last}"

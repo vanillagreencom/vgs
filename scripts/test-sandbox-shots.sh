@@ -66,7 +66,8 @@ chmod 755 "$tmp/bin/grim"
 # workspace 1, DP-2 shows workspace 2 and the special workspace -98.
 # Windows: pid 41 on workspace 1, 42 on workspace 3, 43 on the shown
 # special workspace, 44 on the special workspace -99 no monitor shows, 45
-# on workspace 1 hidden in a group.
+# on workspace 1 as a background group tab, which Hyprland lists with
+# `visible: false` and `hidden: false`, and 46 with no `visible` key.
 cat >"$tmp/bin/hyprctl" <<'SH'
 #!/usr/bin/env bash
 here="${0%/*}"
@@ -80,10 +81,12 @@ import json, sys
 here = sys.argv[1]
 def monitor(name, active, special):
     return {"name": name, "activeWorkspace": {"id": active, "name": str(active)}, "specialWorkspace": {"id": special, "name": "special:shown" if special else ""}}
-def window(pid, workspace, hidden=False):
-    return {"pid": pid, "class": "aquamarine", "mapped": True, "hidden": hidden, "workspace": {"id": workspace, "name": str(workspace)}}
+def window(pid, workspace, visible=True):
+    return {"pid": pid, "class": "aquamarine", "mapped": True, "hidden": False, "visible": visible, "workspace": {"id": workspace, "name": str(workspace)}}
+unkeyed = window(46, 1)
+del unkeyed["visible"]
 json.dump([monitor("DP-1", 1, 0), monitor("DP-2", 2, -98)], open(f"{here}/host-monitors.json", "w"))
-json.dump([window(41, 1), window(42, 3), window(43, -98), window(44, -99), window(45, 1, hidden=True)], open(f"{here}/host-clients.json", "w"))
+json.dump([window(41, 1), window(42, 3), window(43, -98), window(44, -99), window(45, 1, visible=False), unkeyed], open(f"{here}/host-clients.json", "w"))
 PY
 hash_a="$(printf 'image-a' | sha256sum | cut -d' ' -f1)"
 # The hold cases replace shot with a stub that records its name in
@@ -152,6 +155,12 @@ cases=(
   'echo fixed-b >"$T/bin/mode"; state() { echo hidden; }; SHOT_WINDOW_READER=state shot eleven >/dev/null; [[ $(cut -f5 "$D/shots.tsv") == hidden ]]' 0 ""
   "a window state that changes during a shot reads changed"
   'echo fixed-b >"$T/bin/mode"; state() { if [[ -e $D/read ]]; then echo shown; else : >"$D/read"; echo hidden; fi; }; SHOT_WINDOW_READER=state shot twelve >/dev/null; [[ $(cut -f5 "$D/shots.tsv") == changed ]]' 0 ""
+  "a window reader that fails leaves its word"
+  'echo fixed-b >"$T/bin/mode"; state() { echo unreadable; return 1; }; SHOT_WINDOW_READER=state shot thirteen >/dev/null; [[ $(cut -f5 "$D/shots.tsv") == unreadable ]]' 0 ""
+  "a shot in the required window state is taken"
+  'echo fixed-b >"$T/bin/mode"; state() { echo hidden; }; SHOT_WINDOW_READER=state SHOT_WINDOW_REQUIRE=hidden shot fourteen >/dev/null; [[ $(cut -f1,5 "$D/shots.tsv") == $(printf "fourteen\thidden") && -e $D/fourteen.png ]]' 0 ""
+  "a shot in another window state is refused"
+  'echo fixed-b >"$T/bin/mode"; state() { echo shown; }; s=0; SHOT_WINDOW_READER=state SHOT_WINDOW_REQUIRE=hidden shot fifteen >/dev/null || s=$?; [[ ! -e $D/shots.tsv && ! -e $D/fifteen.png ]] || exit 9; exit "$s"' 1 "shot: refused: reason=window-state value=shown"
 )
 # run_cases FILE CASES: every case of the array CASES against FILE.
 run_cases() {
@@ -224,6 +233,10 @@ controls=(
   '"$kind" "$window" >>' '"$kind" - >>' "a shot records the window state read around it"
   "the window state after the shot is not compared"
   '[[ $window_after == "$window_before" ]] ||' 'true ||' "a window state that changes during a shot reads changed"
+  "a failing window reader ends the shot"
+  '$SHOT_WINDOW_READER || true' '$SHOT_WINDOW_READER' "a window reader that fails leaves its word"
+  "the required window state is not compared"
+  'if [[ -n ${SHOT_WINDOW_REQUIRE:-} && $window != "$SHOT_WINDOW_REQUIRE" ]]; then' 'if false; then' "a shot in another window state is refused"
 )
 run_controls "$helper" cases controls
 
@@ -240,14 +253,18 @@ window_cases=(
   'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 43) == shown ]]' 0 ""
   "a window on a hidden special workspace is hidden"
   'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 44) == hidden ]]' 0 ""
-  "a window hidden in a group is hidden"
+  "a background group tab is hidden"
   'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 45) == hidden ]]' 0 ""
+  "a window listed without the keys the reader needs is unreadable"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; s=0; out="$(host_window_state 46)" || s=$?; [[ $out == unreadable && $s -eq 1 ]]' 0 ""
   "a pid that owns no window is absent"
   'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 99) == absent ]]' 0 ""
   "no host instance is unreadable"
   's=0; out="$(host_window_state 41)" || s=$?; [[ $out == unreadable && $s -eq 1 ]]' 0 ""
-  "a failed host read is unreadable"
+  "a failed clients read is unreadable"
   'HYPRLAND_INSTANCE_SIGNATURE=x; s=0; mkdir -p "$D/bin"; cp -- "$T/bin/hyprctl" "$T/bin/host-clients.json" "$T/bin/host-monitors.json" "$D/bin/"; : >"$D/bin/fail-clients"; out="$(PATH="$D/bin:$PATH" host_window_state 41)" || s=$?; [[ $out == unreadable && $s -eq 1 ]]' 0 ""
+  "a failed monitors read is unreadable"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; s=0; mkdir -p "$D/bin"; cp -- "$T/bin/hyprctl" "$T/bin/host-clients.json" "$T/bin/host-monitors.json" "$D/bin/"; : >"$D/bin/fail-monitors"; out="$(PATH="$D/bin:$PATH" host_window_state 41)" || s=$?; [[ $out == unreadable && $s -eq 1 ]]' 0 ""
 )
 run_cases "$window_helper" window_cases
 window_controls=(
@@ -257,12 +274,16 @@ window_controls=(
   '{m["activeWorkspace"]["id"] for m in monitors} | ' '' "a window on a monitor's active workspace is shown"
   "a shown special workspace does not count as shown"
   ' | {m["specialWorkspace"]["id"] for m in monitors}' '' "a window on a shown special workspace is shown"
-  "a window hidden in a group counts as shown"
-  ' and not c["hidden"]' '' "a window hidden in a group is hidden"
+  "a background group tab counts as shown"
+  'c["visible"] and ' '' "a background group tab is hidden"
+  "a reply without the expected keys is not caught"
+  'except (ValueError, KeyError, TypeError):' 'except (ValueError, TypeError):' "a window listed without the keys the reader needs is unreadable"
   "a missing host instance is read"
   'if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then echo unreadable; return 1; fi' 'true' "no host instance is unreadable"
-  "a failed host read is parsed"
-  'clients="$(timeout 2 hyprctl -j clients 2>/dev/null)" || { echo unreadable; return 1; }' 'clients="$(timeout 2 hyprctl -j clients 2>/dev/null)" || true' "a failed host read is unreadable"
+  "a failed clients read is parsed"
+  'clients="$(timeout 2 hyprctl -j clients 2>/dev/null)" || { echo unreadable; return 1; }' 'clients="$(timeout 2 hyprctl -j clients 2>/dev/null)" || true' "a failed clients read is unreadable"
+  "a failed monitors read is parsed"
+  'monitors="$(timeout 2 hyprctl -j monitors 2>/dev/null)" || { echo unreadable; return 1; }' 'monitors="$(timeout 2 hyprctl -j monitors 2>/dev/null)" || true' "a failed monitors read is unreadable"
 )
 run_controls "$window_helper" window_cases window_controls
 
@@ -308,10 +329,11 @@ scene_cases=(
   "a scale other than 1 or 2 is refused" 2 "sandbox-shots: refused: scale=3" --scale 3 settings
   "scale 2 is taken" 77 "qml-smoke: status=not-measured" --scale 2 settings
   "a theme card that is no catalog name is refused" 2 "sandbox-shots: refused: theme-card=../x" --theme-card ../x settings
+  "a theme card the catalog lacks is refused" 2 "sandbox-shots: refused: theme-card=nosuch tree=checkout" --theme-card nosuch theme-browser
 )
 # Each case is label, status, line, then its arguments up to the next case,
 # counted by the arguments each row above carries.
-scene_arity=(1 3 3 1 3 3 3)
+scene_arity=(1 3 3 1 3 3 3 3)
 # Where each case starts in scene_cases and how many arguments it takes, by
 # label, for the controls below.
 declare -A scene_at scene_argc
@@ -338,6 +360,9 @@ shots_controls=(
   "a refused theme card goes on to the harness"
   "refused: theme-card=%s\\n' \"\$theme_card\" >&2; exit 2; }" "refused: theme-card=%s\\n' \"\$theme_card\" >&2; }"
   "a theme card that is no catalog name is refused"
+  "a theme card the catalog lacks goes on to the harness"
+  "if [[ \$scene == theme-browser && ! -f \$tree/themes/catalog/\$theme_card/theme.json ]]; then" "if false; then"
+  "a theme card the catalog lacks is refused"
 )
 shots_mutant="$tmp/sandbox-shots-mutant.sh"
 for (( i = 0; i < ${#shots_controls[@]}; i += 4 )); do

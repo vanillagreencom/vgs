@@ -3,7 +3,7 @@
 #
 # Usage: scripts/sandbox-shots.sh [--out DIR] [--rev REV] [--modes LIST]
 #                                 [--size WxH] [--scale N]
-#                                 [--theme-card NAME]
+#                                 [--theme-card NAME] [--hidden]
 #                                 [--timeout SECONDS] [--keep] [SCENE...]
 #
 # The sandbox is the smoke's own (scripts/smoke/harness.sh): its own HOME,
@@ -41,9 +41,13 @@
 # scale, for every scene, so a shot's width does not depend on the host's
 # window; another shape is refused as `sandbox-shots: refused: size=<value>`.
 # --theme-card NAME is the catalog theme the theme-browser scene selects,
-# frankenstein by default; a name that is not a catalog directory name
-# (lowercase letters, digits and hyphens) is refused as
-# `sandbox-shots: refused: theme-card=<value>`.
+# frankenstein by default. A name other than lowercase letters, digits and
+# hyphens is refused as `sandbox-shots: refused: theme-card=<value>`, and
+# with the theme-browser scene a name the tree's catalog lacks as
+# `sandbox-shots: refused: theme-card=<value> tree=<rev or checkout>`.
+# --hidden refuses every shot not taken with the nested window hidden on
+# the host (SHOT_WINDOW_REQUIRE in scripts/smoke/shot.sh), so a run that
+# exits 0 proves each shot's frame arrived while the window was hidden.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
 # tmp/sandbox-shots/<UTC time>[-REV][-x2]. shots.tsv beside them lists each shot
@@ -71,6 +75,7 @@ modes=""
 scale=1
 shot_size=""
 theme_card="frankenstein"
+require_window=""
 scenes=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -80,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     --size) shot_size="$2"; shift 2 ;;
     --scale) scale="$2"; shift 2 ;;
     --theme-card) theme_card="$2"; shift 2 ;;
+    --hidden) require_window=hidden; shift ;;
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
@@ -140,6 +146,10 @@ for scene in "${scenes[@]}"; do
     printf 'sandbox-shots: refused: scene=%s tree=%s\n' "$scene" "${rev:-checkout}" >&2
     exit 2
   fi
+  if [[ $scene == theme-browser && ! -f $tree/themes/catalog/$theme_card/theme.json ]]; then
+    printf 'sandbox-shots: refused: theme-card=%s tree=%s\n' "$theme_card" "${rev:-checkout}" >&2
+    exit 2
+  fi
 done
 
 # shellcheck disable=SC2034 # the harness sourced below reads it
@@ -190,6 +200,7 @@ ok "grim captures only $SHOT_SOCKET"
 source "$checkout/scripts/smoke/host-window.sh"
 nested_window_state() { host_window_state "$compositor_pid"; }
 SHOT_WINDOW_READER=nested_window_state
+SHOT_WINDOW_REQUIRE="$require_window"
 # Hyprland's own notice that it was not started through start-hyprland
 # would sit over the top right of every shot.
 expect "the nested compositor's notices are dismissed" ok hypr dismissnotify
@@ -505,6 +516,8 @@ scene_theme-browser() { # MODE
 # monitor and restores the mode's theme, so a later scene starts from the
 # run's own state.
 wallpaper_output="VGS-SHOT"
+# overlays_on OUTPUT: the live vgs:overlay layers on that output.
+overlays_on() { hypr -j layers | python3 -c 'import json,sys; m=json.load(sys.stdin).get(sys.argv[1]); print(0 if m is None else sum(1 for lv in m["levels"].values() for l in lv if l["namespace"]=="vgs:overlay" and l["pid"]!=-1))' "$1"; }
 scene_wallpaper-browser() { # MODE
   local theme_dir="$home/.config/vgs/themes/nord"
   mkdir -p -- "$theme_dir/backgrounds"
@@ -521,12 +534,15 @@ scene_wallpaper-browser() { # MODE
   expect_poll "the wallpaper browser maps" 1 layer_count vgs:overlay
   expect_poll "the wallpaper browser holds the keyboard" true ipc smoke activeFocusIn overlay vgs.themes
   expect_poll "the wallpaper browser reads its cards" true ipc smoke readDescendant overlay vgs.themes WallpaperView loaded
+  expect_poll "the wallpaper browser is on $SHOT_OUTPUT" 1 overlays_on "$SHOT_OUTPUT"
+  expect_poll "the wallpaper browser shows its monitor scope" true ipc smoke readDescendant overlay vgs.themes WallpaperView scoped
   take "wallpaper-browser-$1"
   expect "the wallpaper browser hides" ok ipc shell hide overlay vgs.themes
   expect_poll "the wallpaper browser is gone" 0 layer_count vgs:overlay
   expect "the wallpaper browser shot's monitor is removed" ok hypr output remove "$wallpaper_output"
   # vgs has no backgrounds, so applying it removes nord's image.
   "${shell_env[@]}" "$repo/bin/vgsh" theme apply vgs >/dev/null || fail "vgs applies after the wallpaper browser shot"
+  expect_poll "no background is drawn after the wallpaper browser shot" 0 layer_count vgs:background
   set_mode "$1"
 }
 
