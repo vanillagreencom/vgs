@@ -425,11 +425,11 @@ if pre_held 1 "vgsh: refused: scratch=$pre_no_tmp"; then ok "a scratch root mkte
 # Must-fail controls, one per rule of the preflight, each on a copy of
 # bin/vgsh with each NEEDLE replaced once by its REPLACEMENT: the row the
 # rule decides must no longer hold on the copy. pre_copy prints the copy.
-pre_copies=0
+# It runs in a command substitution, so each copy takes a fresh directory
+# from mktemp rather than a counter the subshell would lose.
 pre_copy() { # NEEDLE REPLACEMENT [NEEDLE REPLACEMENT...]
   local copy
-  pre_copies=$((pre_copies + 1))
-  copy="$tmp/pre-mutant-$pre_copies"
+  copy="$(mktemp -d "$tmp/pre-mutant.XXXXXX")" || return 1
   mkdir -p -- "$copy/bin" "$copy/shell"
   cp -- "$repo/bin/vgsh" "$copy/bin/vgsh"
   ln -s -- "$repo/bin/lib" "$copy/bin/lib"
