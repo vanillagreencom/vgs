@@ -686,13 +686,13 @@ theme_idle() { # [IPC_FN]
 # that starts another tree's runner redefines first. The NAME=VALUE words
 # go to env after the harness's own, so a row's PATH wins over
 # shell_start_path. Sets shell_pid, the runner's pid, which stop_shell
-# signals, the first-bar reading, shell_qs_pid, the pid of the qs the
-# runner started, which a row addresses the shell by, and instance_log.
+# signals, the first-bar reading, shell_qs_pid, the shell's pid, which a
+# row addresses the shell by, and instance_log.
 # It clears the last two first, so a failed start leaves no earlier
 # shell's pid or log in their place. BAR `no-bar` takes no first-bar
 # reading, for a start that maps no bar. Returns 1, with the row failed,
-# when the shell does not answer ping within timeout_s, when the runner
-# has no one qs child or when no instance log names that pid. The
+# when the shell does not answer ping within timeout_s, when TREE's
+# `vgsh pid` names no qs process or when no instance log names that pid. The
 # instance is found by pid among every instance in the sandbox's runtime
 # dir, so an installed prefix, whose shell is not TREE/shell, is found as
 # a checkout is.
@@ -711,12 +711,16 @@ theme_idle() { # [IPC_FN]
 #
 # qs buffers stdout when redirected, so the shell's own per-instance log
 # file is the record: it is line-flushed and holds every QML warning. The
-# runner starts qs as its child and waits on it
-# (docs/architecture/runtime.md § Process), so the shell's pid is never
-# the runner's. spawn's setsid does not fork, as a background job is no
-# process group leader, so the runner is spawn_pid itself.
+# shell's pid comes from TREE's own `vgsh pid`, which reads the lock file,
+# since the lock file names the shell under both runners a tree may hold:
+# the current runner starts qs as its child and waits on it
+# (docs/architecture/runtime.md § Process), so the shell's pid is its
+# child's; a revision sandbox-shots.sh exports with --rev may hold a
+# runner that execs qs in place, so the shell's pid is the runner's.
+# spawn's setsid does not fork, as a background job is no process group
+# leader, so the runner is spawn_pid itself.
 start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
-  local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths pong up=false child instance_id
+  local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths pong up=false qs_pid comm="" instance_id
   shift $(( $# < 3 ? $# : 3 ))
   [[ $bar == bar || $bar == no-bar ]] || { fail "start_shell: refused: bar=$bar want=bar|no-bar"; return 1; }
   instance_log=""
@@ -755,11 +759,12 @@ start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
     return 1
   fi
   ok "shell answers ping"
-  if ! child="$(pgrep -P "$shell_pid" -x qs)" || [[ ! $child =~ ^[0-9]+$ ]]; then
-    fail "start_shell: runner pid $shell_pid has no one qs child: [${child//$'\n'/ }]"
+  if ! qs_pid="$("${shell_env[@]}" "$tree/bin/vgsh" pid 2>&1)" || [[ ! $qs_pid =~ ^[0-9]+$ ]] \
+    || ! comm="$(cat -- "/proc/$qs_pid/comm" 2>/dev/null)" || [[ $comm != qs ]]; then
+    fail "start_shell: $tree/bin/vgsh pid names no qs: pid=[${qs_pid//$'\n'/ }] comm=[${comm:-}]"
     return 1
   fi
-  shell_qs_pid="$child"
+  shell_qs_pid="$qs_pid"
   for _ in $(seq 1 50); do
     if instance_id="$("${shell_env[@]}" qs list --all -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
       instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"

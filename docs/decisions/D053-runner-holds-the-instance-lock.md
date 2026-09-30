@@ -33,7 +33,7 @@
 **Consequences**:
 
 - Each session has one more bash process, the runner, which sleeps in `wait` for the shell's life.
-- The runner's pid is no longer the shell's. The nested smoke's `start_shell` keeps the runner's pid for `stop_shell` and addresses the shell by the pid of the runner's `qs` child.
+- The runner's pid is no longer the shell's. The nested smoke's `start_shell` keeps the runner's pid for `stop_shell` and addresses the shell by the pid the started tree's `vgsh pid` reads from the lock file.
 - The parent-death signal leaves one race: a runner killed after it starts the child and before `setpriv` sets the signal leaves a shell with no parent-death signal. The gap is the time of one fork and one exec.
 
 ## Where VGS differs from Omarchy

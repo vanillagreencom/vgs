@@ -284,9 +284,9 @@ fi
 
 # The controls start a copy of the tree whose runner execs qs with the
 # lock's descriptor open, the runner before D053, so every process the
-# shell starts holds the lock. start_shell refuses a runner with no qs
-# child, so start_inherited starts the copy with start_shell's words and
-# waits for ping; its runner's pid is its shell's.
+# shell starts holds the lock. start_inherited stops the running shell
+# and starts the copy through start_shell, whose runner's pid is its
+# shell's.
 IFS= read -r -d '' runner_now <<'VGSH' || :
     (
       printf '%s\n' "$BASHPID" >&9
@@ -299,19 +299,7 @@ IFS= read -r -d '' runner_inherited <<'VGSH' || :
     VGSH_RUNNER_PID=$$ QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec qs -p "$shell_dir"
 VGSH
 inherited_bin="$sandbox/start-order-inherited/bin/vgsh"
-start_inherited() { # LOG
-  local pong=""
-  stop_shell || return 1
-  spawn "$1" "${shell_env[@]}" "${shell_start_words[@]}" "$inherited_bin" run
-  shell_pid="$spawn_pid" shell_qs_pid="$spawn_pid"
-  for _ in $(seq 1 $((timeout_s * 5))); do
-    if pong="$(ipc shell ping 2>/dev/null)" && [[ $pong == ok ]]; then ok "the inherited-lock copy answers ping"; return 0; fi
-    kill -0 "$shell_pid" 2>/dev/null || break
-    sleep 0.2
-  done
-  fail "the inherited-lock copy did not answer ping within ${timeout_s}s"
-  return 1
-}
+start_inherited() { stop_shell && start_shell "$sandbox/start-order-inherited" "$1"; } # LOG
 restart_refusal() { printf '%s %s\n' "$restart_status" "$(head -n 1 -- "$restart_err")"; }
 # The status of `vgsh run` from BIN, its output in LOG, or `running` when
 # it did not end within 5 s; a run that started is stopped.
