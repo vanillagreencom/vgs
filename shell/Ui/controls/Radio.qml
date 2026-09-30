@@ -21,7 +21,7 @@ T.RadioButton {
     indicator: Rectangle {
         implicitWidth: Theme.radio.size
         implicitHeight: Theme.radio.size
-        y: root.text !== "" ? Math.round(root.contentItem.lineTop + root.contentItem.capCentre - height / 2) : Math.round((root.height - height) / 2)
+        y: root.contentItem.indicatorY(height)
         radius: Theme.radius.full
         color: root.down ? Theme.radio.pressed : Theme.radio.background
         border.width: Theme.radio.border
@@ -36,16 +36,8 @@ T.RadioButton {
             visible: root.checked
         }
 
-        FocusRing { target: root; targetRadius: Theme.radius.full }
+        FocusRing { target: root }
     }
 
-    // The label's line box on a whole pixel, centred in the control.
-    contentItem: Label {
-        readonly property real lineTop: Math.round((root.height - lineBox) / 2)
-        role: "item"
-        text: root.text
-        leftPadding: root.indicator.width + root.spacing
-        topPadding: lineTop
-        verticalAlignment: Text.AlignTop
-    }
+    contentItem: IndicatorLabel { control: root }
 }

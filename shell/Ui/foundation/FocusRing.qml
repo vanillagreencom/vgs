@@ -7,8 +7,9 @@ import qs.Commons
 // sees it. A target without `visualFocus`, such as a text input, shows it
 // for `activeFocus`, since an input with the caret is focused however it
 // got there. `offset` is how far outside the background the ring sits.
-// `targetRadius` is the corner of the shape the ring surrounds, so the
-// ring follows a rounded control, a pill or a circle at its offset;
+// `targetRadius` is the corner of the shape the ring surrounds: the
+// radius of the item it fills, `focusRing.radius` when that item has none,
+// so the ring follows a rounded control, a pill or a circle at its offset;
 // `ringColor` lets a control keep a state cue, such as an error, while it
 // holds focus.
 Rectangle {
@@ -16,7 +17,7 @@ Rectangle {
 
     required property Item target
     property int offset: Theme.focusRing.offset
-    property real targetRadius: Theme.focusRing.radius
+    property real targetRadius: parent !== null && parent.radius !== undefined ? parent.radius : Theme.focusRing.radius
     property color ringColor: Theme.focusRing.color
     // The ring's corner: the target's own, grown by the offset.
     readonly property real ringRadius: targetRadius + offset

@@ -7,7 +7,8 @@ QtObject {
     property real radius: 0
     property real width: 0
     property real height: 0
-    property real step: 0
+    // The corner step every component clears by: `inset.cornerStep`.
+    property real step: Theme.inset.cornerStep
     // How far the content's top edge stands in from the container's.
     property real top: 0
     property real inset: pad

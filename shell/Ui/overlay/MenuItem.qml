@@ -26,7 +26,7 @@ T.MenuItem {
     implicitHeight: Math.max(Theme.menu.item.height, implicitContentHeight + topPadding + bottomPadding)
     // Under a rounded theme the side padding grows until the content
     // clears the drawn corner.
-    readonly property real sidePadding: Inset.controlPadding(Theme.menu.item.paddingX, Theme.menu.item.radius, Math.max(Theme.menu.item.height, height), implicitContentHeight, Theme.space.xs)
+    readonly property real sidePadding: Theme.controlPadding(Theme.menu.item.paddingX, Theme.menu.item.radius, Math.max(Theme.menu.item.height, height), implicitContentHeight)
     leftPadding: sidePadding
     rightPadding: sidePadding + (checked ? Theme.icon.size.sm + spacing : 0)
     spacing: Theme.menu.item.gap

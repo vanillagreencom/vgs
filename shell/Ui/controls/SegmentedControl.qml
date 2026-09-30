@@ -53,7 +53,7 @@ Rectangle {
                 height: row.height
                 focusPolicy: Qt.NoFocus
                 implicitWidth: implicitContentWidth + leftPadding + rightPadding
-                leftPadding: Inset.controlPadding(Theme.segmented.paddingX, Math.max(0, Theme.segmented.radius - Theme.segmented.padding), row.height, implicitContentHeight, Theme.space.xs)
+                leftPadding: Theme.controlPadding(Theme.segmented.paddingX, Math.max(0, Theme.segmented.radius - Theme.segmented.padding), row.height, implicitContentHeight)
                 rightPadding: leftPadding
                 hoverEnabled: true
                 PointerCursor {}

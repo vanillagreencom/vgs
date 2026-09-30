@@ -32,7 +32,6 @@ Rectangle {
         radius: Theme.codeLine.radius
         width: root.width
         height: root.implicitHeight
-        step: Theme.space.xs
         top: Theme.codeLine.padding
     }
 

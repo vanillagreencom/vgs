@@ -38,7 +38,7 @@ T.Switch {
     indicator: Rectangle {
         implicitWidth: root.sizeTokens.width
         implicitHeight: root.sizeTokens.height
-        y: root.text !== "" ? Math.round(root.contentItem.lineTop + root.contentItem.capCentre - height / 2) : Math.round((root.height - height) / 2)
+        y: root.contentItem.indicatorY(height)
         radius: Theme.toggle.radius
         color: root.checked ? (root.hovered || root.down ? Theme.toggle.onHover : Theme.toggle.on) : root.hovered || root.down ? Theme.toggle.offHover : Theme.toggle.off
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
@@ -54,16 +54,8 @@ T.Switch {
             Behavior on x { enabled: !root.down; NumberAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
         }
 
-        FocusRing { target: root; targetRadius: Theme.toggle.radius }
+        FocusRing { target: root }
     }
 
-    // The label's line box on a whole pixel, centred in the control.
-    contentItem: Label {
-        readonly property real lineTop: Math.round((root.height - lineBox) / 2)
-        role: "item"
-        text: root.text
-        leftPadding: root.indicator.width + root.spacing
-        topPadding: lineTop
-        verticalAlignment: Text.AlignTop
-    }
+    contentItem: IndicatorLabel { control: root }
 }

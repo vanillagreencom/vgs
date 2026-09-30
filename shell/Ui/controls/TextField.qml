@@ -20,7 +20,7 @@ T.TextField {
     property bool error: false
     property alias actions: actionRow.data
     readonly property color outline: error ? Theme.textField.error : activeFocus ? Theme.textField.focus : hovered ? Theme.textField.hover : Theme.textField.borderColor
-    readonly property real sidePadding: Inset.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, height), contentHeight, Theme.space.xs)
+    readonly property real sidePadding: Theme.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, height), contentHeight)
 
     implicitWidth: Theme.size.panel.sm / 2
     implicitHeight: Math.max(Theme.textField.height, contentHeight + topPadding + bottomPadding)
@@ -67,7 +67,7 @@ T.TextField {
             elide: Text.ElideRight
         }
 
-        FocusRing { target: root; offset: 0; targetRadius: Theme.textField.radius; ringColor: root.error ? Theme.textField.error : Theme.focusRing.color }
+        FocusRing { target: root; offset: 0; ringColor: root.error ? Theme.textField.error : Theme.focusRing.color }
     }
 
     // A child of the field, not of the background: the control puts its

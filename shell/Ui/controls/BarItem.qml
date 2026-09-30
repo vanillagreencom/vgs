@@ -87,6 +87,6 @@ T.AbstractButton {
         radius: Theme.bar.item.radius
         color: root.active ? Theme.bar.active : root.down ? Theme.bar.item.pressed : root.hovered ? Theme.bar.item.hover : "transparent"
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
-        FocusRing { target: root; targetRadius: Theme.bar.item.radius }
+        FocusRing { target: root }
     }
 }

@@ -2,6 +2,7 @@ import QtQuick
 import QtQml.Models
 import Quickshell
 import qs.Commons
+import qs.Ui
 
 // The anchor's window owns the popup; the compositor adjusts its position
 // at screen edges. Every anchored surface takes the focus grab: it is what
@@ -28,10 +29,9 @@ PopupWindow {
     // the plugin fills the popup, and the compositor's slide keeps the
     // popup inside the output.
     readonly property var output: request && request.screen ? request.screen : null
-    readonly property real roomWidth: output ? output.width - 2 * Theme.size.window.gutter : Infinity
-    readonly property real roomHeight: output ? output.height - 2 * Theme.size.window.gutter : Infinity
-    implicitWidth: slot.instance ? Math.max(1, Math.min(slot.instance.implicitWidth, roomWidth)) : 1
-    implicitHeight: slot.instance ? Math.max(1, Math.min(slot.instance.implicitHeight, roomHeight)) : 1
+    readonly property var room: OverlayState.room(output)
+    implicitWidth: slot.instance ? Math.max(1, Math.min(slot.instance.implicitWidth, room.width)) : 1
+    implicitHeight: slot.instance ? Math.max(1, Math.min(slot.instance.implicitHeight, room.height)) : 1
     color: "transparent"
     onVisibleChanged: if (!visible) dismissed()
     onAnchorItemChanged: if (anchorItem === null) dismissed()

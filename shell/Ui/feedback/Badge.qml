@@ -18,7 +18,7 @@ Rectangle {
     property string tone: "neutral"
     readonly property var tokens: toneOf(tone)
     readonly property var sizeTokens: sizeOf(size)
-    readonly property real sidePadding: Inset.controlPadding(sizeTokens.paddingX, Theme.badge.radius, sizeTokens.height, Math.max(icon.visible ? icon.height : 0, label.lineBox), Theme.space.xs)
+    readonly property real sidePadding: Theme.controlPadding(sizeTokens.paddingX, Theme.badge.radius, sizeTokens.height, Math.max(icon.visible ? icon.height : 0, label.lineBox))
 
     function toneOf(name) {
         const found = Theme.badge.tone[name];

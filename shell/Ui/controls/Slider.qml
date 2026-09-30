@@ -46,6 +46,6 @@ T.Slider {
         color: Theme.slider.handleColor
         border.width: Theme.border.thick
         border.color: root.pressed ? Theme.slider.fill : Theme.slider.handleBorder
-        FocusRing { target: root; targetRadius: Theme.slider.radius }
+        FocusRing { target: root }
     }
 }

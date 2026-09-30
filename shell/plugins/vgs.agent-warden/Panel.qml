@@ -100,7 +100,7 @@ Item {
     Pane {
         id: layout
         anchors.fill: parent
-        container: "popover"
+        container: "panel"
         fitToContent: true
         maximumHeight: Theme.size.panel.maxHeight
 

@@ -47,6 +47,7 @@ MenuItem 1.0 overlay/MenuItem.qml
 TitleButton 1.0 controls/TitleButton.qml
 internal AnchorTracker overlay/AnchorTracker.qml
 internal ScrollBar layout/ScrollBar.qml
+internal IndicatorLabel controls/IndicatorLabel.qml
 internal ListAnimation layout/ListAnimation.qml
 internal ListCursorRow layout/ListCursorRow.qml
 internal AvatarFace feedback/AvatarFace.qml

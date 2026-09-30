@@ -9,7 +9,7 @@ Rectangle {
     id: root
 
     property string text: ""
-    readonly property real sidePadding: Inset.controlPadding(Theme.kbd.paddingX, Theme.kbd.radius, Theme.kbd.height, label.lineBox, Theme.space.xs)
+    readonly property real sidePadding: Theme.controlPadding(Theme.kbd.paddingX, Theme.kbd.radius, Theme.kbd.height, label.lineBox)
 
     implicitWidth: Math.max(Theme.kbd.height, Math.round(label.opticalWidth + 2 * sidePadding))
     implicitHeight: Math.max(Theme.kbd.height, label.lineBox)

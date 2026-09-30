@@ -37,7 +37,7 @@ T.AbstractButton {
     }
     Component.onDestruction: share(false)
     readonly property color outline: activeFocus || list.visible ? Theme.textField.focus : hovered ? Theme.textField.hover : Theme.textField.borderColor
-    readonly property real sidePadding: Inset.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, height), implicitContentHeight, Theme.space.xs)
+    readonly property real sidePadding: Theme.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, height), implicitContentHeight)
 
     function textAt(index) {
         if (index < 0 || index >= count) return "";
@@ -110,7 +110,7 @@ T.AbstractButton {
         border.width: Theme.textField.border
         border.color: root.outline
         Behavior on border.color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
-        FocusRing { target: root; targetRadius: Theme.textField.radius }
+        FocusRing { target: root }
     }
 
     PopupWindow {
@@ -125,7 +125,9 @@ T.AbstractButton {
         grabFocus: true
         visible: false
         color: "transparent"
-        implicitWidth: Math.max(1, root.width + 2 * Theme.menu.padding)
+        // The field's width and the menu padding either side, never wider
+        // than the output's room.
+        implicitWidth: Math.max(1, OverlayState.widthFor(root, root.width + 2 * Theme.menu.padding))
         implicitHeight: Math.max(1, Math.min(Theme.menu.maxHeight, entries.contentHeight) + 2 * Theme.menu.padding)
         onVisibleChanged: root.share(visible)
 

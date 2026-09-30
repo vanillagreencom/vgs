@@ -18,7 +18,6 @@ Rectangle {
     readonly property alias closeButton: close
     readonly property real basePadding: Theme.toast.padding
     readonly property real baseRadius: Theme.toast.radius
-    readonly property real clearanceStep: Theme.space.xs
     signal dismissed()
 
     function toneOf(name) {
@@ -43,7 +42,6 @@ Rectangle {
         radius: root.baseRadius
         width: root.width
         height: root.implicitHeight
-        step: root.clearanceStep
         top: root.basePadding
     }
 

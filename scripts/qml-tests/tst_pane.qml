@@ -56,6 +56,22 @@ Item {
         footer: [ Button { text: "Apply"; variant: "secondary" } ]
     }
 
+    // A fitted pane its host holds shorter than its fitted height, as a
+    // popup held inside a short output does.
+    Pane {
+        id: held
+        x: 260
+        y: 240
+        width: 200
+        height: 140
+        fitToContent: true
+        maximumHeight: 400
+        container: "dialog"
+        header: [ Label { text: "Header"; role: "h3"; width: parent.width } ]
+        Rectangle { width: parent.width; height: 300; color: "transparent" }
+        footer: [ Button { text: "Apply"; variant: "secondary" } ]
+    }
+
     TestCase {
         name: "pane"
         when: windowShown
@@ -138,6 +154,17 @@ Item {
             verify(divider(pane).y >= headerSlot(pane).y + headerSlot(pane).height && divider(pane).y + divider(pane).height <= body(pane).mapToItem(pane, 0, 0).y + scroll(pane).contentY, "the divider sits in the header gap");
             scroll(pane).contentY = 0;
             compare(divider(pane).visible, false);
+        }
+
+        // A host shorter than the fitted height keeps the footer inside
+        // the box it gives: the body shrinks and scrolls, and the pane
+        // still asks for its fitted height.
+        function test_a_short_host_keeps_the_footer_inside() {
+            verify(held.cappedHeight > held.height, "the fixture is held short");
+            compare(held.implicitHeight, held.cappedHeight);
+            const foot = footerSlot(held);
+            verify(foot.y + foot.height <= held.height - held.contentInset + 0.5, "footer ends at " + (foot.y + foot.height) + " in a " + held.height + " box");
+            verify(scroll(held).contentHeight > scroll(held).height, "the body scrolls");
         }
 
         // The divider over the footer shows while more of the body lies

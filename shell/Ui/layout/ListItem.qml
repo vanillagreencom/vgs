@@ -31,7 +31,7 @@ T.ItemDelegate {
 
     implicitWidth: leftPadding + rightPadding + (iconName !== "" ? Theme.icon.size.md + Theme.listItem.iconGap : 0) + Math.max(title.implicitWidth, secondaryLabel.implicitWidth) + (trailingRow.width > 0 ? trailingRow.width + Theme.listItem.gap : 0)
     implicitHeight: Math.max(secondary !== "" ? Theme.listItem.twoLineHeight : Theme.listItem.height, implicitContentHeight + topPadding + bottomPadding)
-    leftPadding: Inset.controlPadding(Theme.listItem.paddingX, Theme.listItem.radius, Math.max(secondary !== "" ? Theme.listItem.twoLineHeight : Theme.listItem.height, height), implicitContentHeight, Theme.space.xs)
+    leftPadding: Theme.controlPadding(Theme.listItem.paddingX, Theme.listItem.radius, Math.max(secondary !== "" ? Theme.listItem.twoLineHeight : Theme.listItem.height, height), implicitContentHeight)
     rightPadding: leftPadding
     spacing: Theme.listItem.gap
     hoverEnabled: true
@@ -95,6 +95,6 @@ T.ItemDelegate {
         radius: Theme.listItem.radius
         color: root.cursor !== null ? "transparent" : root.highlighted ? (root.down ? Theme.listItem.selectedPressed : Theme.listItem.selected) : root.down ? Theme.listItem.pressed : root.hovered ? Theme.listItem.hover : "transparent"
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
-        FocusRing { target: root; targetRadius: Theme.listItem.radius }
+        FocusRing { target: root }
     }
 }

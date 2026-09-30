@@ -13,7 +13,7 @@ import qs.Ui
 // `Theme.button.checked` while checked, with its own hover and press. The
 // fill animates between states on `motion.duration.fast`. Under a rounded
 // theme the side padding grows until the content clears the drawn corner
-// (Inset.controlPadding).
+// (Theme.controlPadding).
 T.Button {
     id: root
 
@@ -42,7 +42,7 @@ T.Button {
 
     implicitWidth: implicitContentWidth + leftPadding + rightPadding
     implicitHeight: Math.max(controlHeight, implicitContentHeight + topPadding + bottomPadding)
-    leftPadding: Inset.controlPadding(sizeTokens.paddingX, Theme.button.radius, controlHeight, implicitContentHeight, Theme.space.xs)
+    leftPadding: Theme.controlPadding(sizeTokens.paddingX, Theme.button.radius, controlHeight, implicitContentHeight)
     rightPadding: leftPadding
     spacing: sizeTokens.gap
     hoverEnabled: true
@@ -76,6 +76,6 @@ T.Button {
         border.width: Theme.button.border
         border.color: root.checked ? Theme.button.checked.border : root.tokens.border
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
-        FocusRing { target: root; targetRadius: Theme.button.radius }
+        FocusRing { target: root }
     }
 }

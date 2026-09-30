@@ -78,7 +78,6 @@ Item {
             radius: Theme.tooltip.radius
             width: window.width
             height: window.height
-            step: Theme.space.xs
             top: Theme.tooltip.paddingY
         }
 

@@ -117,6 +117,16 @@ Item {
             menu.close();
         }
 
+        // An output's room is its size less `size.window.gutter` a side;
+        // with no output there is no bound, and an overlay keeps its cap.
+        function test_an_output_leaves_its_room() {
+            const room = OverlayState.room({ width: 480, height: 720 });
+            compare(room.width, 480 - 2 * Theme.size.window.gutter);
+            compare(room.height, 720 - 2 * Theme.size.window.gutter);
+            compare(OverlayState.room(null).width, Infinity);
+            compare(OverlayState.widthFor(null, 360), 360);
+        }
+
         function test_menu_width_follows_its_widest_entry() {
             let window = null;
             for (let i = 0; i < menu.resources.length; i++)

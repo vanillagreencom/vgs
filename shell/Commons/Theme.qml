@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import "Tokens.js" as Tokens
 import "ThemeLogic.js" as ThemeLogic
+import "Inset.js" as Inset
 
 // The design tokens as QML values: one read-only group per top-level group
 // of Tokens.js, so a file reads `Theme.color.accent` or `Theme.text.body`.
@@ -85,6 +86,13 @@ Singleton {
 
     // A resolved colour is `#rrggbbaa`; Qt reads eight digits with alpha
     // first, so the alpha moves to the front here and nowhere else.
+    // A control's side padding under a rounded corner: `pad`, or more
+    // until its content clears the drawn corner by `inset.cornerStep`
+    // (Inset.controlPadding).
+    function controlPadding(pad, radius, height, contentHeight) {
+        return Inset.controlPadding(pad, radius, height, contentHeight, inset.cornerStep);
+    }
+
     function toColor(text) {
         return "#" + text.slice(7, 9) + text.slice(1, 7);
     }

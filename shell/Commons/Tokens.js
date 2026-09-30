@@ -327,6 +327,9 @@ var TOKENS = {
     },
 
     inset: {
+        // The distance a corner of rectangular content keeps inside a
+        // rounded corner's curve (Inset.clearing), for every component.
+        cornerStep: length("{space.xs}"),
         window: length("{space.xl}"),
         dialog: length("{space.xl}"),
         popover: length("{space.lg}"),

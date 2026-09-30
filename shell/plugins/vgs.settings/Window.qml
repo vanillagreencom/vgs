@@ -52,7 +52,7 @@ FocusScope {
 
     readonly property var current: rowOf(drawn)
 
-    implicitWidth: screen === null ? Theme.size.window.width : Math.floor(Math.min(Theme.size.window.width, screen.width - 2 * Theme.size.window.gutter))
+    implicitWidth: Math.floor(Math.min(Theme.size.window.width, OverlayState.room(screen).width))
     implicitHeight: screen === null ? Theme.size.panel.maxHeight : Math.floor(Theme.size.window.heightShare * screen.height)
     focus: true
 

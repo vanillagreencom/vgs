@@ -79,6 +79,7 @@ f share/vgs/shell/Ui/controls/Button.qml
 f share/vgs/shell/Ui/controls/Checkbox.qml
 f share/vgs/shell/Ui/controls/Field.qml
 f share/vgs/shell/Ui/controls/IconButton.qml
+f share/vgs/shell/Ui/controls/IndicatorLabel.qml
 f share/vgs/shell/Ui/controls/Radio.qml
 f share/vgs/shell/Ui/controls/SegmentedControl.qml
 f share/vgs/shell/Ui/controls/Select.qml

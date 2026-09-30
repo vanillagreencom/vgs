@@ -25,7 +25,7 @@ T.CheckBox {
     indicator: Rectangle {
         implicitWidth: Theme.checkbox.size
         implicitHeight: Theme.checkbox.size
-        y: root.text !== "" ? Math.round(root.contentItem.lineTop + root.contentItem.capCentre - height / 2) : Math.round((root.height - height) / 2)
+        y: root.contentItem.indicatorY(height)
         radius: Theme.checkbox.radius
         color: root.checked ? (root.hovered || root.down ? Theme.checkbox.checkedHover : Theme.checkbox.checked) : root.down ? Theme.checkbox.pressed : Theme.checkbox.background
         border.width: Theme.checkbox.border
@@ -40,16 +40,8 @@ T.CheckBox {
             visible: root.checked
         }
 
-        FocusRing { target: root; targetRadius: Theme.checkbox.radius }
+        FocusRing { target: root }
     }
 
-    // The label's line box on a whole pixel, centred in the control.
-    contentItem: Label {
-        readonly property real lineTop: Math.round((root.height - lineBox) / 2)
-        role: "item"
-        text: root.text
-        leftPadding: root.indicator.width + root.spacing
-        topPadding: lineTop
-        verticalAlignment: Text.AlignTop
-    }
+    contentItem: IndicatorLabel { control: root }
 }

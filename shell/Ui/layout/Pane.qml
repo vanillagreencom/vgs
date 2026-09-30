@@ -30,8 +30,6 @@ Item {
     property alias header: headerSlot.data
     default property alias body: bodyColumn.data
     property alias footer: footerSlot.data
-    readonly property real basePadding: padding
-    readonly property real baseRadius: cornerRadius
     // The room a focus ring takes outside its row.
     readonly property real ringRoom: Theme.focusRing.width + Theme.focusRing.offset
     readonly property real contentInset: clearingInset.inset
@@ -44,6 +42,10 @@ Item {
     readonly property real footerGap: footerHeight > 0 && bodyContentHeight > 0 ? gap : 0
     readonly property real uncappedHeight: 2 * contentInset + headerHeight + headerGap + bodyContentHeight + footerGap + footerHeight
     readonly property real cappedHeight: maximumHeight > 0 ? Math.min(uncappedHeight, maximumHeight) : uncappedHeight
+    // The height the box lays out in: a fitted pane's capped height, or
+    // less when its host gives it less, such as a popup held inside a
+    // short output; the body then scrolls and the footer stays inside.
+    readonly property real boxHeight: fitToContent ? (height > 0 ? Math.min(cappedHeight, height) : cappedHeight) : height
     readonly property alias scrollArea: scroll
 
     implicitWidth: Math.max(headerSlot.implicitWidth, bodyColumn.implicitWidth, footerSlot.implicitWidth) + 2 * contentInset
@@ -51,12 +53,11 @@ Item {
 
     ClearingInset {
         id: clearingInset
-        pad: root.basePadding
-        radius: root.baseRadius
+        pad: root.padding
+        radius: root.cornerRadius
         width: root.width
-        height: root.fitToContent ? root.implicitHeight : root.height
-        step: Theme.space.xs
-        top: root.basePadding
+        height: root.boxHeight
+        top: root.padding
     }
 
     function paddingOf(name) {
@@ -102,7 +103,7 @@ Item {
         // A container inset narrower than the bar's gutter still leaves the
         // gutter, so the bar never covers the content.
         rightInset: Math.max(root.contentInset, Theme.scrollArea.gutter)
-        height: root.ringRoom * 2 + (root.fitToContent ? Math.max(0, root.cappedHeight - 2 * root.contentInset - root.headerHeight - root.headerGap - root.footerGap - root.footerHeight) : Math.max(0, root.height - root.contentInset - root.headerHeight - root.headerGap - root.contentInset - root.footerGap - root.footerHeight))
+        height: root.ringRoom * 2 + Math.max(0, root.boxHeight - 2 * root.contentInset - root.headerHeight - root.headerGap - root.footerGap - root.footerHeight)
 
         Item {
             width: scroll.contentWidth
