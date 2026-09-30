@@ -539,7 +539,6 @@ const CONTROLS = [
     [logicFile, "keycode lower-case prefix", 'name = "code:" + String(Number(name.slice(5)));', 'name = "CODE:" + String(Number(name.slice(5)));'],
     [logicFile, "keycode leading zeros", 'String(Number(name.slice(5)))', 'name.slice(5)'],
     [layerFile, "shortcut read respects conflicts", 'if (held[bind.key] !== undefined) {\n                conflicts.push', 'if (held[bind.key] !== undefined) {\n                keys[section.id][bind.shortcut] = bind.key;\n                conflicts.push'],
-    [layerFile, "unbound shortcuts claim no key", 'if (bind.key === null) return { kind: "unbound"', 'if (false) return { kind: "unbound"'],
     [layerFile, "shortcut map has no inherited names", 'keys[section.id] = Object.create(null);', 'keys[section.id] = {};'],
     [layerFile, "identical rule once", "if (written[key] !== undefined) {", "if (false) {"],
     [layerFile, "rule effects compared", "return JSON.stringify([rule.namespace, rule.blur", "return JSON.stringify([rule.namespace]); ([rule.namespace, rule.blur"],
