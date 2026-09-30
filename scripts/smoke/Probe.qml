@@ -939,6 +939,16 @@ Scope {
             return root.json(root.descendants(item).filter(child => root.typeName(child) === "StatusRow").map(row =>
                 root.descendants(row).filter(child => child !== row && takesEdit(child)).map(child => root.typeName(child))));
         }
+        // Each shown TextField of every StatusRow as [the length of its text,
+        // whether it or an item inside it holds the keyboard], one list per
+        // row: a row reads a Connect field's state without its secret.
+        function statusRowFields(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            return root.json(root.descendants(item).filter(child => root.typeName(child) === "StatusRow").map(row =>
+                root.descendants(row).filter(child => root.typeName(child) === "TextField" && child.visible).map(field =>
+                    [field.text.length, field.activeFocus || root.descendants(field).some(inner => inner.activeFocus === true)])));
+        }
         // Keep an instance's `status` provider, answering `held` or `absent`.
         function holdStatus(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);

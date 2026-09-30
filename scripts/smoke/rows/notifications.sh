@@ -1549,11 +1549,31 @@ calls_before="$(secret_calls)"
 expect "secret-tool resolves to the stand-in on the shell's PATH" "$shim/secret-tool" shell_resolves secret-tool
 expect "the absent Acme line takes no edit before Connect" '[[]]' row_inputs
 expect "the manager refuses a clear the absent line does not offer" "refused: secret=slack:T0ACME reason=not-offered" ipc smoke invokeInstance window vgs.settings clearSecret '{"id":"vgs.notifications","key":"slackTokens","account":"slack:T0ACME"}'
+# A status write anywhere hands the page new rows. The open field keeps its
+# line, what was typed into it and the keyboard through one from another
+# plugin, the status fixture, whose one requirement is optional, so it
+# raises no notice. The control: the same reading of a page built anew
+# finds no field, so a line rebuilt by the write would read the same.
+expect "enabling the status fixture beside the token rows is allowed" ok ipc shell setPluginEnabled acme.status true
+expect_poll "the status fixture is built beside the token rows" True record_exists acme.status
+row_fields() { ipc smoke statusRowFields window vgs.settings | py_reply 'import json,sys; print(json.dumps([f for r in json.load(sys.stdin) for f in r]))'; }
+fixture_note() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[s for p in json.load(sys.stdin) if p["id"] == "acme.status" for s in p["status"] if s["key"] == "note"]; print(json.dumps(r[0]["value"] if r else None))'; }
 settings_press "Connect" StatusLine "Acme Corp (acme)" || fail "the click on Acme's Connect failed"
 expect_poll "Connect opens one masked field on the line" '[["TextField"]]' row_inputs
 masked() { ipc smoke itemTexts window vgs.settings StatusRow | py_reply 'import json,sys; print(json.dumps([t for r in json.load(sys.stdin) for t in r if t in ("Save", "Cancel")]))'; }
 expect_poll "the field's Save and Cancel are drawn" '["Save", "Cancel"]' masked
 type_keys "$typed_token" || fail "typing the token failed"
+expect_poll "the open field holds what was typed and the keyboard" "[[${#typed_token}, true]]" row_fields
+expect "another plugin publishes a status value while the field is open" ok ipc acme.status invoke set 'note="unrelated"'
+expect_poll "the page reads the other plugin's write" '"unrelated"' fixture_note
+expect "the field outlives the write with what was typed and the keyboard" "[[${#typed_token}, true]]" row_fields
+expect "the Settings window hides for the field's control" ok ipc shell hide window vgs.settings
+expect "the Settings window is summoned again on the notifications' page" ok ipc shell summon window vgs.settings '{"plugin":"vgs.notifications"}'
+expect_poll "control: a page built anew holds no field" '[]' row_fields
+expect "disabling the status fixture beside the token rows is allowed" ok ipc shell setPluginEnabled acme.status false
+settings_press "Connect" StatusLine "Acme Corp (acme)" || fail "the second click on Acme's Connect failed"
+expect_poll "Connect opens the masked field again" '[["TextField"]]' row_inputs
+type_keys "$typed_token" || fail "typing the token again failed"
 type_keys -k Return || fail "sending Enter to the field failed"
 expect_poll "Save stores the token through secret-tool store, naming the account" "store --label=VGS notifications Slack token slack:T0ACME service vgs-notifications account slack:T0ACME" last_secret_call
 expect "the token reached secret-tool on stdin alone, whole, with no newline" "b'$typed_token'" acme_stdin

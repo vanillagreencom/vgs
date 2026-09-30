@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import qs.Commons
 import qs.Ui
 
@@ -32,10 +33,24 @@ Column {
         return panel === null ? "" : panel.stepReplies[step] || "";
     }
 
+    // ITEMS, each with the `key` a line keeps across writes, so a status
+    // write elsewhere, which hands the page new objects, keeps each line's
+    // delegate, an open Connect field and what it holds with it.
+    function itemsKeyed(items) {
+        const seen = Object.create(null);
+        return items.map(item => {
+            const name = item.secret !== "" ? "secret " + item.secret : "label " + item.label;
+            seen[name] = (seen[name] || 0) + 1;
+            return Object.assign({ key: seen[name] === 1 ? name : name + " " + seen[name] }, item);
+        });
+    }
+
     readonly property var presenceWords: ({ present: "Present", absent: "Absent", locked: "Locked", unavailable: "Unavailable", unsafe: "Unsafe" })
     // What the row draws: { label, hint, command, tone, text, muted, items },
     // `tone` "" for a value drawn as text and `items` a presence list's
-    // items, each { label, value, hint, command, tone, secret, access }.
+    // items, each { key, label, value, hint, command, tone, secret, access }.
+    // `key` names the item across writes: its secret's account, else its
+    // label, with its count among earlier equal names after a second one.
     readonly property var view: {
         if (entry === null) return { label: "", hint: "", command: "", tone: "", text: "", muted: true, items: [] };
         const out = { label: entry.label, hint: entry.hint, command: entry.command, tone: "", text: "Not reported", muted: true, items: [] };
@@ -45,7 +60,7 @@ Column {
         switch (entry.type) {
         case "presence": out.text = presenceWords[entry.value]; return out;
         case "presenceList":
-            out.items = entry.value;
+            out.items = itemsKeyed(entry.value);
             out.text = entry.value.length === 0 ? "None detected" : "";
             out.muted = true;
             return out;
@@ -80,7 +95,10 @@ Column {
     }
 
     Repeater {
-        model: row.view.items
+        model: ScriptModel {
+            values: row.view.items
+            objectProp: "key"
+        }
         StatusLine {
             required property var modelData
             readonly property string stepKey: row.pluginId + "/" + row.entry.key + "/" + modelData.secret
