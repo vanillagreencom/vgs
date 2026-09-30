@@ -1,4 +1,4 @@
-# D058: Keycodes and effective shortcut keys use the generated layer's judges
+# D059: Keycodes and effective shortcut keys use the generated layer's judges
 
 [← Decision Index](INDEX.md)
 

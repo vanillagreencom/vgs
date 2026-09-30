@@ -38,7 +38,7 @@ Hyprland is configured in Lua alone; a classic `hyprland.conf` is unsupported. T
 
 `shell.shortcut.keys` is a read-only, bindable map for the calling plugin: shortcut name to normalized key. Declared shortcuts have `null` when unbound or skipped by a conflict. Undeclared names, including registered names without a manifest bind, are absent. Each read returns a new prototype-free map; changing that copy affects no configuration, bind or other instance.
 
-`Registry.hyprlandSections` holds the enabled manifests' `PluginLogic.hyprlandSection` results. The renderer and `ShortcutRegistry` use `HyprlandLayer.resolveBinds` for the same conflict decision. Reads follow configuration, enablement and manifest updates. They describe the shell's generated layer, not user Lua overrides after its loading line or physical keyboard labels. [D058](../decisions/D058-keycodes-and-effective-shortcut-keys.md) records this boundary.
+`Registry.hyprlandSections` holds the enabled manifests' `PluginLogic.hyprlandSection` results. The renderer and `ShortcutRegistry` use `HyprlandLayer.resolveBinds` for the same conflict decision. Reads follow configuration, enablement and manifest updates. They describe the shell's generated layer, not user Lua overrides after its loading line or physical keyboard labels. [D059](../decisions/D059-keycodes-and-effective-shortcut-keys.md) records this boundary.
 
 `scripts/test-hyprland-layer.js` pins the keycode grammar and effective maps with controls. `scripts/qml-tests/tst_shortcutregistry.qml` reads the actual provider through a QML binding. `scripts/smoke/rows/hyprland.sh` reads a fixture's default, rebound and unbound key from its running instance, plus the compositor's registered bind and configuration errors.
 
