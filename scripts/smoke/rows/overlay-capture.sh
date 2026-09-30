@@ -1,4 +1,4 @@
-# Overlay capture, D059. This row runs last. It starts the normal tree after
+# Overlay capture, D067. This row runs last. It starts the normal tree after
 # start-order's controls, adds harness user binds to the nested Hyprland Lua,
 # and checks that the overlay capture submap blocks a user exec bind while a
 # vgs:overlay layer is mapped, releases it after close, and releases it after
@@ -249,7 +249,7 @@ control_on_demand_typing() {
   tree="$(copy_capture_tree on-demand shell/Hosts/SummonHost.qml 'WlrKeyboardFocus.Exclusive' 'WlrKeyboardFocus.OnDemand')" || { fail "the OnDemand control copy is made"; return; }
   start_capture_tree "$tree" "$sandbox/overlay-capture-on-demand.log" "$marker"
   open_browser_for_capture "control OnDemand"
-  # Hyprland v0.56.2 keeps the browser as the key target after the helper maps while vgs:capture is active, so this production edit does not redden the typing check on the sandbox that read D059.
+  # Hyprland v0.56.2 keeps the browser as the key target after the helper maps while vgs:capture is active, so this production edit does not redden the typing check on the sandbox that read D067.
   capture_typing_probe "control OnDemand" maybe-received
   expect "control OnDemand: browser hide is allowed" ok ipc shell hide overlay vgs.themes
   expect_poll "control OnDemand: browser closes" 0 layer_count vgs:overlay

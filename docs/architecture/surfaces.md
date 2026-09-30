@@ -36,4 +36,4 @@ An unanchored `panel` or `menu` is a layer surface. The shipped application wind
 
 ## Decisions
 
-[D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md), [D018](../decisions/D018-overlays-are-quickshell-popups.md), [D044](../decisions/D044-application-windows-are-hyprland-toplevels.md), [D059](../decisions/D059-overlay-keyboard-capture.md).
+[D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md), [D018](../decisions/D018-overlays-are-quickshell-popups.md), [D044](../decisions/D044-application-windows-are-hyprland-toplevels.md), [D067](../decisions/D067-overlay-keyboard-capture.md).
