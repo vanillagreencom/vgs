@@ -174,13 +174,21 @@ Singleton {
         return request.ok ? root.managerCoreTui(request.name, request.args) : request.answer;
     }
 
+    // What the manager's steps judge plugin ID by: { manifest, enabled,
+    // values }, its manifest or null for an id no plugin has, whether it
+    // is enabled and the status values it published.
+    function managerSubject(id) {
+        const known = typeof id === "string" && Registry.has(id);
+        return { manifest: known ? Registry.manifests[id] : null, enabled: known && Registry.isEnabled(id), values: known ? PluginStatus.valuesOf(id) : {} };
+    }
+
     // The manager's act on plugin ID's status entry KEY (D061): the
     // plugin's own declared TUI through TuiRunner.runFor, or its own
     // requirement commands through the requirement notice after a scan, as
     // PluginLogic.statusActionRequest decides from its published values.
     function managerAct(id, key) {
-        const known = typeof id === "string" && Registry.has(id);
-        const request = Logic.statusActionRequest(known ? Registry.manifests[id] : null, id, known && Registry.isEnabled(id), known ? PluginStatus.valuesOf(id) : {}, key);
+        const subject = managerSubject(id);
+        const request = Logic.statusActionRequest(subject.manifest, id, subject.enabled, subject.values, key);
         if (!request.ok) return request.answer;
         switch (request.kind) {
         case "tui": return tuis.runFor(id, request.name);
@@ -196,8 +204,8 @@ Singleton {
     function managerSecret(ctx, verb, id, key, account, secret, done) {
         if (done !== undefined && typeof done !== "function")
             throw new Error("refused: secret done=not-a-function");
-        const known = typeof id === "string" && Registry.has(id);
-        const request = Logic.secretRequest(known ? Registry.manifests[id] : null, id, known && Registry.isEnabled(id), known ? PluginStatus.valuesOf(id) : {}, key, account, verb, secret);
+        const subject = managerSubject(id);
+        const request = Logic.secretRequest(subject.manifest, id, subject.enabled, subject.values, key, account, verb, secret);
         if (!request.ok) return request.answer;
         return secrets.write(ctx, id, account, verb, request, done);
     }

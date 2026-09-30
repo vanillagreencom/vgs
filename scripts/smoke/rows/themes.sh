@@ -338,8 +338,8 @@ expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
 # then reads Installed and withdraws the button. The control: the manager
 # refuses the act while the tree ships no target and once the writer is
 # there. The target leaves the tree before any apply.
-browser_theming() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[s for p in json.load(sys.stdin) if p["id"] == "vgs.themes" for s in p["status"] if s["key"] == "browserTheming"][0]; print(json.dumps([r["report"], r["tone"], r["action"]["offered"]]))'; }
-browser_text() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[s for p in json.load(sys.stdin) if p["id"] == "vgs.themes" for s in p["status"] if s["key"] == "browserTheming"][0]; print(json.dumps(r["value"]["text"] if r["value"] else None))'; }
+browser_theming() { status_row vgs.themes browserTheming | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps([r["report"], r["tone"], r["action"]["offered"]]))'; }
+browser_text() { status_row vgs.themes browserTheming | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r["value"]["text"] if r["value"] else None))'; }
 expected_errors+=('settings: vgs\.themes/browserTheming refused: action=browserTheming reason=not-offered')
 settings_page_open vgs.themes
 expect_poll "a tree that ships no target reads browser theming not shipped" '"Not shipped: this VGS themes no Chromium-family browser"' browser_text

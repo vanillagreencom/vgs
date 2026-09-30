@@ -1657,7 +1657,13 @@ settings_page_close() {
 }
 # offered_actions ID: each status entry of plugin ID with an action as
 # [key, label, offered], from the manager row the Settings window draws.
-offered_actions() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["key"], s["action"]["label"], s["action"]["offered"]] for s in r if s["action"] is not None]))' "$1"; }
+# status_rows ID: plugin ID's status rows, as the Settings instance of
+# $settings_kind, `window` unless a caller set it, carries them on its
+# manager row, one JSON list, or `absent`. status_row ID KEY: the row of
+# entry KEY among them, or `absent`.
+status_rows() { ipc smoke readInstance "${settings_kind:-window}" vgs.settings plugins | py_reply 'import json,sys; r=[p["status"] for p in json.load(sys.stdin) if p["id"] == sys.argv[1]]; print(json.dumps(r[0]) if r else "absent")' "$1"; }
+status_row() { status_rows "$1" | py_reply 'import json,sys; r=[s for s in json.load(sys.stdin) if s["key"] == sys.argv[1]]; print(json.dumps(r[0]) if r else "absent")' "$2"; }
+offered_actions() { status_rows "$1" | py_reply 'import json,sys; print(json.dumps([[s["key"], s["action"]["label"], s["action"]["offered"]] for s in json.load(sys.stdin) if s["action"] is not None]))'; }
 # settings_act ID KEY: the manager's answer to the step of ID's entry KEY,
 # as its button hands it on.
 settings_act() { ipc smoke invokeInstance window vgs.settings act "{\"id\":\"$1\",\"key\":\"$2\"}"; }

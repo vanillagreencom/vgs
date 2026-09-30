@@ -560,10 +560,9 @@ slack_section() {
 # while logged out, Agent Warden's Install vsys and then Set up, Dev Tools'
 # Install mise, Themes' Install browser theming once the chromium target
 # ships, and Settings' own page with its command revealed.
-automations_offers() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | py_reply 'import json,sys; print(str(any(s["action"] and s["action"]["offered"] for p in json.load(sys.stdin) if p["id"] == "vgs.automations" for s in p["status"])).lower())'; }
 # step_offered ID KEY: whether plugin ID's Settings page offers the step of
 # its status entry KEY.
-step_offered() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | py_reply 'import json,sys; print(str(any(s["key"] == sys.argv[2] and s["action"] and s["action"]["offered"] for p in json.load(sys.stdin) if p["id"] == sys.argv[1] for s in p["status"])).lower())' "$1" "$2"; }
+step_offered() { status_row "$1" "$2" | py_reply 'import json,sys; r=json.load(sys.stdin); print(str(bool(r["action"] and r["action"]["offered"])).lower())'; }
 # step_shot MODE ID KEY LABEL NAME: plugin ID's page with the button LABEL
 # of its entry KEY scrolled into view, as setup-MODE-NAME. A host where the
 # step is not offered, such as one whose scene stood in the command the
@@ -609,7 +608,7 @@ scene_setup_steps() { # MODE
   take "setup-$1-actions"
   expect "the window opens the Automations page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.automations
   expect_poll "the Automations page is shown" '"vgs.automations"' settings_page
-  expect_poll "Automations offers Enable while logged out" true automations_offers
+  expect_poll "Automations offers Enable while logged out" true step_offered vgs.automations linger
   settings_scroll_to 0 >/dev/null || fail "the Automations page did not scroll to the top"
   expect_poll "the Automations page is at its top" True settings_at_top
   park_pointer

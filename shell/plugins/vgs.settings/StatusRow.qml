@@ -21,16 +21,17 @@ Column {
     // left the page's manager row before the row itself goes.
     required property var entry
     // The Settings panel, whose manager calls run each step and whose
-    // `stepReplies` and `writing` each line reads, and the plugin's id.
+    // `replyOf` and `writing` each line reads, and the plugin's id.
     required property Item panel
     required property string pluginId
     // The plugin's `secrets` label, which a Connect's field asks for.
     property string secretLabel: ""
 
-    // The panel's last refusal or failure under STEP, "" for none and while
-    // the page is torn down, when `panel` is already null.
-    function replyOf(step) {
-        return panel === null ? "" : panel.stepReplies[step] || "";
+    // The panel's last refusal or failure of this row's entry, or of
+    // ACCOUNT's secret in it, "" for none and while the page is torn down,
+    // when `panel` is already null.
+    function replyOf(account) {
+        return panel === null || entry === null ? "" : panel.replyOf(pluginId, entry.key, account);
     }
 
     // ITEMS, each with the `key` a line keeps across writes, so a status
@@ -80,7 +81,6 @@ Column {
     spacing: Theme.stack.row
 
     StatusLine {
-        readonly property string stepKey: row.pluginId + "/" + (row.entry === null ? "" : row.entry.key)
         width: row.width
         label: row.view.label
         hint: row.view.hint
@@ -90,7 +90,7 @@ Column {
         muted: row.view.muted
         actionLabel: row.entry === null || row.entry.action === null ? "" : row.entry.action.label
         actionOffered: row.entry !== null && row.entry.action !== null && row.entry.action.offered
-        error: row.replyOf(stepKey)
+        error: row.replyOf()
         onAct: row.panel.act(row.pluginId, row.entry.key)
     }
 
@@ -101,7 +101,6 @@ Column {
         }
         StatusLine {
             required property var modelData
-            readonly property string stepKey: row.pluginId + "/" + row.entry.key + "/" + modelData.secret
             width: row.width
             label: modelData.label
             hint: modelData.hint
@@ -111,7 +110,7 @@ Column {
             access: modelData.access
             secretLabel: row.secretLabel
             busy: row.panel !== null && row.panel.writing !== ""
-            error: row.replyOf(stepKey)
+            error: row.replyOf(modelData.secret)
             onStoreSecret: value => row.panel.storeSecret(row.pluginId, row.entry.key, modelData.secret, value)
             onClearSecret: row.panel.clearSecret(row.pluginId, row.entry.key, modelData.secret)
         }

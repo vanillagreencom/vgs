@@ -159,7 +159,7 @@ FocusScope {
 
             Label {
                 role: "hint"
-                text: page.row === null ? "" : page.panel.replies[page.row.id] || ""
+                text: page.row === null ? "" : page.panel.replyOf(page.row.id)
                 visible: text !== ""
                 color: Theme.color.danger
                 width: parent.width

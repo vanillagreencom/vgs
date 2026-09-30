@@ -1594,7 +1594,7 @@ typed_in_argv() { grep -c -F -- "$typed_token" "$shim/secret-tool.calls" || true
 expect "no secret-tool argv holds the typed token" 0 typed_in_argv
 typed_leaks() {
   local text
-  text="$(ipc shell lent)" && text+="$(ipc smoke readInstance window vgs.settings plugins)" && text+="$(ipc smoke readInstance window vgs.settings stepReplies)" || return
+  text="$(ipc shell lent)" && text+="$(ipc smoke readInstance window vgs.settings plugins)" && text+="$(ipc smoke readInstance window vgs.settings replies)" || return
   grep -c -F -- "$typed_token" <<<"$text" || true
 }
 expect "no status record, manager row or reply holds the typed token" 0 typed_leaks

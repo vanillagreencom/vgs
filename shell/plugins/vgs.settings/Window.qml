@@ -36,14 +36,11 @@ FocusScope {
     readonly property var plugins: shell === null ? [] : shell.manager.plugins
     readonly property string title: shell === null ? "" : shell.manifest.name
     readonly property var screen: shell === null ? null : shell.screens.current
-    // plugin id -> the last refusal the manager answered for it, shown on
-    // its page until a later call for that plugin succeeds.
+    // The last refusal or failure the manager answered, by stepKey: a call
+    // for a plugin, shown on its page, and a status step (D061), shown under
+    // its line, each until a later call there succeeds.
     property var replies: ({})
-    // The last refusal or failure of a status step (D061), by
-    // `<id>/<key>` for an action and `<id>/<key>/<account>` for a secret,
-    // shown under that line until a later step there succeeds.
-    property var stepReplies: ({})
-    // The `<id>/<key>/<account>` of the secret write running, or "".
+    // The stepKey of the secret write running, or "".
     property string writing: ""
     // The page shown: "" for the list, else a plugin id.
     property string page: ""
@@ -71,13 +68,23 @@ FocusScope {
         notice = gone + " is no longer listed.";
     }
 
-    // Keep one manager reply for plugin `id` and answer it.
-    function keep(id, reply) {
+    // Where a reply is kept: plugin `id`, then, for a status step, its
+    // entry `key` and, for a secret, its `account`, joined by "/".
+    function stepKey(id, key, account) {
+        return [id].concat(key === undefined ? [] : [key], account === undefined ? [] : [account]).join("/");
+    }
+    // The reply kept under stepKey(id, key, account), or "".
+    function replyOf(id, key, account) {
+        return replies[stepKey(id, key, account)] || "";
+    }
+
+    // Keep one manager reply under STEP, a stepKey, and answer it.
+    function keep(step, reply) {
         const next = Object.assign({}, replies);
-        if (Reply.isOk(reply)) delete next[id];
+        if (Reply.isOk(reply)) delete next[step];
         else {
-            next[id] = reply;
-            console.warn("settings: " + id + " " + reply);
+            next[step] = reply;
+            console.warn("settings: " + step + " " + reply);
         }
         replies = next;
         return reply;
@@ -148,23 +155,11 @@ FocusScope {
     function removePlugin(id) { return keep(id, shell.manager.remove(id)); }
     function installRequirements(id) { return keep(id, shell.manager.installRequirements(id)); }
 
-    // Keep one step reply under STEP, a key of `stepReplies`, and answer it.
-    function keepStep(step, reply) {
-        const next = Object.assign({}, stepReplies);
-        if (Reply.isOk(reply)) delete next[step];
-        else {
-            next[step] = reply;
-            console.warn("settings: " + step + " " + reply);
-        }
-        stepReplies = next;
-        return reply;
-    }
-
     // Run the action of plugin `id`'s status entry `key` through the
     // manager: its floating TUI, which Hyprland focuses over this window,
     // or the requirement notice; answers the manager's reply (D061).
     function act(id, key) {
-        return keepStep(id + "/" + key, shell.manager.act(id, key));
+        return keep(stepKey(id, key), shell.manager.act(id, key));
     }
 
     // Store what the user typed as plugin `id`'s secret `account`, listed
@@ -173,16 +168,16 @@ FocusScope {
     // end, a failure included, reads under the line. The secret goes to the
     // manager alone: no reply, log line or property here holds it.
     function storeSecret(id, key, account, secret) {
-        return secretStep(id + "/" + key + "/" + account, done => shell.manager.storeSecret(id, key, account, secret, done));
+        return secretStep(stepKey(id, key, account), done => shell.manager.storeSecret(id, key, account, secret, done));
     }
     function clearSecret(id, key, account) {
-        return secretStep(id + "/" + key + "/" + account, done => shell.manager.clearSecret(id, key, account, done));
+        return secretStep(stepKey(id, key, account), done => shell.manager.clearSecret(id, key, account, done));
     }
 
     function secretStep(step, call) {
-        const reply = keepStep(step, call(result => {
+        const reply = keep(step, call(result => {
             if (root.writing === step) root.writing = "";
-            root.keepStep(step, result.ok ? "ok" : "refused: secret write failed " + result.reason);
+            root.keep(step, result.ok ? "ok" : "refused: secret write failed " + result.reason);
         }));
         if (Reply.isOk(reply)) writing = step;
         return reply;
