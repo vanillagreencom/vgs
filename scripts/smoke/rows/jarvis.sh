@@ -10,9 +10,9 @@ jarvis_ready() { # EXPECTED_RETRIES, zero for every fresh startup
 import json,sys
 d=json.load(sys.stdin)
 expected=int(sys.argv[1])
-if d["retries"] != expected:
+if d["retries"] > expected:
     print("unexpected-retries=" + str(d["retries"]))
-elif d["lifetime"]["kind"] == "ready":
+elif d["retries"] == expected and d["lifetime"]["kind"] == "ready":
     print("ready")
 else:
     print("pending")
@@ -213,7 +213,7 @@ jarvis_backend="$repo/shell/plugins/vgs.jarvis/backend/jarvisd.js"
 cp -- "$jarvis_service" "$sandbox/jarvis-service-original"
 cp -- "$jarvis_backend" "$sandbox/jarvis-backend-original"
 jarvis_drop="$sandbox/jarvis-dropped-first-reply"
-"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --drop-first-reply "$jarvis_backend" "$jarvis_drop"
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --drop-initial-replies "$jarvis_backend" "$jarvis_drop"
 jarvis_rescan
 jarvis_timeouts="$(log_lines 'jarvis: hello=timeout')" || { fail "Jarvis timeout log is unreadable"; return 1; }
 expect "a timeout recovery fails the actual ordinary startup assertion once" 1 jarvis_reject_timeout_start

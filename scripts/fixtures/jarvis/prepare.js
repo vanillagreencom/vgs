@@ -77,7 +77,7 @@ function floorDaemon(file) {
         'Object.defineProperty(process.versions, "node", { value: "21.0.0" });\n' + needle));
 }
 
-function dropFirstReply(file, marker) {
+function dropInitialReplies(file, marker) {
     const source = fs.readFileSync(file, "utf8");
     const start = '"use strict";';
     const write = 'if (!process.stdout.write(wire + "\\n")) process.stdin.pause();';
@@ -86,11 +86,11 @@ function dropFirstReply(file, marker) {
     const fixture = `
 const fixtureFs = require("node:fs");
 const fixtureMarker = ${JSON.stringify(marker)};
+const fixtureSuppress = !fixtureFs.existsSync(fixtureMarker);
+if (fixtureSuppress) fixtureFs.writeFileSync(fixtureMarker, "dropped\\n");
 function fixtureWrite(wire) {
-    if (!fixtureFs.existsSync(fixtureMarker)) {
-        fixtureFs.writeFileSync(fixtureMarker, "dropped\\n");
-        return;
-    }
+    // Startup can send multiple lock snapshots before the first deadline.
+    if (fixtureSuppress) return;
     process.stdout.write(wire + "\\n");
 }
 `;
@@ -122,9 +122,9 @@ if (require.main === module) {
     if (process.argv[2] === "--gate-daemon") {
         assert.equal(process.argv.length, 6);
         gateDaemon(...process.argv.slice(3));
-    } else if (process.argv[2] === "--drop-first-reply") {
+    } else if (process.argv[2] === "--drop-initial-replies") {
         assert.equal(process.argv.length, 5);
-        dropFirstReply(...process.argv.slice(3));
+        dropInitialReplies(...process.argv.slice(3));
     } else if (process.argv[2] === "--floor-daemon") {
         assert.equal(process.argv.length, 4);
         floorDaemon(process.argv[3]);
