@@ -429,6 +429,50 @@ geometry expect_poll "the flyout's counts share one right edge and its footer st
 flyout_shifted() { flyout_geometry shift | py_reply 'import json,sys; print(any(e.startswith("count.right") for e in json.load(sys.stdin)))'; }
 expect "control: a count moved off the column is refused" True flyout_shifted
 
+# A monitor too short and narrow for the flyout, 480 by 360: the summon
+# host holds the popup to the output less `size.window.gutter` a side, the
+# flyout lays out at that size, its body scrolls and its footer stays
+# inside it. The held mode is released after, so later rows meet the
+# monitor they read at the start. The footer rule's control is the Pane
+# mutation "a fitted pane lays out past a shorter host" (tst_pane.qml);
+# the size rule's control widens the panel's reading by 8 px, which the
+# check refuses. `[]` is the pass.
+short_mode=480x360
+short_monitor="$(first_name)" || fail "the monitor is unreadable"
+short_main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
+short_gutter="$(ipc smoke themeValue size.window.gutter)" || fail "the gutter token is unreadable"
+expect "the flyout hides before the short monitor" ok ipc shell hide panel vgs.updates
+expect_poll "the flyout is closed before the short monitor" closed flyout_open
+hold_mode "the nested compositor makes its monitor short and narrow" "$short_monitor" "$short_mode"
+expect_poll "the monitor is 480 logical pixels wide" 480 first_width
+# The pointer helpers take the held size while it holds.
+short_saved_w="$mon_w" short_saved_h="$mon_h"
+mon_w=480 mon_h=360
+open_flyout
+panel_room() { # [PLANT]
+  python3 - "$(ipc smoke instanceGeometry panel vgs.updates)" "$short_gutter" "${1:-}" <<'PY'
+import json, sys
+box, gutter, plant = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "wide"
+if not box.startswith("["):
+    print(json.dumps(["panel=%s" % box])); sys.exit()
+x, y, w, h = json.loads(box)
+if plant: w += 8
+out = []
+if w > 480 - 2 * gutter + 1: out.append("width=%d room=%d" % (w, 480 - 2 * gutter))
+if h > 360 - 2 * gutter + 1: out.append("height=%d room=%d" % (h, 360 - 2 * gutter))
+print(json.dumps(out))
+PY
+}
+panel_widened() { panel_room wide | py_reply 'import json,sys; print(any(e.startswith("width=") for e in json.load(sys.stdin)))'; }
+geometry expect_poll "the flyout keeps the room of a short, narrow monitor" '[]' panel_room
+expect "control: a panel wider than the room is refused" True panel_widened
+geometry expect_poll "the flyout's footer stays inside it on the short monitor" '[]' flyout_geometry
+expect "the flyout hides before the monitor's mode returns" ok ipc shell hide panel vgs.updates
+expect_poll "the flyout is closed before the monitor's mode returns" closed flyout_open
+release_mode "the nested compositor restores its monitor's mode" "$short_monitor" "$short_main_mode"
+mon_w="$short_saved_w" mon_h="$short_saved_h"
+expect_poll "the monitor has its width back" "$mon_w" first_width
+
 # Each button's argv, as the terminal stand-in records it. The first
 # Update is the System row's.
 press_and_launch Update vgs.updates/update-source '["update-source.sh", "pacman"]'

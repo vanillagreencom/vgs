@@ -612,10 +612,10 @@ expect_poll "the page is open again" '"acme.probe"' settings_page
 # Source) is at least `row.compactHeight` tall and no taller than that or
 # its tallest text, and consecutive ones sit `stack.row` apart. Each check
 # holds within one pixel and reads minimums and containment, so a larger
-# theme font passes. The controls are the unit mutations of
-# tst_titlebutton (capCentre), tst_button (glyphStart) and tst_spacing (a
-# compact field). `[]` is the pass.
-page_geometry() {
+# theme font passes. The control plants a copy of the same reading with
+# the back button 8 px right, the title 8 px down and the first metadata
+# row 8 px taller, which the check refuses on each rule. `[]` is the pass.
+page_geometry() { # [PLANT]
   local rows md compact gap glyph cap
   rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
   md="$(ipc smoke themeValue size.control.md)" || return
@@ -623,9 +623,10 @@ page_geometry() {
   gap="$(ipc smoke themeValue stack.row)" || return
   glyph="$(ipc smoke readShownDescendant window vgs.settings IconButton glyphStart)" || return
   cap="$(ipc smoke readShownDescendant window vgs.settings TitleButton capCentre)" || return
-  python3 - "$rows" "$md" "$compact" "$gap" "$glyph" "$cap" <<'PY'
+  python3 - "$rows" "$md" "$compact" "$gap" "$glyph" "$cap" "${1:-}" <<'PY'
 import json, sys
-rows, md, compact, gap, glyph, cap = (json.loads(a) for a in sys.argv[1:])
+rows, md, compact, gap, glyph, cap = (json.loads(a) for a in sys.argv[1:7])
+plant = sys.argv[7] == "shift"
 out = []
 def inside(j, i):
     while j != -1:
@@ -643,6 +644,9 @@ hints = [i for i in under("Label") if rows[i].get("role") == "hint"]
 if len(headers) != 1 or not backs or len(titles) != 1 or not hints:
     print(json.dumps(["headers=%d backs=%d titles=%d hints=%d" % (len(headers), len(backs), len(titles), len(hints))])); sys.exit()
 header, back, title = rows[headers[0]], rows[backs[0]], rows[titles[0]]
+if plant:
+    back = dict(back, box=[back["box"][0] + 8] + back["box"][1:])
+    title = dict(title, box=[title["box"][0], title["box"][1] + 8] + title["box"][2:])
 if header["box"][3] < md - 1: out.append("header.height=%.2f min=%d" % (header["box"][3], md))
 check("back.glyph.x", back["box"][0] + glyph, rows[hints[0]]["box"][0])
 check("title.capCentre", title["box"][1] + cap, header["box"][1] + header["box"][3] / 2)
@@ -650,7 +654,9 @@ fields = []
 for i in under("Field"):
     texts = [rows[j] for j, r in enumerate(rows) if r["type"] == "Label" and inside(j, i) and shown(r)]
     if any(t.get("text") in ("Author", "Version", "Source") for t in texts):
-        fields.append((rows[i], max(t["box"][3] for t in texts)))
+        field = rows[i]
+        if plant and not fields: field = dict(field, box=field["box"][:3] + [field["box"][3] + 8])
+        fields.append((field, max(t["box"][3] for t in texts)))
 if len(fields) != 3: out.append("metadata=%d" % len(fields))
 for n, (field, tallest) in enumerate(fields):
     h = field["box"][3]
@@ -660,6 +666,8 @@ print(json.dumps(out))
 PY
 }
 geometry expect_poll "the plugin page's header puts the back glyph on the content edge and the title on its centre, and its metadata rows are compact" '[]' page_geometry
+page_planted() { page_geometry shift | py_reply 'import json,sys; o=json.load(sys.stdin); print(all(any(e.startswith(p) for e in o) for p in ("back.glyph.x=", "title.capCentre=", "metadata0.height=")))'; }
+expect "control: a shifted back glyph, a lowered title and a taller metadata row are each refused" True page_planted
 type_keys -k Escape || fail "sending Escape to the page failed"
 expect_poll "Escape pops the page" '""' settings_page
 type_keys -k Escape || fail "sending Escape to the list failed"

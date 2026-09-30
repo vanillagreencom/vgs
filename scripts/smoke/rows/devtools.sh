@@ -118,11 +118,44 @@ left, right = head[0], width - (chip[0] + chip[2] - (8 if plant else 0))
 print(json.dumps([] if abs(left - right) <= 1 else ["left=%.2f right=%.2f" % (left, right)]))
 PY
 }
-devtools_insets_planted() { devtools_insets narrow | py_reply 'import json,sys; print(len(json.load(sys.stdin)) > 0)'; }
+devtools_insets_planted() { devtools_insets narrow | py_reply 'import json,sys; print(any(e.startswith("left=") for e in json.load(sys.stdin)))'; }
 geometry expect_poll "the content sits the same distance in from both window sides" '[]' devtools_insets
 expect "control: a row narrowed on one side is refused" True devtools_insets_planted
 expect_poll "the absent agent draws Not installed and Install" "$(texts "$agent_name" "Not installed" Install)" row_texts "$agent_name"
 expect_poll "the other mise tool draws its version and its actions" "$(texts github:acme/extra 1.0.0 Update Remove)" row_texts github:acme/extra
+
+# A row's actions stand beside its text while they take at most half the
+# text's room, and move under it past that, so a narrow window never
+# starves the name: the other mise tool's Update and Remove sit beside its
+# name in the window at its own width, and under it in a window on a
+# monitor 480 logical pixels wide. The wide reading is the narrow check's
+# control: the same reader answers `beside` there.
+actions_place() { # ROW BUTTON
+  python3 - "$(ipc smoke scopedWindowGeometry window vgs.devtools ToolRow "$1" Label "$1")" "$(ipc smoke scopedWindowGeometry window vgs.devtools ToolRow "$1" Button "$2")" <<'PY'
+import json, sys
+name, button = sys.argv[1], sys.argv[2]
+if not name.startswith("[") or not button.startswith("["):
+    print("unread name=%s button=%s" % (name, button)); sys.exit()
+name, button = json.loads(name), json.loads(button)
+print("under" if button[1] >= name[1] + name[3] else "beside")
+PY
+}
+expect_poll "the other mise tool's actions sit beside its name at the window's width" beside actions_place github:acme/extra Update
+expect "the window hides before the narrow monitor" ok ipc shell hide window vgs.devtools
+expect_poll "the window is gone before the narrow monitor" hidden window_shown
+narrow_monitor="$(first_name)" || fail "the monitor is unreadable"
+narrow_main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
+hold_mode "the nested compositor makes its monitor narrower than the window" "$narrow_monitor" 480x720
+expect_poll "the monitor is 480 logical pixels wide" 480 first_width
+expect "IPC open summons the window on the narrow monitor" ok devtools open
+expect_poll "the window is shown on the narrow monitor" shown window_shown
+expect_poll "the other mise tool's actions move under its name on a narrow monitor" under actions_place github:acme/extra Update
+expect "the narrow window hides" ok ipc shell hide window vgs.devtools
+expect_poll "the narrow window is gone" hidden window_shown
+release_mode "the nested compositor restores its monitor's mode" "$narrow_monitor" "$narrow_main_mode"
+expect_poll "the monitor has its width back" "$mon_w" first_width
+expect "IPC open summons the window again at its width" ok devtools open
+expect_poll "the window is shown again" shown window_shown
 
 # A click on Install opens the install TUI with the row's id; the list is
 # read again when the run ends, so the key mise now holds shows.

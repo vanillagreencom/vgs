@@ -847,6 +847,7 @@ Scope {
                     current: menu.currentIndex >= 0 && menu.currentIndex < entries.length ? entries[menu.currentIndex].text : null,
                     overflowing: menu.scrollArea.overflowing,
                     barVisible: menu.scrollArea.bar.visible,
+                    barHovered: menu.scrollArea.bar.hovered,
                     anchorType: root.typeName(menu.anchorItem)
                 };
             }));

@@ -38,7 +38,7 @@ for n in range(1, len(boxes)):
 print(json.dumps(out))
 PY
 }
-gallery_stack_planted() { gallery_stack overlap | py_reply 'import json,sys; print(len(json.load(sys.stdin)) > 0)'; }
+gallery_stack_planted() { gallery_stack overlap | py_reply 'import json,sys; print(any(e.startswith("block3.top=") for e in json.load(sys.stdin)))'; }
 geometry expect_poll "no block of the gallery draws over another" '[]' gallery_stack
 expect "control: a heading moved onto the one before is refused" True gallery_stack_planted
 # The cursor over the controls, with the Buttons section scrolled to the

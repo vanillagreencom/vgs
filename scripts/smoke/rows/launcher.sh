@@ -369,6 +369,11 @@ expect_poll "the hidden select holds no surface" 0 layer_count vgs:overlay
 # folders; a helper that cannot build its index says why in the list.
 expect "the launcher summons for files" ok ipc shell summon overlay vgs.launcher '{"query":"f:smoke-report"}'
 expect_poll "f: lists both files of one name, newest first" '[["smoke-report.txt", "~/launcher-files"], ["smoke-report.txt", "~/launcher-files/older"]]' rows_of file
+# A file hit whose icon the sandbox's icon theme cannot draw shows the
+# file glyph on its tile, so its title never keeps an empty tile's
+# indentation. The control is at the end of the file search block.
+file_tiles() { ipc smoke layerItems vgs.launcher IconTile iconName,visible | py_reply 'import json,sys; print(json.dumps(sorted(set(v["iconName"] for s, r, v in json.load(sys.stdin) if v["visible"]))))'; }
+expect_poll "a file hit with no drawable icon shows the file glyph tile" '["file"]' file_tiles
 expect "the file index lives in the launcher's cache" True bash -c '[[ -s $1 ]] && echo True' _ "$home/.cache/vgs/launcher/f.idx"
 expect "F: searches folders" ok ipc shell summon overlay vgs.launcher '{"query":"F:launcher-files"}'
 expect_poll "F: lists the folder" '[["launcher-files", "~"]]' rows_of folder
@@ -385,6 +390,27 @@ type_keys -k Escape -k Escape || fail "sending Escape failed"
 expect_poll "the failed file search closed" 0 layer_count vgs:overlay
 rm -f -- "${home:?}/.cache/vgs/launcher"
 expect_poll "no file search helper outlives the launcher" 0 file_search_children
+# Control: a copy of the row that shows its image slot whatever the image
+# loaded draws no glyph tile for the same file hits.
+row_qml="$repo/shell/plugins/vgs.launcher/LauncherRow.qml"
+cp -- "$row_qml" "$sandbox/LauncherRow.qml.kept"
+python3 - "$row_qml" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+needle = 'readonly property bool imageShown: imageIcon && image.status !== Image.Error && image.source.toString().length > 0'
+assert text.count(needle) == 1, "the image rule to plant occurs once"
+open(path, "w").write(text.replace(needle, "readonly property bool imageShown: imageIcon"))
+PY
+expect "a rescan builds the row copy that always shows its image slot" ok ipc shell rescanPlugins
+expect "the launcher summons the row copy for files" ok ipc shell summon overlay vgs.launcher '{"query":"f:smoke-report"}'
+expect_poll "the row copy lists the files" '[["smoke-report.txt", "~/launcher-files"], ["smoke-report.txt", "~/launcher-files/older"]]' rows_of file
+expect_poll "control: the row copy draws no glyph tile for a file hit" '[]' file_tiles
+focused
+type_keys -k Escape -k Escape || fail "sending Escape failed"
+expect_poll "the row copy's file search closed" 0 layer_count vgs:overlay
+cp -- "$sandbox/LauncherRow.qml.kept" "$row_qml"
+expect "a rescan restores the row" ok ipc shell rescanPlugins
 
 # Repeated summons and hides leave one surface at most and none at the end.
 for _ in 1 2 3 4 5; do
@@ -401,6 +427,7 @@ expect_poll "the shortcut closed the launcher" 0 layer_count vgs:overlay
 # launcher on its screen, and a click outside the card closes it.
 widget_placed() { bar_widget_ids | py_reply 'import json,sys; print(all("vgs.launcher" in bar for bar in json.load(sys.stdin)))'; }
 expect_poll "the bar entry is placed" True widget_placed
+forget_record
 click_centre "$(bar_key)" vgs.launcher || fail "the click on the bar entry failed"
 expect_poll "the bar entry opened the launcher" 1 layer_count vgs:overlay
 # A mapped layer takes input once the compositor has configured it and
@@ -412,6 +439,18 @@ focused "the bar entry's launcher holds the keyboard"
 hover 10 "$((mon_h - 10))" || fail "moving the pointer off the card failed"
 click 10 "$((mon_h - 10))" || fail "the click outside the card failed"
 expect_poll "a click outside the card closed it" 0 layer_count vgs:overlay
+# A right click on the bar entry opens a terminal: the stand-in
+# xdg-terminal-exec records a run with no words, and no launcher opens.
+# The left click above is the control: it recorded no run.
+expect "a left click on the bar entry opens no terminal" absent recorded
+entry_box="$(ipc smoke instanceGeometry "$(bar_key)" vgs.launcher)" || entry_box=absent
+if [[ $entry_box == \[* ]] && read -r ex ey < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$entry_box") && hover "$((ex - 1))" "$ey" && right_click "$ex" "$ey"; then
+  expect_poll "a right click on the bar entry opens a terminal" '[]' recorded
+  expect "a right click on the bar entry opens no launcher" 0 layer_count vgs:overlay
+else
+  fail "the right click on the bar entry failed"
+fi
+forget_record
 
 # The theme menu lists the packages the theme capability reports. Whether
 # an apply succeeded is MenuModel.applySucceeded, pinned under node: the
