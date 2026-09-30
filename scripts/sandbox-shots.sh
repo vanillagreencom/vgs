@@ -498,7 +498,7 @@ scene_theme-browser() { # MODE
   mkdir -p -- "$home/.config/vgs/themes/$theme_card/backgrounds"
   cp -- "$repo/themes/catalog/$theme_card/theme.json" "$home/.config/vgs/themes/$theme_card/theme.json"
   [[ ! -f $repo/themes/catalog/$theme_card/terminal.json ]] || cp -- "$repo/themes/catalog/$theme_card/terminal.json" "$home/.config/vgs/themes/$theme_card/terminal.json"
-  magick "$repo/themes/catalog/thumbnails/$theme_card.jpg" -resize 2560x1440\! "$home/.config/vgs/themes/$theme_card/backgrounds/preview.jpg"
+  "$imagemagick" "$repo/themes/catalog/thumbnails/$theme_card.jpg" -resize 2560x1440\! "$home/.config/vgs/themes/$theme_card/backgrounds/preview.jpg"
   expect "the theme browser opens for the installed shot" ok ipc shell summon overlay vgs.themes '{"view":"themes"}'
   expect_poll "the installed theme browser reads its cards" true ipc smoke readDescendant overlay vgs.themes ThemeView loaded
   type_keys "$theme_card" || fail "typing the installed theme-browser card failed"
