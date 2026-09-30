@@ -2,12 +2,12 @@
 # writes from the theme's border colours, the floating TUIs' window rules
 # and every enabled plugin's `hyprland` manifest data, the line `vgsh hypr
 # wire` keeps first in hyprland.lua, and the `hyprctl reload` after each
-# write. The harness's hyprland.lua existed when the shell first started,
-# so the first write wired it. Every row reads the nested instance back
+# write. The consent row connected the harness's hyprland.lua before this
+# row runs. Every row reads the nested instance back
 # through hyprctl. The launcher's and the notifications' own rows ran
 # before this one, so it enables both, types their keys on the nested
 # seat, and leaves both disabled, shell.json as it found it and
-# hyprland.lua as the first run left it. The window rules are read back on
+# hyprland.lua as the consent row left it. The window rules are read back on
 # windows the harness's toplevel helper maps, each stopped by the pid the
 # row started.
 #
@@ -73,7 +73,7 @@ section_of() { python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); prin
 # How many plugin sections the layer holds. grep -c exits 1 on a count of
 # 0, which is an answer, and 2 on a file it cannot read, which is not.
 section_count() { local status=0; grep -c -- ': binds and layer rules from its manifest$' "$hypr_layer" || status=$?; [[ $status -le 1 ]]; }
-# Put hyprland.lua back as the shell's first run left it: the loading line,
+# Put hyprland.lua back as the consent row left it: the loading line,
 # then the harness's own text.
 restore_hypr_lua() { { printf '%s\n' "$wire_line"; cat -- "$sandbox/hyprland-harness.lua"; } >"$hypr_lua.next" && mv -T -- "$hypr_lua.next" "$hypr_lua"; }
 # The toplevel helper, for the floating TUIs' window rules. open_tui APP_ID
@@ -181,9 +181,9 @@ PY
 both_binds='[[64, "N", "__lua", "vgs.notifications:inbox"], [64, "SPACE", "__lua", "vgs.launcher:toggle"]]'
 rebound='[[72, "SPACE", "__lua", "vgs.launcher:toggle"]]'
 
-# The first run.
-expect "the first run wired the loading line first in the sandbox's hyprland.lua" "$wire_line" head -n 1 -- "$hypr_lua"
-expect "the first run changed nothing else in hyprland.lua" same bash -c 'tail -n +2 -- "$1" | cmp -s - "$2" && echo same' _ "$hypr_lua" "$sandbox/hyprland-harness.lua"
+# The consent row's Connect answer.
+expect "consent wired the loading line first in the sandbox's hyprland.lua" "$wire_line" head -n 1 -- "$hypr_lua"
+expect "consent changed nothing else in hyprland.lua" same bash -c 'tail -n +2 -- "$1" | cmp -s - "$2" && echo same' _ "$hypr_lua" "$sandbox/hyprland-harness.lua"
 expect "the layer's header names the command that writes it again" yes bash -c 'grep -qF -- "\`vgsh hypr render\`" "$1" && echo yes' _ "$hypr_layer"
 expect "no plugin declaring Hyprland data is enabled, so no section is written" 0 section_count
 expect_poll "the nested instance holds no vgs bind" '[]' vgs_binds
@@ -285,7 +285,7 @@ for tui in "org.vgs.tui false" "org.vgs.tui.wide true"; do
   fi
 done
 restore_hypr_lua || fail "hyprland.lua is put back after the floating TUI rows"
-expect "the nested instance reloads the first run's hyprland.lua after the floating TUI rows" ok hypr reload config-only
+expect "the nested instance reloads the consent-wired hyprland.lua after the floating TUI rows" ok hypr reload config-only
 expect "the vgs package applies for the Hyprland rows" "ok theme=vgs" applied vgs
 if vgs_accent="$(resolved_token vgs palette.accent)"; then
   expect_poll "the nested active border takes the vgs accent" "$(gradient_of "$vgs_accent")" hypr_gradient general:col.active_border
@@ -416,12 +416,12 @@ expect "the nested instance reloads with the line" ok hypr reload config-only
 expect_poll "with the line the launcher's bind is back" "$rebound" vgs_binds
 
 # Leave the sandbox as the row found it: shell.json as before the row, which
-# disables both plugins again, and hyprland.lua as the first run left it.
+# disables both plugins again, and hyprland.lua as the consent row left it.
 cp -- "$sandbox/shell-before-hyprland.json" "$user_config.next" && mv -T -- "$user_config.next" "$user_config"
 expect_poll "the launcher is disabled again" False plugin_enabled vgs.launcher
 expect_poll "the notifications are disabled again" False plugin_enabled vgs.notifications
 expect_poll "the shared fixture keeps its original enabled state after the Hyprland rows" "$probe_enabled_before" plugin_enabled acme.probe
 restore_hypr_lua || fail "hyprland.lua is put back after the Hyprland rows"
-expect "the nested instance reloads the first run's hyprland.lua" ok hypr reload config-only
+expect "the nested instance reloads the consent-wired hyprland.lua" ok hypr reload config-only
 expect_poll "the nested instance holds no vgs bind after the Hyprland rows" '[]' vgs_binds
 expect "the configuration after the Hyprland rows holds no error" '[]' config_errors

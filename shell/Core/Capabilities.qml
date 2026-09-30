@@ -157,7 +157,8 @@ Singleton {
         // not find, in declaration order, a copy per read; bindable.
         requirements: ctx => ({
             offer: commands => Notices.offer(ctx, commands),
-            get missing() { return Notices.missingOf(ctx.id).slice(); }
+            get missing() { return Notices.missingOf(ctx.id).slice(); },
+            get revision() { return Registry.requirementsRevision; }
         }),
         doctor: ctx => ({
             offer: (owner, commands) => Notices.chosen(owner, commands),

@@ -4,7 +4,9 @@ import Quickshell
 import Quickshell.Io
 import "PluginLogic.js" as Logic
 
-// The requirement notice: which plugins' missing commands the user is
+// The core notice state: requirement notices for missing commands, and one
+// consent question slot for core-owned setup that must not run silently.
+// Requirement notices decide which plugins' missing commands the user is
 // shown, in what order, on which screen, and the install the shown notice
 // runs (requirement-notice.md). Six triggers raise a notice: the
 // pluginInstalled IPC function `vgsh plugin add` calls, Plugins.setEnabled
@@ -46,11 +48,17 @@ Singleton {
     // Why the shown notice's last install did not end with code 0, or "".
     property string failure: ""
     property var screen: null
+    // A core consent question, or null. The owner supplies { title,
+    // message, disclosure, actions, failure }; NoticeHost draws it only
+    // when no requirement notice shows.
+    property var consent: null
+    property var consentState: null
     // Callbacks waiting for a scan that starts after they were asked for,
     // each { due, fn }, `due` the scan ends still to come.
     property var afterScans: []
 
     readonly property var current: queue.length > 0 ? queue[0] : null
+    readonly property bool showingConsent: current === null && consent !== null
     // What the shown notice draws, PluginLogic.noticeView with the owner's
     // id and name, or null while none shows, before the first detection
     // ended, or while its owner is gone before the scan that drops it.
@@ -66,7 +74,8 @@ Singleton {
         return shown;
     }
     readonly property bool installing: current !== null && installingId === current.id
-    readonly property string shownId: current === null ? "" : current.id
+    readonly property string shownId: current === null ? (consent === null ? "" : "core-consent") : current.id
+    signal consentAnswered(string answer)
 
     onShownIdChanged: {
         failure = "";
@@ -95,7 +104,7 @@ Singleton {
     // to the front (FRESH) and when its screen goes, none while no notice
     // shows.
     function settleScreen(fresh) {
-        if (queue.length === 0) screen = null;
+        if (queue.length === 0 && consent === null) screen = null;
         else if (fresh || screen === null || Quickshell.screens.indexOf(screen) === -1) screen = Compositor.focusedScreen();
     }
 
@@ -241,7 +250,11 @@ Singleton {
     // offers rest; a `doctor` request, the user's press, never rests.
     function dismiss() {
         const notice = current;
-        if (notice === null || installing) return;
+        if (notice === null) {
+            if (consent !== null) consentAnswered("decline");
+            return;
+        }
+        if (installing) return;
         const now = Date.now();
         const next = {};
         for (const id of Object.keys(rest)) if (rest[id] > now) next[id] = rest[id];
@@ -266,6 +279,8 @@ Singleton {
         const now = Date.now();
         return {
             shown: current === null ? null : { plugin: current.id, commands: current.commands, required: current.required, installing: installing, failure: failure },
+            consent: consent === null ? null : { title: consent.title, command: consent.disclosure, failure: consent.failure },
+            consentState: consentState === null ? null : { phase: consentState.phase, queued: consentState.queued || "", failure: consentState.failure || "" },
             waiting: queue.slice(1).map(n => n.id),
             resting: Object.keys(rest).filter(id => rest[id] > now).sort(),
             screen: screen === null ? null : screen.name,

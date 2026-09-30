@@ -27,6 +27,7 @@
     "surfaces",
     "theme",
     "tui",
+    "requirements",
     "status"
   ],
   "defaultSection": "right",

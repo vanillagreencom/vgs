@@ -2,6 +2,7 @@
 // vgsh hypr wire and unwire: keep or remove the one line that loads the
 // Hyprland layer the shell writes (docs/architecture/hyprland.md).
 //
+//   vgsh-hypr-judge state CONFIG_HOME STATE_DIR
 //   vgsh-hypr-judge wire CONFIG_HOME STATE_DIR
 //   vgsh-hypr-judge unwire CONFIG_HOME STATE_DIR
 //
@@ -13,7 +14,8 @@
 // a symlink is resolved and the file it names is replaced with its mode
 // kept, no other byte changes, and the file is never created.
 //
-// Prints `ok hypr=wired|unwired|unchanged path=<file>`. Every refusal is one
+// `state` is read-only and prints `ok hypr=wired|unwired|absent path=<file>`.
+// Prints `ok hypr=wired|unwired|unchanged path=<file>` for edits. Every refusal is one
 // line on stderr and exit 1: `vgsh: refused: hypr=wiring-file-absent
 // path=<file>` for `wire` with no hyprland.lua, `hypr=unreadable` or
 // `hypr=unwritable` with the path and error code, and `hypr=unquotable
@@ -24,12 +26,14 @@ const path = require("path");
 const { refuse, main, editFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 const render = require(path.join(__dirname, "lib", "theme-render.js"));
 
+const fs = require("fs");
+
 const EDITS = { wire: render.wiredText, unwire: render.unwiredText };
 const DONE = { wire: "wired", unwire: "unwired" };
 
 const [verb, configHome, stateDir, ...extra] = process.argv.slice(2);
-if (EDITS[verb] === undefined || typeof configHome !== "string" || typeof stateDir !== "string" || extra.length > 0) {
-    process.stderr.write("vgsh-hypr-judge: usage: vgsh-hypr-judge wire|unwire CONFIG_HOME STATE_DIR\n");
+if ((verb !== "state" && EDITS[verb] === undefined) || typeof configHome !== "string" || typeof stateDir !== "string" || extra.length > 0) {
+    process.stderr.write("vgsh-hypr-judge: usage: vgsh-hypr-judge state|wire|unwire CONFIG_HOME STATE_DIR\n");
     process.exit(2);
 }
 
@@ -42,6 +46,20 @@ main(() => {
     // The file is read and written as latin1, one character per byte, so
     // the line takes the same encoding of its UTF-8 bytes.
     const line = Buffer.from("pcall(dofile, \"" + layer + "\")", "utf8").toString("latin1");
+    if (verb === "state") {
+        let text;
+        try {
+            text = fs.readFileSync(fs.realpathSync(file), "latin1");
+        } catch (e) {
+            if (e.code === "ENOENT") {
+                process.stdout.write("ok hypr=absent path=" + file + "\n");
+                return;
+            }
+            refuse("hypr=unreadable path=" + file + " error=" + e.code, "unreadable");
+        }
+        process.stdout.write("ok hypr=" + (render.wiredText(text, line, undefined) === null ? "wired" : "unwired") + " path=" + file + "\n");
+        return;
+    }
     let changed = false;
     const failure = editFile("hypr", file, false, text => {
         const next = EDITS[verb](text, line, undefined);

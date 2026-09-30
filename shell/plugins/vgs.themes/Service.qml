@@ -8,12 +8,11 @@ import "SetupLogic.js" as SetupLogic
 // table in BrowserLogic.js, each summoning the plugin's overlay on that
 // view, and the Browser theming status row. It draws nothing; each
 // registration's disposer is the core's, so disabling the plugin releases
-// them. The row asks `vgsh theme setup --json` at start and after each run
-// of the `browser-policy` TUI, whoever opened it, the one step that changes
-// its answer from the shell, and publishes SetupLogic.browserTheming's
-// answer; the Settings page offers Install browser theming, that TUI,
-// while it says so (D061). A browser installed while the shell runs is
-// read at its next start.
+// them. The row asks `vgsh theme setup --json` at start, after each plugin
+// requirements scan and after each run of the `browser-policy` TUI, whoever
+// opened it, the one step that changes its answer from the shell, and
+// publishes SetupLogic.browserTheming's answer; the Settings page offers
+// Install browser theming, that TUI, while it says so (D061).
 //   shortcut vgs.themes:themes              SUPER+T from the manifest's
 //                                            `hyprland` binds (README)
 //   shortcut vgs.themes:wallpapers          SUPER+W, the same way
@@ -32,6 +31,7 @@ Item {
     // The end of the browser-policy TUI's last run: each new end asks the
     // setup report again.
     readonly property var policyEnd: shell === null || !shell.tui.state["browser-policy"] ? null : shell.tui.state["browser-policy"].endedAt
+    readonly property int requirementsRevision: shell === null ? -1 : shell.requirements.revision
 
     onShellChanged: {
         if (shell === null || registeredWith !== null) return;
@@ -41,6 +41,7 @@ Item {
         checkSetup();
     }
     onPolicyEndChanged: if (registeredWith !== null) checkSetup()
+    onRequirementsRevisionChanged: if (registeredWith !== null) checkSetup()
 
     // Ask `vgsh theme setup --json` again; one asked while it runs runs
     // once it ends.

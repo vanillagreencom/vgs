@@ -59,7 +59,7 @@
 # reading is not vacuous. `lock` is exclusive, so the row disables the
 # capability rows' fixture, acme.probe, when an earlier row left it
 # enabled. The row ends with the plugin disabled, the fixture as it found
-# it, the stand-ins gone and hyprland.lua as the first run left it.
+# it, the stand-ins gone and hyprland.lua as the consent row left it.
 set -euo pipefail
 lock_user_config="$home/.config/vgs/shell.json"
 lock_hypr_lua="$home/.config/hypr/hyprland.lua"
@@ -295,7 +295,7 @@ type_keys -M logo -k l -m logo || fail "typing SUPER+L failed"
 expect_poll "SUPER+L locked the session" locked session_lock
 release "the SUPER+L lock"
 restore_lock_hypr_lua || fail "hyprland.lua is put back after SUPER+L"
-expect "the nested instance reloads the first run's hyprland.lua" ok hypr reload config-only
+expect "the nested instance reloads the consent-wired hyprland.lua" ok hypr reload config-only
 
 # The before-sleep hook: logind's PrepareForSleep locks, and the hook lets
 # go once the lock is confirmed.
@@ -500,7 +500,7 @@ expect "disabling the lock plugin is allowed" ok ipc shell setPluginEnabled vgs.
 expect_poll "disable released the lock's shortcut, IPC target and idle watch" '[[], [], []]' lock_lent
 expect_poll "the nested instance drops the lock's bind" '[]' lock_binds
 rm -f -- "$shim/systemd-inhibit" "$shim/busctl" "$shim/dbus-monitor" "$sandbox/stand-in/unix_chkpwd"
-expect "hyprland.lua is as the first run left it" same bash -c 'cmp -s <(sed 1d "$1") "$2" && echo same || echo differs' _ "$lock_hypr_lua" "$sandbox/hyprland-harness.lua"
+expect "hyprland.lua is as the consent row left it" same bash -c 'cmp -s <(sed 1d "$1") "$2" && echo same || echo differs' _ "$lock_hypr_lua" "$sandbox/hyprland-harness.lua"
 if [[ $probe_enabled == True ]]; then
   expect "re-enabling the capability fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
 fi

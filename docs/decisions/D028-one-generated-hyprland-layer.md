@@ -17,7 +17,7 @@
 - **User keys.** A `plugins[]` row's `keys` in `shell.json` rebinds a shortcut, or unbinds it with `null`, and `configError` judges it.
 - **Conflicts.** A key two plugins claim goes to the first by id. The loser is a comment and a `listPlugins` error. An identical layer rule is written once.
 - **Writes.** The shell writes again on every plugin, configuration and theme change, only when the bytes change, and then runs `hyprctl reload config-only`.
-- **The line.** `vgsh hypr wire` keeps the line first and `vgsh hypr unwire` removes it, under D021's include-line rule: never create the file, edit no other line, add nothing twice, remove it whole. The shell runs `wire` once, after its first write, when no layer file existed before.
+- **The line.** `vgsh hypr state` reports whether the line is present, `vgsh hypr wire` keeps the line first and `vgsh hypr unwire` removes it, under D021's include-line rule: never create the file, edit no other line, add nothing twice, remove it whole. The shell asks before it runs `wire`.
 - **Hyprland is no theme target.** The `hyprland` target and its `hyprland.conf` wiring are gone. The layer replaces D021's include line for Hyprland, and no other target changes.
 
 **Rationale**:
@@ -53,7 +53,7 @@ Checked against basecamp/omarchy main at `b18ab49`: `config/hypr/hyprland.lua` a
 
 **Revisit When**: Hyprland stops running `hyprland.lua` top to bottom or drops `hl.dsp.global`, or a plugin needs a Hyprland setting other than a bind or a blur rule.
 
-**Verification**: `scripts/test-hyprland-layer.js` covers the manifest key, the key grammar, `keys`, the effective binds and the rendered text, with a control per rule. `scripts/test-vgsh-hypr.sh` covers `wire` and `unwire`, with judge copies as controls. `scripts/smoke/rows/hyprland.sh` reads the nested instance back: first-run wiring, binds, key presses reaching both plugins, a rebind, an unbind, a conflict, a disabled plugin's section, the border following a theme apply, `render`, `unwire`, and an empty `configerrors`.
+**Verification**: `scripts/test-hyprland-layer.js` covers the manifest key, the key grammar, `keys`, the effective binds, the rendered text and the consent sequence, with a control per rule. `scripts/test-vgsh-hypr.sh` covers `state`, `wire` and `unwire`, with judge copies as controls. `scripts/smoke/rows/hyprland-consent.sh`, `scripts/smoke/rows/hyprland-consent-decline.sh` and `scripts/smoke/rows/hyprland.sh` read the nested instance back: consent wiring, the Hyprland-session decline marker, binds, key presses reaching both plugins, a rebind, an unbind, a conflict, a disabled plugin's section, the border following a theme apply, `render`, `unwire`, and an empty `configerrors`.
 
 **References**: [D021](D021-theme-apply-writes-beside-each-destination.md), [D007](D007-install-runs-no-plugin-code.md), [D010](D010-facade-scope-not-sandbox.md), [D012](D012-core-owns-lent-objects.md), [hyprland.md](../architecture/hyprland.md)
 
@@ -77,3 +77,9 @@ The decision holds. The layer gains a second constant core section after the flo
 ## Revisit Outcome (2026-09-29, VGS-596)
 
 The decision holds. The layer gains a third constant core section after the shell window rule: overlay keyboard capture. [D067](D067-overlay-keyboard-capture.md) records it. Plugins still declare only binds and layer rules as data. The capture section repeats enabled plugin binds inside the `vgs:capture` submap and wraps `hl.dsp.focus` and `hl.bind` to learn the user's default-map directional focus binds. The wrapper uses runtime values handed to `hl.bind`; no user key text is rendered into the generated file. The section enters and leaves capture by reading `hl.get_layers()` for mapped `vgs:overlay` layers on layer open, layer close and config reload.
+
+## Revisit Outcome (2026-09-30, VGS-682)
+
+The decision holds with consent. The shell no longer wires `hyprland.lua` silently. After the first read and any needed layer write and reload in a shell run, it runs read-only `vgsh hypr state`. If the answer is `unwired`, the core notice host asks "Let VGS manage its Hyprland settings?" with Connect, Not now and a Show command disclosure for `vgsh hypr wire`. Connect runs the existing wire path and reloads Hyprland. Not now writes the current `HYPRLAND_INSTANCE_SIGNATURE` to `$XDG_RUNTIME_DIR/vgs/hypr/consent-declined`, so a restart in the same Hyprland session does not ask again. A later Hyprland session can ask again, even when systemd lingering keeps the runtime directory alive.
+
+Omarchy, read from `/home/method/dev/vgs/tmp/omarchy-ref` on branch `quattro`, owns the user's whole `hyprland.lua`, so it does not need this question. Its first-run prompts use critical notifications and `omarchy-done` markers. VGS differs because it edits a file the user owns. A centred dialog asks before the edit, and the runtime marker declines only for the current Hyprland session.

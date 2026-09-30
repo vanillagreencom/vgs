@@ -23,9 +23,11 @@ wired_first() { # LUA OWN_TEXT_FILE
   [[ "$(head -n 1 -- "$1")" == "$line" ]] && tail -n +2 -- "$1" | cmp -s - "$2"
 }
 
-# No hyprland.lua: wire refuses and creates nothing; unwire has nothing to
-# remove.
+# No hyprland.lua: state reports absent without creating anything, wire
+# refuses and creates nothing; unwire has nothing to remove.
 cfg="$tmp/cfg-none"; mkdir -p "$cfg"
+inst "state with no hyprland.lua reports absent" "$cfg" "$rt_empty" 0 "ok hypr=absent path=$cfg/hypr/hyprland.lua" "" hypr state
+check "state creates no hyprland.lua" test ! -e "$cfg/hypr"
 inst "wire with no hyprland.lua is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: hypr=wiring-file-absent path=$cfg/hypr/hyprland.lua" hypr wire
 check "wire creates no hyprland.lua" test ! -e "$cfg/hypr"
 inst "unwire with no hyprland.lua changes nothing" "$cfg" "$rt_empty" 0 "ok hypr=unchanged path=$cfg/hypr/hyprland.lua" "" hypr unwire
@@ -36,8 +38,10 @@ check "unwire creates no hyprland.lua" test ! -e "$cfg/hypr"
 # comment is no line.
 cfg="$tmp/cfg-lua"; lua="$cfg/hypr/hyprland.lua"; mkdir -p "$cfg/hypr"
 printf -- '-- mine: %s\nhl.config({ general = { border_size = 3 } })\n' "$line" >"$lua"; cp -- "$lua" "$tmp/own"
+inst "state reports unwired before the line is whole" "$cfg" "$rt_empty" 0 "ok hypr=unwired path=$lua" "" hypr state
 inst "wire keeps the line in hyprland.lua" "$cfg" "$rt_empty" 0 "ok hypr=wired path=$lua" "" hypr wire
 check "the line goes first and every other byte stays" wired_first "$lua" "$tmp/own"
+inst "state reports wired after wire" "$cfg" "$rt_empty" 0 "ok hypr=wired path=$lua" "" hypr state
 cp -- "$lua" "$tmp/wired"
 inst "a second wire changes nothing" "$cfg" "$rt_empty" 0 "ok hypr=unchanged path=$lua" "" hypr wire
 check "the second wire leaves the file byte for byte" cmp -s -- "$lua" "$tmp/wired"
@@ -67,11 +71,13 @@ cfg="$tmp/cfg-lua"
 saved_env=("${base_env[@]}")
 base_env+=(XDG_STATE_HOME="$tmp/st\"ate")
 inst "a state directory holding a quote is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: hypr=unquotable path=$tmp/st\"ate/vgs/hypr/vgs.lua" hypr wire
+inst "state with a quoted state directory is refused" "$cfg" "$rt_empty" 1 "" "vgsh: refused: hypr=unquotable path=$tmp/st\"ate/vgs/hypr/vgs.lua" hypr state
 base_env=("${saved_env[@]}")
 check "the refused wire leaves hyprland.lua" cmp -s -- "$lua" "$tmp/own"
 inst "an unknown hypr subcommand is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: hypr-subcommand=frobnicate" hypr frobnicate
 inst "a missing hypr subcommand is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: hypr-subcommand=missing" hypr
 inst "an argument after wire is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=now" hypr wire now
+inst "an argument after state is exit 2" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=now" hypr state now
 
 # render asks the running shell, and needs one.
 inst "render with no shell exits 69" "$cfg" "$rt_empty" 69 "" "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock" hypr render
@@ -100,6 +106,8 @@ check "the wiring mutant adds the line unwire must remove" grep -qxF -- "$line" 
 cp -- "$tmp/own" "$lua"
 tree_control always-changed bin/vgsh-hypr-judge 'changed = typeof next === "string";' 'changed = true;'
 INST_BIN="$THEME_BIN" inst "the always-changed mutant reports an unchanged unwire as a change" "$cfg" "$rt_empty" 0 "ok hypr=unwired path=$lua" "" hypr unwire
+tree_control state-always-wired bin/vgsh-hypr-judge 'render.wiredText(text, line, undefined) === null ? "wired" : "unwired"' 'true ? "wired" : "unwired"'
+INST_BIN="$THEME_BIN" inst "the state mutant reports an unwired file as wired" "$cfg" "$rt_empty" 0 "ok hypr=wired path=$lua" "" hypr state
 unset THEME_BIN
 
 rows_done test-vgsh-hypr

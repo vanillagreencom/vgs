@@ -167,8 +167,8 @@ LUA
 # on every load, so a reload applies the held rule again.
 mode_hold_file="$rt_dir/monitor-hold.lua"
 printf 'local hold_file = "%s"\nlocal hold = io.open(hold_file)\nif hold then hold:close(); dofile(hold_file) end\n' "$mode_hold_file" >>"$home/.config/hypr/hyprland.lua"
-# The shell's first run wires this file (rows/hyprland.sh), so the rows
-# compare it with the harness's own text.
+# The consent row wires this file, so later rows compare it with the
+# harness's own text.
 cp -- "$home/.config/hypr/hyprland.lua" "$sandbox/hyprland-harness.lua"
 
 # node on PATH may be a version-manager shim that reads the developer's own
@@ -1898,6 +1898,18 @@ PY
 # The requirement notice the core shows as [plugin, commands, required,
 # installing], or null.
 notice_shown() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else [s["plugin"], s["commands"], s["required"], s["installing"]]))'; }
+hypr_consent_record() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["consent"]))'; }
+hypr_consent_phase() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"].get("consentState") or {}; print(s.get("phase", "absent"))'; }
+hypr_config_errors() { hypr -j configerrors | python3 -c 'import json,sys; print(json.dumps([e for e in json.load(sys.stdin) if e]))'; }
+hypr_wire_count() { local line="pcall(dofile, \"$home/.local/state/vgs/hypr/vgs.lua\")"; grep -cxF -- "$line" "$home/.config/hypr/hyprland.lua" || true; }
+hypr_consent_connect() { # LABEL
+  local label="$1"
+  expect_poll "$label: the Hyprland consent notice is shown" '{"title": "Let VGS manage its Hyprland settings?", "command": "vgsh hypr wire", "failure": ""}' hypr_consent_record
+  type_keys -k Return || fail "$label: sending Return to the Hyprland consent notice failed"
+  expect_poll "$label: the consent step reaches wired" wired hypr_consent_phase
+  expect_poll "$label: the loading line is present once" 1 hypr_wire_count
+  expect_poll "$label: Hyprland reloads the wired layer without config errors" '[]' hypr_config_errors
+}
 # After terminal_stand_in: the launcher state present, so the next request
 # launches. The core probes when it starts, before any row wrote the
 # stand-in, so a host without xdg-terminal-exec leaves the state missing;

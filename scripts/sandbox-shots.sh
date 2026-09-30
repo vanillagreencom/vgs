@@ -257,6 +257,9 @@ source "$checkout/scripts/smoke/harness.sh"
 # read, and every later read of the tree reads the sandbox's copy.
 [[ -z $source_tree ]] || rm -rf -- "$source_tree"
 tree="$repo"
+if grep -qF -- "Let VGS manage its Hyprland settings?" "$tree/shell/Core/HyprlandLayer.js" 2>/dev/null; then
+  hypr_consent_connect "the screenshot sandbox answers Hyprland consent"
+fi
 # The plugin fixtures a scene installs: this checkout's, or with --rev that
 # revision's, since its manifest judge is the one that reads them.
 fixtures="$checkout/scripts/smoke/fixtures/plugins"

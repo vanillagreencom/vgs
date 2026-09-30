@@ -172,6 +172,7 @@ source "$repo/scripts/smoke/harness.sh"
 # These rows share one sandbox and run in dependency order. smoke_row
 # (harness.sh) sources each and fails one whose output holds a traceback.
 smoke_row bar
+smoke_row hyprland-consent
 # bar.sh read the startup latencies; the cursor rows need the log.
 if compositor_logs_on; then ok "the nested compositor logs from here on"; else fail "the nested compositor's logs did not turn on"; fi
 smoke_row plugins
@@ -216,6 +217,7 @@ smoke_row diagnostics
 smoke_row supervise
 smoke_row lock
 smoke_row read-only-prefix
+smoke_row hyprland-consent-decline
 smoke_row notices-control
 smoke_row hidpi
 smoke_row start-order

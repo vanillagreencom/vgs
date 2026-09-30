@@ -5,13 +5,15 @@ import qs.Core
 import qs.Commons
 import qs.Ui
 
-// The requirement notice's surface: one OverlaySurface on the screen
-// Notices chose, existing only while a notice shows, taking the keyboard on
-// demand. It draws the shown notice as a Dialog: each missing command with
-// its purpose first, then Install and Not now, or Close alone when no
-// manager here installs a listed package. The command Install runs is
-// only behind Show command (D061). Install runs Notices.accept,
-// every other answer Notices.dismiss. While the shown notice's install runs
+// The core notice surface: one OverlaySurface on the screen Notices chose,
+// existing only while a requirement notice or the core consent question
+// shows, taking the keyboard on demand. It draws one Dialog at a time. A
+// requirement notice has priority: each missing command with its purpose
+// first, then Install and Not now, or Close alone when no manager here
+// installs a listed package. The command Install runs is only behind Show
+// command (D061). Install runs Notices.accept, every other answer
+// Notices.dismiss. The consent question uses Connect and Not now, and its
+// command is only behind Show command. While the shown notice's install runs
 // the window is gone, so the floating TUI it opened, centred on the same
 // monitor, shows whole; a notice the scan after the run keeps comes back as
 // a new window that takes the keyboard. The window fills the area other
@@ -40,14 +42,20 @@ Scope {
         return "No package manager here provides these commands. Install them by hand.";
     }
 
+    function consent() {
+        return Notices.showingConsent ? Notices.consent : null;
+    }
+
     Loader {
         id: loader
-        active: Notices.view !== null && Notices.screen !== null && !Notices.installing
+        active: ((Notices.view !== null && !Notices.installing) || host.consent() !== null) && Notices.screen !== null
         sourceComponent: OverlaySurface {
             id: win
 
             readonly property Item dialog: card
             readonly property var shown: Notices.view
+            readonly property var consent: host.consent()
+            readonly property bool consentMode: win.shown === null && win.consent !== null
 
             screen: Notices.screen
             placement: "center"
@@ -60,10 +68,11 @@ Scope {
                 id: card
                 anchors.centerIn: parent
                 width: implicitWidth
-                title: win.shown.name + " needs " + (win.shown.rows.length === 1 ? "one command" : win.shown.rows.length + " commands")
-                message: host.message(win.shown)
-                actions: win.shown.install !== null ? [{ label: "Install", role: "accept" }, { label: "Not now", role: "cancel" }] : [{ label: "Close", role: "cancel" }]
-                onAccepted: Notices.accept()
+                title: win.consentMode ? win.consent.title : win.shown.name + " needs " + (win.shown.rows.length === 1 ? "one command" : win.shown.rows.length + " commands")
+                message: win.consentMode ? win.consent.message : host.message(win.shown)
+                actions: win.consentMode ? [{ label: win.consent.actions.connect, role: "accept" }, { label: win.consent.actions.decline, role: "cancel" }] : win.shown.install !== null ? [{ label: "Install", role: "accept" }, { label: "Not now", role: "cancel" }] : [{ label: "Close", role: "cancel" }]
+                busy: win.consentMode && win.consent.busy
+                onAccepted: win.consentMode ? Notices.consentAnswered("connect") : Notices.accept()
                 onRejected: Notices.dismiss()
                 // Tab reaches Show command and, while it is open, its Copy.
                 tabItems: [disclosure.toggle, disclosure.copyButton]
@@ -75,8 +84,9 @@ Scope {
                 Column {
                     width: parent.width
                     spacing: Theme.stack.row
+                    visible: !win.consentMode
                     Repeater {
-                        model: win.shown.rows
+                        model: win.consentMode ? [] : win.shown.rows
                         Column {
                             required property var modelData
                             width: parent.width
@@ -100,14 +110,14 @@ Scope {
                 CommandDisclosure {
                     id: disclosure
                     width: parent.width
-                    command: win.shown.commandLine
+                    command: win.consentMode ? win.consent.disclosure : win.shown.commandLine
                 }
                 Label {
                     role: Theme.dialog.bodyRole
                     width: parent.width
                     wrapMode: Text.Wrap
-                    visible: Notices.failure !== ""
-                    text: "The last install did not finish: " + Notices.failure
+                    visible: win.consentMode ? win.consent.failure !== "" : Notices.failure !== ""
+                    text: win.consentMode ? "The last connection did not finish: " + win.consent.failure : "The last install did not finish: " + Notices.failure
                 }
             }
 

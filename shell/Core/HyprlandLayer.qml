@@ -14,12 +14,10 @@ import "HyprlandLayer.js" as Layer
 // scale here, so grouped-window tab rounding can match scaled window corners.
 // It renders again whenever the plugin set, the configuration, the monitors
 // or the theme changes, which covers enable, disable, rescan, a shell.json
-// edit and a theme apply. When the first read finds no file, the first write
-// also runs `vgsh hypr wire`
-// once, which keeps the loading line in hyprland.lua if that file exists;
-// the file then exists, so a later start never wires again after an
-// unwire. No plugin writes the file. shell.qml builds this only in the
-// runner's shell. docs/architecture/hyprland.md.
+// edit and a theme apply. After the first read and any needed write in a
+// shell run, it probes hyprland.lua and raises the core notice before it wires the
+// loading line. No plugin writes the file. shell.qml builds this only in
+// the runner's shell. docs/architecture/hyprland.md.
 //
 // HyprlandLayer.step decides every step; this runs each action it answers
 // and feeds the result back, so the sequence is tested under node.
@@ -29,6 +27,9 @@ Scope {
     readonly property string dir: Paths.stateDir + "/hypr"
     readonly property string path: dir + "/vgs.lua"
     readonly property string runner: Quickshell.shellDir + "/../bin/vgsh"
+    readonly property string consentDir: Quickshell.env("XDG_RUNTIME_DIR") + "/vgs/hypr"
+    readonly property string consentDeclined: consentDir + "/consent-declined"
+    readonly property string hyprlandSignature: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
 
     // HyprlandLayer.step's state: the phase, the bytes on disk, and what
     // waits.
@@ -87,6 +88,23 @@ Scope {
     }
 
     Binding { target: Registry; property: "hyprlandProblems"; value: root.problems }
+    Binding { target: Notices; property: "consent"; value: Layer.consentView(root.machine.consent) }
+    Binding { target: Notices; property: "consentState"; value: root.machine.consent }
+
+    Connections {
+        target: Notices
+        function onConsentAnswered(answer) {
+            switch (answer) {
+            case "connect":
+                root.feed({ type: "connect" });
+                return;
+            case "decline":
+                root.feed({ type: "decline" });
+                return;
+            }
+            throw new Error("HyprlandLayer: consent answer " + JSON.stringify(answer) + " is not known");
+        }
+    }
 
     onRenderedChanged: Qt.callLater(() => feed({ type: "render" }))
 
@@ -117,6 +135,10 @@ Scope {
         case "read": Qt.callLater(() => file.reload()); return;
         case "mkdir": mkdir.running = true; return;
         case "write": Qt.callLater(() => file.setText(root.machine.pending)); return;
+        case "probe": probe.running = true; return;
+        case "checkDecline": markerCheck.running = true; return;
+        case "ask": return;
+        case "decline": markerWrite.running = true; return;
         case "wire": wire.running = true; return;
         case "reload": reloader.running = true; return;
         }
@@ -161,11 +183,70 @@ Scope {
             const done = completion;
             completion = null;
             const said = (wireOut.text + wireErr.text).trim();
-            // With no hyprland.lua there is nothing to wire, which is no fault.
-            if (done !== null && done.code === 0) console.info("hyprland: first run: " + said);
-            else if (said.indexOf("hypr=wiring-file-absent") !== -1) console.info("hyprland: first run: " + said);
-            else console.error("hyprland: first run wire failed: " + (done === null ? "start=failed" : "status=" + done.code) + " " + said);
-            root.feed({ type: "wireDone" });
+            let failure = "";
+            if (done === null) failure = "wire-start=failed";
+            else if (done.code !== 0) failure = "wire=failed status=" + done.code + (said === "" ? "" : " " + said);
+            if (failure === "") console.info("hyprland: consent: " + said);
+            else console.error("hyprland: " + failure);
+            root.feed({ type: "wireDone", failure: failure });
+        }
+    }
+
+    Process {
+        id: probe
+        command: [root.runner, "hypr", "state"]
+        property var completion: null
+        stdout: StdioCollector { id: probeOut }
+        stderr: StdioCollector { id: probeErr }
+        onExited: (code, status) => { completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            const done = completion;
+            completion = null;
+            const said = (probeOut.text + probeErr.text).trim();
+            let failure = "";
+            let answer = "";
+            const m = /^ok hypr=(wired|unwired|absent) path=/.exec(probeOut.text.trim());
+            if (done === null) failure = "probe-start=failed";
+            else if (done.code !== 0) failure = "probe=failed status=" + done.code + (said === "" ? "" : " " + said);
+            else if (m === null) failure = "probe=unreadable reply=" + JSON.stringify(probeOut.text.trim());
+            else answer = m[1];
+            root.feed({ type: "probeDone", answer: answer, failure: failure });
+        }
+    }
+
+    Process {
+        id: markerCheck
+        command: ["bash", "-c", "if [[ ! -e \"$1\" ]]; then echo absent; exit 0; fi; cat -- \"$1\"", "vgs-hypr-consent", root.consentDeclined]
+        property var completion: null
+        stdout: StdioCollector { id: markerOut }
+        stderr: StdioCollector { id: markerCheckErr }
+        onExited: (code, status) => { completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            const done = completion;
+            completion = null;
+            const text = markerOut.text.trim();
+            const why = markerCheckErr.text.trim();
+            const failure = done !== null && done.code === 0 ? "" : "decline-marker-read=failed path=" + root.consentDeclined + (done === null ? " start=failed" : " status=" + done.code) + (why === "" ? "" : " stderr=" + JSON.stringify(why));
+            root.feed({ type: "declineChecked", declined: failure === "" && text === root.hyprlandSignature, failure: failure });
+        }
+    }
+
+    Process {
+        id: markerWrite
+        command: ["bash", "-c", "[[ -n \"$3\" ]] || exit 3; mkdir -p -- \"$1\" && printf '%s\n' \"$3\" > \"$2\"", "vgs-hypr-consent", root.consentDir, root.consentDeclined, root.hyprlandSignature]
+        property var completion: null
+        stderr: StdioCollector { id: markerErr }
+        onExited: (code, status) => { completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            const done = completion;
+            completion = null;
+            const why = markerErr.text.trim();
+            const failure = done !== null && done.code === 0 ? "" : "decline-marker-write=failed path=" + root.consentDeclined + (done === null ? " start=failed" : " status=" + done.code) + (why === "" ? "" : " stderr=" + JSON.stringify(why));
+            if (failure !== "") console.error("hyprland: " + failure);
+            root.feed({ type: "declineDone", failure: failure });
         }
     }
 

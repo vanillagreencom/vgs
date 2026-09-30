@@ -442,7 +442,13 @@ function verify(logic, layer, shellText) {
         let state = layer.initialState();
         const actions = [];
         for (const [event, text] of events) {
-            const next = layer.step(state, event, text);
+            let next;
+            try {
+                next = layer.step(state, event, text);
+            } catch (e) {
+                e.message = "step " + name + ": " + e.message;
+                throw e;
+            }
             state = next.state;
             actions.push(next.action);
         }
@@ -453,6 +459,8 @@ function verify(logic, layer, shellText) {
     }
     assert.throws(() => layer.step(layer.initialState(), { type: "saved" }, "T1"), /event saved arrived in phase reading, want writing/, "a step result out of its phase is refused");
     assert.throws(() => layer.step(layer.initialState(), { type: "later" }, "T1"), /unknown event "later"/, "an unknown event is refused");
+    same(layer.consentView({ phase: "asking", queued: "connect", failure: "reload=failed" }).busy, true, "a queued consent answer makes the dialog busy");
+    same(layer.consentView({ phase: "asking", queued: "", failure: "" }).busy, false, "an unanswered consent dialog is not busy");
 }
 
 // HyprlandLayer.step rows: [name, [[event, text]...], actions, state subset].
@@ -465,41 +473,107 @@ const mkdirOk = { type: "mkdirDone", failure: "" };
 const saved = { type: "saved" };
 const saveFailed = { type: "saveFailed", failure: "write=failed error=4" };
 const reloaded = { type: "reloadDone", failure: "" };
+const probeUnwired = { type: "probeDone", answer: "unwired", failure: "" };
+const probeWired = { type: "probeDone", answer: "wired", failure: "" };
+const probeAbsent = { type: "probeDone", answer: "absent", failure: "" };
+const probeFailed = { type: "probeDone", answer: "", failure: "probe=failed status=1" };
+const notDeclined = { type: "declineChecked", declined: false, failure: "" };
+const declined = { type: "declineChecked", declined: true, failure: "" };
 const SEQUENCES = [
-    ["a first run writes, wires and reloads",
-        [[absent, "T1"], [mkdirOk, "T1"], [saved, "T1"], [{ type: "wireDone" }, "T1"], [reloaded, "T1"]],
-        ["mkdir", "write", "wire", "reload", "none"], { phase: "idle", onDisk: "T1", firstRun: false, failure: "" }],
-    ["a file holding the text is left", [[loaded("T1"), "T1"]], ["none"], { phase: "idle", onDisk: "T1" }],
+    ["a first completed write and reload probes and asks when unwired",
+        [[absent, "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none"], { phase: "idle", onDisk: "T1", failure: "", consent: { phase: "asking", queued: "", failure: "" } }],
+    ["a wired probe settles",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeWired, "T1"]],
+        ["mkdir", "write", "reload", "probe", "none"], { phase: "idle", consent: { phase: "wired", queued: "", failure: "" } }],
+    ["an absent hyprland.lua probe settles",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeAbsent, "T1"]],
+        ["mkdir", "write", "reload", "probe", "none"], { phase: "idle", consent: { phase: "settled", queued: "", failure: "" } }],
+    ["a probe failure is reported and raises no question",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeFailed, "T1"]],
+        ["mkdir", "write", "reload", "probe", "none"], { phase: "idle", failure: "probe=failed status=1", consent: { phase: "settled", queued: "", failure: "" } }],
+    ["a Hyprland-session decline marker suppresses the question",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [declined, "T1"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none"], { phase: "idle", consent: { phase: "declined", queued: "", failure: "" } }],
+    ["decline writes the marker and closes the question",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "decline" }, "T1"], [{ type: "declineDone", failure: "" }, "T1"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none", "decline", "none"], { phase: "idle", consent: { phase: "declined", queued: "", failure: "" } }],
+    ["a marker write failure is reported but still closes the question",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "decline" }, "T1"], [{ type: "declineDone", failure: "decline-marker-write=failed path=p" }, "T1"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none", "decline", "none"], { phase: "idle", failure: "decline-marker-write=failed path=p", consent: { phase: "declined", queued: "", failure: "" } }],
+    ["connect wires and reloads",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "connect" }, "T1"], [{ type: "wireDone", failure: "" }, "T1"], [reloaded, "T1"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none", "wire", "reload", "none"], { phase: "idle", consent: { phase: "wired", queued: "", failure: "" } }],
+    ["a reload failure after wire keeps asking and Connect retries",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "connect" }, "T1"], [{ type: "wireDone", failure: "" }, "T1"], [{ type: "reloadDone", failure: "reload=failed status=1" }, "T1"], [{ type: "connect" }, "T1"], [{ type: "wireDone", failure: "" }, "T1"], [reloaded, "T1"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none", "wire", "reload", "none", "wire", "reload", "none"], { phase: "idle", failure: "", consent: { phase: "wired", queued: "", failure: "" } }],
+    ["a wire failure keeps the question open",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "connect" }, "T1"], [{ type: "wireDone", failure: "wire=failed status=1" }, "T1"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none", "wire", "none"], { phase: "idle", failure: "wire=failed status=1", consent: { phase: "asking", queued: "", failure: "wire=failed status=1" } }],
+    ["Not now after Connect is ignored while wire runs",
+        [[loaded("T1"), "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "connect" }, "T1"], [{ type: "decline" }, "T1"], [{ type: "wireDone", failure: "" }, "T1"], [reloaded, "T1"]],
+        ["probe", "checkDecline", "none", "wire", "none", "reload", "none"], { phase: "idle", consent: { phase: "wired", queued: "", failure: "" } }],
+    ["Not now cannot replace a running Connect",
+        [[loaded("T1"), "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "connect" }, "T1"], [{ type: "decline" }, "T1"]],
+        ["probe", "checkDecline", "none", "wire", "none"], { phase: "wiring", consent: { phase: "asking", queued: "connect", failure: "" } }],
+    ["Connect after Not now is ignored while marker write runs",
+        [[loaded("T1"), "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "decline" }, "T1"], [{ type: "connect" }, "T1"], [{ type: "declineDone", failure: "" }, "T1"]],
+        ["probe", "checkDecline", "none", "decline", "none", "none"], { phase: "idle", consent: { phase: "declined", queued: "", failure: "" } }],
+    ["Connect cannot replace a running Not now",
+        [[loaded("T1"), "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "decline" }, "T1"], [{ type: "connect" }, "T1"]],
+        ["probe", "checkDecline", "none", "decline", "none"], { phase: "declining", consent: { phase: "asking", queued: "decline", failure: "" } }],
+    ["connect during a write waits for the step to end",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [force, "T2"], [loaded("T1"), "T2"], [{ type: "connect" }, "T2"], [mkdirOk, "T2"], [saved, "T2"], [reloaded, "T2"], [{ type: "wireDone", failure: "" }, "T2"], [reloaded, "T2"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none", "read", "mkdir", "none", "write", "reload", "wire", "reload", "none"], { phase: "idle", onDisk: "T2", consent: { phase: "wired", queued: "", failure: "" } }],
+    ["decline during a write waits for the step to end",
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [force, "T2"], [loaded("T1"), "T2"], [{ type: "decline" }, "T2"], [mkdirOk, "T2"], [saved, "T2"], [reloaded, "T2"], [{ type: "declineDone", failure: "" }, "T2"]],
+        ["mkdir", "write", "reload", "probe", "checkDecline", "none", "read", "mkdir", "none", "write", "reload", "decline", "none"], { phase: "idle", onDisk: "T2", consent: { phase: "declined", queued: "", failure: "" } }],
+    ["a render during the probe writes before the marker check",
+        [[loaded("T1"), "T1"], [render, "T2"], [probeUnwired, "T2"], [mkdirOk, "T2"], [saved, "T2"], [reloaded, "T2"]],
+        ["probe", "none", "mkdir", "write", "reload", "checkDecline"], { phase: "checkingDecline", onDisk: "T2", consent: { phase: "unwired", queued: "", failure: "" } }],
+    ["a force during the probe reads before the marker check",
+        [[loaded("T1"), "T1"], [force, "T1"], [probeUnwired, "T1"], [loaded("T1"), "T1"], [mkdirOk, "T1"], [reloaded, "T1"]],
+        ["probe", "none", "read", "mkdir", "reload", "checkDecline"], { phase: "checkingDecline", onDisk: "T1", consent: { phase: "unwired", queued: "", failure: "" } }],
+    ["a render during the marker check writes before asking",
+        [[loaded("T1"), "T1"], [probeUnwired, "T1"], [render, "T2"], [notDeclined, "T2"]],
+        ["probe", "checkDecline", "none", "mkdir"], { phase: "preparing", pending: "T2", consent: { phase: "asking", queued: "", failure: "" } }],
+    ["a force during marker write reads after the marker is written",
+        [[loaded("T1"), "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "decline" }, "T1"], [force, "T1"], [{ type: "declineDone", failure: "" }, "T1"]],
+        ["probe", "checkDecline", "none", "decline", "none", "read"], { phase: "reading", consent: { phase: "declined", queued: "", failure: "" } }],
+    ["a render during wire writes after the wire reload",
+        [[loaded("T1"), "T1"], [probeUnwired, "T1"], [notDeclined, "T1"], [{ type: "connect" }, "T1"], [render, "T2"], [{ type: "wireDone", failure: "" }, "T2"], [reloaded, "T2"]],
+        ["probe", "checkDecline", "none", "wire", "none", "reload", "mkdir"], { phase: "preparing", pending: "T2", consent: { phase: "wired", queued: "", failure: "" } }],
+    ["an unchanged layer at start is probed", [[loaded("T1"), "T1"]], ["probe"], { phase: "probing", onDisk: "T1", consent: { phase: "pending", queued: "", failure: "" } }],
     ["a changed file is written and reloaded, not wired",
-        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"]],
-        ["mkdir", "write", "reload", "none"], { phase: "idle", onDisk: "T1" }],
+        [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"]],
+        ["mkdir", "write", "reload"], { phase: "reloading", onDisk: "T1" }],
     ["a render during a cycle waits for it, then writes its text",
         [[loaded("T0"), "T1"], [render, "T2"], [mkdirOk, "T2"], [saved, "T2"], [reloaded, "T2"], [mkdirOk, "T2"]],
         ["mkdir", "none", "write", "reload", "mkdir", "write"], { phase: "writing", pending: "T2", onDisk: "T1" }],
     ["a failed save reads the file before another write and retries its text only once the text changes",
         [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saveFailed, "T1"], [loaded("T0"), "T1"], [render, "T1"], [render, "T2"], [mkdirOk, "T2"], [saved, "T2"], [reloaded, "T2"]],
-        ["mkdir", "write", "read", "none", "none", "mkdir", "write", "reload", "none"], { phase: "idle", onDisk: "T2", failedText: null, stale: false, failure: "" }],
+        ["mkdir", "write", "read", "none", "none", "mkdir", "write", "reload", "probe"], { phase: "probing", onDisk: "T2", failedText: null, stale: false, failure: "", consent: { phase: "pending", queued: "", failure: "" } }],
     ["a render after a failed save rereads and writes the same text again",
         [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saveFailed, "T1"], [loaded("T0"), "T1"], [force, "T1"], [loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"]],
-        ["mkdir", "write", "read", "none", "read", "mkdir", "write", "reload", "none"], { phase: "idle", onDisk: "T1", forcing: false, failedText: null }],
+        ["mkdir", "write", "read", "none", "read", "mkdir", "write", "reload", "probe"], { phase: "probing", onDisk: "T1", forcing: false, failedText: null, consent: { phase: "pending", queued: "", failure: "" } }],
     ["a failed mkdir tries its text once",
         [[loaded("T0"), "T1"], [{ type: "mkdirDone", failure: "mkdir=failed status=1" }, "T1"], [render, "T1"]],
         ["mkdir", "none", "none"], { phase: "idle", failedText: "T1", failure: "mkdir=failed status=1" }],
     ["a render during a reload, after the file was removed, writes it again",
         [[loaded("T0"), "T1"], [mkdirOk, "T1"], [saved, "T1"], [force, "T1"], [reloaded, "T1"], [absent, "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"]],
-        ["mkdir", "write", "reload", "none", "read", "mkdir", "write", "reload", "none"], { phase: "idle", onDisk: "T1", queuedForce: false, forcing: false, firstRun: false }],
+        ["mkdir", "write", "reload", "none", "read", "mkdir", "write", "reload", "probe"], { phase: "probing", onDisk: "T1", queuedForce: false, forcing: false, consent: { phase: "pending", queued: "", failure: "" } }],
     ["a render of unchanged bytes reloads without a write",
-        [[loaded("T1"), "T1"], [force, "T1"], [loaded("T1"), "T1"], [mkdirOk, "T1"], [reloaded, "T1"]],
-        ["none", "read", "mkdir", "reload", "none"], { phase: "idle", onDisk: "T1", forcing: false }],
+        [[loaded("T1"), "T1"], [probeWired, "T1"], [force, "T1"], [loaded("T1"), "T1"], [mkdirOk, "T1"], [reloaded, "T1"]],
+        ["probe", "none", "read", "mkdir", "reload", "none"], { phase: "idle", onDisk: "T1", forcing: false, consent: { phase: "wired", queued: "", failure: "" } }],
     ["a first read before the text waits, and wires after the first write",
         [[absent, null], [render, "T1"], [mkdirOk, "T1"], [saved, "T1"]],
-        ["none", "mkdir", "write", "wire"], { phase: "wiring", firstRun: false }],
+        ["none", "mkdir", "write", "reload"], { phase: "reloading" }],
     ["an unreadable file is reported and written",
         [[{ type: "loadFailed", notFound: false, detail: "error=3" }, "T1"]],
-        ["mkdir"], { onDisk: null, firstRun: false, failure: "read=failed error=3" }],
+        ["mkdir"], { onDisk: null, failure: "read=failed error=3" }],
     ["a reread that finds no file is no first run",
-        [[loaded("T1"), "T1"], [force, "T1"], [absent, "T1"], [mkdirOk, "T1"], [saved, "T1"]],
-        ["none", "read", "mkdir", "write", "reload"], { firstRun: false }]
+        [[loaded("T1"), "T1"], [probeWired, "T1"], [force, "T1"], [absent, "T1"], [mkdirOk, "T1"], [saved, "T1"]],
+        ["probe", "none", "read", "mkdir", "write", "reload"], { phase: "reloading" }]
 ];
 
 const shellText = fs.readFileSync(shellFile, "utf8");
@@ -608,18 +682,28 @@ const CONTROLS = [
     [layerFile, "a stale view is read first", "if (state.queuedForce || state.stale)", "if (state.queuedForce)"],
     [layerFile, "a queued render reads first", "if (state.queuedForce || state.stale)", "if (state.stale)"],
     [layerFile, "a queued render forces its cycle", "forcing: state.forcing || state.queuedForce,", "forcing: state.forcing,"],
-    [layerFile, "a failed text waits for a change", "(text === state.onDisk || text === state.failedText)", "(text === state.onDisk)"],
-    [layerFile, "a forced cycle writes whatever the bytes", "if (!state.forcing && (text === state.onDisk", "if ((text === state.onDisk"],
+    [layerFile, "a failed text waits for a change", "text !== state.failedText", "true"],
+    [layerFile, "a forced cycle writes whatever the bytes", "state.forcing || (text !== state.onDisk", "(text !== state.onDisk"],
     [layerFile, "a failed save leaves the view stale", "withChanges(state, { stale: true, failedText: state.pending })", "withChanges(state, { failedText: state.pending })"],
-    [layerFile, "a failed mkdir keeps its text", "return settle(withChanges(state, { failedText: state.pending }), event.failure, text);", "return settle(state, event.failure, text);"],
+    [layerFile, "a failed mkdir keeps its text", "return idleDecision(withChanges(state, { failedText: state.pending }), event.failure, text, true);", "return idleDecision(state, event.failure, text, true);"],
     [layerFile, "held bytes skip the write", "if (state.pending === state.onDisk) return written(", "if (false) return written("],
     [layerFile, "a write clears the failed text", "{ onDisk: state.pending, failedText: null }", "{ onDisk: state.pending }"],
-    [layerFile, "first run only on the first read", "(state.onDisk === undefined && event.notFound)", "event.notFound"],
-    [layerFile, "a settled cycle stops forcing", "{ phase: \"idle\", failure: failure, forcing: false }", "{ phase: \"idle\", failure: failure }"],
+    [layerFile, "an unchanged layer probes once", "state.consent.phase === \"pending\" && text !== null && text === state.onDisk", "false"],
+    [layerFile, "an unwired probe checks the decline marker", "return idleDecision(consentChanges(state, { phase: \"unwired\", queued: \"\", failure: \"\" }), state.failure, text);", "return idleDecision(consentChanges(state, { phase: \"asking\", queued: \"\", failure: \"\" }), state.failure, text);"],
+    [layerFile, "a declined marker suppresses the question", "if (event.declined) return idleDecision(consentChanges(state, { phase: \"declined\", queued: \"\", failure: \"\" }), state.failure, text);", "if (false) return idleDecision(consentChanges(state, { phase: \"declined\", queued: \"\", failure: \"\" }), state.failure, text);"],
+    [layerFile, "decline records the marker", "return state.phase === \"idle\" ? begin(consentChanges(state, { queued: \"decline\", failure: \"\" }), text) : { state: consentChanges(state, { queued: \"decline\", failure: \"\" }), action: \"none\" };", "return idleDecision(consentChanges(state, { phase: \"declined\", queued: \"\", failure: \"\" }), state.failure, text);"],
+    [layerFile, "connect during a step waits", "return state.phase === \"idle\" ? begin(consentChanges(state, { queued: \"connect\", failure: \"\" }), text) : { state: consentChanges(state, { queued: \"connect\", failure: \"\" }), action: \"none\" };", "return begin(consentChanges(state, { queued: \"connect\", failure: \"\" }), text);"],
+    [layerFile, "first consent answer keeps connect", "case \"decline\":\n        if (state.consent.phase !== \"asking\")\n            throw new Error(\"HyprlandLayer.step: event decline arrived in consent phase \" + state.consent.phase + \", want asking\");\n        if (state.consent.queued !== \"\") return { state: state, action: \"none\" };", "case \"decline\":\n        if (state.consent.phase !== \"asking\")\n            throw new Error(\"HyprlandLayer.step: event decline arrived in consent phase \" + state.consent.phase + \", want asking\");\n        if (false) return { state: state, action: \"none\" };"],
+    [layerFile, "first consent answer keeps decline", "case \"connect\":\n        if (state.consent.phase !== \"asking\")\n            throw new Error(\"HyprlandLayer.step: event connect arrived in consent phase \" + state.consent.phase + \", want asking\");\n        if (state.consent.queued !== \"\") return { state: state, action: \"none\" };", "case \"connect\":\n        if (state.consent.phase !== \"asking\")\n            throw new Error(\"HyprlandLayer.step: event connect arrived in consent phase \" + state.consent.phase + \", want asking\");\n        if (false) return { state: state, action: \"none\" };"],
+    [layerFile, "a queued connect runs after the step", "state.consent.phase === \"asking\" && state.consent.queued === \"connect\"", "false"],
+    [layerFile, "wire failure keeps asking", "return idleDecision(consentChanges(state, { phase: \"asking\", queued: \"\", failure: event.failure }), event.failure, text);", "return idleDecision(consentChanges(state, { phase: \"settled\", queued: \"\", failure: \"\" }), event.failure, text);"],
+    [layerFile, "wire reload failure keeps asking", "if (event.failure !== \"\")\n                return idleDecision(consentChanges(state, { phase: \"asking\", queued: \"\", failure: event.failure }), event.failure, text, true);\n            return idleDecision(consentChanges(state, { phase: \"wired\", queued: \"\", failure: \"\" }), \"\", text, true);", "if (event.failure !== \"\")\n                return idleDecision(consentChanges(state, { phase: \"wired\", queued: \"\", failure: event.failure }), event.failure, text, true);\n            return idleDecision(consentChanges(state, { phase: \"wired\", queued: \"\", failure: \"\" }), \"\", text, true);"],
+    [layerFile, "probe failure is reported", "case \"probeDone\":\n        expectPhase(state, event, \"probing\");\n        if (event.failure !== undefined && event.failure !== \"\")\n            return idleDecision(consentChanges(state, { phase: \"settled\", queued: \"\", failure: \"\" }), event.failure, text);", "case \"probeDone\":\n        expectPhase(state, event, \"probing\");\n        if (event.failure !== undefined && event.failure !== \"\")\n            return idleDecision(consentChanges(state, { phase: \"settled\", queued: \"\", failure: \"\" }), state.failure, text);"],
+    [layerFile, "a settled cycle stops forcing", "forcing: clearForcing ? false : state.forcing", "forcing: state.forcing"],
     [layerFile, "a render waits for the step", "return state.phase === \"idle\" ? begin(state, text) : { state: state, action: \"none\" };", "return begin(state, text);"],
     [layerFile, "a render request starts when idle", "return state.phase === \"idle\" ? begin(queued, text) : { state: queued, action: \"none\" };", "return { state: queued, action: \"none\" };"],
     [layerFile, "a result out of its phase is refused", "if (state.phase !== phase)", "if (false)"],
-    [layerFile, "an unreadable file is reported", "failure: event.notFound ? state.failure : \"read=failed \" + event.detail", "failure: state.failure"]
+    [layerFile, "an unreadable file is reported", "event.notFound ? state.failure : \"read=failed \" + event.detail, text", "state.failure, text"]
 ];
 
 // A copy sits at its file's own place in a temporary tree, beside the icon

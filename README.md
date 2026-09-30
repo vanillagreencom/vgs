@@ -63,7 +63,7 @@ hl.on("hyprland.start", function () hl.exec_cmd("vgsh run") end)
 
 The line needs `vgsh` on the `PATH` Hyprland starts programs with. When that `PATH` lacks `~/.local/bin`, use the absolute path the install script prints. From a checkout, use the absolute path of `bin/vgsh`.
 
-On its first run VGS adds one line to the top of `hyprland.lua`. That line loads the keys, border colours and blur rules VGS generates. `vgsh hypr unwire` removes it.
+After it writes its Hyprland layer, VGS asks before it adds one line to the top of `hyprland.lua`. That line loads the keys, border colours and blur rules VGS generates. `vgsh hypr unwire` removes it.
 
 ### Other distributions
 
@@ -104,7 +104,7 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 - The shell reads `config/shell.json`, then your `~/.config/vgs/shell.json`, and enables the plugins those name.
 - Each plugin is shown on the surfaces it declares. A widget appears in the bar, a service runs with no surface.
 - `bin/vgsh plugin disable <id>` writes your file; the shell watches it and updates the screen. Disable keeps the plugin's placement and settings, so enable restores it as it was.
-- The shell writes `~/.local/state/vgs/hypr/vgs.lua` with the theme's border colours and each enabled plugin's keys and blur rules, and reloads Hyprland when it changes. On its first run it adds `pcall(dofile, "…/vgs.lua")` as the first line of `~/.config/hypr/hyprland.lua` if that file exists; `bin/vgsh hypr wire` and `unwire` add and remove the line. Settings after that line win. See [docs/architecture/hyprland.md](docs/architecture/hyprland.md).
+- The shell writes `~/.local/state/vgs/hypr/vgs.lua` with the theme's border colours and each enabled plugin's keys and blur rules, and reloads Hyprland when it changes. It asks before it adds `pcall(dofile, "…/vgs.lua")` as the first line of `~/.config/hypr/hyprland.lua`; `bin/vgsh hypr state`, `wire` and `unwire` report, add and remove the line. Settings after that line win. See [docs/architecture/hyprland.md](docs/architecture/hyprland.md).
 
 ## Settings
 

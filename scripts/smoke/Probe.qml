@@ -583,9 +583,9 @@ Scope {
         }
         function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : root.answer(Plugins.hosts.toast.closeGeometry(index)); }
         function toastWindowGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : root.answer(Plugins.hosts.toast.toastWindowGeometry(index)); }
-        // The requirement notice's dialog: whether an item in it holds the
-        // keyboard focus, and what it draws as { title, message, rows,
-        // actions, busy }, `rows` the visible lines under the message.
+        // The core notice dialog: whether an item in it holds the keyboard
+        // focus, and what it draws as { title, message, rows, actions,
+        // busy }, `rows` the visible lines under the message.
         function noticeFocused(): bool {
             const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
             return dialog !== null && root.descendants(dialog).some(child => child.activeFocus);

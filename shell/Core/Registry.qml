@@ -65,6 +65,10 @@ Singleton {
     property bool scanned: false
     property bool rescanPending: false
     property var completion: null
+    // Raised when each plugin and requirements scan ends, whether or not
+    // the manifest set changed. The requirements capability exposes it so
+    // a plugin can re-read its own environment after PATH changes.
+    property int requirementsRevision: 0
 
     // The manifest map was replaced: a plugin appeared, went, or changed
     // its source revision.
@@ -184,6 +188,7 @@ Singleton {
                 root.scanError = "vgsh-scan exited " + root.completion.code + " status=" + root.completion.status;
             else root.applyScan(output.text);
             if (root.scanError !== "") console.error("plugins: " + root.scanError);
+            root.requirementsRevision += 1;
             root.scanFinished();
             if (root.rescanPending) {
                 root.rescanPending = false;

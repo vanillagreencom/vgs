@@ -341,6 +341,7 @@ expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
 # target leaves the tree before any apply.
 browser_theming() { status_row vgs.themes browserTheming | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps([r["report"], r["tone"], r["action"]["offered"]]))'; }
 browser_text() { status_row vgs.themes browserTheming | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r["value"]["text"] if r["value"] else None))'; }
+themes_source_dir() { ipc shell listPlugins | py_reply 'import json,sys; print(next((p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.themes"), "absent"))'; }
 expected_errors+=('settings: vgs\.themes/browserTheming refused: action=browserTheming reason=not-offered')
 settings_page_open vgs.themes
 expect_poll "a tree that ships no target reads browser theming not shipped" '"Not shipped: this VGS themes no Chromium-family browser"' browser_text
@@ -377,6 +378,46 @@ case $first_setup in
     expect "the manager refuses the install once the writer is there" "refused: action=browserTheming reason=not-offered" settings_act vgs.themes browserTheming
     expect "the refused install started no terminal" absent recorded
     unlink -- "${shim:?}/vgs-browser-policy"
+    expect "a browser theming rescan after the writer goes away is accepted" ok ipc shell rescanPlugins
+    expect_poll "the requirements revision makes browser theming read missing again" '["reported", "warning", true]' browser_theming
+    expected_errors+=('plugins: hidden by a higher-precedence plugin with the same id: vgs\.themes')
+    mutant="$home/.config/vgs/plugins/vgs.themes"
+    mkdir -p -- "$(dirname -- "$mutant")"
+    cp -R -- "$repo/shell/plugins/vgs.themes" "$mutant"
+    service_qml="$mutant/Service.qml"
+    cp -- "$service_qml" "$sandbox/vgs.themes-Service.qml.orig"
+    if python3 - "$service_qml" <<'PY'
+import sys
+path = sys.argv[1]
+old = "    onRequirementsRevisionChanged: if (registeredWith !== null) checkSetup()\n"
+text = open(path).read()
+if text.count(old) != 1:
+    sys.exit("requirements revision handler occurs %d times" % text.count(old))
+open(path, "w").write(text.replace(old, "    onRequirementsRevisionChanged: if (false) checkSetup()\n"))
+PY
+    then ok "the browser rescan control drops the requirements revision handler"; else fail "the browser rescan control could not drop the requirements revision handler"; fi
+    scans="$(log_lines 'plugins: scan complete changed=true')" || fail "the instance log is unreadable before the mutant themes copy"
+    expect "the mutant themes plugin rescan is accepted" ok ipc shell rescanPlugins
+    expect_log "the mutant themes copy is published" "$((scans + 1))" 'plugins: scan complete changed=true'
+    expect_poll "the mutant themes copy is the discovered source" "$mutant" themes_source_dir
+    expect_poll "the mutant themes service reads the missing writer at build" '["reported", "warning", true]' browser_theming
+    printf '#!/bin/sh\nexit 0\n' >"$shim/vgs-browser-policy"
+    chmod 755 "$shim/vgs-browser-policy"
+    expect "the control writer resolves on the shell's PATH" "$shim/vgs-browser-policy" shell_resolves vgs-browser-policy
+    scans="$(log_lines 'plugins: scan complete changed=false')" || fail "the instance log is unreadable before the control rescan"
+    expect "the control rescan is accepted" ok ipc shell rescanPlugins
+    expect_log "the control rescan ends without a rebuild" "$((scans + 1))" 'plugins: scan complete changed=false'
+    expect "control: without requirements revision the browser row stays stale" '["reported", "warning", true]' browser_theming
+    rm -rf -- "$mutant"
+    scans="$(log_lines 'plugins: scan complete changed=true')" || fail "the instance log is unreadable before the bundled themes restore"
+    expect "the real themes plugin rescan is accepted" ok ipc shell rescanPlugins
+    expect_log "the bundled themes plugin is published" "$((scans + 1))" 'plugins: scan complete changed=true'
+    expect_poll "the real requirements revision reads the installed writer" '["reported", "success", false]' browser_theming
+    unlink -- "${shim:?}/vgs-browser-policy"
+    scans="$(log_lines 'plugins: scan complete changed=false')" || fail "the instance log is unreadable before the positive requirements rescan"
+    expect "the positive requirements revision rescan is accepted" ok ipc shell rescanPlugins
+    expect_log "the positive requirements revision rescan ends without a rebuild" "$((scans + 1))" 'plugins: scan complete changed=false'
+    expect_poll "the bundled themes service reads the missing writer after a rescan" '["reported", "warning", true]' browser_theming
     ;;
   *)
     fail "the browser theming row reads $first_setup, so Install browser theming was not pressed"

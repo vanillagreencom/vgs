@@ -10,6 +10,26 @@
 // The command that writes the file again, which its header names.
 var REGENERATE = "vgsh hypr render";
 
+var CONSENT = {
+    title: "Let VGS manage its Hyprland settings?",
+    message: "One line at the top of hyprland.lua loads the keys, border colours and blur rules VGS generates. Your own settings after it still win.",
+    disclosure: "vgsh hypr wire",
+    connect: "Connect",
+    decline: "Not now"
+};
+
+function consentView(consent) {
+    if (consent.phase !== "asking") return null;
+    return {
+        title: CONSENT.title,
+        message: CONSENT.message,
+        disclosure: CONSENT.disclosure,
+        actions: { connect: CONSENT.connect, decline: CONSENT.decline },
+        failure: consent.failure,
+        busy: consent.queued !== ""
+    };
+}
+
 // The border colours: [Hyprland table path, theme colour name]. `colours`
 // holds each name as Theme publishes a colour, `#aarrggbb`.
 var BORDERS = [
@@ -501,9 +521,10 @@ function render(sections, theme, themeName, highestScale) {
 // the action and feeds its result back as the next event. TEXT is the
 // rendered layer, or null before the inputs are ready.
 //
-// A cycle reads the file when it must, makes the directory, writes the text,
-// wires hyprland.lua after the first write when the first read found no
-// file, and reloads Hyprland. Quickshell's FileView writes nothing, and
+// A cycle reads the file when it must, makes the directory, writes the text
+// and reloads Hyprland. Once one write-and-reload cycle completes, the
+// machine probes hyprland.lua and asks before it wires the loading line.
+// Quickshell's FileView writes nothing, and
 // reports nothing, for the bytes it last read or wrote, and it keeps the
 // bytes of a failed write as those; so a failed write leaves the view
 // `stale`, and the next cycle reads the file before any write. A text whose
@@ -512,15 +533,29 @@ function render(sections, theme, themeName, highestScale) {
 // change, never a loop. A render asked while a step runs is queued in
 // `queuedForce` and starts its own cycle, a read first, once the step ends.
 //
-// State: phase (`reading`, `idle`, `preparing`, `writing`, `wiring`,
-// `reloading`); onDisk, the bytes last read or written, null when absent or
-// unreadable, undefined before the first read ends; stale; firstRun;
-// queuedForce; forcing, which writes and reloads whatever the bytes; pending,
-// the text being written; failedText; failure, the last step's keyed
-// failure, "" once a cycle completes. Actions: `none`, `read`, `mkdir`,
-// `write` (state.pending), `wire`, `reload`.
+// State: phase (`reading`, `idle`, `preparing`, `writing`, `reloading`,
+// `probing`, `checkingDecline`, `declining`, `wiring`);
+// onDisk, the bytes last read or written, null when absent or unreadable,
+// undefined before the first read ends; stale; queuedForce; forcing, which
+// writes and reloads whatever the bytes; pending, the text being written;
+// failedText; failure, the last step's keyed failure, "" once a cycle
+// completes; reloadOwner, `layer` for the layer writer and `wire` for a
+// Connect reload; consent, a tagged state for the Hyprland wiring question.
+// Actions: `none`, `read`, `mkdir`, `write` (state.pending), `reload`,
+// `probe`, `checkDecline`, `ask`, `decline` and `wire`.
 function initialState() {
-    return { phase: "reading", onDisk: undefined, stale: false, firstRun: false, queuedForce: false, forcing: false, pending: "", failedText: null, failure: "" };
+    return {
+        phase: "reading",
+        onDisk: undefined,
+        stale: false,
+        queuedForce: false,
+        forcing: false,
+        pending: "",
+        failedText: null,
+        failure: "",
+        reloadOwner: "",
+        consent: { phase: "pending", queued: "", failure: "" }
+    };
 }
 
 function withChanges(state, changes) {
@@ -535,45 +570,56 @@ function expectPhase(state, event, phase) {
         throw new Error("HyprlandLayer.step: event " + event.type + " arrived in phase " + state.phase + ", want " + phase);
 }
 
+function consentChanges(state, changes) {
+    return withChanges(state, { consent: withChanges(state.consent, changes) });
+}
+
 // An idle writer: start the next cycle, or rest.
 function begin(state, text) {
     if (state.queuedForce || state.stale)
         return { state: withChanges(state, { phase: "reading", forcing: state.forcing || state.queuedForce, queuedForce: false, stale: false }), action: "read" };
-    if (text === null) return { state: withChanges(state, { forcing: false }), action: "none" };
-    if (!state.forcing && (text === state.onDisk || text === state.failedText)) return { state: state, action: "none" };
-    return { state: withChanges(state, { phase: "preparing", pending: text }), action: "mkdir" };
+    if (text !== null && (state.forcing || (text !== state.onDisk && text !== state.failedText)))
+        return { state: withChanges(state, { phase: "preparing", pending: text }), action: "mkdir" };
+    if (state.consent.phase === "asking" && state.consent.queued === "connect")
+        return { state: withChanges(state, { phase: "wiring" }), action: "wire" };
+    if (state.consent.phase === "asking" && state.consent.queued === "decline")
+        return { state: withChanges(state, { phase: "declining" }), action: "decline" };
+    if (state.consent.phase === "pending" && text !== null && text === state.onDisk)
+        return { state: withChanges(state, { phase: "probing" }), action: "probe" };
+    if (state.consent.phase === "unwired")
+        return { state: withChanges(state, { phase: "checkingDecline" }), action: "checkDecline" };
+    return { state: withChanges(state, { forcing: false }), action: "none" };
 }
 
-// The bytes are on disk: wire after the first write when the first read
-// found no file, then reload.
+// The bytes are on disk: reload the layer after every write.
 function written(state) {
     var next = withChanges(state, { onDisk: state.pending, failedText: null });
-    if (next.firstRun) return { state: withChanges(next, { firstRun: false, phase: "wiring" }), action: "wire" };
-    return { state: withChanges(next, { phase: "reloading" }), action: "reload" };
+    return { state: withChanges(next, { phase: "reloading", reloadOwner: "layer" }), action: "reload" };
 }
 
-function settle(state, failure, text) {
-    return begin(withChanges(state, { phase: "idle", failure: failure, forcing: false }), text);
+function idleDecision(state, failure, text, clearForcing) {
+    return begin(withChanges(state, { phase: "idle", failure: failure, forcing: clearForcing ? false : state.forcing, reloadOwner: "" }), text);
 }
 
 // EVENT is one of { type: "loaded", content }, { type: "loadFailed",
 // notFound, detail }, { type: "render" } (the text changed), { type: "force" }
 // (a render request), { type: "mkdirDone", failure }, { type: "saved" },
-// { type: "saveFailed", failure }, { type: "wireDone" } and
-// { type: "reloadDone", failure }, a failure being "" when the step worked.
+// { type: "saveFailed", failure }, { type: "reloadDone", failure },
+// { type: "probeDone", answer|failure }, { type: "declineChecked",
+// declined|failure }, { type: "connect" }, { type: "decline" },
+// { type: "declineDone", failure } and { type: "wireDone", failure }, a
+// failure being "" when the step worked.
 function step(state, event, text) {
     switch (event.type) {
     case "loaded":
         expectPhase(state, event, "reading");
-        return begin(withChanges(state, { phase: "idle", onDisk: event.content }), text);
+        return idleDecision(withChanges(state, { onDisk: event.content }), state.failure, text, false);
     case "loadFailed":
         expectPhase(state, event, "reading");
-        return begin(withChanges(state, {
-            phase: "idle",
+        return idleDecision(withChanges(state, {
             onDisk: null,
-            firstRun: state.firstRun || (state.onDisk === undefined && event.notFound),
             failure: event.notFound ? state.failure : "read=failed " + event.detail
-        }), text);
+        }), event.notFound ? state.failure : "read=failed " + event.detail, text, false);
     case "render":
         return state.phase === "idle" ? begin(state, text) : { state: state, action: "none" };
     case "force":
@@ -581,7 +627,7 @@ function step(state, event, text) {
         return state.phase === "idle" ? begin(queued, text) : { state: queued, action: "none" };
     case "mkdirDone":
         expectPhase(state, event, "preparing");
-        if (event.failure !== "") return settle(withChanges(state, { failedText: state.pending }), event.failure, text);
+        if (event.failure !== "") return idleDecision(withChanges(state, { failedText: state.pending }), event.failure, text, true);
         // FileView skips the bytes it holds already, and reports nothing.
         if (state.pending === state.onDisk) return written(withChanges(state, { phase: "writing" }));
         return { state: withChanges(state, { phase: "writing" }), action: "write" };
@@ -590,13 +636,54 @@ function step(state, event, text) {
         return written(state);
     case "saveFailed":
         expectPhase(state, event, "writing");
-        return settle(withChanges(state, { stale: true, failedText: state.pending }), event.failure, text);
-    case "wireDone":
-        expectPhase(state, event, "wiring");
-        return { state: withChanges(state, { phase: "reloading" }), action: "reload" };
+        return idleDecision(withChanges(state, { stale: true, failedText: state.pending }), event.failure, text, true);
     case "reloadDone":
         expectPhase(state, event, "reloading");
-        return settle(state, event.failure, text);
+        if (state.reloadOwner === "wire") {
+            if (event.failure !== "")
+                return idleDecision(consentChanges(state, { phase: "asking", queued: "", failure: event.failure }), event.failure, text, true);
+            return idleDecision(consentChanges(state, { phase: "wired", queued: "", failure: "" }), "", text, true);
+        }
+        if (state.reloadOwner === "layer")
+            return idleDecision(state, event.failure, text, true);
+        throw new Error("HyprlandLayer.step: reload owner " + JSON.stringify(state.reloadOwner) + " is not one of layer, wire");
+    case "probeDone":
+        expectPhase(state, event, "probing");
+        if (event.failure !== undefined && event.failure !== "")
+            return idleDecision(consentChanges(state, { phase: "settled", queued: "", failure: "" }), event.failure, text);
+        switch (event.answer) {
+        case "wired":
+            return idleDecision(consentChanges(state, { phase: "wired", queued: "", failure: "" }), state.failure, text);
+        case "absent":
+            return idleDecision(consentChanges(state, { phase: "settled", queued: "", failure: "" }), state.failure, text);
+        case "unwired":
+            return idleDecision(consentChanges(state, { phase: "unwired", queued: "", failure: "" }), state.failure, text);
+        }
+        throw new Error("HyprlandLayer.step: unknown probe answer " + JSON.stringify(event.answer));
+    case "declineChecked":
+        expectPhase(state, event, "checkingDecline");
+        if (event.failure !== undefined && event.failure !== "")
+            return idleDecision(consentChanges(state, { phase: "settled", queued: "", failure: "" }), event.failure, text);
+        if (event.declined) return idleDecision(consentChanges(state, { phase: "declined", queued: "", failure: "" }), state.failure, text);
+        return idleDecision(consentChanges(state, { phase: "asking", queued: "", failure: "" }), state.failure, text);
+    case "connect":
+        if (state.consent.phase !== "asking")
+            throw new Error("HyprlandLayer.step: event connect arrived in consent phase " + state.consent.phase + ", want asking");
+        if (state.consent.queued !== "") return { state: state, action: "none" };
+        return state.phase === "idle" ? begin(consentChanges(state, { queued: "connect", failure: "" }), text) : { state: consentChanges(state, { queued: "connect", failure: "" }), action: "none" };
+    case "decline":
+        if (state.consent.phase !== "asking")
+            throw new Error("HyprlandLayer.step: event decline arrived in consent phase " + state.consent.phase + ", want asking");
+        if (state.consent.queued !== "") return { state: state, action: "none" };
+        return state.phase === "idle" ? begin(consentChanges(state, { queued: "decline", failure: "" }), text) : { state: consentChanges(state, { queued: "decline", failure: "" }), action: "none" };
+    case "declineDone":
+        expectPhase(state, event, "declining");
+        return idleDecision(consentChanges(state, { phase: "declined", queued: "", failure: "" }), event.failure, text);
+    case "wireDone":
+        expectPhase(state, event, "wiring");
+        if (event.failure !== "")
+            return idleDecision(consentChanges(state, { phase: "asking", queued: "", failure: event.failure }), event.failure, text);
+        return { state: withChanges(consentChanges(state, { phase: "asking", queued: "connect", failure: "" }), { phase: "reloading", reloadOwner: "wire" }), action: "reload" };
     }
     throw new Error("HyprlandLayer.step: unknown event " + JSON.stringify(event.type));
 }

@@ -14,7 +14,7 @@ Covers: README.md § Install, § Shipped plugins and § Licence, scripts/check-r
 | Nix: `nix run github:vanillagreencom/vgs/v<VERSION> -- <vgsh args>` | `VERSION`, and the usage header of `bin/vgsh` for the command |
 | A checkout: `git clone https://github.com/vanillagreencom/vgs`, then `vgs/bin/vgsh <args>` | the usage header of `bin/vgsh` |
 | The autostart line, in one `lua` fence | the autostart sentence in [runtime.md § Process](runtime.md#process), and the line `install.sh` prints with `vgsh` for its absolute path |
-| The first run adds one line to `hyprland.lua`, and `vgsh hypr unwire` removes it | [hyprland.md](hyprland.md) |
+| The shell asks before it adds one line to `hyprland.lua`, and `vgsh hypr unwire` removes it | [hyprland.md](hyprland.md) |
 | One Shipped plugins row per plugin directory | the directories `bin/vgsh-scan` lists under `shell/plugins/` |
 | The package licence expression | `license` in `packaging/arch/vgs/PKGBUILD` |
 | Fedora follows in 0.1.x. Debian, Ubuntu, openSUSE, Gentoo and Void wait until their repositories carry Quickshell 0.3.1 and Hyprland with Lua configuration. | [distribution-fedora.md](distribution-fedora.md) for Fedora; decision 5 of [the platform roadmap](../plans/v2-platform-roadmap.md#decisions) for the rest |

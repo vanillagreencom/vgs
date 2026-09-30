@@ -48,6 +48,7 @@
 #   vgsh theme browser-policy install
 #                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
 #   vgsh theme setup [--json]      each theme target's one-time setup and whether it is done
+#   vgsh hypr state                report whether hyprland.lua loads the Hyprland layer; read-only
 #   vgsh hypr wire                 keep the line that loads the Hyprland layer first in hyprland.lua
 #   vgsh hypr unwire               remove that line from hyprland.lua
 #   vgsh hypr render               have the running shell write the Hyprland layer again and reload Hyprland
@@ -1988,7 +1989,7 @@ case "$cmd" in
     [[ $# -gt 0 ]] && shift
     if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
     case "$sub" in
-      wire|unwire)
+      state|wire|unwire)
         exec node "$hypr_judge" "$sub" "$config_home" "$state_home/vgs"
         ;;
       render)
