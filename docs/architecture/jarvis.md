@@ -1,6 +1,6 @@
 # Jarvis
 
-Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-session.js, scripts/test-jarvis-session-runner.js, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
+Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
 
 The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon runs the region reducer, but this skeleton captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
 
@@ -30,20 +30,7 @@ J02 provides the [core hold-shortcut contract](hyprland-shortcuts.md#hold-shortc
 
 ## Session
 
-`Session.js::reduce` owns all transitions. `Session.js::REGIONS` owns the tagged state shape; `phaseOf` owns phase priority. The reducer reads time only from the event. It returns a new state and ordered effects without changing its inputs.
-
-- `shell/plugins/vgs.jarvis/backend/session-runner.js::SessionRunner` owns callback stamping, the event queue and the next deadline. Synchronous adapter callbacks enter the queue after the current transition's effects. It replaces its deadline timer after each drain. Lease loss forces brain close and releases the timer. Late callbacks cannot rearm a closed owner.
-- The daemon supplies unavailable adapter ports. An acquisition through those ports throws an invariant error, never a simulated success. Every hello produces a real snapshot event; every resulting state reaches the service through the wire and becomes the plugin's `detail` status.
-- The runner stamps capture, transcript, brain, playback, tool and approval callbacks with their effect's identity. A callback must match the region's live operation and generation. Session counts discarded callbacks. Cancellation acknowledgments and eventual tool outcomes retain their original identity across stop; they cannot update a newer turn.
-- Conversation start, end and session-setting changes invalidate generation identity. `SESSION_SETTINGS` owns which settings end the session. Next-capture settings do not end it. The hello still accepts only empty settings; later settings enter the wire when the service can produce and the daemon can consume them.
-- A repeated held edge changes nothing. A new press after release and the explicit interrupt event use `Session.js::interrupt`. It retires the previous collection and held approval, cancels thinking and flushes playback. A delayed final from the previous hold cannot close or replace the new hold. Release without hold demand changes nothing. Toggle collapse uses event time. The plan's debounce and thinking, approval and cancellation deadlines are behavioral rules, not measured latency budgets.
-- Interrupt preserves a running tool. Stop requests tool cancellation only while the tool offers it. No new proposal starts in an interrupted conversation, alongside a running tool or while approval is held. Session grants no permission and accepts no confirmation; the policy and router own those decisions.
-- Capture requires an up gate, unmuted state, a shown indicator and no fault or turn cancellation. Half-duplex also requires idle playback. Playback waits for capture's close acknowledgment before it starts without echo cancellation. Mute remains `muting` until that acknowledgment.
-- Thinking cancellation retains its operation until acknowledgment or its deadline, then emits adapter close. Arriving callbacks also check expiry, so a delayed timer cannot admit late content. Each tool proposal carries its table row's deadline. An expired tool reports `unknown` but keeps the serial slot until its eventual completion, failure or unknown outcome. The outcome effect names the original brain operation even after stop. The planned router connects those outcomes to the audit interface. No real brain delivery exists yet.
-
-The `brain` region retains the acquired adapter identity after a response completes. A later send names that same owner while its turn receives a new operation. Conversation end closes a completed adapter immediately; an active response keeps its cancellation deadline. Lease loss forces either owner closed. Tool outcomes still name the original turn and tool operation after adapter close, not a newer conversation.
-
-The `input` region retains demand while capture opens, closes or waits for playback. `conversation` separates active, interrupted and ended lifetimes. `indicator` and `duplex` record capture prerequisites. Playback admission, tool cancellation and tool deadline are tagged values inside their owning regions. They introduce no key handling, mode selection or audio implementation.
+[jarvis-session.md](jarvis-session.md) defines the region reducer, effect owner and lifetime rules, with their owning test evidence.
 
 ## Setting options
 
@@ -84,8 +71,6 @@ J12 owns keys, mode selection and mute controls. J13 owns audio process lifetime
 ## Evidence
 
 - `scripts/test-jarvis-protocol.js` pins shape, direction, unknown-type and UTF-8 line-bound refusals with per-rule controls.
-- `scripts/test-jarvis-session.js` tests transitions, ordered event pairs and state-shape refusals. The matrix retains seed-owner callbacks and discovers effects produced by the first event for live second callbacks. It covers capture, collection, brain, playback, tool and approval callbacks, including every deadline owner. Each created pair pins a transition or effect. Independent controls omit each callback family or deadline pair, or change created identities into stale seed identities. Separate mutations break hold replacement, approval retirement, retained brain ownership, identity, muted capture and the other lifetime rules.
-- `scripts/test-jarvis-session-runner.js` uses in-memory ports and an injectable clock. Its stand-in brain connection stays open after done until the close port releases it. It proves lease, stop and setting teardown after completed responses, callback identity, synchronous callback ordering, deadline replacement, eventual tool outcomes and timer release. These pure suites start no child or socket.
 - `scripts/test-jarvis-daemon.js` runs the real daemon and lease controls through the [J09 test world](validation-jarvis.md). Its fixture parameters enter as arguments. No caller environment reaches the world.
 - `scripts/smoke/rows/jarvis.sh` proves zero-retry hello, Session detail delivery, disable cleanup and bounded recovery. Removing state publication breaks the real consumer assertion. Recovery checks name their retry count. Its suppressed first reply retains the timeout log and fails the ordinary startup assertion once. Its six-retry copy breaks the five-retry assertion.
 - Its gated real daemon proves startup lock forwarding beside the test-only lock holder. That holder locks and unlocks through the core without authentication. Removing the startup resend forces recovery rather than accepting the current lock snapshot. The row also proves Node-floor exit 78 does not retry.

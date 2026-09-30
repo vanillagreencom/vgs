@@ -6,7 +6,7 @@ How the shell's changes are checked: the check selector and its rows. The nested
 
 The shared Jarvis test environment, its private services and its behavior controls are in [validation-jarvis.md](validation-jarvis.md). It belongs to test infrastructure, not the installed shell.
 
-The [Jarvis Session](jarvis.md#session) has pure reducer and effect-owner rows in the `logic` area. The protocol row also selects on the Session state judge it imports. The real daemon and nested service rows use the private Jarvis environment.
+The [Jarvis Session](jarvis-session.md#session) has pure reducer and effect-owner rows in the `logic` area. The protocol row also selects on the Session state judge it imports. The real daemon and nested service rows use the private Jarvis environment.
 
 The pure Jarvis guidance, speech text and language suites select from their modules, runtime assets and fixtures. Their [voice text contract](jarvis-voice.md) defines the consumer boundary and mutation evidence. The installed consumer runs in the install-tree suite and nested read-only prefix row.
 
