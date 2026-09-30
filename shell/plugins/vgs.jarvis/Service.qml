@@ -176,4 +176,5 @@ Item {
     }
     Timer { id: retry; onTriggered: root.start() }
     Timer { id: helloDeadline; interval: 5000; onTriggered: root.broken("jarvis: hello=timeout") }
+    Keys { shell: root.shell }
 }

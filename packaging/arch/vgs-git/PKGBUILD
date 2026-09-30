@@ -39,11 +39,11 @@ optdepends=(
   'sudo: package installs and the browser policy writer in floating TUIs'
   'imagemagick: square Slack profile photos and custom emoji in notifications'
   'curl: Slack profile photos, custom emoji and Web API calls in notifications'
-  'libsecret: secret-tool, to read Slack tokens for notifications from the keyring'
+  'libsecret: secret-tool, for Slack tokens and Jarvis provider keys in the keyring'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'
   'mise: Dev Tools installs, updates and removes developer tools'
   'cronie: crontab, which schedules automations where no systemd user manager answers'
-  'systemd: systemd-inhibit and busctl, so the lock screen locks before each suspend'
+  'systemd: before-suspend locking and Jarvis key presence without reading secrets'
   'dbus: dbus-monitor, so the lock screen hears logind announce a suspend'
 )
 makedepends=('git')

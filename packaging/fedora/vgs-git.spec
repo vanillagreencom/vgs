@@ -43,6 +43,7 @@ Recommends:     cronie
 Recommends:     xdg-utils
 Recommends:     curl
 Recommends:     libsecret
+Recommends:     systemd
 Recommends:     ImageMagick
 Conflicts:      vgs-shell
 # end runtime dependencies

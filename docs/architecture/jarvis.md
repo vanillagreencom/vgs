@@ -4,6 +4,8 @@ Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarv
 
 The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon runs the region reducer, but this skeleton captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
 
+The service also owns a metadata-only key presence probe. Settings opens the masked Add key terminal. Storage, lookup and the reference contract for future adapters and the accounts picker are in [jarvis-secrets.md](jarvis-secrets.md). The daemon still opens no provider account.
+
 ## Local speech inputs
 
 [jarvis-local.md](jarvis-local.md) defines the independent artifact declaration, bounded model inputs, measurement instrument and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the selected exports and caption path. These inputs register no plugin and do not implement the sidecar, setup or admission.
@@ -49,7 +51,7 @@ The core supports the [passive layer input contract](layers.md), refined by [D05
 - The daemon exits when stdin closes. No systemd unit or detached process keeps it alive. It uses the shared library loader from the real VGS tree, passed as argv, because its published plugin snapshot contains no core files.
 - A successful hello does not replenish the restart allowance. Five restarts use exponential delays, then the service publishes a problem and raises one toast. The hello deadline bounds a child that starts but sends no answer. These are recovery rules, not measured latency budgets.
 - The daemon's normal exit 78 is permanent configuration failure. The service publishes its Node-needed cause without a restart. VGS's package floor remains Node 18; only Jarvis requires Node 22.
-- Node below the plugin floor refuses before reading hello. The manifest names only the command this skeleton runs. D035 supplies the install notice; the plugin runs no installer.
+- Node below the plugin floor refuses before reading hello. The manifest names the daemon and key flow's commands. D035 supplies the install notice; the plugin runs no installer.
 
 ## Wire
 
@@ -58,6 +60,8 @@ The core supports the [passive layer input contract](layers.md), refined by [D05
 The service takes settings from `shell.settings`, the revision from the registry-owned `shell.manifest.__revision`, state storage from `Paths.stateDir`, and data/runtime roots from the shell's XDG environment. This skeleton has no settings or binds, so those hello records are empty. The daemon validates the complete snapshot and creates none of those directories. A lock change sends a new snapshot while the child is starting or ready. A failure or teardown permits no further send.
 
 The daemon owns generation identity. Hello carries the service's last observation, initially zero; it cannot assign a daemon generation. Status and state carry the current generation and snapshot revision. State also carries the ordered sequence, regions and phase. `JarvisProtocol.accept` uses `Session.validate` for the record and `Session.phaseOf` for the phase. One daemon writer and the stdin/stdout pipes preserve order. The service filters replies to earlier lock observations and clears detail before child restart. Other intent and adapter messages remain outside the wire.
+
+Key presence uses a separate service-owned reader, not a new daemon wire type.
 
 Both endpoints frame chunks before retaining an unfinished line. QML uses `SplitParser` with an empty `splitMarker`, not its default unbounded line buffer. The daemon uses a UTF-8 decoder across reads. [The Quickshell 0.3.1 reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/SplitParser/) documents arbitrary chunk lengths for the empty marker. The [Process reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/Process/) documents stdin closure, explicit environments and restart from `runningChanged`.
 

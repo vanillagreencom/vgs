@@ -229,8 +229,19 @@ jarvis_lock_case() { # EXPECTED
   expect "the gated service disables" ok ipc shell setPluginEnabled vgs.jarvis false
 }
 
+jarvis_key_value() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+d=json.load(sys.stdin)
+rows=d["status"].get("keys", [])
+expected=[{"label":"fixture / test", "value":sys.argv[1]}]
+print("matched" if rows == expected else "pending")
+' "$1"
+}
+
 jarvis_enable
 expect_poll "the healthy skeleton keeps the Session gate unconfigured" session jarvis_session unconfigured
+expect_poll "Jarvis publishes only the fixture key presence" matched jarvis_key_value present
 jarvis_disable
 
 jarvis_service="$repo/shell/plugins/vgs.jarvis/Service.qml"
@@ -333,3 +344,64 @@ expect "the control disables" ok ipc shell setPluginEnabled vgs.jarvis false
 cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
 jarvis_rescan
 jarvis_enable
+
+# The core's floating terminal receives only the declared script path.
+# Its disposable script is a no-auth fixture, not the real key entry flow.
+jarvis_keys="$repo/shell/plugins/vgs.jarvis/Keys.qml"
+cp -- "$jarvis_keys" "$sandbox/jarvis-keys-original"
+cp -- "$repo/shell/plugins/vgs.jarvis/tui/add-key.sh" "$sandbox/jarvis-add-key-original"
+printf '#!/bin/sh\nexit 0\n' >"$repo/shell/plugins/vgs.jarvis/tui/add-key.sh"
+terminal_stand_in
+terminal_ready "Jarvis Add key"
+jarvis_rescan
+jarvis_listed_key() {
+  ipc shell listTuis | py_reply '
+import json,sys
+rows=json.load(sys.stdin)
+want={"key":"vgs.jarvis/add-key","plugin":"vgs.jarvis","name":"add-key",
+      "title":"Add Jarvis key","label":"Add key","icon":"key-round","group":"Jarvis"}
+print("listed" if want in rows else "missing")
+'
+}
+expect "the key-entry action is listed" listed jarvis_listed_key
+jarvis_open_key() {
+  local revision snapshot
+  revision="$(jarvis_revision)" || return 1
+  snapshot="$rt_dir/vgsh-sources-$shell_qs_pid/$revision"
+  forget_record
+  expect "Add key opens by its core TUI key" ok ipc shell openTui vgs.jarvis/add-key
+  expect_poll "Add key hands the terminal only its declared script" \
+    "$(words --app-id=org.vgs.tui "--title=VGS · Add Jarvis key" -- "$tui_self" present --presentation full \
+      --plugin vgs.jarvis --dir "$snapshot" --record vgs.jarvis/add-key --run RUN --record-dir "$rt_dir/vgs/tui" \
+      --app-id org.vgs.tui --window-title "VGS · Add Jarvis key" -- tui/add-key.sh)" recorded
+  expect_run_end "the fixture Add key terminal ends" vgs.jarvis/add-key
+}
+expect_poll "the key row starts present" matched jarvis_key_value present
+printf 'locked\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_key
+expect_poll "the service checks presence after Add key ends" matched jarvis_key_value locked
+python3 - "$jarvis_keys" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+needle="onEndedAtChanged: if (endedAt !== null) refresh()"
+assert s.count(needle)==1
+p.write_text(s.replace(needle, "onEndedAtChanged: {}"))
+PY
+printf 'present\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_rescan
+expect_poll "the no-refresh control first publishes present" matched jarvis_key_value present
+printf 'locked\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_key
+jarvis_refresh_control() {
+  (failures=0 behaviour_failures=0
+   expect_poll "Add key must refresh presence" matched jarvis_key_value locked >"$sandbox/jarvis-refresh-control.log"
+   echo "$failures")
+}
+expect "removing the end refresh breaks its actual assertion" 1 jarvis_refresh_control
+cp -- "$sandbox/jarvis-keys-original" "$jarvis_keys"
+cp -- "$sandbox/jarvis-add-key-original" "$repo/shell/plugins/vgs.jarvis/tui/add-key.sh"
+printf 'present\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_rescan
+expect_poll "restored key status contains no secret" matched jarvis_key_value present

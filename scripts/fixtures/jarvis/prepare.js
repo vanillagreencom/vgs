@@ -99,7 +99,7 @@ function fixtureWrite(wire) {
 }
 
 function service(sourceTree, tree, root) {
-    fs.mkdirSync(path.join(root, "standins"), { recursive: true });
+    require("./keys-world.js").standins(path.join(root, "standins"));
     const launcher = path.join(sourceTree, "scripts/lib/jarvis-env.sh");
     const lease = path.join(root, "lease.sh");
     // Bash gives an asynchronous command /dev/null on stdin. J09 starts
@@ -116,6 +116,17 @@ function service(sourceTree, tree, root) {
     const replacement = 'command: ["bash", ' + JSON.stringify(lease) + ', ' + JSON.stringify(launcher) + ', ' +
         JSON.stringify(path.join(root, "standins")) + ', root.daemon, Quickshell.shellDir + "/.."]';
     fs.writeFileSync(file, source.replace(needle, replacement));
+    const keys = path.join(tree, "shell/plugins/vgs.jarvis/Keys.qml");
+    const keysSource = fs.readFileSync(keys, "utf8");
+    const keysNeedle = 'command: ["node", root.program, "presence"]';
+    assert.equal(keysSource.split(keysNeedle).length - 1, 1, "key presence instrumentation match");
+    const keysCommand = 'command: ["bash", ' + JSON.stringify(launcher) + ', ' +
+        JSON.stringify(path.join(root, "standins")) + ', "--", "node", ' +
+        JSON.stringify(path.join(sourceTree, "scripts/fixtures/jarvis/keys-world.js")) + ', root.program, ' +
+        JSON.stringify(path.join(root, "key-mode")) + ']';
+    if (!fs.existsSync(path.join(root, "key-mode")))
+        fs.writeFileSync(path.join(root, "key-mode"), "present\n");
+    fs.writeFileSync(keys, keysSource.replace(keysNeedle, keysCommand));
 }
 
 module.exports = { freshSuite };

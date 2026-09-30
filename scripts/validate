@@ -156,6 +156,7 @@ rows=(
   "cli|updates pipeline controls|scripts/test-updates-pipeline.sh|scripts/vgsh-rows.sh shell/plugins/vgs.updates/tui/* shell/plugins/vgs.updates/bin/facts shell/plugins/vgs.updates/UpdatesLogic.js bin/lib/tui.sh bin/lib/qml-library.js"
   "cli|automations engine|node scripts/test-automations-engine.js|shell/plugins/vgs.automations/* bin/vgsh bin/vgsh-plugin-judge bin/vgsh-scan bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json"
   "cli|Jarvis daemon|node scripts/test-jarvis-daemon.js|shell/plugins/vgs.jarvis/* bin/lib/qml-library.js scripts/lib/jarvis-env.sh scripts/fixtures/jarvis/*"
+  "cli|Jarvis secrets|node scripts/test-jarvis-secrets.js|shell/plugins/vgs.jarvis/backend/Secrets.js shell/plugins/vgs.jarvis/backend/keys.js shell/plugins/vgs.jarvis/tui/* bin/lib/tui.sh scripts/lib/jarvis-env.sh scripts/fixtures/jarvis/keys-world.js scripts/fixtures/jarvis/key-tui.py"
   "cli|automations linger TUI|scripts/test-automations-linger.sh|shell/plugins/vgs.automations/tui/linger.sh bin/lib/tui.sh"
   "cli|themes browser-policy TUI|scripts/test-themes-browser-policy-tui.sh|shell/plugins/vgs.themes/tui/browser-policy.sh bin/lib/tui.sh"
   "cli|notifications open TUI|scripts/test-notifications-open.sh|shell/plugins/vgs.notifications/tui/open.sh bin/lib/tui.sh"
