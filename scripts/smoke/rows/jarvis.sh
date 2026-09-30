@@ -5,13 +5,30 @@ expected_errors+=('WARN qml: jarvis: stderr=.*Killed.*')
 expected_errors+=('WARN qml: jarvis: stderr=jarvis: node=21[.]0[.]0 need=22')
 expected_errors+=('WARN qml: jarvis: hello=timeout')
 
-jarvis_wait_ready() {
-  local answer kind
+jarvis_ready() { # EXPECTED_RETRIES, zero for every fresh startup
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+d=json.load(sys.stdin)
+expected=int(sys.argv[1])
+if d["retries"] != expected:
+    print("unexpected-retries=" + str(d["retries"]))
+elif d["lifetime"]["kind"] == "ready":
+    print("ready")
+else:
+    print("pending")
+' "${1:-0}"
+}
+
+jarvis_wait_ready() { # EXPECTED_RETRIES
+  local answer expected="${1:-0}"
   for ((attempt = 0; attempt < 200; attempt++)); do
-    answer="$(ipc smoke jarvisProcess)" || return 1
-    kind="$(py_reply 'import json,sys; print(json.load(sys.stdin)["lifetime"]["kind"])' <<<"$answer")" || return 1
-    if [[ $kind == ready ]]; then
+    answer="$(jarvis_ready "$expected")" || return 1
+    if [[ $answer == ready ]]; then
       echo ready
+      return
+    fi
+    if [[ $answer == unexpected-retries=* ]]; then
+      printf '%s\n' "$answer"
       return
     fi
     sleep 0.01
@@ -46,6 +63,12 @@ PY
 jarvis_enable() {
   expect "Jarvis enables" ok ipc shell setPluginEnabled vgs.jarvis true
   expect "the real Jarvis daemon answers hello" ready jarvis_wait_ready
+}
+
+jarvis_reject_timeout_start() {
+  (failures=0 behaviour_failures=0
+   jarvis_enable >"$sandbox/jarvis-timeout-control-assertions.log"
+   echo "$failures")
 }
 
 jarvis_toasts() {
@@ -119,7 +142,11 @@ jarvis_exhaust() {
       sleep 0.01
     done
     if [[ $crash -lt 5 ]]; then
-      jarvis_wait_ready >/dev/null
+      answer="$(jarvis_wait_ready "$((crash + 1))")" || return 1
+      if [[ $answer != ready ]]; then
+        printf 'crash=%s readiness=%s\n' "$crash" "$answer"
+        return 1
+      fi
     fi
   done
   answer="$(ipc smoke jarvisProcess)"
@@ -185,6 +212,17 @@ jarvis_service="$repo/shell/plugins/vgs.jarvis/Service.qml"
 jarvis_backend="$repo/shell/plugins/vgs.jarvis/backend/jarvisd.js"
 cp -- "$jarvis_service" "$sandbox/jarvis-service-original"
 cp -- "$jarvis_backend" "$sandbox/jarvis-backend-original"
+jarvis_drop="$sandbox/jarvis-dropped-first-reply"
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --drop-first-reply "$jarvis_backend" "$jarvis_drop"
+jarvis_rescan
+jarvis_timeouts="$(log_lines 'jarvis: hello=timeout')" || { fail "Jarvis timeout log is unreadable"; return 1; }
+expect "a timeout recovery fails the actual ordinary startup assertion once" 1 jarvis_reject_timeout_start
+expect "the intentional recovery still reaches ready with its explicit allowance" ready jarvis_wait_ready 1
+expect_log "the control retains its real hello timeout log" "$((jarvis_timeouts + 1))" 'jarvis: hello=timeout'
+expect "the first-reply suppression control disables" ok ipc shell setPluginEnabled vgs.jarvis false
+cp -- "$sandbox/jarvis-backend-original" "$jarvis_backend"
+jarvis_rescan
+
 jarvis_gate="$sandbox/jarvis-first-reply-gate"
 jarvis_seen="$sandbox/jarvis-first-hello"
 expect "the test-only session holder enables" ok ipc shell setPluginEnabled acme.probe true

@@ -76,8 +76,9 @@ PY
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
-  # AF_UNIX bind probe on Linux, 2026-09-30:
-  # 107 bytes bind; 108 refuse. Session bus is this world's longest socket.
+  # Linux unix(7): sun_path is 108 bytes including the terminating byte.
+  # https://man7.org/linux/man-pages/man7/unix.7.html
+  # Session bus is this world's longest socket.
   "$allocator" -I - "$root/run/session.bus" <<'PY' || exit 1
 import os, sys
 size = len(os.fsencode(sys.argv[1]))

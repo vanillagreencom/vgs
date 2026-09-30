@@ -46,10 +46,10 @@ J13 owns audio process lifetime, forced daemon death ending its children, and ca
 
 - `scripts/test-jarvis-protocol.js` pins shape, direction, unknown-type and UTF-8 line-bound refusals with per-rule controls.
 - `scripts/test-jarvis-daemon.js` runs the real daemon and lease controls through the [J09 test world](validation-jarvis.md). Its fixture parameters enter as arguments. No caller environment reaches the world.
-- `scripts/smoke/rows/jarvis.sh` reads a real answer, disables the service, reads both owned PIDs gone, and exhausts the restart allowance. Its disposable six-retry copy breaks the five-retry assertion.
+- `scripts/smoke/rows/jarvis.sh` proves zero-retry hello, disable cleanup and bounded recovery. Recovery checks name their retry count. Its suppressed first reply retains the timeout log and fails the ordinary startup assertion once. Its six-retry copy breaks the five-retry assertion.
 - Its gated real daemon proves startup lock forwarding beside the test-only lock holder. That holder locks and unlocks through the core without authentication. Removing the startup resend forces recovery rather than accepting the current lock snapshot. The row also proves Node-floor exit 78 does not retry.
 - Every IPC JSON reader in that row follows the shared [smoke reader rule](validation-smoke-harness.md). State words and empty replies do not enter a direct JSON parse.
-- `scripts/smoke/rows/read-only-prefix.sh` adds the shared test observer to its disposable installed tree, then starts the installed service and gets its answer with the prefix non-writable. The existing tree snapshot assertion checks that startup changes no installed file.
+- `scripts/smoke/rows/read-only-prefix.sh` adds the shared observer to its disposable installed tree. It requires zero-retry hello from the non-writable prefix and checks that startup changes no installed file. `scripts/smoke/rows/start-order.sh` uses the same fresh-start read for the default set.
 - Smoke instruments only disposable service copies to launch the child through the real J09 helper. `scripts/fixtures/jarvis/prepare.js` keeps that instrumentation in one place. The helper itself owns worktree-local scratch allocation. A fixture launcher carries the stdin pipe through a descriptor, because Bash replaces stdin with `/dev/null` for the helper's asynchronous namespace supervisor. It restores stdin inside the namespace before executing the real daemon.
 
 ## Omarchy comparison

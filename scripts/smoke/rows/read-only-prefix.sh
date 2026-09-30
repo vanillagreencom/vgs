@@ -91,7 +91,7 @@ if stop_shell && start_shell "$readonly_dest/usr" "$sandbox/read-only-qs.log" ba
   ok "the shell starts from a non-writable installed prefix"
 fi
 expect "Jarvis enables from the non-writable installed prefix" ok ipc shell setPluginEnabled vgs.jarvis true
-expect "Jarvis answers hello from the non-writable installed prefix" ready jarvis_wait_ready
+expect "Jarvis answers hello without retries from the non-writable installed prefix" ready jarvis_wait_ready 0
 
 installed_apply_vgs() {
   local err status=0

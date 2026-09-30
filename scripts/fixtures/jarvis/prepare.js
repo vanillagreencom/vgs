@@ -77,6 +77,26 @@ function floorDaemon(file) {
         'Object.defineProperty(process.versions, "node", { value: "21.0.0" });\n' + needle));
 }
 
+function dropFirstReply(file, marker) {
+    const source = fs.readFileSync(file, "utf8");
+    const start = '"use strict";';
+    const write = 'if (!process.stdout.write(wire + "\\n")) process.stdin.pause();';
+    assert.equal(source.split(start).length - 1, 1);
+    assert.equal(source.split(write).length - 1, 1);
+    const fixture = `
+const fixtureFs = require("node:fs");
+const fixtureMarker = ${JSON.stringify(marker)};
+function fixtureWrite(wire) {
+    if (!fixtureFs.existsSync(fixtureMarker)) {
+        fixtureFs.writeFileSync(fixtureMarker, "dropped\\n");
+        return;
+    }
+    process.stdout.write(wire + "\\n");
+}
+`;
+    fs.writeFileSync(file, source.replace(start, start + fixture).replace(write, "fixtureWrite(wire);"));
+}
+
 function service(sourceTree, tree, root) {
     fs.mkdirSync(path.join(root, "standins"), { recursive: true });
     const launcher = path.join(sourceTree, "scripts/lib/jarvis-env.sh");
@@ -102,6 +122,9 @@ if (require.main === module) {
     if (process.argv[2] === "--gate-daemon") {
         assert.equal(process.argv.length, 6);
         gateDaemon(...process.argv.slice(3));
+    } else if (process.argv[2] === "--drop-first-reply") {
+        assert.equal(process.argv.length, 5);
+        dropFirstReply(...process.argv.slice(3));
     } else if (process.argv[2] === "--floor-daemon") {
         assert.equal(process.argv.length, 4);
         floorDaemon(process.argv[3]);

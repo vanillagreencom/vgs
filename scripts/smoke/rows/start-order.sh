@@ -101,6 +101,7 @@ rescan_follows() {
 release_reason() { local reason waited; read -r reason waited < <(service_release) && echo "$reason"; }
 
 if restart_over "$repo" "$sandbox/start-order-qs.log"; then
+  expect "default-set Jarvis starts without spending recovery allowance" ready jarvis_wait_ready
   echo "  latency_first_bar_ms=${first_bar_ms:-unmeasured} budget_ms=$default_first_bar_budget_ms cpu_some_pct=$first_bar_cpu_some_pct plugin_set=default"
   if [[ -n $first_bar_ms && $first_bar_ms -le $default_first_bar_budget_ms ]]; then ok "the first bar of the default set maps within its budget"; else fail "default-set first bar latency ${first_bar_ms:-unmeasured} ms over budget $default_first_bar_budget_ms ms"; fi
   expect "the gate released the services on the first bar frame" first-frame release_reason
