@@ -14,9 +14,9 @@
 **Rationale**:
 - omarchy-voice's `task_worker.py::sandbox_command` uses bubblewrap namespaces, a new session, private devices, selected runtime mounts, a cleared environment and a writable workspace. VGS takes those controls.
 - VGS differs by exposing read-only HOME with Denied masks. Its file and shell tools use the same trusted user paths. Rebuilding protected mount branches makes absent masks possible without writing into HOME.
-- VGS preserves symlinks instead of binding their targets at another path. A read-only credential bind at an unprotected alias would still expose its contents.
+- VGS preserves HOME and protected-path symlinks instead of binding their targets at another path. A read-only credential bind at an unprotected alias would still expose its contents. Declared public system data uses a separate source-resolving projection, so resolver, CA and alternatives links keep working without exposing host runtime or private certificate directories.
 - VGS supplies no host GPU devices, desktop endpoints or real authentication. Its shell consumer needs commands, not model execution or a desktop session.
-- A seccomp filter denies Unix sockets even when external networking is authorized. A pathname mask cannot hide an abstract bus socket. VGS refuses unsupported syscall architectures rather than run without that filter.
+- A seccomp filter denies both Unix socket constructors, including reconnectable socketpair endpoints, even when external networking is authorized. A pathname mask cannot hide an abstract bus socket. VGS refuses unsupported syscall architectures rather than run without that filter.
 - Omarchy's agents plugin keeps display separate from worker extraction. VGS likewise keeps the service separate from this command owner.
 - User-namespace or bootstrap failure removes the tools. Continuing outside confinement would invalidate D070.
 

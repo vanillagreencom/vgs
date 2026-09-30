@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real bwrap inside the J09 world. No auth binary, live HOME, device or network.
 "use strict";
-const { assert, fs, path, tree, world, asyncControl } = require("./fixtures/jarvis/policy.js");
+const { assert, fs, path, tree, world, asyncControl, moduleCopy, datagram } = require("./fixtures/jarvis/policy.js");
 const net = require("node:net");
 const { cases } = require("./fixtures/jarvis/forbidden.js");
 const sourceFile = path.join(tree, "shell/plugins/vgs.jarvis/backend/Sandbox.js");
@@ -53,6 +53,191 @@ async function forbidden(sandbox, w, file, operation) {
     exited(result, 42);
     assert.match(result.stdout, /^(EACCES|EROFS|ENOENT|EISDIR)$/);
 }
+
+async function reviewFixes(w) {
+    async function pairs(sandbox, opened = false) {
+        const results = [];
+        for (const abstract of [false, true]) {
+            await datagram(w.project, abstract, async (address, received) => {
+                const result = await sandbox.run(request(["/usr/bin/python3", "-I",
+                    path.join(w.project, "datagram.py"), "send", quoted(address)], w.project, abstract), w.roots);
+                if (opened) {
+                    // The control must reach both listeners, not fail on an
+                    // unrelated setup error before its final assertion.
+                    if (result.kind !== "exited" || result.code !== 0)
+                        throw new Error("socketpair control did not open the channel: " + JSON.stringify(result));
+                    const message = await received();
+                    if (message.kind !== "received" || message.text !== "scratch-only")
+                        throw new Error("socketpair control delivered the wrong fixture payload");
+                    console.log("socketpair-control=" + (abstract ? "abstract" : "pathname") + " received=scratch-only");
+                } else {
+                    exited(result, 42);
+                    assert.equal(result.stdout.trim(), "socketpair=blocked");
+                    console.log("socketpair=" + (abstract ? "abstract" : "pathname") + " blocked");
+                }
+                results.push(result.code);
+            });
+        }
+        assert.deepEqual(results, [42, 42]);
+    }
+    fs.copyFileSync(path.join(tree, "scripts/fixtures/jarvis/sandbox-datagram.py"), w.project + "/datagram.py");
+    await pairs(Sandbox);
+    await control("socketpair", "[0x15, 0, 3, abi[2]]", "[0x15, 0, 3, 0xffffffff]", s => pairs(s, true));
+
+    // These existing gates share the changed instruction program. Keep their
+    // real syscall cases and controls in the narrow fix instrument too.
+    const run = argv => Sandbox.run(request(argv, w.project), w.roots);
+    const syscall = number => ["/usr/bin/python3", "-I", "-c",
+        `import ctypes,errno,os\nc=ctypes.CDLL(None,use_errno=True)\nr=c.syscall(${number},0,0,0,0,0,0)\nos._exit(42 if r==-1 and ctypes.get_errno()==errno.EPERM else 0)\n`];
+    for (const number of [425, 426, 427]) exited(await run(syscall(number)), 42);
+    await control("io-uring", "[0x35, 0, 2, 425], [0x25, 1, 0, 427], [0x06, 0, 0, 0x00050001],",
+        "[0x35, 0, 2, 425], [0x25, 1, 0, 427], [0x06, 0, 0, 0x7fff0000],", async s =>
+            exited(await s.run(request(syscall(427), w.project), w.roots), 42));
+    if (process.arch === "x64") {
+        // Linux x86-64 raw compatibility getpid, not an auth/privilege probe.
+        // int 0x80 uses AUDIT_ARCH_I386; the Python caller exits through its
+        // native ABI. Bytes are mov eax,20; int 0x80; ret (Intel ISA).
+        const compat = ["/usr/bin/python3", "-I", "-c",
+            'import ctypes,mmap,os\nm=mmap.mmap(-1,8,prot=mmap.PROT_READ|mmap.PROT_WRITE|mmap.PROT_EXEC)\nm.write(bytes.fromhex("b814000000cd80c3"))\nf=ctypes.CFUNCTYPE(ctypes.c_int)(ctypes.addressof(ctypes.c_char.from_buffer(m)))\nos._exit(42 if f()==-1 else 0)\n'];
+        exited(await run(compat), 42);
+        await control("syscall-abi", "[0x15, 1, 0, abi[0]]", "[0x05, 0, 0, 1]", async s =>
+            exited(await s.run(request(compat, w.project), w.roots), 42));
+        const x32 = syscall(0x40000029);
+        exited(await run(x32), 42);
+        await control("x32", "[0x35, 0, 1, 0x40000000]", "[0x35, 0, 1, 0xffffffff]", async s =>
+            exited(await s.run(request(x32, w.project), w.roots), 42));
+    }
+
+    const root = path.join(process.env.JARVIS_TEST_ROOT, "public-layout");
+    const etc = root + "/etc";
+    const hidden = root + "/run";
+    const files = {
+        "/etc/resolv.conf": "synthetic resolver\n",
+        "/etc/ssl/cert.pem": "synthetic public CA\n",
+        "/etc/ssl/certs/ca-bundle.crt": "synthetic public CA\n",
+        "/etc/pki/tls/cert.pem": "synthetic public CA\n",
+        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem": "synthetic public CA\n"
+    };
+    fs.mkdirSync(hidden + "/systemd/resolve", { recursive: true });
+    fs.writeFileSync(hidden + "/systemd/resolve/stub-resolv.conf", files["/etc/resolv.conf"]);
+    fs.writeFileSync(hidden + "/service-private", "not selected");
+    fs.mkdirSync(etc + "/pki/ca-trust/extracted/pem", { recursive: true });
+    fs.writeFileSync(etc + "/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "synthetic public CA\n");
+    fs.mkdirSync(etc + "/pki/tls/certs", { recursive: true });
+    fs.symlinkSync("../../ca-trust/extracted/pem/tls-ca-bundle.pem", etc + "/pki/tls/certs/ca-bundle.crt");
+    fs.symlinkSync("../ca-trust/extracted/pem/tls-ca-bundle.pem", etc + "/pki/tls/cert.pem");
+    fs.mkdirSync(etc + "/pki/tls/private");
+    fs.writeFileSync(etc + "/pki/tls/private/sentinel", "synthetic private fixture");
+    fs.mkdirSync(etc + "/ssl/private", { recursive: true });
+    fs.writeFileSync(etc + "/ssl/private/sentinel", "synthetic private fixture");
+    fs.symlinkSync("../pki/tls/certs", etc + "/ssl/certs");
+    fs.symlinkSync("../pki/tls/cert.pem", etc + "/ssl/cert.pem");
+    fs.symlinkSync("../run/systemd/resolve/stub-resolv.conf", etc + "/resolv.conf");
+    fs.mkdirSync(root + "/alternatives", { recursive: true });
+    fs.symlinkSync("/usr/bin/true", root + "/alternatives/fixture-tool");
+    fs.symlinkSync("../alternatives", etc + "/alternatives");
+    // Only the source lookup changes in this disposable module. Normal
+    // Sandbox.run/available still build and launch the real kernel sandbox.
+    const lookup = ["function publicRuntime(args, file, masks, input = file, ancestors = []) {",
+        "function publicRuntime(args, file, masks, input = file, ancestors = []) {\n"
+        + "    if (ancestors.length === 0) input = path.join(" + quoted(etc) + ", path.relative('/etc', file));"];
+    const readable = async sandbox => {
+        assert.deepEqual(await sandbox.available(), { kind: "available" });
+        for (const [file, contents] of Object.entries(files)) {
+            const result = await sandbox.run(request(js(`process.stdout.write(require("node:fs").readFileSync(${quoted(file)},"utf8"))`), w.project), w.roots);
+            exited(result, 0);
+            assert.equal(result.stdout, contents, file);
+            await forbidden(sandbox, w, file, "write");
+        }
+        exited(await sandbox.run(request(["/etc/alternatives/fixture-tool"], w.project), w.roots), 0);
+        const absent = [hidden + "/service-private", hidden + "/systemd/resolve/stub-resolv.conf",
+            "/run/systemd/resolve/stub-resolv.conf", "/etc/ssl/private/sentinel", "/etc/pki/tls/private/sentinel"];
+        const isolation = await sandbox.run(request(js(`const f=require("node:fs");process.stdout.write(JSON.stringify(${quoted(absent)}.map(p=>f.existsSync(p))))`), w.project), w.roots);
+        exited(isolation, 0);
+        assert.deepEqual(JSON.parse(isolation.stdout), absent.map(() => false));
+    };
+    await moduleCopy(sourceFile, [lookup], readable);
+    console.log("public-runtime=resolver-ca-alternatives readable-and-readonly hidden-runtime=absent");
+
+    const mutations = [
+        ["public-resolution", "const source = fs.realpathSync.native(input);",
+            'const source = fs.realpathSync.native(input);\n    if (fs.lstatSync(input).isSymbolicLink()) { args.push("--symlink", fs.readlinkSync(input), file); return; }'],
+        ["public-directory-projection", "stat.isDirectory() && source === file", "stat.isDirectory()"],
+        ["public-alternatives", '"/etc/alternatives", ', ""],
+        ["public-ca-path", '"/etc/pki/tls/cert.pem", ', ""],
+        ["public-extracted-ca", '"/etc/pki/ca-trust/extracted",', ""],
+        ["public-readonly", 'args.push("--ro-bind", source, file)', 'args.push("--bind", source, file)']
+    ];
+    for (const [name, needle, replacement] of mutations) {
+        await moduleCopy(sourceFile, [lookup, [needle, replacement]], async sandbox => {
+            await assert.rejects(() => readable(sandbox), assert.AssertionError, name + " must turn red");
+        });
+        console.log("control=" + name + " detected");
+    }
+    fs.writeFileSync(hidden + "/systemd/resolve/stub-resolv.conf", files["/etc/resolv.conf"]);
+    fs.unlinkSync(etc + "/resolv.conf");
+    fs.symlinkSync(w.home + "/.ssh/sentinel", etc + "/resolv.conf");
+    const protectedSource = async sandbox => {
+        const result = await sandbox.run(request(["/usr/bin/true"], w.project), w.roots);
+        assert.equal(result.kind, "error");
+        assert.match(result.error, /^jarvis: sandbox=public-runtime-protected path=\/etc\/resolv.conf$/);
+    };
+    await moduleCopy(sourceFile, [lookup], protectedSource);
+    await moduleCopy(sourceFile, [lookup, [
+        "if (masks.some(root => within(file, root) || within(source, root) || within(root, source)))",
+        "if (false)"
+    ]], async sandbox => {
+        await assert.rejects(() => protectedSource(sandbox), assert.AssertionError);
+    });
+    console.log("control=public-protected-source detected");
+    fs.unlinkSync(etc + "/resolv.conf");
+    fs.symlinkSync("../run/absent-resolver", etc + "/resolv.conf");
+    const missing = async sandbox => {
+        const result = await sandbox.available();
+        assert.equal(result.kind, "unavailable");
+        assert.equal(result.reason, "public-runtime");
+        assert.equal(result.error, "ENOENT");
+    };
+    await moduleCopy(sourceFile, [lookup], missing);
+    await moduleCopy(sourceFile, [lookup, [
+        "const source = fs.realpathSync.native(input)",
+        'let source; try { source = fs.realpathSync.native(input); } catch (e) { if (e.code === "ENOENT") return; throw e; }'
+    ]], async sandbox => { await assert.rejects(() => missing(sandbox), assert.AssertionError); });
+    console.log("control=public-dangling-source detected");
+    fs.unlinkSync(etc + "/resolv.conf");
+    fs.symlinkSync("../run/systemd/resolve/stub-resolv.conf", etc + "/resolv.conf");
+    fs.symlinkSync(".", root + "/alternatives/cycle");
+    const cycle = async sandbox => {
+        const result = await sandbox.available();
+        assert.equal(result.kind, "unavailable");
+        assert.match(result.error, /^jarvis: sandbox=public-runtime-cycle path=\/etc\/alternatives\/cycle$/);
+    };
+    await moduleCopy(sourceFile, [lookup], cycle);
+    // Treating a cycle as an absent member must not produce the keyed
+    // unavailability result, so the control can detect that fail-open choice.
+    await moduleCopy(sourceFile, [lookup, [
+        'if (ancestors.includes(source)) throw new Error("jarvis: sandbox=public-runtime-cycle path=" + file)',
+        "if (ancestors.includes(source)) return"
+    ]], async sandbox => { await assert.rejects(() => cycle(sandbox), assert.AssertionError); });
+    console.log("control=public-cycle detected");
+    fs.unlinkSync(root + "/alternatives/cycle");
+    await datagram(w.project, false, async address => {
+        fs.symlinkSync(address, root + "/alternatives/service");
+        const special = async sandbox => {
+            const result = await sandbox.available();
+            assert.equal(result.kind, "unavailable");
+            assert.match(result.error, /^jarvis: sandbox=public-runtime-kind path=\/etc\/alternatives\/service$/);
+        };
+        await moduleCopy(sourceFile, [lookup], special);
+        await moduleCopy(sourceFile, [lookup, [
+            'if (!stat.isDirectory()) throw new Error("jarvis: sandbox=public-runtime-kind path=" + file)',
+            "if (!stat.isDirectory()) return"
+        ]], async sandbox => { await assert.rejects(() => special(sandbox), assert.AssertionError); });
+        fs.unlinkSync(root + "/alternatives/service");
+    });
+    console.log("control=public-special-source detected");
+}
+
 async function main() {
     const available = await Sandbox.available();
     if (available.kind !== "available") {
@@ -62,6 +247,11 @@ async function main() {
         return;
     }
     const w = seed();
+    await reviewFixes(w);
+    if (process.argv.includes("--review-fixes")) {
+        console.log("jarvis-sandbox: review-fixes real-bwrap cases and controls passed");
+        return;
+    }
     const denied = Denied.create(w.roots);
     const run = (argv, network = false, options = {}) => Sandbox.run(request(argv, w.project, network), w.roots, options);
     for (const row of cases(w)) {
@@ -116,26 +306,6 @@ async function main() {
     const childEnv = await run(js('process.stdout.write(JSON.stringify(process.env))'));
     exited(childEnv, 0);
     assert.equal(JSON.parse(childEnv.stdout).XDG_RUNTIME_DIR, "/run/jarvis");
-    const syscall = number => ["/usr/bin/python3", "-I", "-c",
-        `import ctypes,errno,os\nc=ctypes.CDLL(None,use_errno=True)\nr=c.syscall(${number},0,0,0,0,0,0)\nos._exit(42 if r==-1 and ctypes.get_errno()==errno.EPERM else 0)\n`];
-    for (const number of [425, 426, 427]) exited(await run(syscall(number)), 42);
-    await control("io-uring", "[0x35, 0, 2, 425], [0x25, 1, 0, 427], [0x06, 0, 0, 0x00050001],",
-        "[0x35, 0, 2, 425], [0x25, 1, 0, 427], [0x06, 0, 0, 0x7fff0000],", async s =>
-            exited(await s.run(request(syscall(427), w.project), w.roots), 42));
-    if (process.arch === "x64") {
-        // Linux x86-64 raw compatibility getpid, not an auth/privilege probe.
-        // int 0x80 uses AUDIT_ARCH_I386; the Python caller exits through its
-        // native ABI. Bytes are mov eax,20; int 0x80; ret (Intel ISA).
-        const compat = ["/usr/bin/python3", "-I", "-c",
-            'import ctypes,mmap,os\nm=mmap.mmap(-1,8,prot=mmap.PROT_READ|mmap.PROT_WRITE|mmap.PROT_EXEC)\nm.write(bytes.fromhex("b814000000cd80c3"))\nf=ctypes.CFUNCTYPE(ctypes.c_int)(ctypes.addressof(ctypes.c_char.from_buffer(m)))\nos._exit(42 if f()==-1 else 0)\n'];
-        exited(await run(compat), 42);
-        await control("syscall-abi", "[0x15, 1, 0, abi[0]]", "[0x05, 0, 0, 1]", async s =>
-            exited(await s.run(request(compat, w.project), w.roots), 42));
-        const x32 = syscall(0x40000029);
-        exited(await run(x32), 42);
-        await control("x32", "[0x35, 0, 1, 0x40000000]", "[0x35, 0, 1, 0xffffffff]", async s =>
-            exited(await s.run(request(x32, w.project), w.roots), 42));
-    }
     // Only private loopback and private scratch Unix sockets. These cannot
     // reach a host bus or auth service even in a control.
     const accept = socket => socket.on("error", error => assert.equal(error.code, "ECONNRESET"));

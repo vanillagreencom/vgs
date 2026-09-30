@@ -16,14 +16,15 @@ const within = (file, root) => file === root || file.startsWith(root + "/");
 function socketFilter() {
     // Linux seccomp_data and audit.h ABI. Reject compatibility syscall ABIs,
     // including x32, so they cannot bypass the native socket rule.
-    const abi = { x64: [0xc000003e, 41], arm64: [0xc00000b7, 198] }[process.arch];
+    const abi = { x64: [0xc000003e, 41, 53], arm64: [0xc00000b7, 198, 199] }[process.arch];
     if (!abi) throw new Error("jarvis: sandbox=unsupported-architecture");
     const instructions = [
         [0x20, 0, 0, 4], [0x15, 1, 0, abi[0]], [0x06, 0, 0, 0x00050001],
         [0x20, 0, 0, 0], [0x35, 0, 1, 0x40000000], [0x06, 0, 0, 0x00050001],
         // io_uring can create/connect sockets without the socket syscall.
         [0x35, 0, 2, 425], [0x25, 1, 0, 427], [0x06, 0, 0, 0x00050001],
-        [0x15, 0, 3, abi[1]], [0x20, 0, 0, 16],
+        // Both constructors can supply a connectable Unix datagram endpoint.
+        [0x15, 1, 0, abi[1]], [0x15, 0, 3, abi[2]], [0x20, 0, 0, 16],
         [0x15, 0, 1, 1], [0x06, 0, 0, 0x00050001], [0x06, 0, 0, 0x7fff0000]
     ];
     const data = Buffer.alloc(instructions.length * 8);
@@ -88,6 +89,34 @@ function mount(args, file, masks, writable) {
     args.push("--remount-ro", file);
 }
 
+/**
+ * Project selected public system data at its expected path. Resolve each
+ * member against its source tree, not the projected directory: relative CA
+ * links otherwise change meaning when a directory alias is flattened.
+ * HOME uses mount(), which must preserve links instead.
+ */
+function publicRuntime(args, file, masks, input = file, ancestors = []) {
+    try { fs.lstatSync(input); }
+    catch (error) {
+        if (error.code === "ENOENT" && ancestors.length === 0) return;
+        throw error;
+    }
+    const source = fs.realpathSync.native(input);
+    if (masks.some(root => within(file, root) || within(source, root) || within(root, source)))
+        throw new Error("jarvis: sandbox=public-runtime-protected path=" + file);
+    const stat = fs.statSync(source);
+    if (stat.isFile() || (stat.isDirectory() && source === file)) {
+        args.push("--ro-bind", source, file);
+        return;
+    }
+    if (!stat.isDirectory()) throw new Error("jarvis: sandbox=public-runtime-kind path=" + file);
+    if (ancestors.includes(source)) throw new Error("jarvis: sandbox=public-runtime-cycle path=" + file);
+    args.push("--perms", "0755", "--tmpfs", file);
+    for (const name of fs.readdirSync(source).sort())
+        publicRuntime(args, path.join(file, name), masks, path.join(source, name), [...ancestors, source]);
+    args.push("--remount-ro", file);
+}
+
 function mounts(args, masks, home, cwd) {
     mount(args, "/usr", masks, null);
     // Use each distribution's real runtime layout, including non-merged /usr.
@@ -96,10 +125,12 @@ function mounts(args, masks, home, cwd) {
         catch (error) { if (error.code !== "ENOENT") throw error; }
     }
     // No host /etc wholesale: authentication and bus configuration stay out.
-    for (const file of ["/etc/ssl", "/etc/ca-certificates", "/etc/resolv.conf",
+    // Public CA paths only. /etc/ssl/private and /etc/pki/tls/private stay out.
+    for (const file of ["/etc/ssl/certs", "/etc/ssl/cert.pem", "/etc/ca-certificates",
+        "/etc/pki/tls/certs", "/etc/pki/tls/cert.pem", "/etc/pki/ca-trust/extracted",
+        "/etc/alternatives", "/etc/resolv.conf",
         "/etc/hosts", "/etc/nsswitch.conf", "/etc/localtime"]) {
-        try { fs.lstatSync(file); mount(args, file, masks, null); }
-        catch (error) { if (error.code !== "ENOENT") throw error; }
+        publicRuntime(args, file, masks);
     }
     if (home !== null) {
         mount(args, home, masks, null);
@@ -200,7 +231,10 @@ async function available() {
     const binary = executable();
     if (binary === null) return { kind: "unavailable", reason: "bwrap-missing" };
     const args = runtime(false);
-    mounts(args, [], null, null);
+    try { mounts(args, [], null, null); }
+    catch (error) {
+        return { kind: "unavailable", reason: "public-runtime", error: error.code || error.message };
+    }
     const result = await launch(binary, command(args, ["/usr/bin/true"]));
     if (result.kind === "exited" && result.code === 0) return { kind: "available" };
     return { kind: "unavailable", reason: "bwrap-unavailable", detail: result };

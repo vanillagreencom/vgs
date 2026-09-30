@@ -17,7 +17,7 @@ function world(main, prepareStandins) {
         fs.mkdirSync(standins);
         if (prepareStandins !== undefined) prepareStandins(standins);
         const result = cp.spawnSync("/bin/bash", [path.join(tree, "scripts/lib/jarvis-env.sh"),
-            standins, "--", "node", process.argv[1], "--inside"], {
+            standins, "--", "node", process.argv[1], "--inside", ...process.argv.slice(2)], {
             env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: parent },
             encoding: "utf8", timeout: 60000
         });
@@ -80,21 +80,68 @@ function fsFault(method, replacement, check) {
 
 // Bind an asynchronous instrument to its source. Each invocation owns a
 // disposable module and asserts an actual assertion failure, not a parse error.
-function asyncControl(file) {
-    return async (name, needle, replacement, check) => {
-        const source = fs.readFileSync(file, "utf8");
-        assert.equal(source.split(needle).length - 1, 1, name + " mutation match");
+async function moduleCopy(file, edits, check) {
+    let source = fs.readFileSync(file, "utf8");
+    for (const [needle, replacement] of edits) {
+        assert.equal(source.split(needle).length - 1, 1, path.basename(file) + " mutation match");
         const changed = source.replace(needle, replacement);
         assert.notEqual(changed, source);
-        const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "sb-mutant-"));
-        for (const sibling of ["Denied.js", "Tools.js"])
-            fs.copyFileSync(path.join(path.dirname(file), sibling), path.join(folder, sibling));
-        fs.writeFileSync(path.join(folder, path.basename(file)), changed);
-        try {
-            await assert.rejects(() => check(require(path.join(folder, path.basename(file)))), assert.AssertionError, name + " must turn red");
+        source = changed;
+    }
+    const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "sb-mutant-"));
+    for (const sibling of ["Denied.js", "Tools.js"])
+        fs.copyFileSync(path.join(path.dirname(file), sibling), path.join(folder, sibling));
+    fs.writeFileSync(path.join(folder, path.basename(file)), source);
+    try { return await check(require(path.join(folder, path.basename(file)))); }
+    finally { fs.rmSync(folder, { recursive: true, force: true }); }
+}
+
+function asyncControl(file) {
+    return async (name, needle, replacement, check) => {
+        await moduleCopy(file, [[needle, replacement]], async module => {
+            await assert.rejects(() => check(module), assert.AssertionError, name + " must turn red");
             console.log("control=" + name + " detected");
-        } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+        });
     };
 }
 
-module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, asyncControl };
+async function datagram(project, abstract, check) {
+    const address = abstract ? "\0jarvis-pair-" + process.pid : path.join(project, "pair.sock");
+    const child = cp.spawn("/usr/bin/python3", ["-I", path.join(tree, "scripts/fixtures/jarvis/sandbox-datagram.py"),
+        "listen", JSON.stringify(address)], { env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    let buffer = "";
+    const lines = [];
+    const waiters = [];
+    const line = () => new Promise((resolve, reject) => {
+        if (lines.length) { resolve(lines.shift()); return; }
+        // The fixture announces binding and receipt; the bound is for a
+        // missing fixture handshake, not a network or sandbox latency budget.
+        const timer = setTimeout(() => reject(new Error("datagram fixture handshake: " + stderr)), 5000);
+        waiters.push(value => { clearTimeout(timer); resolve(value); });
+    });
+    child.stdout.on("data", chunk => {
+        buffer += chunk;
+        while (buffer.includes("\n")) {
+            const end = buffer.indexOf("\n");
+            const value = JSON.parse(buffer.slice(0, end));
+            buffer = buffer.slice(end + 1);
+            if (waiters.length) waiters.shift()(value); else lines.push(value);
+        }
+    });
+    const closed = new Promise((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", resolve);
+    });
+    try {
+        assert.deepEqual(await line(), { kind: "ready" });
+        await check(address, line);
+    } finally {
+        child.kill("SIGTERM");
+        await closed;
+        if (!abstract) fs.rmSync(address, { force: true });
+    }
+}
+
+module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, asyncControl, moduleCopy, datagram };

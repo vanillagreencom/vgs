@@ -1,6 +1,6 @@
 # Jarvis kernel sandbox
 
-Covers: shell/plugins/vgs.jarvis/backend/Sandbox.js, scripts/test-jarvis-sandbox.js, scripts/fixtures/jarvis/forbidden.js, scripts/fixtures/jarvis/sandbox-child.py
+Covers: shell/plugins/vgs.jarvis/backend/Sandbox.js, scripts/test-jarvis-sandbox.js, scripts/fixtures/jarvis/forbidden.js, scripts/fixtures/jarvis/sandbox-child.py, scripts/fixtures/jarvis/sandbox-datagram.py
 
 [D074](../decisions/D074-jarvis-kernel-sandbox.md) refines [the action policy](jarvis-policy.md). The service still offers no tool. J49 supplies the shell adapter. J19 owns approval and J21 owns the pre-action audit.
 
@@ -8,11 +8,13 @@ Covers: shell/plugins/vgs.jarvis/backend/Sandbox.js, scripts/test-jarvis-sandbox
 
 - `Sandbox.js` starts bubblewrap from fixed system paths. It creates user, PID, mount, IPC, network and UTS namespaces and a new terminal session. Bubblewrap sets `no_new_privs` before setup. VGS drops capabilities and passes no stdin or host descriptor.
 - The sandbox mounts selected system runtime paths read-only. It supplies private devices, temporary files and runtime directories. No host GPU, audio or input device enters it. No desktop, audio, bus or keyring endpoint enters its environment.
+- `publicRuntime` resolves the declared public system sources before binding them at their expected paths. A resolver link into hidden `/run` becomes a read-only file, not a mount of the runtime directory. Public CA and alternatives data also enter through this owner. Private SSL and PKI directories stay out.
+- An aliased public directory needs a projected tree. Each member resolves against the physical source, so relative certificate links keep their meaning. Protected-source overlap, dangling links, cycles and special-file sources fail construction. `available()` reports this failure as unavailable. HOME and ordinary runtime links still use `mount` and remain symlinks.
 - HOME is read-only except the physically resolved working directory. `Denied.create` rejects a working directory that contains a protected root. The sandbox also refuses overlap with the trusted runtime directory.
 - `Denied.masks` owns the protected inventory. The sandbox rebuilds only mount branches with protected descendants. Empty, unreadable, read-only mounts cover both present and absent roots. It preserves symlinks rather than bind-mounting their targets at an unprotected alias. Roots outside mounted trees are already inaccessible.
 - The complete trusted runtime root also stays hidden if a user puts it inside HOME. A working directory cannot restore it as a writable mount.
 - Networking stays private unless the immutable request sets `network: true`. `Tools.refine` classifies that request as `external`. The router must bind approval and release to that same snapshot.
-- A seccomp filter denies Unix socket creation and io_uring even for external requests. Abstract bus sockets have no path a mount can hide. io_uring can create sockets without the socket syscall. The filter permits only the native x86-64 or AArch64 syscall ABI. Other architectures are unavailable, not an unfiltered launch.
+- A seccomp filter denies AF_UNIX through both `socket` and `socketpair`, and denies io_uring even for external requests. A socketpair endpoint can reconnect to a pathname or abstract datagram listener. Abstract bus sockets have no path a mount can hide. io_uring can create sockets without either constructor. The filter permits only the native x86-64 or AArch64 syscall ABI. Other architectures are unavailable, not an unfiltered launch.
 - Kernel mounts protect paths, not copies of content. A host program can copy sensitive content to an ordinary file. This boundary does not stop that host program or replace the release judge.
 
 ## Shell adapter contract
@@ -36,6 +38,8 @@ Only bubblewrap's separate JSON status descriptor proves that exec completed. St
 `scripts/test-jarvis-sandbox.js` runs real bubblewrap inside the [J09 world](validation-jarvis.md). Its shared forbidden list exercises reserved calls through Policy, not invented executors. Kernel cases cover every supplied mask, file-valued protection, symlink aliases, absent targets, HOME writes, session separation, kernel `no_new_privs`, private devices, runtime endpoints, network isolation and bounded teardown.
 
 Controls alter disposable Sandbox copies. They remove masks, alias preservation, mask permissions, mask read-only mounts, HOME read-only binds, cwd inspection, session separation, private devices, runtime isolation, network isolation, Unix socket and io_uring refusal, output bounds, timeout and launch-status checks. The x86-64 cases exercise compatibility and x32 syscall refusal. The PID control leaves a scratch lock holder alive; J09 ends it when the world closes. No control exposes a real credential or authentication service. Bubblewrap owns `no_new_privs`; the test reads its kernel bit and starts no authentication command.
+
+The socketpair control removes only that constructor's refusal. Both scratch listeners receive the synthetic payload in the control. The pathname case uses default networking. The abstract case uses explicit external networking inside J09's private network. Public-runtime cases use disposable source-lookup substitutions and scratch resolver, CA and alternatives layouts. They read files and execute the allow-listed true program, not DNS, TLS, authentication or an external connection. Separate controls restore dangling system links, omit public data, flatten a relocated directory without fixing member links, permit writes or remove each construction refusal.
 
 ## Requirements
 
