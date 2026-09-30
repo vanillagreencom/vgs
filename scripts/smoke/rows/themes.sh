@@ -326,10 +326,11 @@ expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
 # Install browser theming, D061: the service publishes what `vgsh theme
 # setup` says of the Chromium-family writer. The sandbox tree ships no
 # target, so the row reads not shipped until the row copies the chromium
-# target in and the service starts again. On a host whose PATH holds a
-# Chromium-family browser and no writer, the Settings page then offers
-# Install browser theming, whose button opens the plugin's browser-policy
-# TUI. The stand-in terminal runs a plugin's TUI script for real, and the
+# target in and the service starts again. qml-smoke.sh hides the host's
+# writer from every sandbox shell, and the row stands a chromium in the
+# shell's own directory that runs nothing, so on any host the Settings page
+# then offers Install browser theming, whose button opens the plugin's
+# browser-policy TUI. The stand-in terminal runs a plugin's TUI script for real, and the
 # harness has made the sandbox tree's bin/vgsh-browser-policy a sentinel;
 # for the press the row swaps in a stand-in that records its argv and puts
 # a stand-in writer on the shell's PATH, running no sudo and writing
@@ -343,6 +344,10 @@ expected_errors+=('settings: vgs\.themes/browserTheming refused: action=browserT
 settings_page_open vgs.themes
 expect_poll "a tree that ships no target reads browser theming not shipped" '"Not shipped: this VGS themes no Chromium-family browser"' browser_text
 expect "the manager refuses the install while no target ships" "refused: action=browserTheming reason=not-offered" settings_act vgs.themes browserTheming
+printf '#!/bin/sh\nexit 1\n' >"$shim/chromium"
+chmod 755 "$shim/chromium"
+expect "chromium resolves to the row's stand-in on the shell's PATH" "$shim/chromium" shell_resolves chromium
+expect "the browser-policy writer is absent from the shell's PATH" none shell_resolves vgs-browser-policy
 cp -R -- "$source_repo/themes/targets/chromium" "$repo/themes/targets/chromium"
 expect "the themes plugin is disabled to read the shipped target" ok ipc shell setPluginEnabled vgs.themes false
 expect_poll "the themes service is gone" False record_exists vgs.themes
@@ -375,13 +380,11 @@ case $first_setup in
     expect "the refused install started no terminal" absent recorded
     unlink -- "${shim:?}/vgs-browser-policy"
     ;;
-  '["reported", "info", false]'|'["reported", "success", false]')
-    ok "a host with no Chromium-family browser, or with its writer, reads $first_setup, offering nothing"
-    ;;
   *)
-    fail "the browser theming row reads $first_setup"
+    fail "the browser theming row reads $first_setup, so Install browser theming was not pressed"
     ;;
 esac
+unlink -- "${shim:?}/chromium"
 rm -r -- "${repo:?}/themes/targets/chromium"
 settings_page_close vgs.themes
 

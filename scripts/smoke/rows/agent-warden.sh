@@ -54,7 +54,7 @@ warden_state() { warden_values | py_reply 'import json,sys; d=json.load(sys.stdi
 warden_lent() { ipc shell lent | py_reply 'import json,sys; r=json.load(sys.stdin)["status"].get("vgs.agent-warden"); print(json.dumps(r if r is None else r["keys"]))'; }
 warden_rows() { settings_rows | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.agent-warden"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))'; }
 # The answer the scan gives for vsys on the sandbox PATH.
-vsys_on_path() { if "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" bash -c 'command -v vsys' >/dev/null; then echo '"present"'; else echo '"absent"'; fi; }
+vsys_on_path() { if [[ $(shell_resolves vsys) != none ]]; then echo '"present"'; else echo '"absent"'; fi; }
 # A notify-send stand-in in the shell's own PATH directory, written before
 # the service first runs, so no notice of the row reaches a notification
 # server: it appends each call's argv as one JSON line to $warden_sent;
@@ -147,6 +147,9 @@ expect_poll "no warden directory reads as not set up" '["not-set-up", null, 0, [
 expect "no status leaves the heartbeat alone" absent warden_heartbeat
 expect "an absent status logs nothing" 0 log_lines 'agent-warden: status='
 vsys_first="$(vsys_on_path)"
+# qml-smoke.sh hides the host's vsys from every sandbox shell, so each
+# press below that needs vsys absent runs on any host.
+expect "vsys is absent from the shell's PATH whatever the host holds" '"absent"' echo "$vsys_first"
 # A warden row that offers Set up while vsys is present, D061: VALUE with
 # `action: true` added then.
 warden_setup_row() { python3 -c 'import json,sys; v=json.loads(sys.argv[1]); v.update({"action": True} if sys.argv[2] == "\"present\"" else {}); print(json.dumps(v))' "$1" "$vsys_first"; }
@@ -224,10 +227,7 @@ expect_poll "the Settings rows show the warden, the agents, the last check and v
 expect_poll "a checking warden offers no Set up" "$(python3 -c 'import json,sys; print(json.dumps([["warden", "Set up", False], ["vsys", "Install vsys", sys.argv[1] == "\"absent\""]]))' "$vsys_first")" offered_actions vgs.agent-warden
 expected_errors+=('settings: vgs\.agent-warden/(warden|vsys) refused: action=(warden|vsys) reason=not-offered')
 expect "the manager refuses Set up for a checking warden" "refused: action=warden reason=not-offered" settings_act vgs.agent-warden warden
-if [[ $vsys_first == '"present"' ]]; then
-  expect "the manager refuses Install vsys while vsys is present" "refused: action=vsys reason=not-offered" settings_act vgs.agent-warden vsys
-fi
-expect "the refused acts raised no notice" null notice_shown
+expect "the refused act raised no notice" null notice_shown
 expect "the Settings window is hidden" ok ipc shell hide window vgs.settings
 expect "disabling the Settings plugin after the rows is allowed" ok ipc shell setPluginEnabled vgs.settings false
 
@@ -236,6 +236,11 @@ expect "disabling the Settings plugin after the rows is allowed" ok ipc shell se
 printf '#!/bin/sh\nexit 0\n' >"$shim/vsys"; chmod 755 "$shim/vsys"
 expect "a rescan after vsys arrives starts" ok ipc shell rescanPlugins
 expect_poll "vsys reads as present" '"present"' warden_value vsys
+settings_page_open vgs.agent-warden
+expect_poll "a present vsys offers no Install vsys" '[["warden", "Set up", false], ["vsys", "Install vsys", false]]' offered_actions vgs.agent-warden
+expect "the manager refuses Install vsys while vsys is present" "refused: action=vsys reason=not-offered" settings_act vgs.agent-warden vsys
+expect "the refused Install vsys raised no notice" null notice_shown
+settings_page_close vgs.agent-warden
 rm -f -- "$shim/vsys"
 expect "a rescan after vsys goes starts" ok ipc shell rescanPlugins
 expect_poll "vsys reads as the host PATH gives it again" "$vsys_first" warden_value vsys
@@ -626,8 +631,7 @@ fi
 rm -f -- "$shim/systemctl"
 
 # Without vsys the panel offers it through the core's notice, and a scan
-# that finds it closes the notice with no rest. A host whose PATH holds
-# vsys cannot reach the offer; its panel offers Set up, read above.
+# that finds it closes the notice with no rest.
 rm -f -- "$shim/vsys" "$warden_dir/status.json"
 expect "a rescan after the stand-in vsys goes starts" ok ipc shell rescanPlugins
 expect_poll "vsys reads as the host PATH gives it" "$vsys_first" warden_value vsys
@@ -652,8 +656,7 @@ if [[ $vsys_first == '"absent"' ]]; then
   expect_poll "the scan that finds vsys closes the notice" null warden_notice
   expect_poll "the closed notice leaves no surface" 0 layer_count vgs:notice
 else
-  warden_vsys_stub
-  expect "a rescan after the stand-in vsys returns starts" ok ipc shell rescanPlugins
+  fail "vsys reads $vsys_first, so Install vsys and Get vsys were not pressed"
 fi
 expect_poll "the stand-in vsys reads as present again" '"present"' warden_value vsys
 

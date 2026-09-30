@@ -161,6 +161,12 @@ if [[ -n $first_bar_runs ]]; then
 fi
 
 
+# Every sandbox shell finds vsys and the browser-policy writer absent,
+# whatever the host holds, so the rows press Install vsys and Install
+# browser theming on any host (harness.sh's shell_hidden_commands); a row
+# that needs one present stands its own stand-in for it.
+# shellcheck disable=SC2034 # the harness sourced below reads it
+shell_hidden_commands=(vsys vgs-browser-policy)
 source "$repo/scripts/smoke/harness.sh"
 
 # These rows share one sandbox and run in dependency order. smoke_row
