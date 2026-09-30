@@ -17,7 +17,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 ## Requirements
 
-The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and a desktop Secret Service. Key presence needs busctl. The core's requirement notice offers installation of missing commands.
+The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and a desktop Secret Service. Add key needs gum to draw its terminal header. Key presence needs busctl. The core's requirement notice offers installation of missing commands.
 
 ## How it works
 

@@ -8,7 +8,7 @@ The [Jarvis plan's secrets section](../plans/v2-jarvis-plan.md#39-secrets-and-ac
 
 Settings lists Add key from the manifest's TUI declaration. The core opens the floating terminal and supplies the presentation library. The script asks for provider, account label and origin. Only that metadata reaches argv. `Secrets::addKey` runs `secret-tool store` with terminal stdin and private output pipes. Libsecret's `getpass` prompt reads the key with terminal echo off. Jarvis never receives the key during storage.
 
-The [secret-tool manual](https://man.archlinux.org/man/secret-tool.1.en) defines terminal storage and attributes. Its [source](https://github.com/GNOME/libsecret/blob/master/tool/secret-tool.c), `read_password_tty`, uses `getpass`; its prompt uses the controlling terminal. A non-terminal invocation fails before storage. Successful storage writes only the reference. Failed storage changes no reference. If the reference write fails after storage, the keyed failure reports the write cause; the key remains in libsecret and the user can repeat Add key.
+The [secret-tool manual](https://man.archlinux.org/man/secret-tool.1.en) defines terminal storage and attributes. Its [source](https://github.com/GNOME/libsecret/blob/master/tool/secret-tool.c), `read_password_tty`, uses `getpass`; its prompt uses the controlling terminal. A non-terminal invocation fails before storage. Add key and `remember` share one reference-update judge. Add key checks the metadata and bounds before the key prompt, then checks again when it writes. Failed storage changes no reference. If the reference write fails after storage, the keyed failure reports the write cause; the key remains in libsecret and the user can repeat Add key.
 
 The manifest names each external command and its package. Settings can install missing requirements with the core's Install button. No setup command or plugin installer is needed.
 
@@ -41,9 +41,9 @@ The [Quickshell Process reference](https://quickshell.org/docs/v0.3.1/types/Quic
 ## Evidence
 
 - `scripts/test-jarvis-secrets.js` runs the actual module, CLI and Add key script in the [Jarvis test world](validation-jarvis.md). Every secret, bus and presentation helper is a stand-in. A private terminal fixture waits for the masked prompt before it supplies synthetic key bytes.
-- The suite checks attributes, origin storage, external references, deferred lookup, presence states, malformed replies, missing helpers, failed storage, metadata-only files and scrubbed environments. It checks generated state, HOME and runtime files for the synthetic key. Lookup returns directly to the test's in-process consumer.
+- The suite checks attributes, origin storage, external references, deferred lookup, presence states, malformed replies, missing helpers, failed storage, metadata-only files and scrubbed environments. Invalid or full metadata must fail before any secret-tool call. It checks generated state, HOME and runtime files for the synthetic key. Lookup returns directly to the test's in-process consumer.
 - Controls remove reference rules, secret-free diagnosis, the correct lookup/probe operation and the storage-output suppression. The owning assertions must fail.
-- `scripts/smoke/rows/jarvis.sh` reads the real service's presence through a J09 probe. It opens only a disposable no-auth Add key script and checks recorded terminal argv. A removed TUI-end refresh breaks the same presence assertion. No real keyring, account or unlock is used.
+- `scripts/smoke/rows/jarvis.sh` reads the real service's presence through a J09 probe. It opens only a disposable no-auth Add key script and checks recorded terminal argv. A failed whole probe must replace present rows with Unavailable. Controls retain stale rows or remove TUI-end refresh and must break those assertions. No real keyring, account or unlock is used.
 
 ## Omarchy comparison
 

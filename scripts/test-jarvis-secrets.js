@@ -68,24 +68,16 @@ function inside() {
     ];
     for (const [input, expected] of referenceCases) rejects(() => store.remember(input), expected);
     const clean = fs.readFileSync(store.file);
-    for (const [data, expected] of [
+    const metadataCases = [
         ["junk", /references=json/], [JSON.stringify([ref, ref]), /references=duplicate/],
         [JSON.stringify(Array(33).fill(ref)), /references=limit/],
         [" ".repeat(65537), /references=size/], [JSON.stringify([{ ...ref, key }]), /reference=shape/]
-    ]) {
-        fs.writeFileSync(store.file, data);
-        rejects(() => store.references(), expected);
-    }
-    fs.writeFileSync(store.file, clean);
-    fs.renameSync(store.file, store.file + ".saved");
-    fs.symlinkSync(store.file + ".saved", store.file);
-    rejects(() => store.references(), /references=read-failed/);
-    fs.unlinkSync(store.file);
-    fs.renameSync(store.file + ".saved", store.file);
+    ];
 
-    function tui(folder = path.dirname(backend), script = path.join(tree, "shell/plugins/vgs.jarvis/tui/add-key.sh")) {
+    function tui(folder = path.dirname(backend), script = path.join(tree, "shell/plugins/vgs.jarvis/tui/add-key.sh"),
+        extra = []) {
         return cp.spawnSync("python3", [path.join(tree, "scripts/fixtures/jarvis/key-tui.py"),
-            script, path.join(tree, "bin/lib/tui.sh"), folder], { env, encoding: "utf8", timeout: 15000 });
+            script, path.join(tree, "bin/lib/tui.sh"), folder, ...extra], { env, encoding: "utf8", timeout: 15000 });
     }
     function goodTui(result) {
         assert.equal(result.error, undefined);
@@ -95,6 +87,43 @@ function inside() {
         safe(result.stdout + result.stderr);
         assert.deepEqual(store.references().find(item => item.account === "test"), ref);
     }
+    function refusedTui(expected, folder = path.dirname(backend)) {
+        const before = calls("secret-calls");
+        const metadata = fs.readFileSync(store.file);
+        const result = tui(folder, undefined, ["--expect-metadata-refusal"]);
+        assert.equal(result.error, undefined);
+        assert.equal(result.status, 1, result.stdout + result.stderr);
+        assert.match(result.stdout, expected);
+        assert.doesNotMatch(result.stdout, /Password: /, "metadata must fail before prompting for a key");
+        assert.equal(calls("secret-calls"), before, "invalid metadata must not call secret-tool");
+        assert.deepEqual(fs.readFileSync(store.file), metadata, "refusal must preserve reference metadata");
+        safe(result.stdout + result.stderr);
+    }
+    for (const [data, expected] of metadataCases) {
+        fs.writeFileSync(store.file, data);
+        rejects(() => store.references(), expected);
+        refusedTui(expected);
+    }
+    fs.writeFileSync(store.file, clean);
+    fs.renameSync(store.file, store.file + ".saved");
+    fs.symlinkSync(store.file + ".saved", store.file);
+    rejects(() => store.references(), /references=read-failed/);
+    refusedTui(/references=read-failed/);
+    assert.equal(fs.lstatSync(store.file).isSymbolicLink(), true);
+    fs.unlinkSync(store.file);
+    fs.renameSync(store.file + ".saved", store.file);
+    const full = Array.from({ length: 32 }, (_, index) => ({ ...ref, account: String(index) }));
+    fs.writeFileSync(store.file, JSON.stringify(full));
+    refusedTui(/references=limit/);
+    const replacement = { ...full[0], attributes: { id: "replacement" } };
+    store.remember(replacement);
+    assert.equal(store.references().length, 32, "a full list permits an existing identity update");
+    assert.deepEqual(store.references()[0], replacement);
+    fs.writeFileSync(store.file, JSON.stringify([...full.slice(1), ref]));
+    goodTui(tui());
+    assert.equal(store.references().length, 32, "a full list permits storing an existing identity");
+    fs.writeFileSync(store.file, clean);
+    cases += 3;
     goodTui(tui());
     safe(calls("secret-calls"));
     const snapshot = fs.readFileSync(store.file);
@@ -175,6 +204,18 @@ function inside() {
     const mutant = path.join(root, "tui-copy");
     fs.mkdirSync(path.join(mutant, "backend"), { recursive: true });
     fs.copyFileSync(path.join(backend, "keys.js"), path.join(mutant, "backend/keys.js"));
+    const precheck = "this.#referenceUpdate(own);";
+    assert.equal(source.split(precheck).length - 1, 1);
+    const unchecked = source.replace(precheck, "void own;");
+    assert.notEqual(unchecked, source);
+    fs.writeFileSync(path.join(mutant, "backend/Secrets.js"), unchecked);
+    for (const [data, expected] of [...metadataCases, [JSON.stringify(full), /references=limit/]]) {
+        fs.writeFileSync(store.file, data);
+        assert.throws(() => refusedTui(expected, mutant), assert.AssertionError,
+            "removing the early judge must break refusal before key entry");
+    }
+    fs.writeFileSync(store.file, clean);
+    controls++;
     const needle = 'output.fill(0);\n        this.remember(own);';
     assert.equal(source.split(needle).length - 1, 1);
     fs.writeFileSync(path.join(mutant, "backend/Secrets.js"),

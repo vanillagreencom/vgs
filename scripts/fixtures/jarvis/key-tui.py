@@ -47,7 +47,8 @@ try:
         child.kill()
     code = child.wait(timeout=2)
     sys.stdout.buffer.write(output)
-    sys.exit(code if not steps else 90)
+    metadata_refusal = len(sys.argv) == 5 and sys.argv[4] == "--expect-metadata-refusal"
+    sys.exit(code if not steps or (metadata_refusal and len(steps) == 1) else 90)
 finally:
     if child.poll() is None:
         child.kill()

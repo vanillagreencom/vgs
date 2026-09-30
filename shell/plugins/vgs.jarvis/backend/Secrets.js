@@ -86,9 +86,7 @@ class Secrets {
 
     identity(ref) { return JSON.stringify([ref.provider, ref.account, ref.origin]); }
 
-    // J27 calls this only after the user selects an item's attributes.
-    // No secret-value field can be persisted by this API.
-    remember(value) {
+    #referenceUpdate(value) {
         const ref = reference(value);
         const refs = this.references();
         const index = refs.findIndex(item => this.identity(item) === this.identity(ref));
@@ -96,6 +94,13 @@ class Secrets {
         if (refs.length > MAX_REFERENCES) fail("references=limit");
         const bytes = JSON.stringify(refs) + "\n";
         if (Buffer.byteLength(bytes) > MAX_BYTES) fail("references=size");
+        return { ref, bytes };
+    }
+
+    // J27 calls this only after the user selects an item's attributes.
+    // No secret-value field can be persisted by this API.
+    remember(value) {
+        const { ref, bytes } = this.#referenceUpdate(value);
         let temporary;
         try {
             fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
@@ -134,6 +139,7 @@ class Secrets {
 
     addKey(ref) {
         const own = ownReference(ref.provider, ref.account, ref.origin);
+        this.#referenceUpdate(own);
         if (!process.stdin.isTTY) fail("store=terminal-required");
         // secret-tool uses getpass on the controlling terminal when stdin
         // is a TTY. Jarvis never receives the key. Keep stdout/stderr private:

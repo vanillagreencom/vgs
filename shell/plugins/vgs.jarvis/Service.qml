@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import "." as Jarvis
 import "JarvisProtocol.js" as Protocol
 
 Item {
@@ -176,5 +177,5 @@ Item {
     }
     Timer { id: retry; onTriggered: root.start() }
     Timer { id: helloDeadline; interval: 5000; onTriggered: root.broken("jarvis: hello=timeout") }
-    Keys { shell: root.shell }
+    Jarvis.Keys { shell: root.shell }
 }

@@ -59,9 +59,9 @@ module.exports = { ref, standins };
 if (require.main === module) {
     const directory = path.join(process.env.XDG_STATE_HOME, "vgs/jarvis");
     fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(path.join(directory, "keys.json"), JSON.stringify([ref]));
-    if (process.argv[3]) fs.writeFileSync(path.join(process.env.XDG_STATE_HOME, "bus-mode"),
-        fs.readFileSync(process.argv[3]));
+    const mode = process.argv[3] ? fs.readFileSync(process.argv[3], "utf8").trim() : "present";
+    fs.writeFileSync(path.join(directory, "keys.json"), mode === "probe-failed" ? "junk" : JSON.stringify([ref]));
+    fs.writeFileSync(path.join(process.env.XDG_STATE_HOME, "bus-mode"), mode);
     const env = {};
     for (const name of ["PATH", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME",
         "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]) env[name] = process.env[name];

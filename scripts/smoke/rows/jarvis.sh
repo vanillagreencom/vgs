@@ -239,6 +239,15 @@ print("matched" if rows == expected else "pending")
 ' "$1"
 }
 
+jarvis_key_unavailable() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+rows=json.load(sys.stdin)["status"].get("keys", [])
+expected=[{"label":"Key references", "value":"unavailable", "hint":"jarvis-keys: presence=failed"}]
+print("matched" if rows == expected else "pending")
+'
+}
+
 jarvis_enable
 expect_poll "the healthy skeleton keeps the Session gate unconfigured" session jarvis_session unconfigured
 expect_poll "Jarvis publishes only the fixture key presence" matched jarvis_key_value present
@@ -380,6 +389,42 @@ expect_poll "the key row starts present" matched jarvis_key_value present
 printf 'locked\n' >"$sandbox/jarvis-world/key-mode"
 jarvis_open_key
 expect_poll "the service checks presence after Add key ends" matched jarvis_key_value locked
+printf 'present\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_key
+expect_poll "the key row is present before the whole-probe failure" matched jarvis_key_value present
+printf 'probe-failed\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_key
+expect_poll "a nonzero whole probe replaces present rows with unavailable" matched jarvis_key_unavailable
+printf 'present\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_key
+expect_poll "restoring the probe replaces unavailable with present" matched jarvis_key_value present
+python3 - "$jarvis_keys" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+assert not p.is_symlink()
+s=p.read_text()
+needle='rows = [{ label: "Key references", value: "unavailable", hint: "jarvis-keys: presence=failed" }];'
+assert s.count(needle)==1
+changed=s.replace(needle, "if (code !== 0) return;\n            " + needle)
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+expect_poll "the stale-row control first publishes present" matched jarvis_key_value present
+printf 'probe-failed\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_key
+jarvis_failure_control() {
+  (failures=0 behaviour_failures=0
+   expect_poll "a failed probe must replace stale present rows" matched jarvis_key_unavailable >"$sandbox/jarvis-probe-control.log"
+   echo "$failures")
+}
+expect "retaining stale rows breaks the actual whole-probe assertion" 1 jarvis_failure_control
+expect "the control leaves the previous present row" matched jarvis_key_value present
+cp -- "$sandbox/jarvis-keys-original" "$jarvis_keys"
+printf 'present\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_rescan
+expect_poll "restored whole-probe handling publishes present" matched jarvis_key_value present
 python3 - "$jarvis_keys" <<'PY'
 from pathlib import Path
 import sys
