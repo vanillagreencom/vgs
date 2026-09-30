@@ -60,6 +60,10 @@ Reading text draws in `font.family.sans`, the bundled Inter; chrome draws in `fo
 
 The container layout contract, the component spacing rules, the corner-clearing rule and the notification media tiers are in [design-layout.md](design-layout.md).
 
+## Standard
+
+The grid, type scale, control sizes, container classes and states every surface is judged against, and the captures that prove it, are in [design-quality.md](design-quality.md).
+
 ## Motion
 
 `motion.scale` stills every duration. The list motion, one cursor that travels between a list's rows and rows that rise in as they arrive, is `motion.list`, drawn by `ListCursor` and `ListEntrance`: [motion.md](motion.md).
