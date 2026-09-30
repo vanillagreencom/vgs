@@ -73,9 +73,13 @@ var TOKENS = {
         shadow: color("alpha(#000000, 0.45)"),
         header: { size: length(18), letterSpacing: offset(-0.2), idle: share(0.38) },
         label: { size: length(16), weight: weight(500), rest: share(0.86) },
-        detail: { size: length(11), opacity: share(0.5) },
-        empty: { size: length(12), opacity: share(0.38) },
-        flyout: { size: length(12), detail: length(10) }
+        // A row's detail line and the empty list's message are reading
+        // text, at the shell's 13 px floor; the flyout's entries and their
+        // detail are chrome, at 12 and the 11 px floor
+        // (docs/architecture/design-quality.md § Type).
+        detail: { size: length(13), opacity: share(0.5) },
+        empty: { size: length(13), opacity: share(0.38) },
+        flyout: { size: length(12), detail: length(11) }
     },
 
     glass: {

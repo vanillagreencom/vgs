@@ -429,7 +429,9 @@ var TOKENS = {
         radius: length("{radius.full}"),
         on: color("{color.accent}"),
         onHover: color("{color.accentHover}"),
+        onPressed: color("{color.accentPressed}"),
         offHover: color("mix({toggle.off}, {palette.foreground}, 0.15)"),
+        offPressed: color("mix({toggle.off}, {palette.background}, 0.15)"),
         // The off track: the raised surface's colour moved 46% toward the
         // colour the background contrasts with, then 8% toward black. It
         // holds 3:1 on every resting surface, and in a dark theme it stays
@@ -450,6 +452,7 @@ var TOKENS = {
         pressed: color("{color.surfaceHover}"),
         checked: color("{color.accent}"),
         checkedHover: color("{color.accentHover}"),
+        checkedPressed: color("{color.accentPressed}"),
         mark: color("contrast({checkbox.checked})"),
         gap: length("{control.gap}")
     },
@@ -463,6 +466,7 @@ var TOKENS = {
         pressed: color("{color.surfaceHover}"),
         checked: color("{color.accent}"),
         checkedHover: color("{color.accentHover}"),
+        checkedPressed: color("{color.accentPressed}"),
         dot: length(6),
         gap: length("{control.gap}")
     },

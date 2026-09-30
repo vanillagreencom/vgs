@@ -3,9 +3,10 @@ import qs.Commons
 import qs.Ui
 
 // __NAME__: one item in a bar section. The core hands this widget `bar`,
-// `moduleName` and `settings`; BarWidget declares them. Size the widget
-// with implicitWidth and implicitHeight, compose the components of qs.Ui,
-// and read every value they do not cover from Theme.
+// `moduleName` and `settings`; BarWidget declares them. The widget draws
+// one BarItem, as every first-party widget does, so its height, padding,
+// icon and text match the bar's other items; give it `iconName`, `text`
+// or `count`, and `tone` from the bar's colour.
 BarWidget {
     id: root
 
@@ -13,14 +14,13 @@ BarWidget {
     // present; a settings change hands over a new `settings`.
     readonly property string label: String(settings.label)
 
-    implicitWidth: text.implicitWidth
+    implicitWidth: item.implicitWidth
     implicitHeight: barSize
 
-    Label {
-        id: text
+    BarItem {
+        id: item
         anchors.centerIn: parent
-        role: "body"
         text: root.label
-        color: root.bar ? root.bar.foreground : Theme.bar.foreground
+        tone: root.bar ? root.bar.foreground : Theme.bar.foreground
     }
 }

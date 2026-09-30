@@ -154,6 +154,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `Icon` | `Item` | `name`: a Lucide icon; `size`, `color`, `stroke` |
 | `Surface`, `Divider`, `FocusRing` | `Rectangle` | `level`; `vertical`; `target` |
 | `Button`, `IconButton`, `ToggleButton` | `T.Button` | `text`, `iconName`, `variant` (`primary`, `secondary`, `tertiary`, `ghost`, `danger`), `size` (`sm`, `md`, `lg`); `label` for an icon button |
+| `BarItem` | `T.AbstractButton` | one item of the bar, which every bar widget draws: `iconName`, `text`, `count`, `tone` (the bar's colour), `active`, `spinning`, `label` for an icon alone; `clicked` |
 | `SegmentedControl` | `Rectangle` | `model`, `currentIndex`, `activated(index)` |
 | `Switch`, `Checkbox`, `Radio` | `T.Switch`, `T.CheckBox`, `T.RadioButton` | `text`, `checked` |
 | `Slider` | `T.Slider` | `from`, `to`, `value`, `stepSize` |
@@ -164,6 +165,8 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `Badge`, `Kbd` | `Rectangle` | `text`, `iconName`, `tone` (`neutral`, `accent`, `success`, `warning`, `danger`, `info`); `text` |
 | `CodeLine` | `Rectangle` | `text`, a command or path, wrapped whole; `copyLabel`, the Copy button's label; `copy()`, `copied()`, `confirming` while the button shows its check mark |
 | `ScrollArea` | `Flickable` | its children; `overflowing`, and `bar`, the embedded bar, which a gutter keeps clear of the content |
+| `Pane` | `Item` | one inset box for a container: `header`, body children and `footer`; `container` (`window`, `dialog`, `popover`, `panel`); `padding`, `cornerRadius`, `gap`, `bodySpacing` for a plugin that owns its look; `fitToContent`, `maximumHeight` |
+| `SlimScrollBar` | `Item` | a slim bar beside a plugin's own `Flickable`, for a plugin that owns its look: `flickable` and every look value it draws with; the caller places it and sets its width |
 | `Tabs` | `T.TabBar` | `model`, `currentIndex` |
 | `ListItem` | `T.ItemDelegate` | `text`, `secondary`, `iconName`, `trailing`, `highlighted`; `cursor`, the list's `ListCursor`, which then draws the highlight, `pointed` when a hover the cursor lets through should select the row, `enters` (true with a cursor) |
 | `ListCursor` | `Item` | the one highlight of a list, declared in the item that holds the rows or a view's `contentItem`: `follow(row, holds)`, `snap()`, `hoverTakes(scenePoint)`, `disarm()` on a key, `arm()`, `enterSlot()`, `shown`; `motion` (`Theme.motion.list` by default), `color`, `radius`, `background`: [`docs/architecture/motion.md`](../../../../docs/architecture/motion.md) |

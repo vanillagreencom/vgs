@@ -347,7 +347,7 @@ try {
         // A selected indicator draws in the accent, so its 3:1 boundary
         // shortfall is fixed by the accent's lift; a copy that does not
         // count it holds the theme back on it.
-        const noBoundary = converterCopy(path.join(dir, "no-boundary"), "const ACCENT_BOUNDARIES = [\"checkbox.checked\", \"radio.checked\", \"toggle.on\"];", "const ACCENT_BOUNDARIES = [];");
+        const noBoundary = converterCopy(path.join(dir, "no-boundary"), "const ACCENT_BOUNDARIES = logic.BOUNDARY_ROLES.filter(", "const ACCENT_BOUNDARIES = [].filter(");
         const noBoundaryDir = path.join(dir, "no-boundary-run");
         freshRoot(noBoundaryDir);
         copyFixtureArchives(noBoundaryDir);

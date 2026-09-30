@@ -50,10 +50,12 @@ const COLOR_OVERRIDE_ORDER = ["textMuted", "textFaint", "success", "warning", "d
 // colour its token default reads. Other roles derive from that colour too,
 // so the fix changes the palette colour, not the role's expression.
 const PALETTE_OVERRIDE_ROLES = { text: "foreground", accent: "accent" };
-// The selected indicators that draw in color.accent: a shortfall of one
-// against a surface is fixed by the accent's lift, as accent text is.
-const ACCENT_BOUNDARIES = ["checkbox.checked", "radio.checked", "toggle.on"];
-const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.concat(Object.keys(PALETTE_OVERRIDE_ROLES)).map(role => `color.${role}`).concat(PALETTE_OVERRIDE_ROLES.accent ? ACCENT_BOUNDARIES : []));
+// The judged boundary roles (ThemeLogic.BOUNDARY_ROLES) whose token
+// default is color.accent: a shortfall of one against a surface is fixed
+// by the accent's lift, as accent text is.
+const tokenDefault = name => name.split(".").reduce((node, key) => (node === undefined ? undefined : node[key]), tokens);
+const ACCENT_BOUNDARIES = logic.BOUNDARY_ROLES.filter(role => { const leaf = tokenDefault(role); return leaf !== undefined && leaf.value === "{color.accent}"; });
+const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.concat(Object.keys(PALETTE_OVERRIDE_ROLES)).map(role => `color.${role}`).concat(ACCENT_BOUNDARIES));
 const STATUS_ROLES = ["success", "warning", "danger", "info"];
 const TERMINAL_SLOTS = Array.from({ length: 16 }, (_, index) => `color${index}`);
 const REPO_HOST = "https://github.com/";

@@ -27,7 +27,7 @@ T.CheckBox {
         implicitHeight: Theme.checkbox.size
         y: root.contentItem.indicatorY(height)
         radius: Theme.checkbox.radius
-        color: root.checked ? (root.hovered || root.down ? Theme.checkbox.checkedHover : Theme.checkbox.checked) : root.down ? Theme.checkbox.pressed : Theme.checkbox.background
+        color: root.checked ? (root.down ? Theme.checkbox.checkedPressed : root.hovered ? Theme.checkbox.checkedHover : Theme.checkbox.checked) : root.down ? Theme.checkbox.pressed : Theme.checkbox.background
         border.width: Theme.checkbox.border
         border.color: root.checked ? color : root.hovered || root.down ? Theme.checkbox.hoverBorder : Theme.checkbox.borderColor
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }

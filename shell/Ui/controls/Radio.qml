@@ -25,7 +25,7 @@ T.RadioButton {
         radius: Theme.radius.full
         color: root.down ? Theme.radio.pressed : Theme.radio.background
         border.width: Theme.radio.border
-        border.color: root.checked ? (root.hovered || root.down ? Theme.radio.checkedHover : Theme.radio.checked) : root.hovered || root.down ? Theme.radio.hoverBorder : Theme.radio.borderColor
+        border.color: root.checked ? (root.down ? Theme.radio.checkedPressed : root.hovered ? Theme.radio.checkedHover : Theme.radio.checked) : root.hovered || root.down ? Theme.radio.hoverBorder : Theme.radio.borderColor
 
         Rectangle {
             anchors.centerIn: parent

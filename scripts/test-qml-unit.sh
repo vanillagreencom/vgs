@@ -262,7 +262,7 @@ mutations=(
   "the switch ignores its size|controls/Switch.qml|const found = Theme.toggle.size[name];|const found = Theme.toggle.size.md;|tst_toggles.qml"
   "the toggle width counts the gap twice|controls/Checkbox.qml|implicitWidth: text !== \"\" ? implicitContentWidth : implicitIndicatorWidth|implicitWidth: implicitIndicatorWidth + spacing + implicitContentWidth|tst_toggles.qml"
   "a clicked segment leaves the keys elsewhere|controls/SegmentedControl.qml|onClicked: { root.forceActiveFocus(); root.choose(index); }|onClicked: root.choose(index)|tst_segmented.qml"
-  "the switch track ignores checked|controls/Switch.qml|color: root.checked ? (root.hovered|color: false ? (root.hovered|tst_toggles.qml"
+  "the switch track ignores checked|controls/Switch.qml|color: root.checked ? (root.down ? Theme.toggle.onPressed|color: false ? (root.down ? Theme.toggle.onPressed|tst_toggles.qml"
   "the checkbox mark ignores checked|controls/Checkbox.qml|visible: root.checked|visible: false|tst_toggles.qml"
   "the radio dot ignores checked|controls/Radio.qml|visible: root.checked|visible: true|tst_toggles.qml"
   "the slider fill ignores the value|controls/Slider.qml|width: root.position * parent.width|width: parent.width|tst_slider.qml"
@@ -465,6 +465,9 @@ mutations=(
   "a slim bar's thumb stays at the top|layout/SlimScrollBar.qml|    y: (flickable.height - height) * progress|    y: 0|tst_slimscrollbar.qml"
   "a drag on a slim bar scrolls nothing|layout/SlimScrollBar.qml|            root.flickable.contentY = root.flickable.originY + Math.max(0, Math.min(1, top / track)) * root.travel;|            return;|tst_slimscrollbar.qml"
   "a slim bar never widens|layout/SlimScrollBar.qml|        width: root.active ? root.wide : root.thin|        width: root.thin|tst_slimscrollbar.qml"
+  "a checked box presses like its hover|controls/Checkbox.qml|root.down ? Theme.checkbox.checkedPressed : root.hovered|root.down ? Theme.checkbox.checkedHover : root.hovered|tst_toggles.qml"
+  "a checked radio presses like its hover|controls/Radio.qml|root.down ? Theme.radio.checkedPressed : root.hovered|root.down ? Theme.radio.checkedHover : root.hovered|tst_toggles.qml"
+  "an on switch presses like its hover|controls/Switch.qml|root.down ? Theme.toggle.onPressed : root.hovered|root.down ? Theme.toggle.onHover : root.hovered|tst_toggles.qml"
 )
 
 copy="$tmp/ui"

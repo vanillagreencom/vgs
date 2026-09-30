@@ -76,8 +76,9 @@ var TOKENS = {
         shadow: color("alpha(#000000, 0.45)"),
         summaryShadow: color("alpha(#000000, 0.4)"),
         title: { size: length(14), weight: weight(700) },
-        // The body's colour is the foreground at the subtitle's opacity, so
-        // an image inline in the body draws at full strength.
+        // The subtitle is the inbox header's count, chrome at the 11 px
+        // floor. The body's colour is the foreground at the subtitle's
+        // opacity, so an image inline in the body draws at full strength.
         subtitle: { size: length(11), opacity: share(0.5), color: color("alpha({text.foreground}, {text.subtitle.opacity})") },
         // A card's body: the subtitle's colour at the shell's 13 px reading
         // floor (docs/architecture/design-quality.md), above the

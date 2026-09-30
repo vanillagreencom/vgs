@@ -121,6 +121,33 @@ Item {
             tryCompare(box.indicator.border, "color", Qt.color(Theme.checkbox.borderColor));
         }
 
+        // A checked indicator's press differs from its hover.
+        function test_checked_indicators_press_apart_from_hover() {
+            box.checked = true;
+            mouseMove(box.indicator, 4, 4);
+            tryCompare(box.indicator, "color", Qt.color(Theme.checkbox.checkedHover));
+            mousePress(box.indicator, 4, 4);
+            tryCompare(box.indicator, "color", Qt.color(Theme.checkbox.checkedPressed));
+            mouseRelease(box.indicator, 4, 4);
+            box.checked = true;
+            sw.checked = true;
+            mouseMove(sw.indicator, 4, sw.indicator.height / 2);
+            tryCompare(sw.indicator, "color", Qt.color(Theme.toggle.onHover));
+            mousePress(sw.indicator, 4, sw.indicator.height / 2);
+            tryCompare(sw.indicator, "color", Qt.color(Theme.toggle.onPressed));
+            mouseRelease(sw.indicator, 4, sw.indicator.height / 2);
+            one.checked = true;
+            mouseMove(one.indicator, 4, 4);
+            tryCompare(one.indicator.border, "color", Qt.color(Theme.radio.checkedHover));
+            mousePress(one.indicator, 4, 4);
+            tryCompare(one.indicator.border, "color", Qt.color(Theme.radio.checkedPressed));
+            mouseRelease(one.indicator, 4, 4);
+            mouseMove(root, root.width - 1, root.height - 1);
+            box.checked = false;
+            sw.checked = false;
+            one.checked = true;
+        }
+
         // Each indicator centres on its label's capital centre on a whole
         // pixel, and a compact control keeps a `size.control.sm` input area.
         function test_indicators_centre_on_the_label_and_keep_an_input_area() {

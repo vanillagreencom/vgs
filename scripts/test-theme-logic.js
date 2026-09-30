@@ -888,4 +888,41 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
+// The 4 px grid (D058, docs/architecture/design-quality.md § Grid): every
+// length token of the shipped table resolves to a multiple of 4 or to
+// radius.full, except the classes the rule names, one pattern each. The
+// control moves row.height off the grid in a theme document, and the
+// check must name it.
+const GRID_EXCEPTIONS = [
+    [/^(font\.size|text\.[^.]+\.size)$/, "type sizes"],
+    [/(^border\.|\.border$|[bB]orderWidth$|^divider\.thickness$|^focusRing\.width$|^titleButton\.underline$|^tabs\.indicator$|^avatarGroup\.ringWidth$|^hyprland\.border\.size$)/, "strokes"],
+    [/^(icon\.size\.|button\.size\.[^.]+\.icon$|slider\.handle$|radio\.dot$)/, "indicator and icon drawing sizes"],
+    [/^(space\.xxs|segmented\.padding|segmented\.gap|toggle\.inset|focusRing\.offset|scrollArea\.barInset|titleButton\.underlineGap)$/, "2 px steps inside one component"],
+    [/^(space\.sm|badge\.size\.sm\.paddingX|kbd\.paddingX)$/, "6 px padding inside a chip or a key cap"],
+    [/^motion\./, "motion distances"],
+    [/^(carousel|desktopPreview|angledCard)\./, "the theme browser's reference geometry, pending VGS-596"]
+];
+function gridShortfalls(values) {
+    const out = [];
+    (function walk(node, prefix) {
+        for (const [key, leaf] of Object.entries(node)) {
+            const name = prefix ? prefix + "." + key : key;
+            if (leaf !== null && typeof leaf === "object" && "type" in leaf && "value" in leaf) {
+                if (leaf.type !== "length") continue;
+                const value = at(values, name);
+                if (value % 4 === 0 || value >= 4096) continue;
+                if (GRID_EXCEPTIONS.some(([pattern]) => pattern.test(name))) continue;
+                out.push(`${name}=${value}`);
+            } else if (leaf !== null && typeof leaf === "object") walk(leaf, name);
+        }
+    })(TOKENS, "");
+    return out;
+}
+{
+    const judge = load(judgeFile);
+    assert.deepEqual(gridShortfalls(judge.defaults(TOKENS).values), [], "every shipped length is on the 4 px grid or in a named exception");
+    const moved = judge.accept(TOKENS, document({ row: { height: 30 } }));
+    assert.equal(moved.ok, true, "the grid control document is accepted");
+    assert.deepEqual(gridShortfalls(moved.values), ["row.height=30", "listItem.height=30"], "control: a row height off the grid is named with the list row that reads it");
+}
 console.log(`test-theme-logic: ok documents=${ACCEPTED.length + REFUSED.length} controls=${CONTROLS.length}`);

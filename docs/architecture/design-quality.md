@@ -7,8 +7,10 @@ The standard every surface is judged against, and the evidence that proves a sur
 ## Grid
 
 - Every layout dimension is a multiple of 4 px: a gap, a padding, an inset, a control's height and a row's height. The shipped scale moved onto this grid in [D058](../decisions/D058-design-scale-on-the-4-px-grid.md).
-- Inside one component a 2 px step is allowed: a segment's inset, a focus ring's offset, the gap between a title and its underline, the gap between the two lines of one row. Inside a chip or a key cap, a 6 px side padding, `space.sm`, is allowed: `badge.size.sm.paddingX` and `kbd.paddingX`.
-- The grid does not govern type, icon drawing, strokes or computed corner clearance. A font size and its line box follow § Type. An icon's drawn size follows `icon.size`, and its painted bounds follow the glyph (`IconBounds.js`). A stroke is `border.thin` or `border.thick`. A corner clearance is `Inset.clearing`, rounded up to `space.xs`.
+- Inside one component a 2 px step is allowed: a segment's inset (`segmented.padding`), a switch knob's inset (`toggle.inset`), a focus ring's offset (`focusRing.offset`), a scroll bar's inset (`scrollArea.barInset`) and the gap between a title and its underline (`titleButton.underlineGap`). Inside a chip or a key cap, a 6 px side padding, `space.sm`, is allowed: `badge.size.sm.paddingX` and `kbd.paddingX`.
+- The grid does not govern type, strokes, icon and indicator drawing sizes (`icon.size`, `slider.handle`, `radio.dot`), motion distances or computed corner clearance. A font size and its line box follow § Type. An icon's painted bounds follow the glyph (`IconBounds.js`). A stroke is `border.thin` or `border.thick`. A corner clearance is `Inset.clearing` by `inset.cornerStep`.
+- The theme browser's reference geometry, the `carousel`, `angledCard` and `desktopPreview` groups, is not on the grid yet; VGS-596 owns it.
+- `scripts/test-theme-logic.js` walks every length token of the shipped table and fails on a value off the grid outside these named classes, with a control that moves `row.height` off it.
 - A value off this grid is a defect in its token, never in the surface that reads it.
 
 ## Type
@@ -24,7 +26,7 @@ The standard every surface is judged against, and the evidence that proves a sur
 | `text.tooltip` | 12 / 16 / 500 | a tooltip line |
 
 - A surface uses `h3` for its title. `h1` and `h2` are for documents.
-- Reading text is at least 13 px and chrome at least 11 px. A plugin that owns its look ([appearance.md](appearance.md)) meets the same floor.
+- Reading text is at least 13 px and chrome at least 11 px. Reading text is a description, a message, a card's body and a list row's detail line; chrome is a label, a count, a button's text and a menu entry. A plugin that owns its look ([appearance.md](appearance.md)) meets the same floor.
 - A control's label, a checkbox's, a radio's and a switch's, draws in `item`, so its line centres on the control. An indicator centres on the label's capital centre on a whole pixel.
 
 ## Controls
@@ -39,7 +41,7 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 
 - A button, an icon button, a text field, a select, a segmented control, a tab row and a menu entry of one size share the height, the padding and the content icon. A disclosure indicator, such as a select's chevron, is one icon step smaller than the content icon.
 - The controls of one row share one size. A badge beside an `sm` button is `Badge` `md`, 24 px.
-- Every interactive control draws rest, hover, pressed, focus, disabled and, where it has one, checked, each from its own token. Hover and pressed differ from each other and from rest. A checked control still shows hover and press. A row under a `ListCursor` shows its press through the cursor's `pressedColor`.
+- Every interactive control draws rest, hover, pressed, focus, disabled and, where it has one, checked, each from its own token. Hover and pressed differ from each other and from rest. A checked checkbox, radio or switch still shows hover and press, each its own token. An item a click cannot change in its current state, the chosen segment of a `SegmentedControl` and an `active` `BarItem` such as the focused workspace, keeps its selected fill and draws no hover or press. A row under a `ListCursor` shows its press through the cursor's `pressedColor`.
 - A control's input area is at least `size.control.sm` tall, whatever its drawn size: a small switch, a checkbox and a slider take a press over that height.
 - The focus ring is `focusRing.width` 2 at `focusRing.offset` 2 and follows the control's own radius. A text field draws focus as its outline at offset 0, in the error colour while it is in error. A container leaves the ring room inside its clip.
 - Disabled is `opacity.disabled` on the whole control.
@@ -52,16 +54,18 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 |---|---|---|---|---|
 | window | `inset.window` 16 | `h3` in a `size.control.md` row | `stack.group` 12 | the window host sizes it |
 | dialog | `inset.dialog` 16 | `h3` | `dialog.gap` 12 | content, to `dialog.maxHeightShare` |
-| panel, popover | `inset.panel` 12, `inset.popover` 12 | `h3` | `stack.group` 12 | content, to `popover.maxHeightShare`; refits when content changes |
-| menu, select list | `menu.padding` 8 | none | none | entries, to `menu.maxHeight`, at most `menu.maxWidth` wide |
+| panel (a summoned flyout) | `inset.panel` 12, on a `Surface` | `h3` | `stack.group` 12 | content, to `size.panel.maxHeight` and the output's room; refits when content changes |
+| popover (`qs.Ui` `Popover`) | `inset.popover` 12 | `h3` | `stack.group` 12, `popover.gap` 4 from its anchor | content, to `popover.maxHeightShare` |
+| menu | `menu.padding` 8 | none | none | entries, to `menu.maxHeight`, 160 to `menu.maxWidth` wide |
+| select list | `menu.padding` 8 | none | none | entries, to `menu.maxHeight`, the field's width |
 | tooltip | `tooltip.paddingX` 8 | none | none | wraps at `tooltip.maxWidth` 280 |
 
-- Every window, panel, popover and dialog composes `Pane` ([D050](../decisions/D050-container-layout-contract.md), [design-layout.md](design-layout.md)). Left and right insets are equal, and the scroll bar sits inside the right inset.
+- Every window, panel, popover and dialog composes `Pane` ([D050](../decisions/D050-container-layout-contract.md), [design-layout.md](design-layout.md)). Left and right insets are equal, and the scroll bar sits inside the right inset. The `vgs.themes` panel and its theme and wallpaper browsers are not on `Pane` yet; VGS-596 owns them.
 - A header row's height is its control size. Every item in it centres on the row, and a title centres by its capital height.
 - A back or close `IconButton` at the start or end of a header puts its glyph's painted bounds, not its box, on the content edge ([design-layout.md § Headers](design-layout.md#headers)).
 - A title that opens a menu draws its caret at rest and its underline on hover, on focus and while the menu is open.
 - A footer is a `Pane` footer. It stays in view while the body scrolls, and its controls share one size.
-- A container, a menu, a select list and a tooltip never extend past their output: each keeps `size.window.gutter` from each screen edge on a narrow monitor.
+- A summoned panel, a menu, a select list and a tooltip are at most their output's room, the output less `size.window.gutter` a side (`OverlayState.room`), and the compositor slides each inside its output, so none extends past it.
 
 ## Rows and groups
 
@@ -81,5 +85,5 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 
 ## Evidence
 
-- `scripts/sandbox-shots.sh` captures every surface class in dark, light and rounded, at scale 1 and 2, on the default monitor and on a 480 × 720 one. A hover shot waits until its item reports the pointer. A change to a surface lands with before and after shots of it.
+- `scripts/sandbox-shots.sh` captures every surface class in dark, light and rounded, at scale 1 and 2, on the default monitor and on a 480 × 720 one; the theme and wallpaper browsers only when named. A hover shot waits until its item reports the pointer. A change to a surface lands with before and after shots of it.
 - A defect class that can be measured has a geometry row under `scripts/smoke/rows/` or a `qs.Ui` unit test under `scripts/qml-tests/`, each with a must-fail control ([validation.md](validation.md)). A geometry row checks containment and minimums, so a theme with a larger font still passes.

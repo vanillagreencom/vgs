@@ -2,8 +2,9 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// The themes button: one icon button that opens the plugin's own panel
-// under it, or closes it when it is open.
+// The themes button: one BarItem, the palette alone in the bar's own
+// colour, that opens the plugin's own panel under it, or closes it when it
+// is open.
 BarWidget {
     id: root
 
@@ -18,12 +19,12 @@ BarWidget {
         return reply;
     }
 
-    IconButton {
+    BarItem {
         id: button
         anchors.centerIn: parent
-        size: "sm"
         iconName: "palette"
         label: "Themes"
+        tone: root.bar ? root.bar.foreground : "transparent"
         onClicked: root.toggle()
     }
 }
