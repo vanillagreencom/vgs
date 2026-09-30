@@ -77,16 +77,18 @@ const refusalRows = [
     ["cursor y cannot be an object", "moveCursor", [0, {}], "refused: dispatcher=moveCursor argument=1 value={}"],
 ];
 
-function verifyDispatch(lib, report) {
+function verifyDispatch(lib, report, forms = formRows) {
     let bad = 0;
     const row = (name, got, want) => {
         if (JSON.stringify(got) !== JSON.stringify(want)) bad += 1;
         if (report) check(name, got, want);
     };
-    for (const [name, args, lua, classic] of formRows) {
+    for (const [name, args, lua, classic] of forms) {
         row("lua " + name + " " + JSON.stringify(args), lib.request(name, args, true), { ok: true, request: lua });
         row("classic " + name + " " + JSON.stringify(args), lib.request(name, args, false), { ok: true, request: classic });
     }
+    for (const name of lib.PLUGIN_DISPATCHERS)
+        row("plugin dispatcher " + name + " has a form row", forms.some(r => r[0] === name), true);
     row("the provider exposes every supported operation", lib.PLUGIN_DISPATCHERS.slice().sort(),
         ["closeWindow", "floatWindow", "focusMonitor", "focusWindow", "focusWorkspace", "fullscreenWindow", "moveCursor", "moveWindow", "moveWindowToWorkspace", "resizeWindow", "toggleSpecialWorkspace"]);
     for (const [name, dispatcher, args, want] of refusalRows) {
@@ -98,6 +100,7 @@ function verifyDispatch(lib, report) {
     return bad;
 }
 verifyDispatch(ctx, true);
+check("control: a plugin dispatcher without form rows fails coverage", verifyDispatch(ctx, false, formRows.filter(r => r[0] !== "moveCursor")), 1);
 
 // Bringing a window into view: the request's judge, what a Hyprland event
 // means to a waiting reveal and which window a reveal focuses. Every value

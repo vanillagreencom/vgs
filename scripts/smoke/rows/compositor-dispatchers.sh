@@ -6,6 +6,8 @@
 # expect_poll interval of 200 ms; no latency budget is measured here.
 # Fullscreen is focused-window-only in both dialects. Move and resize are
 # absolute layout coordinates and size, respectively.
+# Repeated sets wait for a distinct pointer move queued behind them before
+# reading the already-matching state. A toggle control uses that same read.
 set -euo pipefail
 
 dispatch_client() { # ADDRESS FIELD
@@ -54,6 +56,32 @@ dispatch_noop_control() { # REQUEST WANT READER [ARGS...]
   shim_hyprctl real
 }
 
+# The queue serializes requests. A new pointer position proves the request
+# ahead of it completed, even when that request should leave state alone.
+dispatch_completed_state() { # LABEL REQUEST WANT READER [ARGS...]
+  local label="$1" request="$2" want="$3"
+  shift 3
+  expect "$label: the completion sentinel resets" ok probe dispatch "moveCursor 10 10"
+  expect_poll "$label: the completion sentinel starts elsewhere" '[10, 10]' dispatch_cursor
+  expect "$label: the request and completion sentinel are queued" 'ok,ok' probe batch "$request;moveCursor 11 10"
+  expect_poll "$label: the queued request completes before readback" '[11, 10]' dispatch_cursor
+  expect "$label" "$want" "$@"
+}
+
+dispatch_toggle_control() { # NAME SET_REQUEST WANT FIELD
+  local name="$1" request="$2" want="$3" field="$4" log="$sandbox/dispatch-repeat-$1-control.log" count
+  (
+    failures=0
+    row_class=behaviour
+    dispatch_completed_state "a repeated $name set keeps its state" "${request% set} toggle" "$want" dispatch_client "$dispatch_target" "$field"
+    printf 'control-failures=%s\n' "$failures"
+  ) >"$log"
+  count="$(sed -n 's/^control-failures=//p' "$log")"
+  expect "control: toggling a repeated $name set fails its completed readback once" 1 printf '%s' "$count"
+  expect "the $name state is restored after the toggle control" ok probe dispatch "$request"
+  expect_poll "the restored $name state is read back" "$want" dispatch_client "$dispatch_target" "$field"
+}
+
 if open_toplevel "$sandbox/dispatch-target.log" smoke.dispatch target; then
   dispatch_target_pid="$toplevel_pid"
   dispatch_target="$(toplevel_address "$dispatch_target_pid")"
@@ -66,8 +94,8 @@ if open_toplevel "$sandbox/dispatch-target.log" smoke.dispatch target; then
     expect "float addresses the target, not the active window" ok probe dispatch "floatWindow $dispatch_target set"
     expect_poll "float makes the addressed window floating" true dispatch_client "$dispatch_target" floating
     expect "float leaves the active window tiled" false dispatch_client "$dispatch_other" floating
-    expect "a repeated float set is accepted" ok probe dispatch "floatWindow $dispatch_target set"
-    expect_poll "a repeated float set keeps it floating" true dispatch_client "$dispatch_target" floating
+    dispatch_completed_state "a repeated float set keeps its state" "floatWindow $dispatch_target set" true dispatch_client "$dispatch_target" floating
+    dispatch_toggle_control float "floatWindow $dispatch_target set" true floating
     expect "float unset is accepted" ok probe dispatch "floatWindow $dispatch_target unset"
     expect_poll "float unset tiles the target" false dispatch_client "$dispatch_target" floating
     expect "float toggle is accepted" ok probe dispatch "floatWindow $dispatch_target toggle"
@@ -91,8 +119,8 @@ if open_toplevel "$sandbox/dispatch-target.log" smoke.dispatch target; then
     dispatch_noop_control "fullscreenWindow fullscreen set" 2 dispatch_client "$dispatch_target" fullscreen
     expect "fullscreen set is accepted" ok probe dispatch "fullscreenWindow fullscreen set"
     expect_poll "fullscreen sets the focused window's state" 2 dispatch_client "$dispatch_target" fullscreen
-    expect "a repeated fullscreen set is accepted" ok probe dispatch "fullscreenWindow fullscreen set"
-    expect_poll "a repeated fullscreen set keeps it fullscreen" 2 dispatch_client "$dispatch_target" fullscreen
+    dispatch_completed_state "a repeated fullscreen set keeps its state" "fullscreenWindow fullscreen set" 2 dispatch_client "$dispatch_target" fullscreen
+    dispatch_toggle_control fullscreen "fullscreenWindow fullscreen set" 2 fullscreen
     expect "fullscreen unset is accepted" ok probe dispatch "fullscreenWindow fullscreen unset"
     expect_poll "fullscreen unset restores the window" 0 dispatch_client "$dispatch_target" fullscreen
     expect "maximized toggle is accepted" ok probe dispatch "fullscreenWindow maximized toggle"
