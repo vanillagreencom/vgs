@@ -32,6 +32,10 @@ Item {
     // under the text.
     readonly property real room: Math.max(0, width - tile.width - look.row.gap)
     readonly property bool stacked: trailing.implicitWidth > 0 && trailing.implicitWidth > room * look.row.stackShare
+    // The row's controls share one size: a channel Select is `md`, so the
+    // actions beside it are too; a chip is `md`, the height of an `sm`
+    // button.
+    readonly property string controlSize: view.channels.length > 0 ? "md" : "sm"
     property bool detailsOpen: false
     readonly property bool clipped: {
         for (let i = 0; i < lineRepeater.count; i++) {
@@ -123,6 +127,7 @@ Item {
             Badge {
                 required property var modelData
                 anchors.verticalCenter: parent.verticalCenter
+                size: "md"
                 text: modelData.text
                 tone: modelData.tone
             }
@@ -138,7 +143,7 @@ Item {
             Button {
                 required property var modelData
                 anchors.verticalCenter: parent.verticalCenter
-                size: "sm"
+                size: root.controlSize
                 variant: modelData.variant
                 text: modelData.label
                 onClicked: root.acted(modelData, channel.visible ? channel.currentText : "")
