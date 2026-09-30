@@ -41,8 +41,9 @@ Item {
         when: windowShown
 
         function make(segments, lines) {
-            const item = createTemporaryObject(textComponent, root, { segments: segments, maximumLineCount: lines || 2 });
+            const item = createTemporaryObject(textComponent, root, { maximumLineCount: lines || 2 });
             verify(item !== null);
+            item.segments = segments;
             return item;
         }
 
@@ -83,6 +84,13 @@ Item {
             tryVerify(() => redRows(item).length > 0, 3000, "the image is drawn");
             compare(redAlpha(item), 255, "the image draws at full strength under a half-alpha text colour");
             verify(redRows(item).length <= item.imageSize, "the image is one line's height");
+        }
+
+        function test_a_url_value_image_segment_draws_as_an_image() {
+            const item = make([{ image: Qt.resolvedUrl("images/red.png"), alt: ":red:" }], 1);
+            verify(drawn(item).text.indexOf("<img") !== -1, "the text names the image");
+            tryVerify(() => redRows(item).length > 0, 3000, "the image is drawn");
+            compare(item.failed.length, 0);
         }
 
         function test_a_line_with_an_image_keeps_its_pitch() {

@@ -5,9 +5,10 @@
 // the tokens it may be cut between, and the cut with an ellipsis.
 //
 // A segment is { markup } for StyledText the caller has already made safe,
-// or { image, alt } for a local image URL and the plain text drawn in its
-// place when it cannot be. An image draws as an `<img>` of `size` by `size`
-// pixels, aligned to the middle of its line.
+// or { image, alt } for a local image URL, as a string or QML url
+// value, and the plain text drawn in its place when it cannot be. An image
+// draws as an `<img>` of `size` by `size` pixels, aligned to the middle of
+// its line.
 
 var ELLIPSIS = "\u2026";
 
@@ -15,6 +16,14 @@ var ELLIPSIS = "\u2026";
 // attribute or start another tag. Any other draws its alt text.
 function drawableUrl(url) {
     return typeof url === "string" && /^file:\/\/\/[^"<>&]+$/.test(url);
+}
+
+// A segment's drawable image URL as a string. QML url values stringify to
+// their file URL, while plain objects stringify outside drawableUrl's rules.
+function imageUrl(segment) {
+    var value = segment.image;
+    var url = typeof value === "string" ? value : String(value);
+    return drawableUrl(url) ? url : "";
 }
 
 function escape(text) {
@@ -25,8 +34,8 @@ function escape(text) {
 function imageUrls(segments) {
     var out = [];
     for (var i = 0; i < segments.length; i++) {
-        var url = segments[i].image;
-        if (drawableUrl(url) && out.indexOf(url) === -1) out.push(url);
+        var url = imageUrl(segments[i]);
+        if (url !== "" && out.indexOf(url) === -1) out.push(url);
     }
     return out;
 }
@@ -56,10 +65,13 @@ function tokens(segments, size, failed) {
         var segment = segments[i];
         if (typeof segment.markup === "string") {
             out = out.concat(markupTokens(segment.markup));
-        } else if (drawableUrl(segment.image) && failed.indexOf(segment.image) === -1) {
-            out.push({ kind: "image", markup: "<img src=\"" + segment.image + "\" width=\"" + size + "\" height=\"" + size + "\" align=\"middle\">" });
         } else {
-            out = out.concat(markupTokens(escape(segment.alt)));
+            var url = imageUrl(segment);
+            if (url !== "" && failed.indexOf(url) === -1) {
+                out.push({ kind: "image", markup: "<img src=\"" + url + "\" width=\"" + size + "\" height=\"" + size + "\" align=\"middle\">" });
+            } else {
+                out = out.concat(markupTokens(escape(segment.alt)));
+            }
         }
     }
     return out;

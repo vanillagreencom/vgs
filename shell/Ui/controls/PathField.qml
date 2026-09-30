@@ -15,22 +15,37 @@ Item {
     property bool error: false
     property string errorMessage: ""
     readonly property bool absolute: isAbsolute(displayPath)
-    // The folder model falls back to the working directory for a folder
-    // that does not exist (runtime-qml.md), so the folder it lists names
-    // whether the folder the picker shows exists.
+    // runtime-qml.md defines both missing-folder cases: completion can
+    // swap `folder`, and a later missing folder leaves status Null.
     readonly property string actualFolder: clean(String(folders.folder || ""))
-    readonly property bool folderFound: actualFolder === currentFolder
+    readonly property int folderStatus: folders.status
+    readonly property bool folderFound: actualFolder === currentFolder && folderStatus !== FolderListModel.Null
     // Whether the typed or chosen path exists, read while the picker's
     // folder is that path and kept while the picker browses elsewhere.
     property bool displayFound: true
     readonly property bool valid: absolute && (displayPath === "" || displayFound)
+    property string editedSettlementPath: ""
+    property bool editedSettlementPending: false
+    property bool editedNeedsStatus: false
     onFolderFoundChanged: syncDisplayFound()
-    onActualFolderChanged: syncDisplayFound()
+    onActualFolderChanged: {
+        syncDisplayFound();
+        if (actualFolder !== currentFolder) {
+            editedNeedsStatus = false;
+            settleEditedPath();
+        }
+    }
+    onDisplayFoundChanged: settleEditedPath()
+    // `changed` reports each user or picker change. `edited` reports a
+    // user text edit at once, then reports the same text again if the
+    // asynchronous folder model later changes that text's validity.
     signal changed(string path)
     signal edited(string path, bool valid)
     signal picked(string path)
 
     onPathChanged: {
+        editedSettlementPending = false;
+        editedNeedsStatus = false;
         displayPath = path;
         if (path !== "" && path.charAt(0) === "/") currentFolder = clean(path);
     }
@@ -40,6 +55,12 @@ Item {
 
     function syncDisplayFound() {
         if (displayPath !== "" && isAbsolute(displayPath) && clean(displayPath) === currentFolder) displayFound = folderFound;
+    }
+    function settleEditedPath() {
+        if (!editedSettlementPending || editedNeedsStatus || folderStatus === FolderListModel.Loading) return;
+        if (displayPath !== editedSettlementPath || !isAbsolute(displayPath) || clean(displayPath) !== currentFolder) return;
+        editedSettlementPending = false;
+        root.edited(displayPath, root.valid);
     }
     function homePath() { return StandardPaths.writableLocation(StandardPaths.HomeLocation); }
     function isAbsolute(value) { return value === "" || value.charAt(0) === "/"; }
@@ -72,6 +93,15 @@ Item {
         return fromRole === undefined ? "" : String(fromRole);
     }
 
+    Connections {
+        target: folders
+        function onStatusChanged() {
+            root.syncDisplayFound();
+            root.editedNeedsStatus = false;
+            root.settleEditedPath();
+        }
+    }
+
     TextField {
         id: field
         anchors.fill: parent
@@ -80,6 +110,9 @@ Item {
         error: root.error || !root.valid
         onTextEdited: {
             root.displayPath = text;
+            root.editedSettlementPath = text;
+            root.editedSettlementPending = text !== "" && text.charAt(0) === "/";
+            root.editedNeedsStatus = root.editedSettlementPending;
             if (text.charAt(0) === "/") root.currentFolder = root.clean(text);
             root.errorMessage = "";
             root.edited(text, root.valid);

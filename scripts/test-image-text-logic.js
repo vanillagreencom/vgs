@@ -15,6 +15,8 @@ const source = path.join(__dirname, "..", "shell", "Ui", "foundation", "ImageTex
 const logic = load(process.env.IMAGE_TEXT_LOGIC || source);
 const same = (got, want, message) => assert.deepEqual(JSON.parse(JSON.stringify(got)), want, message);
 const RED = "file:///cache/emoji/0123456789abcdef.png?v=0123456789abcdef";
+const URL_VALUE = new URL("file:///cache/emoji/space here.png");
+const URL_VALUE_TEXT = "file:///cache/emoji/space%20here.png";
 
 // URLs: [label, url, drawn].
 for (const [label, url, drawn] of [
@@ -41,10 +43,15 @@ same(logic.tokens([{ markup: "hi " }, { image: RED, alt: ":red:" }], 12, []), [
     { kind: "image", markup: "<img src=\"" + RED + "\" width=\"12\" height=\"12\" align=\"middle\">" }
 ], "an image token");
 same(logic.tokens([{ image: RED, alt: ":red:" }], 12, [RED]), [{ kind: "word", markup: ":red:" }], "a failed image writes its alt text");
+same(logic.tokens([{ image: URL_VALUE, alt: ":space:" }], 12, []), [
+    { kind: "image", markup: "<img src=\"" + URL_VALUE_TEXT + "\" width=\"12\" height=\"12\" align=\"middle\">" }
+], "a url value writes an image token");
+same(logic.tokens([{ image: {}, alt: "<plain>" }], 12, []), [{ kind: "word", markup: "&lt;plain&gt;" }], "a plain object writes its alt text");
 same(logic.tokens([{ image: "http://h/x.png", alt: "<img src=x>" }], 12, []), [
     { kind: "word", markup: "&lt;img" }, { kind: "space", markup: " " }, { kind: "word", markup: "src=x&gt;" }
 ], "alt text is escaped");
 same(logic.imageUrls([{ image: RED }, { markup: "x" }, { image: RED }, { image: "http://h/x.png" }]), [RED], "unique drawable URLs");
+same(logic.imageUrls([{ image: URL_VALUE }, { image: URL_VALUE }, { image: {} }]), [URL_VALUE_TEXT], "url values become unique drawable URL strings");
 
 // Elision against a stand-in measure: markup fits when its text, tags
 // removed and an image counted as one character, is at most `room` long.
@@ -62,11 +69,14 @@ assert.ok(asked <= 12, "the cut bisects: " + asked + " measures for 1000 words")
 
 function controls() {
     const text = fs.readFileSync(source, "utf8");
-    const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "test-image-text-logic-"));
+    const scratchRoot = process.env.TMPDIR || path.join(__dirname, "..", "tmp");
+    fs.mkdirSync(scratchRoot, { recursive: true });
+    const dir = fs.mkdtempSync(path.join(scratchRoot, "test-image-text-logic-"));
     const table = [
         ["only local files draw", "/^file:\\/\\/\\/[^\"<>&]+$/.test(url)", "true", /drawable: a remote image/],
-        ["alt text is escaped", "out = out.concat(markupTokens(escape(segment.alt)));", "out = out.concat(markupTokens(segment.alt));", /alt text is escaped/],
-        ["a failed image draws no image", "failed.indexOf(segment.image) === -1", "true", /a failed image writes its alt text/],
+        ["alt text is escaped", "out = out.concat(markupTokens(escape(segment.alt)));", "out = out.concat(markupTokens(segment.alt));", /plain object writes its alt text|alt text is escaped/],
+        ["a failed image draws no image", "failed.indexOf(url) === -1", "true", /a failed image writes its alt text/],
+        ["a url value becomes a drawable string", "var url = typeof value === \"string\" ? value : String(value);", "var url = typeof value === \"string\" ? value : value;", /url value writes an image token|url values become unique drawable URL strings/],
         ["the cut ends on a word or an image", "if (list[i].kind === \"word\" || list[i].kind === \"image\") out.push(i + 1);", "out.push(i + 1);", /without the space after it|line break before the cut/],
         ["the cut bisects", "var mid = (low + high) >> 1;", "var mid = low;", /the cut bisects/]
     ];

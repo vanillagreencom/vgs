@@ -22,6 +22,7 @@ Item {
     TimeField { id: timeField; y: 240; text: "09:00" }
     DateField { id: dateField; y: 240; x: 120; date: "2026-01-05" }
     PathField { id: pathField; y: 280; path: "" }
+    SignalSpy { id: pathEdited; target: pathField; signalName: "edited" }
     DateField { id: boundDate; y: 320; date: root.boundDateValue }
     PathField { id: boundPath; y: 320; x: 160; path: root.boundPathValue }
     TimeChipList { id: boundTimes; y: 360; width: 220; times: root.boundTimesValue }
@@ -43,6 +44,16 @@ Item {
             root.boundPathValue = "";
             root.boundTimesValue = ["17:30"];
             root.boundWeekdaysValue = ["wed"];
+            pathField.path = "";
+            pathField.displayFound = true;
+            pathField.openFolder(pathField.homePath());
+            pathEdited.clear();
+        }
+
+        function pathEditor() {
+            for (const child of pathField.children)
+                if (child.placeholderText === "Working directory, blank for home") return child;
+            fail("no path field editor");
         }
 
         function test_text_area_keeps_lines_and_error_outline() {
@@ -157,15 +168,28 @@ Item {
             compare(pathField.parentPath(pathField.currentFolder), "/home/method");
         }
 
-        // Browse judges the folder it shows, not the chosen one. The
-        // offscreen runner lists no folder, so this reads the folder the
-        // model is asked for, not a missing folder's swap.
+        // Browse judges the folder it shows. Browsing away from a chosen
+        // folder keeps the chosen value valid.
         function test_path_field_browses_away_from_a_chosen_folder() {
             pathField.choose("/usr");
             pathField.openFolder("/usr/share");
             compare(pathField.currentFolder, "/usr/share");
             tryCompare(pathField, "folderFound", true);
             compare(pathField.valid, true);
+            pathField.openFolder("/nonexistent-vgs-601-folder");
+            tryCompare(pathField, "folderFound", false);
+            compare(pathField.valid, true);
+        }
+
+        function test_path_field_re_sends_edited_when_missing_path_settles() {
+            const missing = "/nonexistent-vgs-680-folder";
+            const editor = pathEditor();
+            editor.text = missing;
+            editor.textEdited();
+            verify(pathEdited.count >= 1);
+            compare(pathEdited.signalArguments[0][0], missing);
+            tryVerify(() => pathEdited.signalArguments[pathEdited.count - 1][0] === missing && pathEdited.signalArguments[pathEdited.count - 1][1] === false, 3000, "the settled edit reports the missing folder");
+            compare(pathField.valid, false);
         }
 
         function test_path_field_keeps_external_binding_after_choose() {
