@@ -18,6 +18,10 @@ A privacy-sensitive service declares capability `session` and binds to `shell.se
 
 The service treats a missing shell or lock value as locked. Each hello carries the observed lock state. The daemon answers `locked` or `ready` for health, and neither answer permits capture. Session stays down with reason `locked` or `unconfigured`. The core capability does not enforce capture or action policy.
 
+## Shortcut foundation
+
+J02 provides the [core hold-shortcut contract](hyprland-shortcuts.md#hold-shortcuts), recorded by [D071](../decisions/D071-hold-shortcuts-use-a-release-companion.md). This foundation does not connect Jarvis keys. J12 owns that connection and mode selection.
+
 ## Session
 
 `Session.js::reduce` owns all transitions. `Session.js::REGIONS` owns the tagged state shape; `phaseOf` owns phase priority. The reducer reads time only from the event. It returns a new state and ordered effects without changing its inputs.
