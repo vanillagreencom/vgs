@@ -113,7 +113,10 @@
 # the pid itself when its parent holds no lock; waits for that lock to free,
 # which it does when the runner exits after the shell, and asks Hyprland to run
 # `vgsh run`, so the new shell inherits the session environment. It prints
-# the new pid once that shell answers as the guarded instance.
+# the new pid once that shell answers as the guarded instance, and refuses
+# `start=exited pid=<pid|none>` once that run has written the lock file
+# and no process holds the lock any more: the new runner ended with no
+# guarded shell, the pid the last one the file named.
 #
 # add, update and remove run no code from the plugin and no git hook, and ask
 # for no privilege: installed plugins live under
@@ -662,7 +665,7 @@ shell_stop_target() { # PID
 }
 
 shell_restart() {
-  local pid hypr_status status using_lua locked_out reply cmd request dispatch_reply new_pid guarded_out lua_cmd stop_target
+  local pid hypr_status status using_lua locked_out reply cmd request dispatch_reply new_pid guarded_out lua_cmd stop_target written seen_pid
   pid="$(shell_pid)" || exit $?
   set +e
   hypr_status="$(hyprctl -j status 2>&1)"
@@ -705,6 +708,13 @@ shell_restart() {
     request="exec $cmd"
   fi
 
+  # Only a runner that holds the lock writes the file, so a change after
+  # this reading, with the lock free again, is a run that started and
+  # ended, however short: its runner empties the file when it exits. The
+  # lock is probed only after the change, when the new runner has taken
+  # it for its whole life, so the probe never meets that runner's
+  # `flock -n`, which it would make refuse with 75.
+  written="$(stat -L -c '%y' -- "$lock")" || refuse 1 "lock=unreadable path=$lock"
   set +e
   dispatch_reply="$(hyprctl dispatch "$request" 2>&1)"
   set -e
@@ -713,8 +723,10 @@ shell_restart() {
       "the shell stopped; start it with vgsh run"
   fi
 
+  seen_pid=none
   for _ in $(seq 1 300); do
     if [[ -r $lock ]] && IFS= read -r new_pid <"$lock" && [[ $new_pid =~ ^[0-9]+$ && $new_pid != "$pid" ]]; then
+      seen_pid="$new_pid"
       if [[ ! -d /proc/$new_pid ]]; then
         refuse 1 "start=exited pid=$new_pid" \
           "the new shell exited; read its log or start it with vgsh run"
@@ -727,6 +739,10 @@ shell_restart() {
         printf 'ok pid=%s\n' "$new_pid"
         return 0
       fi
+    fi
+    if [[ $(stat -L -c '%y' -- "$lock" 2>/dev/null) != "$written" ]] && flock -n "$lock" true; then
+      refuse 1 "start=exited pid=$seen_pid" \
+        "the new vgsh run ended with no guarded shell; read its log or start it with vgsh run"
     fi
     sleep 0.1
   done

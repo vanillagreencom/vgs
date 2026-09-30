@@ -30,7 +30,8 @@ trap 'cleanup_started_pids; rm -rf -- "${tmp:?}"' EXIT
 # STUB_QS_STDERR on stderr, then STUB_QS_VERSION, and exits
 # STUB_QS_VERSION_EXIT. Invoked as the shell (no
 # `ipc` argument) it records its pid, VGSH_RUNNER_PID, the file-watcher
-# environment and its arguments in STUB_RECORD. STUB_SHELL_HOLD keeps that
+# environment, the first line of the lock file as it reads it while it
+# runs and its arguments in STUB_RECORD. STUB_SHELL_HOLD keeps that
 # process, the shell the runner waits on, alive for restart rows.
 cat >"$tmp/qs" <<'EOF2'
 #!/usr/bin/env bash
@@ -40,7 +41,9 @@ if [[ ${1:-} == --version ]]; then
   exit "${STUB_QS_VERSION_EXIT:-0}"
 fi
 if [[ ${1:-} != ipc && ${1:-} != log ]]; then
-  printf 'pid=%s runner=%s disable=%s no_popup=%s args=%s\n' "$$" "${VGSH_RUNNER_PID:-unset}" "${QS_DISABLE_FILE_WATCHER:-unset}" "${QS_NO_RELOAD_POPUP:-unset}" "$*" >"${STUB_RECORD:?}"
+  lock_line=""
+  [[ -r ${XDG_RUNTIME_DIR:?}/vgsh.lock ]] && IFS= read -r lock_line <"$XDG_RUNTIME_DIR/vgsh.lock"
+  printf 'pid=%s runner=%s disable=%s no_popup=%s lock=%s args=%s\n' "$$" "${VGSH_RUNNER_PID:-unset}" "${QS_DISABLE_FILE_WATCHER:-unset}" "${QS_NO_RELOAD_POPUP:-unset}" "${lock_line:-empty}" "$*" >"${STUB_RECORD:?}"
   [[ -n ${STUB_SHELL_HOLD:-} ]] && exec sleep "$STUB_SHELL_HOLD"
   exit 0
 fi
@@ -124,6 +127,17 @@ run_has_file_watcher_env() { # RECORD
   no_popup="${record#*no_popup=}"
   no_popup="${no_popup%% *}"
   [[ $disable == 1 && $no_popup == 1 ]]
+}
+
+# run_lock_state RECORD RT: `running=` what the lock file named while the
+# shell ran, `shell` for the recorded pid, and `exited=` whether the file
+# names anything once the runner ended.
+run_lock_state() { # RECORD RT
+  local pid lock_line
+  pid="${1#pid=}"; pid="${pid%% *}"
+  lock_line="${1#*lock=}"; lock_line="${lock_line%% *}"
+  printf 'running=%s exited=%s\n' "$([[ -n $pid && $lock_line == "$pid" ]] && echo shell || echo "other:$lock_line")" \
+    "$([[ -s $2/vgsh.lock ]] && echo pid || echo empty)"
 }
 
 record_runner() { # RECORD
@@ -279,7 +293,7 @@ if [[ $status == 0 && -f $tmp/record ]]; then
   args="${record#*args=}"
   if [[ $pid == "$runner" ]]; then ok "run hands the shell its own pid as the runner identity"; else fail "run identity: $record"; fi
   if run_has_file_watcher_env "$record"; then ok "run disables Quickshell's file watcher and reload popup"; else fail "run watcher env: $record"; fi
-  if [[ "$(cat "$rt_run/vgsh.lock")" == "$pid" ]]; then ok "run records the shell's pid in the lock file"; else fail "lock file holds [$(cat "$rt_run/vgsh.lock")] want $pid"; fi
+  if [[ $(run_lock_state "$record" "$rt_run") == "running=shell exited=empty" ]]; then ok "the lock file names the shell while it runs and nothing once the runner ended"; else fail "run lock file: $(run_lock_state "$record" "$rt_run")"; fi
   if [[ $args == "-p $repo/shell" ]]; then ok "run passes qs the shell path and nothing else"; else fail "run args: $args"; fi
   if [[ ! -e $rt_run/vgsh-sources-1 ]]; then ok "run removes the source snapshot roots dead shells left"; else fail "run left $rt_run/vgsh-sources-1"; fi
   if [[ -d $run_state ]]; then ok "run creates the state directory the shell watches"; else fail "run left no $run_state"; fi
@@ -287,6 +301,33 @@ if [[ $status == 0 && -f $tmp/record ]]; then
 else
   fail "unlocked run: exit=$status record=$([[ -f $tmp/record ]] && echo present || echo absent) stderr=$(head -n 1 "$tmp/err")"
 fi
+
+# The lock file's rules, each with a control on a copy of bin/vgsh whose
+# run the row must not pass: the child writes its own pid, not the
+# runner's, and the runner empties the file once the shell exited.
+lock_mutant_state() { # NAME NEEDLE REPLACEMENT
+  local dir="$tmp/lock-mutant-$1" record=""
+  mkdir -p "$dir/bin" "$dir/shell" "$dir/rt"
+  ln -s -- "$repo/bin/lib" "$dir/bin/lib"
+  python3 - "$repo/bin/vgsh" "$dir/bin/vgsh" "$2" "$3" <<'PY' || { echo "edit-failed"; return; }
+import sys
+source, target, old, new = sys.argv[1:]
+text = open(source).read()
+if text.count(old) != 1:
+    raise SystemExit(f"lock-file-control: expected one match, found {text.count(old)}")
+open(target, "w").write(text.replace(old, new))
+PY
+  chmod +x "$dir/bin/vgsh"
+  "${base_env[@]}" XDG_RUNTIME_DIR="$dir/rt" STUB_RECORD="$dir/record" "$dir/bin/vgsh" run 2>/dev/null || :
+  [[ -f $dir/record ]] && record="$(cat "$dir/record")"
+  run_lock_state "$record" "$dir/rt"
+}
+for control in "runner-pid|printf '%s\\n' \"\$BASHPID\" >&9|printf '%s\\n' \"\$\$\" >&9" \
+  "file-kept|    truncate -s 0 -- \"\$lock\" 9>&-|    :"; do
+  IFS='|' read -r name needle replacement <<<"$control"
+  got="$(lock_mutant_state "$name" "$needle" "$replacement")"
+  if [[ $got != "running=shell exited=empty" ]]; then ok "control $name: the lock file row fails ($got)"; else fail "control $name: the lock file row still holds"; fi
+done
 
 watcher_mutant="$tmp/watcher-mutant"; mkdir -p "$watcher_mutant/bin" "$watcher_mutant/shell"
 cp -- "$repo/bin/vgsh" "$watcher_mutant/bin/vgsh"; chmod +x "$watcher_mutant/bin/vgsh"
@@ -588,13 +629,54 @@ wait "$fake_runner" 2>/dev/null || true
 if [[ $restart_status == 1 && -z $restart_out && $restart_err == "vgsh: refused: start=failed reply=nope" ]]; then ok "restart refuses a failed Hyprland dispatch reply"; else fail "restart bad dispatch: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
 if [[ ! -d /proc/$old_pid ]]; then ok "a failed relaunch reports that the old shell stopped"; else fail "failed relaunch left old pid=$old_pid"; fi
 
-rt_restart_exited="$tmp/rt-restart-exited"; dispatch="$tmp/dispatch-exited"
-start_fake_shell "restart exited fixture starts a shell" "$rt_restart_exited" "$tmp/record-exited-old"
-old_pid="$fake_pid"
-run_restart_capture "$rt_restart_exited" "$tmp/record-exited-new" "$dispatch" false STUB_SHELL_HOLD=
-wait "$fake_runner" 2>/dev/null || true
-if [[ $restart_status == 1 && -z $restart_out && $restart_err =~ ^vgsh:\ refused:\ start=exited\ pid=([0-9]+)$ ]]; then exited_pid="${BASH_REMATCH[1]}"; ok "restart refuses a shell that exits before it is guarded"; else exited_pid=""; fail "exited restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
-if [[ -n $exited_pid && ! -d /proc/$exited_pid ]]; then ok "the exited restart names a dead replacement pid"; else fail "exited restart pid live=$([[ -n $exited_pid && -d /proc/$exited_pid ]] && echo yes || echo no) pid=${exited_pid:-missing}"; fi
+# A dispatched run that ends with no guarded shell: its shell exits 0 at
+# once, or after HOLD seconds while it answers guarded=false. restart
+# refuses start=exited once that run wrote the lock file and nothing holds
+# the lock, well inside its 30 s bound, naming the last pid the file named,
+# `none` when it named one too briefly to be read. exited_verdict LABEL BIN
+# HOLD sets exited_got to the exit, the key, the pid's state and whether
+# restart ended within 5 s; it runs in the suite's own shell, since its
+# fixture records the pids the suite stops.
+exited_verdict() { # LABEL BIN HOLD
+  local rt="$tmp/rt-restart-exited-$1" start_us took_ms pid_state
+  start_fake_shell "restart $1 exited fixture starts a shell" "$rt" "$rt/record-old"
+  start_us="${EPOCHREALTIME//[!0-9]/}"
+  RESTART_BIN="$2" run_restart_capture "$rt" "$rt/record-new" "$rt/dispatch" false STUB_SHELL_HOLD="$3" STUB_GUARDED=false
+  took_ms=$(( (${EPOCHREALTIME//[!0-9]/} - start_us) / 1000 ))
+  wait "$fake_runner" 2>/dev/null || true
+  pid_state=unread
+  if [[ $restart_err =~ ^vgsh:\ refused:\ start=exited\ pid=([0-9]+)$ ]]; then
+    if [[ -d /proc/${BASH_REMATCH[1]} ]]; then pid_state=live; else pid_state=dead; fi
+  elif [[ $restart_err == "vgsh: refused: start=exited pid=none" ]]; then
+    pid_state=none
+  fi
+  printf -v exited_got 'exit=%s out=[%s] key=%s pid=%s prompt=%s' "$restart_status" "$restart_out" "${restart_err%% pid=*}" "$pid_state" \
+    "$( ((took_ms < 5000)) && echo yes || echo "no:${took_ms}ms")"
+}
+exited_verdict at-once "$repo/bin/vgsh" ""; got="$exited_got"
+if [[ $got =~ ^exit=1\ out=\[\]\ key=vgsh:\ refused:\ start=exited\ pid=(dead|none)\ prompt=yes$ ]]; then ok "restart refuses a run whose shell exits at once, at once: $got"; else fail "exited restart at once: $got"; fi
+exited_want="exit=1 out=[] key=vgsh: refused: start=exited pid=dead prompt=yes"
+exited_verdict unguarded "$repo/bin/vgsh" 0.6; got="$exited_got"
+if [[ $got == "$exited_want" ]]; then ok "restart refuses a run whose shell never answers guarded, naming its dead pid"; else fail "exited restart unguarded: $got"; fi
+# Controls: a copy that never reads the run's end waits out its bound,
+# shortened to 3 s here; a copy that refuses while the lock is still held
+# refuses a run whose shell answers guarded on the third call.
+if exited_copy="$(pre_copy '&& flock -n "$lock" true; then' '&& false; then' 'for _ in $(seq 1 300); do' 'for _ in $(seq 1 30); do')"; then
+  exited_verdict unread "$exited_copy" 0.6; got="$exited_got"
+  if [[ $got != "$exited_want" ]]; then ok "control: a restart that never reads the run's end fails the row: $got"; else fail "control: the unread-end copy still holds"; fi
+else
+  fail "the unread-end control could not edit its copy"
+fi
+if held_copy="$(pre_copy '&& flock -n "$lock" true; then' '&& true; then')"; then
+  rt_held_ctl="$tmp/rt-restart-held-control"
+  start_fake_shell "restart held-control fixture starts a shell" "$rt_held_ctl" "$rt_held_ctl/record-old"
+  RESTART_BIN="$held_copy" run_restart_capture "$rt_held_ctl" "$rt_held_ctl/record-new" "$rt_held_ctl/dispatch" false STUB_GUARDED_FALSE_CALLS=2 STUB_GUARDED_COUNT="$rt_held_ctl/guarded-count"
+  wait "$fake_runner" 2>/dev/null || true
+  if [[ $restart_status != 0 ]]; then ok "control: a restart that ignores the held lock refuses a live run: $restart_err"; else fail "control: the held-lock copy still restarts"; fi
+  [[ -r $rt_held_ctl/vgsh.lock ]] && IFS= read -r held_pid <"$rt_held_ctl/vgsh.lock" && [[ $held_pid =~ ^[0-9]+$ ]] && started_pids+=("$(awk '$1 == "PPid:" { print $2 }' "/proc/$held_pid/status" 2>/dev/null)") || :
+else
+  fail "the held-lock control could not edit its copy"
+fi
 
 # Install, update and remove, with local bare repositories as the source,
 # through the library's `g` and plugin source fixture.
