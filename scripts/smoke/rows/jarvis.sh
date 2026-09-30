@@ -60,10 +60,11 @@ jarvis_rescan() {
   expect "the changed Jarvis service rescans" ok ipc shell rescanPlugins
   for ((attempt = 0; attempt < 200; attempt++)); do
     if ! current="$(jarvis_revision)"; then fail "Jarvis revision is unreadable after rescan"; return 1; fi
-    [[ $current == "$before" ]] || return
+    [[ $current == "$before" ]] || return 0
     sleep 0.01
   done
   fail "Jarvis source revision did not change"
+  return 1
 }
 
 jarvis_no_pid() { # PID
