@@ -4,6 +4,14 @@
 # live prefix. Each refusal row asserts the keyed first line a packager acts on.
 set -euo pipefail
 
+if ! node_bin="$(node -e 'process.stdout.write(process.execPath)')"; then
+  echo 'test-install-tree: status=not-measured missing=node'
+  exit 77
+fi
+[[ $node_bin == /* && -x $node_bin ]] || {
+  echo 'test-install-tree: status=not-measured missing=node-binary'
+  exit 77
+}
 repo="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd -P)"
 tmp="$repo/tmp/test-install-tree.$$"
 failures=0
@@ -26,6 +34,7 @@ run_capture() { # OUT ERR STATUS_VAR CMD...
   printf -v "$status_var" '%s' "$rc"
 }
 grep_out() { grep -qxF -- "$1" "$2"; }
+voice_command=(env -i PATH=/usr/bin:/bin "$node_bin" "$repo/scripts/fixtures/jarvis-voice/installed.js")
 
 dest="$tmp/install"
 run_capture "$tmp/install.out" "$tmp/install.err" status env DESTDIR="$dest" PREFIX=/usr "$repo/packaging/install-system.sh"
@@ -41,8 +50,68 @@ check "shell CLAUDE.md is not installed" test ! -e "$dest/usr/share/vgs/shell/CL
 check "shell plugin README.md is not installed" test ! -e "$dest/usr/share/vgs/shell/plugins/vgs.bar/README.md"
 check "a plugin's other Markdown is not installed" test ! -e "$dest/usr/share/vgs/shell/plugins/vgs.updates/pipeline.md"
 check "Jarvis runtime guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/core.md"
-run_capture "$tmp/guidance.out" "$tmp/guidance.err" status env -i PATH=/usr/bin:/bin node "$repo/scripts/fixtures/jarvis-voice/installed.js" "$dest/usr/share/vgs"
+run_capture "$tmp/guidance.out" "$tmp/guidance.err" status "${voice_command[@]}" "$dest/usr/share/vgs"
 check "installed guidance composes every consumer without source-tree files" test "$status" = 0
+private_node="$tmp/private node/bin/node"
+empty_path="$tmp/no-node-on-path"
+mkdir -p -- "$(dirname -- "$private_node")" "$empty_path"
+cp -- "$node_bin" "$private_node"
+run_capture "$tmp/private-node.out" "$tmp/private-node.err" status env -i PATH=/usr/bin:/bin "$private_node" -e 'process.stdout.write(process.execPath)'
+check "a non-system Node executable resolves its real path" test "$status" = 0
+check "the resolved runtime stays outside the system directories" grep_out "$private_node" "$tmp/private-node.out"
+private_voice=("${voice_command[@]}")
+private_voice[2]="PATH=$empty_path"
+private_voice[3]="$(<"$tmp/private-node.out")"
+run_capture "$tmp/private-voice.out" "$tmp/private-voice.err" status "${private_voice[@]}" "$dest/usr/share/vgs"
+check "the installed consumer uses resolved Node with no Node on PATH" test "$status" = 0
+check "the non-system runtime reaches the real installed consumer" grep_out "jarvis-voice-installed=ok" "$tmp/private-voice.out"
+private_voice[3]=node
+run_capture "$tmp/private-voice-mutant.out" "$tmp/private-voice-mutant.err" status "${private_voice[@]}" "$dest/usr/share/vgs"
+check "control: replacing resolved Node with a PATH lookup fails the consumer" test "$status" = 127
+
+# A version-manager shim can fail or return no runtime. Each copy changes
+# only that refusal, and the same keyed assertion must reject the copy.
+for node_case in failed empty; do
+  guard_root="$tmp/node-$node_case"
+  mkdir -p -- "$guard_root/bin" "$guard_root/scripts"
+  if [[ $node_case == failed ]]; then
+    printf '#!/usr/bin/env bash\nexit 23\n' >"$guard_root/bin/node"
+    missing=node
+  else
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$guard_root/bin/node"
+    missing=node-binary
+  fi
+  chmod 755 -- "$guard_root/bin/node"
+  node_env=(env -i PATH="$guard_root/bin:/usr/bin:/bin" HOME="$guard_root" TMPDIR="$tmp" VGS_TEST_RUN=1)
+  run_capture "$tmp/node-$node_case.out" "$tmp/node-$node_case.err" status "${node_env[@]}" bash "$repo/scripts/test-install-tree.sh"
+  check "Node resolution ($node_case) is not verified" test "$status" = 77
+  check "Node resolution ($node_case) names its cause" grep_out "test-install-tree: status=not-measured missing=$missing" "$tmp/node-$node_case.out"
+  python3 - "$repo/scripts/test-install-tree.sh" "$guard_root/scripts/test-install-tree.sh" "$node_case" <<'PY'
+import pathlib
+import sys
+
+source, target = map(pathlib.Path, sys.argv[1:3])
+text = source.read_text()
+if sys.argv[3] == "failed":
+    needle = 'if ! node_bin="$(node -e \'process.stdout.write(process.execPath)\')"; then'
+    replacement = needle.replace("if ! ", "if ")
+else:
+    needle = '[[ $node_bin == /* && -x $node_bin ]] || {\n'
+    replacement = '[[ true ]] || {\n'
+if text.count(needle) != 1:
+    raise SystemExit("install-control: Node guard did not occur once")
+changed = text.replace(needle, replacement)
+if changed == text or target.is_symlink():
+    raise SystemExit("install-control: Node guard copy did not change")
+target.write_text(changed)
+PY
+  run_capture "$tmp/node-$node_case-mutant.out" "$tmp/node-$node_case-mutant.err" status "${node_env[@]}" bash "$guard_root/scripts/test-install-tree.sh"
+  if [[ $status == 77 ]] && grep_out "test-install-tree: status=not-measured missing=$missing" "$tmp/node-$node_case-mutant.out"; then
+    fail "control: a removed $node_case Node guard still passes its assertion"
+  else
+    ok "control: a removed $node_case Node guard fails its keyed assertion"
+  fi
+done
 check "root README.md is installed under doc" test -e "$dest/usr/share/doc/vgs/README.md"
 check "LICENSE is installed under licenses" test -e "$dest/usr/share/licenses/vgs/LICENSE"
 
@@ -177,7 +246,7 @@ check "the guidance-dropping mutant still installs" test "$status" = 0
 run_capture "$tmp/voice-check.out" "$tmp/voice-check.err" status "$repo/scripts/check-install-tree.sh" "$mutant_dest" /usr
 check "the manifest catches dropped runtime guidance" test "$status" = 1
 check "the dropped core layer is reported as missing" grep_out "install-tree=missing entry=f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/core.md" "$tmp/voice-check.out"
-run_capture "$tmp/voice-compose.out" "$tmp/voice-compose.err" status env -i PATH=/usr/bin:/bin node "$repo/scripts/fixtures/jarvis-voice/installed.js" "$mutant_dest/usr/share/vgs"
+run_capture "$tmp/voice-compose.out" "$tmp/voice-compose.err" status "${voice_command[@]}" "$mutant_dest/usr/share/vgs"
 check "the dropped-guidance mutant breaks the installed consumer" test "$status" = 1
 
 READ_ONLY_PREFIX_SOURCE_ONLY=true source "$repo/scripts/smoke/rows/read-only-prefix.sh"

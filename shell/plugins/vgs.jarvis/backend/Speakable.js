@@ -13,6 +13,8 @@ const URL_START = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.|mailto:)/u;
 // until punctuation/whitespace disproves it, rather than maintain a scheme list.
 const SCHEME_PART = /^[A-Za-z][A-Za-z0-9+.-]*(?::\/{0,2})?$/u;
 const ABBREVIATIONS = /(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Sra|Srta|Ud|Uds)|\b[A-Z])\.$/u;
+const HTML_TAG = /^<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s+[A-Za-z_:][A-Za-z0-9_:.-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>/u;
+const HTML_OTHER = /^(?:<!--[\s\S]*?-->|<!DOCTYPE\s+[^<>]+>|<\?[A-Za-z][\s\S]*?\?>)/iu;
 
 function siteName(raw) {
     try {
@@ -47,7 +49,7 @@ function create(language) {
     }
     function emit(raw, output) {
         let text = expand(raw, code, note);
-        text = text.replace(/[^\p{L}\p{M}\s.,!?;:'’"()-]/gu, () => { note("symbol"); return " "; })
+        text = text.replace(/[^\p{L}\p{M}\p{N}\s.,!?¿¡;:'’"()-]/gu, () => { note("symbol"); return " "; })
             .replace(/\s+/gu, " ").replace(/\s+([.,!?;:])/gu, "$1").trim();
         // Do not offer a punctuation-only "sentence" to the speech adapter.
         if (!/[\p{L}\p{N}]/u.test(text)) return;
@@ -80,10 +82,6 @@ function create(language) {
                     else if (!final && fence.startsWith(pending)) return;
                     else pending = pending.slice(1);
                     continue;
-                case "tag":
-                    if (pending[0] === ">") mode = "prose";
-                    pending = pending.slice(1);
-                    continue;
                 default: throw new Error("jarvis: speakable=mode");
                 }
             }
@@ -105,7 +103,14 @@ function create(language) {
                 if (!final && pending === "<") return;
                 if (URL_START.test(pending.slice(1))) { pending = pending.slice(1); continue; }
                 if (!final && SCHEME_PART.test(pending.slice(1))) return;
-                mode = "tag"; note("markdown"); pending = pending.slice(1); continue;
+                const tag = HTML_TAG.exec(pending) || HTML_OTHER.exec(pending);
+                if (tag !== null) {
+                    note("markdown"); pending = pending.slice(tag[0].length); continue;
+                }
+                // A possible tag stays bounded and pending until it closes.
+                // At EOF it is prose, not permission to discard the turn.
+                if (!final && /^<[A-Za-z/!?]/u.test(pending)) return;
+                plain("<", output); pending = pending.slice(1); continue;
             }
             const url = URL_START.test(pending);
             if (url) {
@@ -138,7 +143,8 @@ function create(language) {
                 note("markdown"); pending = pending.slice(start); continue;
             }
             if (!final && pending === "!") return;
-            const path = /^(?:\/[\p{L}\p{N}_.]|~\/|[A-Za-z]:\\)/u.test(pending);
+            const pathBoundary = sentence === "" || /[\s([{'"]$/u.test(sentence);
+            const path = pathBoundary && /^(?:\/[\p{L}\p{N}_.]|~\/|[A-Za-z]:\\)/u.test(pending);
             if (path) {
                 const end = pending.search(/\s/u);
                 if (end === -1 && !final) return;

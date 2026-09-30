@@ -9,8 +9,11 @@ function spoken(logic, row, chunks = [row.text]) {
     const stream = logic.create(row.language);
     const output = chunks.flatMap(chunk => stream.push(chunk)).concat(stream.finish());
     assert.deepEqual(output, row.sentences, row.name);
+    if (row.counts !== undefined)
+        for (const [kind, expected] of Object.entries(row.counts)) assert.equal(stream.counts()[kind], expected, row.name + " " + kind);
+    if (row.violations === 0) assert.equal(Object.values(stream.counts()).reduce((a, b) => a + b, 0), 0, row.name + " measurement");
 }
-assert.equal(fixtures.length, 27, "sanitation coverage floor");
+assert.equal(fixtures.length, 46, "sanitation coverage floor");
 for (const row of fixtures) {
     spoken(Speakable, row);
     spoken(Speakable, row, row.text.split(""));
@@ -55,6 +58,18 @@ world("js", root => {
         ["kept-path", 'note("path"); plain(" " + trailing, output);',
             'note("path"); plain(pending.slice(0, length), output);',
             logic => spoken(logic, fixtures.find(row => row.name === "paths"))],
+        ["comparison-prose", 'plain("<", output); pending = pending.slice(1); continue;',
+            'plain("<", output); mode = "code"; fence = ">"; pending = pending.slice(1); continue;',
+            logic => spoken(logic, fixtures.find(row => row.name === "comparison-spaced"))],
+        ["unterminated-prose", 'if (!final && /^<[A-Za-z/!?]/u.test(pending)) return;',
+            'if (/^<[A-Za-z/!?]/u.test(pending)) { if (final) pending = ""; return; }',
+            logic => spoken(logic, fixtures.find(row => row.name === "unterminated-tag-candidate"))],
+        ["html-removal", 'HTML_TAG.exec(pending) || HTML_OTHER.exec(pending)', 'null',
+            logic => spoken(logic, fixtures.find(row => row.name === "html-attributes"))],
+        ["path-boundary", 'pathBoundary && /', 'true && /',
+            logic => spoken(logic, fixtures.find(row => row.name === "rates-en"))],
+        ["spanish-punctuation", "!?¿¡;", "!?;",
+            logic => spoken(logic, fixtures.find(row => row.name === "punctuation-es"))],
         ["streaming-cut", 'emit(sentence.slice(0, end), output);', 'emit("", output);',
             logic => spoken(logic, fixtures.find(row => row.name === "markdown"))],
         ["violation-count", 'counts[kind]++;', 'counts[kind] += 0;',

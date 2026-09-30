@@ -30,6 +30,11 @@ const DAYS_EN = ["", "first", "second", "third", "fourth", "fifth", "sixth", "se
     "eighteenth", "nineteenth", "twentieth", "twenty first", "twenty second", "twenty third",
     "twenty fourth", "twenty fifth", "twenty sixth", "twenty seventh", "twenty eighth",
     "twenty ninth", "thirtieth", "thirty first"];
+const ORDINALS_ES = [
+    ["", "primero", "segundo", "tercero", "cuarto", "quinto", "sexto", "séptimo", "octavo", "noveno"],
+    ["", "décimo", "vigésimo", "trigésimo", "cuadragésimo", "quincuagésimo", "sexagésimo", "septuagésimo", "octogésimo", "nonagésimo"],
+    ["", "centésimo", "ducentésimo", "tricentésimo", "cuadringentésimo", "quingentésimo", "sexcentésimo", "septingentésimo", "octingentésimo", "noningentésimo"]
+];
 // Singular, plural, for the units a brain's desktop/system answer can emit.
 const UNITS = {
     "%": [["percent", "percent"], ["por ciento", "por ciento"]],
@@ -66,6 +71,10 @@ function languageCode(language) {
     throw new Error("jarvis: speech=language");
 }
 
+function spanishAgreement(text, feminine = false) {
+    return feminine ? text.replace(/uno$/, "una") : text.replace(/veintiuno$/, "veintiún").replace(/uno$/, "un");
+}
+
 function integer(n, code) {
     if (n < SMALL[code].length) return SMALL[code][n];
     if (n < 100) {
@@ -86,12 +95,34 @@ function integer(n, code) {
         let prefix = integer(count, code) + " " + word;
         if (code === "es") {
             if (size === 1000 && count === 1) prefix = "mil";
-            else if (size === 1000000) prefix = count === 1 ? "un millón" : integer(count, code).replace(/uno$/, "un") + " millones";
-            else prefix = prefix.replace(/uno mil$/, "un mil");
+            else prefix = spanishAgreement(integer(count, code)) + " " + (size === 1000000 && count !== 1 ? "millones" : word);
         }
         return prefix + (n % size ? " " + integer(n % size, code) : "");
     }
     throw new Error("jarvis: speech=integer");
+}
+
+function ordinal(n, code) {
+    if (code === "en") {
+        if (n === 0) return "zeroth";
+        if (n < DAYS_EN.length) return DAYS_EN[n];
+        const words = integer(n, code).split(" ");
+        const last = words.pop();
+        const small = SMALL.en.indexOf(last);
+        words.push(small > 0 ? DAYS_EN[small] : last.endsWith("y") ? last.slice(0, -1) + "ieth" : last + "th");
+        return words.join(" ");
+    }
+    if (n === 0) return "cero";
+    if (n < 1000) {
+        return [2, 1, 0].map(power => ORDINALS_ES[power][Math.floor(n / (10 ** power)) % 10])
+            .filter(word => word !== "").join(" ");
+    }
+    const size = n >= 1000000 ? 1000000 : 1000;
+    const count = Math.floor(n / size);
+    const prefix = count === 1 ? "" : spanishAgreement(integer(count, code))
+        .normalize("NFD").replace(/\p{M}|\s/gu, "");
+    return prefix + (size === 1000 ? "milésimo" : "millonésimo")
+        + (n % size ? " " + ordinal(n % size, code) : "");
 }
 
 function number(raw, code) {
@@ -110,7 +141,7 @@ function number(raw, code) {
             + [...parts[1]].map(digit => SMALL[code][Number(digit)]).join(" ") : "");
 }
 
-/** Expand a sentence's numbers, known units, ISO dates and clock times. */
+/** Expand numbers, ordinals, identifier digits, units, rates, dates and times. */
 function expand(text, language, note) {
     const code = languageCode(language);
     text = text.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (raw, y, m, d) => {
@@ -131,10 +162,32 @@ function expand(text, language, note) {
     });
     const numeric = code === "en" ? "(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
         : "(?:\\d{1,3}(?:\\.\\d{3})+|\\d+)(?:,\\d+)?";
+    const ordinalPattern = code === "en"
+        ? /(?<![\p{L}\p{N}])(\d{1,12})(st|nd|rd|th)(?![\p{L}\p{N}])/gu
+        : /(?<![\p{L}\p{N}])(\d{1,12})\.?(º|ª)(?![\p{L}\p{N}])/gu;
+    text = text.replace(ordinalPattern, (raw, digits, suffix) => {
+        const n = Number(digits);
+        if (code === "en") {
+            const ending = n % 100 >= 11 && n % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th");
+            if (suffix !== ending) return raw;
+        }
+        note("number");
+        const spoken = ordinal(n, code);
+        return suffix === "ª" ? spoken.replace(/o\b/gu, "a") : spoken;
+    });
     const units = Object.keys(UNITS).sort((a, b) => b.length - a.length)
         .map(unit => unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-    const pattern = new RegExp("(?<![\\p{L}\\p{N}])(?:([$€])\\s*)?([-+]?" + numeric + ")(?:\\s*(" + units + ")(?!\\p{L}))?", "gu");
-    return text.replace(pattern, (raw, currency, amount, unit) => {
+    const pattern = new RegExp("(?<![\\p{L}\\p{N}])(?:([$€])\\s*)?([-+]?" + numeric + ")(?:\\s*(" + units
+        + ")(?![\\p{L}\\p{N}])(?:\\s*/\\s*(" + units + ")(?![\\p{L}\\p{N}]))?)?(?![\\p{L}\\p{N}])"
+        + "|([\\p{L}\\p{N}]+(?:[.-][\\p{L}\\p{N}]+)*)", "gu");
+    return text.replace(pattern, (raw, currency, amount, unit, rate, identifier) => {
+        if (identifier !== undefined) {
+            if (!/\p{L}/u.test(identifier) || !/\d/u.test(identifier)) return identifier;
+            return identifier.replace(/\d+/gu, digits => {
+                note("number");
+                return " " + [...digits].map(digit => SMALL[code][Number(digit)]).join(" ") + " ";
+            }).trim();
+        }
         note("number");
         const chosen = currency || unit;
         let spoken = number(amount, code);
@@ -142,11 +195,12 @@ function expand(text, language, note) {
             note("unit");
             const canonical = amount.replace(code === "en" ? /,/g : /\./g, "").replace(",", ".");
             const singular = Math.abs(Number(canonical)) === 1;
-            if (code === "es" && chosen !== "%") {
-                spoken = chosen === "h" ? spoken.replace(/uno$/, "una")
-                    : spoken.replace(/veintiuno$/, "veintiún").replace(/uno$/, "un");
-            }
+            if (code === "es" && chosen !== "%") spoken = spanishAgreement(spoken, chosen === "h");
             spoken += " " + UNITS[chosen][code === "en" ? 0 : 1][singular ? 0 : 1];
+            if (rate !== undefined) {
+                note("unit");
+                spoken += (code === "en" ? " per " : " por ") + UNITS[rate][code === "en" ? 0 : 1][0];
+            }
         }
         return spoken;
     });

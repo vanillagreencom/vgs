@@ -15,7 +15,14 @@ const cases = [
     ["en", "2024-02-29 00:00", "February twenty ninth two thousand twenty four midnight"],
     ["es", "2024-02-29 23:59", "veintinueve de febrero de dos mil veinticuatro veintitrés y cincuenta y nueve"],
     ["en", "$ 2 00:05", "two dollars twelve oh five"],
-    ["es", "21 kg 31 h", "veintiún kilogramos treinta y una horas"]
+    ["es", "21 kg 31 h", "veintiún kilogramos treinta y una horas"],
+    ["es", "21.000 21.000.000 31.000 31.000.000", "veintiún mil veintiún millones treinta y un mil treinta y un millones"],
+    ["en", "3rd 21st 11th 12th 13th 22nd 100th 101st 1000th", "third twenty first eleventh twelfth thirteenth twenty second one hundredth one hundred first one thousandth"],
+    ["es", "1º 2ª 21º 31ª 100º 1001º", "primero segunda vigésimo primero trigésima primera centésimo milésimo primero"],
+    ["en", "v128 IPv6 MP3 4K v1.2", "v one two eight IPv six MP three four K v one . two"],
+    ["es", "v128 IPv6 MP3 4K", "v uno dos ocho IPv seis MP tres cuatro K"],
+    ["en", "20 MB/s 50 km/h", "twenty megabytes per second fifty kilometres per hour"],
+    ["es", "20 MB/s 50 km/h", "veinte megabytes por segundo cincuenta kilómetros por hora"]
 ];
 function expanded(logic, row) { assert.equal(logic.expand(row[1], row[0], () => {}), row[2]); }
 for (const row of cases) expanded(Language, row);
@@ -38,6 +45,19 @@ world("jl", root => {
         ["time", 'note("time");', 'note("time"); return raw;', logic => expanded(logic, cases[9])]
     ]) {
         control(root, name, "SpeechLanguage.js", needle, replacement, check); controls++;
+    }
+    for (const [name, needle, replacement, example] of [
+        ["scale-agreement", 'spanishAgreement(integer(count, code)) + " "', 'integer(count, code) + " "', 12],
+        ["accent-agreement", '.replace(/veintiuno$/, "veintiún")', '.replace(/veintiuno$/, "veintiun")', 12],
+        ["ordinal", 'const spoken = ordinal(n, code);', 'const spoken = digits;', 13],
+        ["ordinal-gender", 'suffix === "ª" ? spoken.replace(/o\\b/gu, "a") : spoken',
+            'false ? spoken.replace(/o\\b/gu, "a") : spoken', 14],
+        ["identifier-digits", 'return " " + [...digits].map(digit => SMALL[code][Number(digit)]).join(" ") + " ";',
+            'return digits;', 15],
+        ["unit-rate", 'spoken += (code === "en" ? " per " : " por ") + UNITS[rate][code === "en" ? 0 : 1][0];',
+            'spoken += "";', 17]
+    ]) {
+        control(root, name, "SpeechLanguage.js", needle, replacement, logic => expanded(logic, cases[example])); controls++;
     }
     for (const [name, needle, replacement, input, kind] of [
         ["invalid-date", 'year < 100 || date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day',
