@@ -12,10 +12,11 @@ The plugin ships with VGS and is enabled by default. It needs `notify-send` (lib
 
 ## Features
 
+- A window for list, editor, next-run preview and history.
 - Every day, some weekdays, several times a day, every N days, weeks, months or years, a day of the month, the first to fifth or last weekday of the month, or a day of the year.
 - An end: never, on a date, or after a number of runs.
 - A preview of the next runs, from the same rules the timers follow.
-- Per automation: paused or enabled, a timeout, a working directory, catch-up of runs missed while the machine was off, and a notification for every start and finish, not only failures.
+- Per automation: paused or enabled, a multi-line shell command, a timeout, a working directory, catch-up of runs missed while the machine was off, and a notification for every start and finish, not only failures.
 - Run now, a history of every run with its outcome and transcript, and clearing one automation's history or all of it.
 
 ## How it works
@@ -25,6 +26,8 @@ The plugin ships with VGS and is enabled by default. It needs `notify-send` (lib
 3. At each run the runner starts your command in your login shell, so it finds what your terminal finds, and stops it at its timeout.
 4. It saves a transcript, each output line with its time, and a record of the outcome under `~/.local/state/vgs/automations/runs/`.
 5. A failure sends a red notification with the last error lines. With "notify on every run" on, a start and a green finish notification come too. Under the VGS notifications, a click on a finish or failure notification opens the transcript in your `$EDITOR`, or with `xdg-open`.
+
+Open the window from the launcher rows "Automations" and "New automation". The editor uses presets first, then Custom for every N days, weeks, months or years. Once is stored as a schedule that ends after one run.
 
 Timers stop when you log out unless systemd keeps your user manager running, which is called lingering. The plugin's Settings page shows whether it is on, and while it is off its **Enable while logged out** button opens a floating terminal that asks, then turns it on. The launcher lists the same step as "Run automations while logged out".
 

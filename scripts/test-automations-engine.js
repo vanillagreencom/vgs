@@ -193,10 +193,12 @@ const CASES = {
         const engineCopy = /"([^"]*\/engine\/[0-9a-f]{16})\/bin\/automations"/.exec(exec)[1];
         assert.equal(fs.readFileSync(path.join(engineCopy, "AutomationsLogic.js"), "utf8"), fs.readFileSync(path.join(pluginDir, "AutomationsLogic.js"), "utf8"), "the units run a copy of the judge");
         assert.ok(JSON.parse(fs.readFileSync(path.join(w.home, ".local", "state", "vgs", "automations", "guard", "back-up.json"), "utf8")).handledThrough > Date.now() - 60000, "add marks the past handled");
-        const refused = cli(w, engine, ["add", "--definition", JSON.stringify(def({ command: "a\nb" }))]);
+        const multi = cli(w, engine, ["add", "--definition", JSON.stringify(def({ name: "Multi", command: "a=1\necho $a" }))]);
+        assert.equal(multi.status, 0);
+        const refused = cli(w, engine, ["add", "--definition", JSON.stringify(def({ command: "a\u0000b" }))]);
         assert.equal(refused.status, 1);
-        assert.equal(refused.first, "automations: refused: definition=definition.command:-want=one-line-of-1..4096");
-        assert.equal(JSON.parse(fs.readFileSync(w.store, "utf8")).automations.length, 1, "a refused add leaves the store");
+        assert.equal(refused.first, "automations: refused: definition=definition.command:-want=command-of-1..4096-without-control-characters-except-newline-and-tab");
+        assert.equal(JSON.parse(fs.readFileSync(w.store, "utf8")).automations.length, 2, "a refused add leaves the store");
         assert.equal(cli(w, engine, ["add", "--definition", "{"]).first, "automations: refused: definition=not-json");
     },
 

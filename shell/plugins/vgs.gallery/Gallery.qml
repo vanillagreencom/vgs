@@ -206,6 +206,12 @@ Item {
                     Field { label: "Button"; inline: true; width: parent.width; Button { text: "Open"; size: "sm"; variant: "secondary" } }
                     Field { label: "Select"; inline: true; hint: "Hints start under the value column."; width: parent.width; Select { width: parent.width; model: ["Default", "Ocean", "Forest"] } }
                 }
+                Field { label: "Command"; hint: "Multi-line command text"; width: parent.width; TextArea { width: parent.width; text: "echo hello\nprintf '%s\\n' done" } }
+                Field { label: "Date"; hint: "A keyboard picker"; width: parent.width; DateField { date: "2026-01-05" } }
+                Field { label: "Time"; hint: "Up and down step minutes"; width: parent.width; TimeField { text: "09:00" } }
+                Field { label: "Folder"; hint: "A directory picker"; width: parent.width; PathField { path: "" } }
+                Field { label: "Weekdays"; hint: "Calendar recurrence chips"; width: parent.width; WeekdayChipGroup { selected: ["mon", "wed", "fri"] } }
+                Field { label: "Times"; hint: "Sorted time chips"; width: parent.width; TimeChipList { width: parent.width; times: ["09:00", "17:30"] } }
                 Slider { from: 0; to: 100; value: 40; width: parent.width }
                 Slider { from: 0; to: 100; value: 70; width: parent.width; enabled: false }
 

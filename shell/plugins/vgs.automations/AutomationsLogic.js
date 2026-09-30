@@ -109,6 +109,10 @@ function isPrintableLine(value, max) {
     return typeof value === "string" && value.trim() !== "" && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
+function isCommandText(value, max) {
+    return typeof value === "string" && value.trim() !== "" && value.length <= max && !/[\u0000-\u0008\u000b-\u001f\u007f]/.test(value);
+}
+
 function unknownKey(value, allowed, where) {
     var keys = Object.keys(value);
     for (var i = 0; i < keys.length; i++)
@@ -532,9 +536,33 @@ function longDate(text) {
     return d.d + " " + MONTH_NAMES[d.m - 1] + " " + d.y;
 }
 
+function longDateFromInstant(ms) {
+    var at = new Date(ms);
+    return at.getDate() + " " + MONTH_NAMES[at.getMonth()] + " " + at.getFullYear();
+}
+
+function weekdayNameFromInstant(ms) {
+    var at = new Date(ms);
+    return WEEKDAY_NAMES[(at.getDay() + 6) % 7];
+}
+
+function timeFromInstant(ms) {
+    var at = new Date(ms);
+    return pad2(at.getHours()) + ":" + pad2(at.getMinutes());
+}
+
+function weekdayNameOfDate(text) {
+    var d = parseDate(text);
+    return WEEKDAY_NAMES[weekdayOf(d.y, d.m, d.d)];
+}
+
 // The rule in one line: "Every weekday at 09:00", "Every 2 weeks on Monday
 // and Thursday at 08:30 and 17:00, 10 times".
 function summaryText(s) {
+    if (s.end.type === "count" && s.end.count === 1) {
+        var first = occurrencesFrom(s, null, 1)[0];
+        return first === undefined ? "Once" : "Once on " + weekdayNameFromInstant(first) + " " + longDateFromInstant(first) + " at " + timeFromInstant(first);
+    }
     var head;
     switch (s.frequency) {
     case "daily":
@@ -579,9 +607,9 @@ function isAbsolutePath(value) {
 // "" or the first defect of one stored automation, under `where`.
 //   id                ID_PATTERN; names the units and the records
 //   name              a printable line of at most NAME_MAX
-//   command           one shell command line of at most COMMAND_MAX, run
-//                     as `<login shell> -l -c <command>`; a tab is the one
-//                     control character it may hold
+//   command           shell text of at most COMMAND_MAX, run as
+//                     `<login shell> -l -c <command>`; newline and tab are
+//                     allowed and other control characters are refused
 //   enabled           whether its timer runs; a paused one keeps its history
 //   schedule          scheduleError's model
 //   timeoutSeconds    TIMEOUT_MIN..TIMEOUT_MAX
@@ -596,8 +624,8 @@ function automationError(a, where) {
         if (!hasOwn(a, AUTOMATION_KEYS[k])) return where + "." + AUTOMATION_KEYS[k] + ": missing";
     if (typeof a.id !== "string" || !ID_PATTERN.test(a.id)) return where + ".id: want=lower-case letters, digits and inner dashes, 1..40";
     if (!isPrintableLine(a.name, NAME_MAX)) return where + ".name: want=printable line of 1.." + NAME_MAX;
-    if (typeof a.command !== "string" || a.command.trim() === "" || a.command.length > COMMAND_MAX || /[\u0000-\u0008\u000a-\u001f\u007f]/.test(a.command))
-        return where + ".command: want=one line of 1.." + COMMAND_MAX;
+    if (!isCommandText(a.command, COMMAND_MAX))
+        return where + ".command: want=command of 1.." + COMMAND_MAX + " without control characters except newline and tab";
     if (typeof a.enabled !== "boolean") return where + ".enabled: want=boolean";
     var scheduleDefect = scheduleError(a.schedule);
     if (scheduleDefect !== "") return where + "." + scheduleDefect;

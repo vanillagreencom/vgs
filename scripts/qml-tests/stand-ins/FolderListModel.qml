@@ -10,6 +10,7 @@ QtObject {
     property string folder: ""
     property var nameFilters: []
     property bool showDirs: false
+    property bool showFiles: true
     property bool showDotAndDotDot: false
     property bool showHidden: false
     property var files: []

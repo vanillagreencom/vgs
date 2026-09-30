@@ -18,6 +18,12 @@ Checkbox 1.0 controls/Checkbox.qml
 Radio 1.0 controls/Radio.qml
 Slider 1.0 controls/Slider.qml
 TextField 1.0 controls/TextField.qml
+TextArea 1.0 controls/TextArea.qml
+WeekdayChipGroup 1.0 controls/WeekdayChipGroup.qml
+TimeChipList 1.0 controls/TimeChipList.qml
+TimeField 1.0 controls/TimeField.qml
+DateField 1.0 controls/DateField.qml
+PathField 1.0 controls/PathField.qml
 Field 1.0 controls/Field.qml
 Spinner 1.0 feedback/Spinner.qml
 VoiceOrb 1.0 feedback/VoiceOrb.qml

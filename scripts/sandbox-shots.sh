@@ -14,9 +14,10 @@
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
 # SCENE is gallery, settings, manager, launcher, notifications, bar,
-# panels, devtools, dialog, lock, polkit, narrow, theme-browser or
-# wallpaper-browser. settings takes the automations' and the Jarvis
-# pages among the plugin pages, each when the tree ships its plugin. bar
+# panels, devtools, dialog, lock, polkit, narrow, theme-browser,
+# wallpaper-browser or automations. settings takes the automations' and
+# the Jarvis pages among the plugin pages, each when the tree ships its
+# plugin. bar
 # is the bar with every first-party widget and each widget's tooltip or
 # hover; panels is the Agent Warden panel, the updates flyout and the
 # themes panel, each opened from its widget over planted status or
@@ -134,7 +135,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|settings|manager|launcher|notifications|bar|panels|devtools|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser) scenes+=("$1"); shift ;;
+    gallery|settings|manager|launcher|notifications|bar|panels|devtools|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser|automations) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -206,6 +207,7 @@ scene_ships() {
     settings|manager) [[ $1 == "$manager_scene" ]] ;;
     gallery) ships_plugin vgs.gallery ;;
     launcher|notifications) ships_plugin "vgs.$1" ;;
+    automations) ships_plugin vgs.automations ;;
     bar) ships_plugin vgs.bar vgs.launcher vgs.agent-warden vgs.updates vgs.themes ;;
     panels) ships_plugin vgs.agent-warden vgs.updates vgs.themes ;;
     devtools) ships_plugin vgs.devtools ;;
@@ -1383,6 +1385,123 @@ scene_polkit() { # MODE
 # narrow pass takes every other scene's surfaces again.
 setups=()
 need_setup() { local s; for s in "${setups[@]}"; do [[ $s == "$1" ]] && return 0; done; setups+=("$1"); }
+
+scene_automations() { # MODE
+  local auto_stub="$sandbox/shots-automations"
+  automations_stand_ins "$auto_stub"
+  if [[ -e $shim/systemd-analyze ]]; then mv -- "$shim/systemd-analyze" "$auto_stub/saved/systemd-analyze"; fi
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$shim/systemd-analyze"
+  chmod 755 "$shim/systemd-analyze"
+  terminal_stand_in
+  cat >"$shim/xdg-terminal-exec" <<EOF
+#!/usr/bin/env bash
+: >"$tui_record.next"
+for a; do printf '%s\n' "\$a" >>"$tui_record.next"; done
+mv -f -- "$tui_record.next" "$tui_record"
+app_id="" title=""
+while [[ \$# -gt 0 && \$1 != -- ]]; do
+  case "\$1" in
+    --app-id=*) app_id="\${1#*=}" ;;
+    --title=*) title="\${1#*=}" ;;
+  esac
+  shift
+done
+shift
+presenter=()
+while [[ \$# -gt 0 && \$1 != -- ]]; do presenter+=("\$1"); shift; done
+"$sandbox/toplevel" "\$app_id" "\$title" >/dev/null 2>&1 &
+window=\$!
+"\${presenter[@]}" -- true </dev/null >/dev/null 2>&1
+kill "\$window" 2>/dev/null
+wait "\$window"
+EOF
+  chmod 755 "$shim/xdg-terminal-exec"
+  local auto_engine="$repo/shell/plugins/vgs.automations/bin/automations"
+  local shell_path
+  shell_path="$(tr '\0' '\n' <"/proc/$shell_qs_pid/environ" | sed -n 's/^PATH=//p')"
+  automations_shot() { "${shell_env[@]}" PATH="$shell_path" "$auto_engine" --tree "$repo" "$@"; }
+  automation_list_has() { ipc smoke itemTexts window vgs.automations AutomationRow | py_reply 'import json,sys; print(any(row and row[0] == sys.argv[1] for row in json.load(sys.stdin)))' "$1"; }
+  automation_list_empty() { ipc smoke itemTexts window vgs.automations AutomationRow | py_reply 'import json,sys; rows=json.load(sys.stdin); print(len(rows) == 0)'; }
+  automation_history_count() { automations_shot history "$1" --json | py_reply 'import json,sys; print(len(json.load(sys.stdin)["rows"]))'; }
+  automation_scroll() { ipc smoke scrollAreas window vgs.automations | py_reply 'import json,sys
+areas=json.load(sys.stdin)
+if not areas:
+    print("areas=0"); raise SystemExit
+areas.sort(key=lambda a: a.get("contentHeight", 0) - a.get("height", 0), reverse=True)
+print(json.dumps(areas[0]))'; }
+  automation_scroll_to() {
+    local area move tx ty
+    area="$(automation_scroll)" && [[ $area == \{* ]] || return 1
+    move="$(python3 -c 'import json,sys
+a, want = json.loads(sys.argv[1]), int(sys.argv[2])
+most = a["contentHeight"] - a["height"]
+travel = a["bar"][3] - a["thumb"][3]
+print(0 if most <= 0 or travel <= 0 else round((max(0, min(want, most)) - a["contentY"]) * travel / most))' "$area" "$1")" || return 1
+    [[ $move -ne 0 ]] || return 0
+    read -r tx ty < <(at_centre window:Automations "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")") || return 1
+    drag "$tx" "$ty" "$tx" "$((ty + move))"
+  }
+  local success='{"name":"Shot success","command":"echo success","notifyEveryRun":true,"schedule":{"frequency":"weekly","interval":1,"weekdays":["mon"],"times":["09:00"],"start":"2026-01-05","end":{"type":"never"}}}'
+  local failure='{"name":"Shot failure","command":"echo nope >&2; exit 3","notifyEveryRun":true,"schedule":{"frequency":"weekly","interval":1,"weekdays":["fri"],"times":["17:30"],"start":"2026-01-09","end":{"type":"never"}}}'
+  local custom='{"name":"Shot custom","command":"printf custom","notifyEveryRun":false,"schedule":{"frequency":"weekly","interval":3,"weekdays":["mon","wed"],"times":["08:30","16:45"],"start":"2026-01-05","end":{"type":"never"}}}'
+  automations_shot add --definition "$success" >/dev/null
+  automations_shot add --definition "$failure" >/dev/null
+  automations_shot add --definition "$custom" >/dev/null
+  expect "enabling vgs.automations is allowed" ok ipc shell setPluginEnabled vgs.automations true
+  expect_poll "vgs.automations is built" True record_exists vgs.automations
+  automation_active_count() { ipc vgs.automations invoke status "" | py_reply 'import json,sys; print(json.load(sys.stdin).get("active", "unset"))'; }
+  expect_poll "the service lists the seeded automations" 3 automation_active_count
+  expect "the automations window opens" ok ipc shell summon window vgs.automations '{}'
+  expect_poll "the automations window maps" 1 window_count Automations
+  expect_poll "the automations list shows Shot success" True automation_list_has "Shot success"
+  take "automations-$1-list"
+  click_in window:Automations window vgs.automations AutomationRow "Shot success" || fail "selecting the success automation failed"
+  auto_shot_preview_ready() { ipc smoke readInstance window vgs.automations previewFirst | py_reply 'import json,sys; print(str(json.load(sys.stdin)).isdigit())'; }
+  expect_poll "the preset preview has a first occurrence" True auto_shot_preview_ready
+  take "automations-$1-editor-preset-next"
+  automation_scroll_to 360 || true
+  click_in window:Automations window vgs.automations Button "Test run" || fail "starting a test run from the editor failed"
+  expect_poll "the editor test run reaches history" 1 automation_history_count shot-success
+  auto_shot_transcript_ready() { ipc smoke readInstance window vgs.automations testTranscript | py_reply 'import json,sys; print(json.load(sys.stdin) != "")'; }
+  expect_poll "the editor shows the test run transcript" True auto_shot_transcript_ready
+  take "automations-$1-test-run-transcript"
+  click_in window:Automations window vgs.automations IconButton "Back to automations" || fail "returning to the automations list failed"
+  click_in window:Automations window vgs.automations AutomationRow "Shot custom" || fail "selecting the custom automation failed"
+  expect_poll "the custom preview has a first occurrence" True auto_shot_preview_ready
+  take "automations-$1-editor-custom-next"
+  automation_scroll_to 520 || true
+  click_in window:Automations window vgs.automations Radio On || fail "showing the end date field failed"
+  click_in window:Automations window vgs.automations TextField "2026-01-05" || fail "focusing the end date field failed"
+  type_keys -k Down || fail "opening the date picker failed"
+  take "automations-$1-date-picker"
+  type_keys -k Escape >/dev/null 2>&1 || true
+  automations_shot run-now shot-success >/dev/null
+  automations_shot run-now shot-failure >/dev/null
+  click_in window:Automations window vgs.automations Label History || fail "opening history failed"
+  take "automations-$1-history"
+  click_in window:Automations window vgs.automations Button "Clear history" || true
+  take "automations-$1-confirm-dialog"
+  click_in window:Automations window vgs.automations Button Confirm || fail "confirming history clear failed"
+  take "automations-$1-history-empty-state"
+  automations_shot remove shot-success >/dev/null
+  automations_shot remove shot-failure >/dev/null
+  automations_shot remove shot-custom >/dev/null
+  expect "the Automations window hides before the empty shot" ok ipc shell hide window vgs.automations
+  expect_poll "the Automations window is hidden before the empty shot" 0 window_count Automations
+  expect "the empty Automations window opens" ok ipc shell summon window vgs.automations '{}'
+  expect_poll "the empty Automations window maps" 1 window_count Automations
+  expect_poll "the automations list is empty" True automation_list_empty
+  take "automations-$1-empty-state"
+  expect "enabling vgs.notifications is allowed" ok ipc shell setPluginEnabled vgs.notifications true
+  expect_poll "vgs.notifications is built" True record_exists vgs.notifications
+  notify Automations "Shot success finished" "Finished in 0 s" '["default", "Open"]' '{"x-vgs-icon": <"circle-check">, "x-vgs-tone": <"success">, "x-vgs-click": <"open">}' >/dev/null
+  notify Automations "Shot failure failed" "Exit code 3" '["default", "Open"]' '{"x-vgs-icon": <"circle-x">, "x-vgs-tone": <"danger">, "x-vgs-click": <"open">}' >/dev/null
+  expect_poll "automation notifications are on screen" 2 on_screen
+  take "automations-$1-notifications"
+  if [[ -e $auto_stub/saved/systemd-analyze ]]; then mv -f -- "$auto_stub/saved/systemd-analyze" "$shim/systemd-analyze"; else rm -f -- "$shim/systemd-analyze"; fi
+  automations_stand_ins_restore "$auto_stub"
+}
+
 for scene in "${scenes[@]}"; do
   case $scene in
     bar) need_setup launcher; need_setup panels; need_setup bar ;;

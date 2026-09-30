@@ -1,7 +1,6 @@
 import QtQuick
 import Qt.labs.folderlistmodel
 import Quickshell
-import Quickshell.Io
 import qs.Commons
 import "AutomationsLogic.js" as Logic
 
@@ -20,20 +19,18 @@ import "AutomationsLogic.js" as Logic
 //     refresh   list; `ok`
 //     linger    opens the linger TUI; shell.tui.run's reply. Its end
 //               lists again, as every run of it does.
+//     open      opens the Automations window; shell.surfaces.summon's reply
+//     new       opens the Automations window on a new draft; shell.surfaces.summon's reply
 Item {
     id: root
 
     property var shell: null
     property bool registered: false
-    // The engine calls waiting to run, each an argv after `--tree <dir>`.
-    property var queue: []
     property var reported: ({})
     // `list --json`'s last document, null before the first.
     property var listed: null
     // Each engine operation's last failure (AutomationsLogic.withOutcome).
     property var failures: ({})
-    readonly property string engine: String(Qt.resolvedUrl("bin/automations")).replace(/^file:\/\//, "")
-    readonly property string tree: Quickshell.shellDir + "/.."
     readonly property int historyDays: shell === null ? Logic.HISTORY_DAYS_MAX : shell.settings.historyDays
     readonly property string runsFolder: listed === null ? "" : "file://" + listed.runsDir
     readonly property string storeFile: listed === null ? "" : listed.storeFile
@@ -62,25 +59,18 @@ Item {
             return "ok";
         });
         shell.ipc.handle("linger", () => shell.tui.run("linger", []));
+        shell.ipc.handle("open", arg => shell.surfaces.summon("window", arg || "{}"));
+        shell.ipc.handle("new", () => shell.surfaces.summon("window", "{\"new\":true}"));
         request(["sync"]);
         request(["prune", "--days", String(historyDays)]);
         request(["list", "--json"]);
     }
 
     function request(args) {
-        const key = JSON.stringify(args);
-        if (queue.some(q => JSON.stringify(q) === key)) return;
-        queue = queue.concat([args]);
-        pump();
-    }
-
-    function pump() {
-        if (cli.running || queue.length === 0) return;
-        const next = queue[0];
-        queue = queue.slice(1);
-        cli.args = next;
-        cli.command = [engine, "--tree", tree].concat(next);
-        cli.running = true;
+        if (args[0] === "list")
+            client.requestJson(args, (ok, doc, failure) => root.finishedJson(args, ok, doc, failure));
+        else
+            client.request(args, (ok, stdoutText, stderrText, failure) => root.finished(args, ok, stdoutText, failure));
     }
 
     function fail(operation, line) {
@@ -89,11 +79,10 @@ Item {
         publish();
     }
 
-    function finished(args, done, stdoutText, stderrText) {
+    function finished(args, ok, stdoutText, failure) {
         const operation = args[0];
-        if (done === null || done.code !== 0) {
-            const line = String(stderrText || "").split("\n").filter(l => l !== "")[0] || "no-output";
-            fail(operation, operation + " " + (done === null ? "start=failed" : "exit=" + done.code) + " " + line);
+        if (!ok) {
+            fail(operation, failure);
             return;
         }
         if (operation !== "list") {
@@ -101,11 +90,12 @@ Item {
             publish();
             return;
         }
-        let doc;
-        try {
-            doc = JSON.parse(stdoutText);
-        } catch (e) {
-            fail(operation, "list answer=not-json");
+    }
+
+    function finishedJson(args, ok, doc, failure) {
+        const operation = args[0];
+        if (!ok) {
+            fail(operation, failure);
             return;
         }
         listed = doc;
@@ -128,21 +118,7 @@ Item {
         reported = next;
     }
 
-    Process {
-        id: cli
-        property var args: []
-        property var completion: null
-        stdout: StdioCollector { id: cliOut }
-        stderr: StdioCollector { id: cliErr }
-        onExited: (code, status) => { completion = { code: code, status: status }; }
-        onRunningChanged: {
-            if (running) return;
-            const done = completion;
-            completion = null;
-            root.finished(args, done, cliOut.text, cliErr.text);
-            root.pump();
-        }
-    }
+    EngineClient { id: client }
 
     // A run writes its started and ended records under new names, so the
     // listing's count moves with each; the list the change asks for waits a

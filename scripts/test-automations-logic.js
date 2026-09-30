@@ -64,7 +64,7 @@ const COMPILED = [
     ["yearly", YEARLY, ["*-03-15 09:00:00"], ["0 9 15 3 *"], "Annually on 15 March at 09:00"],
     ["ends on a date", UNTIL, ["*-*-* 09:00:00"], ["0 9 * * *"], "Every day at 09:00, until 4 January 2026"],
     ["ends after 5", FIVE_TIMES, ["Mon,Wed *-*-* 09:00:00"], ["0 9 * * 1,3"], "Weekly on Monday and Wednesday at 09:00, 5 times"],
-    ["ends after 1", schedule({ end: { type: "count", count: 1 } }), ["*-*-* 09:00:00"], ["0 9 * * *"], "Every day at 09:00, once"],
+    ["ends after 1", schedule({ end: { type: "count", count: 1 } }), ["*-*-* 09:00:00"], ["0 9 * * *"], "Once on Thursday 1 January 2026 at 09:00"],
     ["every 3 days", EVERY_3_DAYS, ["*-*-* 09:00:00"], ["0 9 * * *"], "Every 3 days at 09:00"],
     ["every 2 months", EVERY_2_MONTHS, ["*-*-01 09:00:00"], ["0 9 1 * *"], "Every 2 months on day 1 at 09:00"]
 ];
@@ -140,8 +140,8 @@ const STORE_REFUSED = [
     ["an unknown key", JSON.stringify({ version: 1, automations: [], x: 1 }), "store.x: unknown"],
     ["a missing key", JSON.stringify({ version: 1, automations: [(({ catchUp, ...rest }) => rest)(automation({}))] }), "store.automations.0.catchUp: missing"],
     ["an id with capitals", JSON.stringify({ version: 1, automations: [automation({ id: "Backup" })] }), "store.automations.0.id: want=lower-case letters, digits and inner dashes, 1..40"],
-    ["a command on two lines", JSON.stringify({ version: 1, automations: [automation({ command: "a\nb" })] }), "store.automations.0.command: want=one line of 1..4096"],
-    ["a blank command", JSON.stringify({ version: 1, automations: [automation({ command: "  " })] }), "store.automations.0.command: want=one line of 1..4096"],
+    ["a command with a NUL", JSON.stringify({ version: 1, automations: [automation({ command: "a\u0000b" })] }), "store.automations.0.command: want=command of 1..4096 without control characters except newline and tab"],
+    ["a blank command", JSON.stringify({ version: 1, automations: [automation({ command: "  " })] }), "store.automations.0.command: want=command of 1..4096 without control characters except newline and tab"],
     ["a name with a control character", JSON.stringify({ version: 1, automations: [automation({ name: "a\u0007" })] }), "store.automations.0.name: want=printable line of 1..80"],
     ["a timeout past a day", JSON.stringify({ version: 1, automations: [automation({ timeoutSeconds: 86401 })] }), "store.automations.0.timeoutSeconds: want=1..86400"],
     ["a relative working directory", JSON.stringify({ version: 1, automations: [automation({ workingDirectory: "notes" })] }), "store.automations.0.workingDirectory: want=\"\" or an absolute path"],
@@ -157,6 +157,7 @@ function verify(logic) {
         same(logic.cronFields(s), cron, "cron: " + label);
         assert.equal(logic.summaryText(s), summary, "summary: " + label);
     }
+    assert.equal(logic.summaryText(schedule({ frequency: "weekly", weekdays: ["fri"], start: "2026-01-05", end: { type: "count", count: 1 } })), "Once on Friday 9 January 2026 at 09:00", "Once summary names the first occurrence, not the start");
     for (const [label, s, after, want] of NEXT)
         same(logic.nextOccurrences(s, at(after), want.length).map(iso), want, "next: " + label);
     same(logic.nextOccurrences(FIVE_TIMES, at("2026-01-19T10:00:00Z"), 3), [], "an ended rule has no next occurrence");
@@ -182,6 +183,7 @@ function verify(logic) {
 
     // The store.
     for (const [label, text, want] of STORE_REFUSED) same(logic.parseStore(text), { ok: false, error: want }, "store: " + label);
+    same(logic.parseStore(JSON.stringify({ version: 1, automations: [automation({ command: "echo one\necho two" })] })).ok, true, "a multi-line command is accepted");
     const one = { version: 1, automations: [automation({})] };
     same(logic.parseStore(logic.serializeStore(one)), { ok: true, store: one }, "a store reads back as written");
     const added = logic.addAutomation(logic.emptyStore(), { name: "Back up notes!", command: "true", schedule: schedule({}) });
@@ -447,9 +449,10 @@ const CONTROLS = [
     ["an end date follows the start", "if (end.date < start) return \"schedule.end.date: want>=start\";", "if (false) return \"\";"],
     ["29 February is the longest February", "var most = daysInMonth(2000, yr.month);", "var most = 31;"],
     ["the summary names every weekday", "else head = every(s.interval, \"Weekly\", \"weeks\") + \" on \" + listText(", "else head = every(s.interval, \"Weekly\", \"weeks\") + \" on \" + String("],
+    ["once has a plain summary", "if (s.end.type === \"count\" && s.end.count === 1) {", "if (false) {"],
     ["the summary names the end", "var tail = s.end.type === \"date\" ? \", until \" + longDate(s.end.date)", "var tail = s.end.type === \"never\" ? \", until \" + longDate(s.end.date)"],
     ["a store automation needs every key", "if (!hasOwn(a, AUTOMATION_KEYS[k])) return where + \".\" + AUTOMATION_KEYS[k] + \": missing\";", "if (false) return \"\";"],
-    ["a command is one line", "if (typeof a.command !== \"string\" || a.command.trim() === \"\" || a.command.length > COMMAND_MAX || /[\\u0000-\\u0008\\u000a-\\u001f\\u007f]/.test(a.command))", "if (typeof a.command !== \"string\")"],
+    ["a command refuses control characters", "if (!isCommandText(a.command, COMMAND_MAX))", "if (typeof a.command !== \"string\")"],
     ["ids are distinct", "if (hasOwn(seen, doc.automations[i].id)) return { ok: false, error: \"store.automations.\" + i + \".id: duplicate\" };", "if (false) return null;"],
     ["add fills the defaults", "else if (hasOwn(AUTOMATION_DEFAULTS, key)) made[key] = AUTOMATION_DEFAULTS[key];", "else if (false) made[key] = null;"],
     ["a derived id steps past a taken one", "for (var n = 2; taken.indexOf(id) !== -1; n++) id = base + \"-\" + n;", "var n = 2;"],

@@ -12,6 +12,8 @@
     "system.reboot": { "icon": "rotate-ccw", "label": "Reboot", "requires": ["systemctl"], "run": ["systemctl", "reboot"] },
     "system.shutdown": { "icon": "power-off", "label": "Shut down", "requires": ["systemctl"], "run": ["systemctl", "poweroff"] },
     "tools": { "icon": "terminal", "label": "Tools" },
+    "tools.automations": { "icon": "calendar-clock", "label": "Automations", "description": "List schedules, runs and history", "run": ["vgsh", "ipc", "call", "vgs.automations", "invoke", "open", "{}"] },
+    "tools.automations-new": { "icon": "calendar-plus", "label": "New automation", "description": "Create a recurring command", "run": ["vgsh", "ipc", "call", "vgs.automations", "invoke", "new", "{}"] },
     "tools.terminal": { "icon": "terminal", "label": "Terminal", "requires": ["xdg-terminal-exec"], "run": ["xdg-terminal-exec"] },
     "tools.screenshot": { "icon": "camera", "label": "Screenshot", "description": "Select a region and copy it", "requires": ["grim", "slurp", "wl-copy"], "run": ["sh", "-c", "grim -g \"$(slurp)\" - | wl-copy --type image/png"] },
     "tools.files": { "icon": "folder", "label": "Files", "requires": ["xdg-open"], "run": ["sh", "-c", "exec xdg-open \"$HOME\""] },

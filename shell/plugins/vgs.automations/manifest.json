@@ -4,12 +4,12 @@
   "name": "Automations",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Runs shell commands on a recurrence through systemd user timers, with cron as the fallback, keeps each run's transcript for up to 30 days and notifies every failure. Manage automations with the plugin's bin/automations command.",
+  "description": "Runs shell commands on a recurrence through systemd user timers, with cron as the fallback, keeps each run's transcript for up to 30 days and notifies every failure. Manage automations in its window or with the plugin's bin/automations command.",
   "license": "MIT",
   "icon": "calendar-clock",
-  "kinds": ["service"],
-  "entryPoints": { "service": "Service.qml" },
-  "capabilities": ["ipc", "status", "tui"],
+  "kinds": ["window", "service"],
+  "entryPoints": { "window": "Window.qml", "service": "Service.qml" },
+  "capabilities": ["ipc", "screens", "status", "surfaces", "tui"],
   "settings": {
     "historyDays": 30
   },
@@ -33,6 +33,11 @@
     "problem": { "type": "state", "label": "Engine", "hint": "The last call of bin/automations that failed, the engine that owns the store, the timers and the history" }
   },
   "tui": {
+    "transcript": {
+      "script": "tui/transcript.sh",
+      "title": "Automation transcript",
+      "size": "wide"
+    },
     "linger": {
       "script": "tui/linger.sh",
       "title": "Run automations while logged out",

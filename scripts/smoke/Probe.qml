@@ -284,8 +284,9 @@ Scope {
         return null;
     }
 
-    // The first visible, enabled item named `type` whose `text`, or `name`
-    // for an icon, is `text` inside the first visible item named
+    // The first visible, enabled item named `type` whose `text`, `name`
+    // for an icon, `label` for an icon button or `currentText` for a
+    // Select is `text` inside the first visible item named
     // `scopeType` that draws `scopeText`, under an instance, or null: one
     // row's button among rows that each draw a button with the same text.
     function scopedItem(hostKey, id, scopeType, scopeText, type, text) {
@@ -294,17 +295,24 @@ Scope {
         const draws = node => root.descendants(node).some(child => child instanceof Text && child.visible && child.text === scopeText);
         const scope = root.descendants(item).find(child => root.typeName(child) === scopeType && child.visible && draws(child));
         if (scope === undefined) return null;
-        const found = root.descendants(scope).find(child => root.typeName(child) === type && (child.text === text || child.name === text) && child.visible && child.enabled);
+        const found = root.descendants(scope).find(child => root.typeName(child) === type && root.reads(child, text) && child.visible && child.enabled);
         return found === undefined ? null : found;
     }
 
+    // Whether an item reads `text`: its `text`, its `name` for an icon,
+    // its `label` for an icon button, or its `currentText` for a Select,
+    // which draws its choice and holds no text of its own.
+    function reads(child, text) {
+        return child.text === text || child.name === text || child.label === text || child.currentText === text;
+    }
+
     // The window box of the first visible item named `type` under an
-    // instance whose `text`, or `label` for an icon button, is `text`, and
-    // enabled when `enabledOnly` holds, or "absent".
+    // instance that reads `text` (reads), and enabled when `enabledOnly`
+    // holds, or "absent".
     function labelledBox(hostKey, id, type, text, enabledOnly) {
         const item = root.instance(hostKey, id);
         if (item === null) return "absent";
-        const found = root.descendants(item).find(child => root.typeName(child) === type && (child.text === text || child.label === text) && child.visible && (child.enabled || !enabledOnly));
+        const found = root.descendants(item).find(child => root.typeName(child) === type && root.reads(child, text) && child.visible && (child.enabled || !enabledOnly));
         return found === undefined ? "absent" : root.json(root.windowBox(found));
     }
 
@@ -321,6 +329,20 @@ Scope {
     // An item's box in its own window's coordinates, as [x, y, w, h]: a
     // layer surface the compositor centres knows no place of its own on the
     // screen, so a row adds the layer's position from `hyprctl layers`.
+    // Scrolls the nearest scrolling ancestor of `found` so it lies in view
+    // and answers its window box after, or "absent" for null.
+    function reveal(found) {
+        if (found === null) return "absent";
+        for (let at = found.parent; at !== null && at !== undefined; at = at.parent) {
+            if (at.contentY === undefined || at.contentHeight === undefined || at.contentItem === undefined || at.contentHeight <= at.height) continue;
+            const top = found.mapToItem(at.contentItem, 0, 0).y;
+            if (top < at.contentY) at.contentY = Math.max(0, top);
+            else if (top + found.height > at.contentY + at.height) at.contentY = Math.min(at.contentHeight - at.height, top + found.height - at.height);
+            break;
+        }
+        return root.json(root.windowBox(found));
+    }
+
     function windowBox(item) {
         const at = item.mapToItem(null, 0, 0);
         return [at.x, at.y, item.width, item.height];
@@ -669,6 +691,22 @@ Scope {
             const flick = areas[0];
             flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
             return root.json([flick.contentY, flick.contentHeight, flick.height]);
+        }
+        // Scrolls the nearest scrolling ancestor of the first shown item
+        // named `type` that reads `text` (reads) so the whole item lies in
+        // its view, as a wheel over that list would, and answers the item's
+        // window box after, or "absent". A page with several scroll areas,
+        // such as an editor holding a multi-line field, reveals the item in
+        // the one that holds it.
+        function revealItem(hostKey: string, id: string, type: string, text: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const found = root.descendants(item).find(child => root.typeName(child) === type && root.reads(child, text) && child.visible);
+            return root.reveal(found === undefined ? null : found);
+        }
+        // revealItem for the item scopedItem finds.
+        function revealScopedItem(hostKey: string, id: string, scopeType: string, scopeText: string, type: string, text: string): string {
+            return root.reveal(root.scopedItem(hostKey, id, scopeType, scopeText, type, text));
         }
         function galleryHeadings(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
@@ -1142,6 +1180,17 @@ Scope {
                     const swatches = strip === undefined ? [] : root.descendants(strip).filter(child => child !== strip && child.visible && child.width > 0 && child.color !== undefined);
                     return [card.modelData.name, shown(card), strip !== undefined && shown(strip), swatches.length];
                 }));
+        }
+        // The deepest item under an instance holding the active focus, as
+        // [type, text], so a keyboard row types only once the field it
+        // means holds the keys, or "no-focus".
+        function activeFocusItem(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const focused = root.descendants(item).filter(child => child.activeFocus);
+            if (focused.length === 0) return "no-focus";
+            const at = focused[focused.length - 1];
+            return root.json([root.typeName(at), at.text === undefined ? null : String(at.text)]);
         }
         function activeFocusIn(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);
