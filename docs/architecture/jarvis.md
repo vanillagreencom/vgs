@@ -8,6 +8,8 @@ The service also owns a metadata-only key presence probe. Settings opens the mas
 
 The [voice text contract](jarvis-voice.md) defines the shipped guidance and speech-text APIs for future engines. These modules do not start an engine or change the service's current behavior.
 
+[Jarvis audit](jarvis-audit.md) defines the installed redaction and pre-action persistence interface. The current daemon has no producer for that interface and opens no audit store.
+
 ## Local speech inputs
 
 [jarvis-local.md](jarvis-local.md) defines the independent artifact declaration, bounded model inputs, measurement instrument and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the selected exports and caption path. These inputs register no plugin and do not implement the sidecar, setup or admission.
@@ -37,7 +39,7 @@ J02 provides the [core hold-shortcut contract](hyprland-shortcuts.md#hold-shortc
 - A repeated held edge changes nothing. A new press after release and the explicit interrupt event use `Session.js::interrupt`. It retires the previous collection and held approval, cancels thinking and flushes playback. A delayed final from the previous hold cannot close or replace the new hold. Release without hold demand changes nothing. Toggle collapse uses event time. The plan's debounce and thinking, approval and cancellation deadlines are behavioral rules, not measured latency budgets.
 - Interrupt preserves a running tool. Stop requests tool cancellation only while the tool offers it. No new proposal starts in an interrupted conversation, alongside a running tool or while approval is held. Session grants no permission and accepts no confirmation; the policy and router own those decisions.
 - Capture requires an up gate, unmuted state, a shown indicator and no fault or turn cancellation. Half-duplex also requires idle playback. Playback waits for capture's close acknowledgment before it starts without echo cancellation. Mute remains `muting` until that acknowledgment.
-- Thinking cancellation retains its operation until acknowledgment or its deadline, then emits adapter close. Arriving callbacks also check expiry, so a delayed timer cannot admit late content. Each tool proposal carries its table row's deadline. An expired tool reports `unknown` but keeps the serial slot until its eventual completion, failure or unknown outcome. The outcome effect names the original brain operation even after stop. No audit writer or real brain delivery exists yet.
+- Thinking cancellation retains its operation until acknowledgment or its deadline, then emits adapter close. Arriving callbacks also check expiry, so a delayed timer cannot admit late content. Each tool proposal carries its table row's deadline. An expired tool reports `unknown` but keeps the serial slot until its eventual completion, failure or unknown outcome. The outcome effect names the original brain operation even after stop. The planned router connects those outcomes to the audit interface. No real brain delivery exists yet.
 
 The `brain` region retains the acquired adapter identity after a response completes. A later send names that same owner while its turn receives a new operation. Conversation end closes a completed adapter immediately; an active response keeps its cancellation deadline. Lease loss forces either owner closed. Tool outcomes still name the original turn and tool operation after adapter close, not a newer conversation.
 

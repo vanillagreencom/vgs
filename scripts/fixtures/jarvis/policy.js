@@ -50,12 +50,21 @@ function mutant(file, name, needle, replacement, check, consumer = path.basename
     const changed = source.replace(needle, replacement);
     assert.notEqual(changed, source);
     const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "mutant-"));
-    for (const sibling of ["Tools.js", "Denied.js", "Policy.js"])
-        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend", sibling), path.join(folder, sibling));
+    const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
+    for (const sibling of fs.readdirSync(backend).filter(name => name.endsWith(".js")))
+        fs.copyFileSync(path.join(backend, sibling), path.join(folder, sibling));
     const copy = path.join(folder, path.basename(file));
     fs.writeFileSync(copy, changed);
     try { assert.throws(() => check(require(path.join(folder, consumer))), assert.AssertionError, name + " must turn red"); }
     finally { fs.rmSync(folder, { recursive: true, force: true }); }
 }
 
-module.exports = { assert, fs, path, tree, world, seed, mutant };
+// Filesystem fault stand-ins affect only the synchronous case, never a child
+// or the developer's filesystem. Always restore before reading evidence.
+function fsFault(method, replacement, check) {
+    const original = fs[method];
+    fs[method] = (...args) => replacement(original, ...args);
+    try { check(); } finally { fs[method] = original; }
+}
+
+module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault };

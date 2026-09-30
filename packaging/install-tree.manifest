@@ -208,9 +208,11 @@ f share/vgs/shell/plugins/vgs.jarvis/Keys.qml
 f share/vgs/shell/plugins/vgs.jarvis/Service.qml
 f share/vgs/shell/plugins/vgs.jarvis/Session.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
+f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Policy.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Redact.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Secrets.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Speakable.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/SpeechLanguage.js
