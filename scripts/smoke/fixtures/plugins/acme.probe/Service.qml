@@ -26,6 +26,9 @@ Item {
     // it ran: verb -> { count, result }.
     property var themeAnswers: ({})
     readonly property bool lockSecure: shell !== null && shell.lock.secure
+    // Each idle state the idle watch reported, in order, and its disposer.
+    property var idleChanges: []
+    property var idleDisposer: null
     readonly property bool hasAgent: shell !== null && shell.polkit.agent !== null
     readonly property bool agentRegistered: shell !== null && shell.polkit.registered
     readonly property int screenCount: shell === null ? -1 : shell.screens.all.length
@@ -61,6 +64,15 @@ Item {
         shell.ipc.handle("environ", path => root.shell.run.detached(["sh", "-c", "env >\"$1\"", "sh", path]));
         shell.ipc.handle("lock", () => root.shell.lock.lock(lockContent));
         shell.ipc.handle("unlock", () => root.shell.lock.unlock());
+        // idle-watch <seconds>: one idle watch, its changes kept in
+        // idleChanges; a refusal is answered. idle-unwatch runs its disposer.
+        shell.ipc.handle("idle-watch", arg => {
+            try {
+                root.idleDisposer = root.shell.idle.watch(Number(arg), idle => root.idleChanges = root.idleChanges.concat([idle ? "idle" : "active"]));
+                return "ok";
+            } catch (e) { return e.message; }
+        });
+        shell.ipc.handle("idle-unwatch", () => { root.idleDisposer(); root.idleDisposer = null; return "ok"; });
         shell.ipc.handle("dispatch", arg => { const a = arg.split(" "); return root.shell.compositor[a[0]].apply(null, a.slice(1)); });
         // reveal <address>[,<address>...] [sender]: the compositor's reveal
         // of those windows, awaiting the sender with the word `sender`.

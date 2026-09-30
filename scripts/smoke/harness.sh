@@ -6,9 +6,8 @@ source "$repo/scripts/smoke/shot.sh"
 source "$repo/scripts/smoke/app-window.sh"
 missing=()
 # fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs;
-# grim reads the pixels app-window.sh checks; rows/lock.sh locks the nested
-# session with hyprlock.
-for tool in Hyprland qs hyprctl python3 node flock setpriv setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim hyprlock; do
+# grim reads the pixels app-window.sh checks.
+for tool in Hyprland qs hyprctl python3 node flock setpriv setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 # ImageMagick, `magick` or `convert`, converts the Slack custom emoji the
@@ -334,8 +333,9 @@ fi
 # stand-in systemctl, systemd-run, notify-send and loginctl. vgs.polkit
 # starts disabled, since polkit is exclusive and the capability rows'
 # fixture holds it; rows/polkit.sh enables it and disables it again.
-# vgs.lock starts disabled for the launcher's reason; rows/lock.sh enables
-# it and disables it again.
+# vgs.lock starts disabled for the launcher's reason, and its idle watch
+# would lock the session under the rows after five minutes; rows/lock.sh
+# enables it and disables it again.
 # vgs.themes stays enabled, its background built on every
 # screen: it maps no surface while the sandbox holds no backgrounds.json,
 # so the host rows see only their fixture's background surface.

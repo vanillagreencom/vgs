@@ -5,7 +5,7 @@
     "style": { "icon": "paintbrush", "label": "Style" },
     "style.theme": { "icon": "palette", "label": "Theme", "aliases": ["theme", "themes"], "provider": "themes" },
     "system": { "icon": "power", "label": "System", "aliases": ["power-menu", "power"] },
-    "system.lock": { "icon": "lock", "label": "Lock", "description": "Lock the session with the themed hyprlock screen", "requires": ["vgsh", "hyprlock"], "run": ["vgsh", "lock"] },
+    "system.lock": { "icon": "lock", "label": "Lock", "description": "Lock the session with the VGS lock screen", "requires": ["vgsh"], "run": ["vgsh", "lock"] },
     "system.suspend": { "icon": "moon", "label": "Suspend", "requires": ["systemctl"], "run": ["systemctl", "suspend"] },
     "system.hibernate": { "icon": "snowflake", "label": "Hibernate", "requires": ["systemctl"], "run": ["systemctl", "hibernate"] },
     "system.logout": { "icon": "log-out", "label": "Log out", "requires": ["loginctl"], "run": ["sh", "-c", "exec loginctl terminate-session ''"] },

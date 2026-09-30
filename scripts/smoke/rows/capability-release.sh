@@ -8,6 +8,7 @@ expect "enabling a second lock plugin is allowed" ok ipc shell setPluginEnabled 
 expect_poll "the lock stays with its first holder" '["acme.probe"]' lent holders.lock
 expect "the second lock plugin is not built while the lock is held" False record_exists acme.locker
 
+expect "the fixture holds an idle watch before its disable" ok probe idle-watch 600
 expect "disabling the fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
 expect_poll "the second lock plugin builds once the holder is disabled" True record_exists acme.locker
 expect_poll "the lock moved to the second plugin" '["acme.locker"]' lent holders.lock
@@ -23,6 +24,7 @@ expect "disable released the IPC target" '[]' lent ipcTargets
 expect "disable released the notification subscriber" '[]' lent subscribers
 expect "disable destroyed the notification server" false lent notificationServer
 expect "disable destroyed the polkit agent" false lent polkitAgent
+expect "disable released every idle watch" '[]' lent idle
 expect "disable released the tui capability" '["vgs.themes"]' lent holders.tui
 expect_poll "the compositor dropped the fixture's shortcut" 0 hypr_shortcuts
 expect "qs lists no IPC target for the disabled fixture" 0 ipc_targets

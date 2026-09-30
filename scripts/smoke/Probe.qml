@@ -641,6 +641,13 @@ Scope {
         }
         function configSettled(): bool { return !Config.smokeUserView.busy && !Config.reloadRequested; }
         function readInstance(hostKey: string, id: string, property: string): string { return root.read(hostKey, id, property); }
+        // The core's session lock, taken and released without a password,
+        // for rows/lock.sh: a sandbox row never runs PAM against the real
+        // account (docs/architecture/lock-polkit.md § Validation). The bare
+        // lock takes the session over with no lock screen, as after a lock
+        // client died, so the release can follow.
+        function sessionUnlock(): string { return Capabilities.sessionLock.unlock(); }
+        function sessionLockBare(): string { Capabilities.sessionLock.lockRequested = true; return "ok"; }
         // A plugin's published status values, as each of its instances reads them.
         function statusValues(id: string): string { return JSON.stringify(PluginStatus.valuesOf(id)); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }

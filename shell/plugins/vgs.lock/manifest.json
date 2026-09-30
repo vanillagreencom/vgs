@@ -4,7 +4,7 @@
   "name": "Lock",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Locks the session with hyprlock on the applied theme's lock screen. Lock with SUPER+L or IPC; the lock stays if the shell stops.",
+  "description": "The lock screen: locks the session with SUPER+L, IPC, the launcher, after idle and before sleep, and unlocks with your password. The session stays locked if the shell stops.",
   "license": "MIT",
   "icon": "lock",
   "kinds": [
@@ -14,17 +14,28 @@
     "service": "Service.qml"
   },
   "capabilities": [
+    "idle",
     "ipc",
-    "run",
-    "shortcut"
+    "lock",
+    "shortcut",
+    "status"
   ],
-  "settings": {},
+  "settings": {
+    "idleLockSeconds": 300,
+    "lockBeforeSleep": true
+  },
+  "schema": {
+    "idleLockSeconds": { "type": "number", "label": "Lock after idle", "description": "Seconds without input before the session locks; 0 never locks on idle", "min": 0, "max": 86400, "step": 30, "group": "Lock" },
+    "lockBeforeSleep": { "type": "boolean", "label": "Lock before sleep", "description": "Hold each suspend until the session is locked", "group": "Lock" }
+  },
+  "status": {
+    "sleep": { "type": "state", "label": "Before sleep", "hint": "logind holds each suspend until the lock is confirmed, for at most its delay" }
+  },
   "requirements": [
-    {
-      "command": "hyprlock",
-      "packages": { "pacman": "hyprlock", "apt": "hyprlock", "nix": "hyprlock" },
-      "purpose": "Holds the session lock and asks for the password"
-    }
+    { "command": "systemd-inhibit", "packages": { "pacman": "systemd", "apt": "systemd", "nix": "systemd" }, "optional": true, "purpose": "Holds each suspend until the session is locked" },
+    { "command": "dbus-monitor", "packages": { "pacman": "dbus", "apt": "dbus-bin", "nix": "dbus" }, "optional": true, "purpose": "Hears logind announce a suspend" },
+    { "command": "busctl", "packages": { "pacman": "systemd", "apt": "systemd", "nix": "systemd" }, "optional": true, "purpose": "Reads how long logind waits for the lock before a suspend" },
+    { "command": "readlink", "packages": { "pacman": "coreutils", "apt": "coreutils", "nix": "coreutils" }, "optional": true, "purpose": "Finds the theme's background image for the lock screen" }
   ],
   "hyprland": {
     "binds": [

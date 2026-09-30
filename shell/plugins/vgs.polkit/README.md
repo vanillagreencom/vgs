@@ -8,9 +8,10 @@ The plugin ships with VGS and is enabled by default. polkitd accepts one agent p
 
 ## Features
 
-- A dialog over a dimmed screen with the request's message, the account it authenticates as, and the password field.
+- A dialog over a dimmed screen with the request's message and its polkit action, the account it authenticates as, and the password field.
+- A choice of account when the request accepts several, such as every member of an administrators' group.
 - Enter or Authenticate submits the password; Escape or Cancel denies the request.
-- A wrong password shows the failure and asks again.
+- A wrong password, and every message PAM sends, shows under the field; the dialog then asks again.
 - The Settings page shows whether polkitd accepted the agent.
 
 ## How it works

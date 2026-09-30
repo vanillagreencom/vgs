@@ -377,6 +377,17 @@ function overlayCaptureLines(plan) {
     ]);
 }
 
+// The session lock: a new lock client may take over a lock whose client
+// died, so a shell started after a crash while locked locks the session
+// again, as Omarchy's looknfeel.lua sets it. Hyprland keeps the session
+// locked either way; without it only a TTY clears the dead lock.
+function sessionLockLines() {
+    return [
+        "-- Session lock: a restarted shell takes over a lock whose client died.",
+        "hl.config({ misc = { allow_session_lock_restore = true } })"
+    ];
+}
+
 // A layer rule as data: its namespace and effects, which two plugins
 // declaring the same rule share.
 function ruleKey(rule) {
@@ -404,8 +415,9 @@ function ruleLine(id, rule) {
 // wrote, the same namespace and effects, is written once. THEME gives the
 // theme's colours and Hyprland tokens. The fixed theme-appearance groups are
 // written after the header, in order, when their switch is on. The floating
-// TUIs' window rules follow them, then the shell's application window rule,
-// before any plugin section, whatever the sections.
+// TUIs' window rules follow them, then the shell's application window rule
+// and the session lock's restore, before any plugin section, whatever the
+// sections.
 function render(sections, theme, themeName, highestScale) {
     var plan = bindPlan(sections);
     var switches = groupSwitches(sections);
@@ -425,7 +437,7 @@ function render(sections, theme, themeName, highestScale) {
     lines.push("");
     if (switches.groups.motion.enabled) lines = lines.concat(motionLines(theme));
     else lines.push(disabledGroupLine("motion", switches.groups.motion.setting));
-    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan));
+    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan), [""], sessionLockLines());
     var written = Object.create(null);
     plan.sections.forEach(function (row) {
         var section = row.section;

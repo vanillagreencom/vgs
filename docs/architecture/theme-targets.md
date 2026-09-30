@@ -45,7 +45,7 @@ The editor targets, their table and their one-time steps are in [theme-editors.m
 
 The GTK, Qt, KDE colour scheme, icon theme and light or dark mode targets: [theme-toolkits.md](theme-toolkits.md).
 
-The chat and tool targets, `gum`, the colours of the floating TUIs, and `hyprlock`, the lock screen: [theme-tool-targets.md](theme-tool-targets.md).
+The chat and tool targets, and `gum`, the colours of the floating TUIs: [theme-tool-targets.md](theme-tool-targets.md).
 
 The browser targets, Zen, pywalfox and Chromium: [theme-browsers.md](theme-browsers.md).
 

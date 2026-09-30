@@ -31,7 +31,7 @@ expect "the polkit plugin starts disabled in the sandbox" False plugin_enabled v
 probe_enabled="$(plugin_enabled acme.probe)" || probe_enabled=unreadable
 case "$probe_enabled" in
   True) expect "disabling the capability fixture, which holds polkit, is allowed" ok ipc shell setPluginEnabled acme.probe false ;;
-  False) ;;
+  False|absent) ;;
   *) fail "the capability fixture's enabled state is unreadable: $probe_enabled" ;;
 esac
 expect_poll "no plugin holds polkit before the row" null polkit_lent holders.polkit

@@ -36,6 +36,24 @@ function identityOf(identity) {
     return display !== "" ? display : name;
 }
 
+// Every identity FLOW offers, labelled as identityOf labels one, in the
+// flow's order; the prompt offers a choice when there are several.
+function identitiesOf(flow) {
+    var list = flow.identities;
+    if (list === null || list === undefined || typeof list.length !== "number") return [];
+    var out = [];
+    for (var i = 0; i < list.length; i++) out.push(identityOf(list[i]));
+    return out;
+}
+
+// The index of FLOW's selected identity among its identities, -1 for none.
+function identityIndexOf(flow) {
+    var list = flow.identities;
+    if (list === null || list === undefined || typeof list.length !== "number") return -1;
+    for (var i = 0; i < list.length; i++) if (list[i] === flow.selectedIdentity) return i;
+    return -1;
+}
+
 // The line under the field: PAM's own message, an error or not, else the
 // failed note once an attempt failed, else null.
 function noteOf(flow) {
@@ -56,7 +74,10 @@ function viewOf(flow) {
     return {
         title: titleOf(flow.message),
         message: String(flow.message || ""),
+        action: String(flow.actionId || ""),
         identity: identityOf(flow.selectedIdentity),
+        identities: identitiesOf(flow),
+        identityIndex: identityIndexOf(flow),
         prompt: promptOf(flow.inputPrompt),
         echo: flow.responseVisible === true,
         inputEnabled: required,

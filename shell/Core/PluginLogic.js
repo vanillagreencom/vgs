@@ -17,7 +17,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "window", "service
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "requirements", "doctor"];
+var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "requirements", "doctor"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -2390,4 +2390,17 @@ function surfacePlacement(kind, settings, gap) {
         margins[edge] = gap;
     });
     return { anchors: anchors, margins: margins, exclusion: placement === "center" ? "ignore" : "normal", layer: layer, placement: placement, error: known ? "" : "placement=" + JSON.stringify(asked) + " unknown" };
+}
+
+// The longest idle watch the `idle` capability takes, one day in seconds.
+var IDLE_WATCH_MAX_SECONDS = 86400;
+
+// "" when an idle watch of SECONDS calling ONCHANGE is valid, else its
+// keyed refusal: a whole number of seconds from 1 to IDLE_WATCH_MAX_SECONDS
+// and a function.
+function idleWatchRefusal(seconds, onChange) {
+    if (typeof seconds !== "number" || !Number.isInteger(seconds) || seconds < 1 || seconds > IDLE_WATCH_MAX_SECONDS)
+        return "refused: idle-timeout=" + JSON.stringify(seconds) + " want=1.." + IDLE_WATCH_MAX_SECONDS;
+    if (typeof onChange !== "function") return "refused: idle-handler=not-a-function";
+    return "";
 }

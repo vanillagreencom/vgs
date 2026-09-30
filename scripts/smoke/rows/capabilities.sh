@@ -12,7 +12,7 @@ probe() { ipc acme.probe invoke "$1" "${2:-}"; }
 # The fixture holds every capability and the bare fixture none; another
 # plugin may hold a shared capability beside the fixture.
 lent_holds() { ipc shell lent | py_reply 'import json,sys; h=json.load(sys.stdin)["holders"].get(sys.argv[1],[]); print("acme.probe" in h and "acme.bare" not in h)' "$1"; }
-for cap in compositor configure ipc lock notifications polkit run screens shortcut toasts theme; do
+for cap in compositor configure idle ipc lock notifications polkit run screens shortcut toasts theme; do
   expect "the $cap capability is lent to the fixture and not the bare plugin" True lent_holds "$cap"
 done
 
@@ -135,3 +135,16 @@ expect "the fixture focuses a workspace" ok probe dispatch 'focusWorkspace 2'
 expect_poll "the compositor moved to that workspace" 2 active_ws
 expect_poll "the fixture focuses the first workspace again" ok probe dispatch 'focusWorkspace 1'
 expect_poll "the compositor moved back" 1 active_ws
+
+# idle: a watch reports idle once the nested seat has had no input for its
+# timeout and active again at the next key; the lending record lists it,
+# and its disposer drops it. A zero timeout is refused.
+idle_watches() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps([[w["id"], w["timeout"]] for w in json.load(sys.stdin)["idle"]]))'; }
+expect "an idle watch of zero seconds is refused" "refused: idle-timeout=0 want=1..86400" probe idle-watch 0
+expect "the fixture watches for one second without input" ok probe idle-watch 1
+expect "the lending record lists the watch" '[["acme.probe", 1]]' idle_watches
+expect_poll "the watch reports idle after a second without input" '["idle"]' read_service idleChanges
+type_keys -k Shift_L || fail "typing a key for the idle watch failed"
+expect_poll "a key reports the seat active again" '["idle", "active"]' read_service idleChanges
+expect "the disposer drops the watch" ok probe idle-unwatch
+expect "the lending record lists no watch after the disposer" '[]' idle_watches

@@ -43,6 +43,7 @@ f share/vgs/shell/Core/Config.qml
 f share/vgs/shell/Core/Dispatch.js
 f share/vgs/shell/Core/HyprlandLayer.js
 f share/vgs/shell/Core/HyprlandLayer.qml
+f share/vgs/shell/Core/IdleRegistry.qml
 f share/vgs/shell/Core/IpcRegistry.qml
 f share/vgs/shell/Core/Layers.qml
 f share/vgs/shell/Core/Lifetime.js
@@ -202,8 +203,12 @@ f share/vgs/shell/plugins/vgs.launcher/manifest.json
 f share/vgs/shell/plugins/vgs.launcher/menu.json
 f share/vgs/shell/plugins/vgs.launcher/shaders/edgelight.frag
 f share/vgs/shell/plugins/vgs.launcher/shaders/edgelight.frag.qsb
+f share/vgs/shell/plugins/vgs.lock/LockModel.js
+f share/vgs/shell/plugins/vgs.lock/LockView.qml
 f share/vgs/shell/plugins/vgs.lock/Service.qml
+f share/vgs/shell/plugins/vgs.lock/bin/sleep-watch
 f share/vgs/shell/plugins/vgs.lock/manifest.json
+f share/vgs/shell/plugins/vgs.lock/pam/vgs-lock
 f share/vgs/shell/plugins/vgs.notifications/Anim.qml
 f share/vgs/shell/plugins/vgs.notifications/Appearance.js
 f share/vgs/shell/plugins/vgs.notifications/CardSlot.qml
@@ -558,8 +563,6 @@ f share/vgs/themes/targets/helix/helix.toml
 f share/vgs/themes/targets/helix/target.json
 f share/vgs/themes/targets/hermes/hermes.yaml
 f share/vgs/themes/targets/hermes/target.json
-f share/vgs/themes/targets/hyprlock/hyprlock.conf
-f share/vgs/themes/targets/hyprlock/target.json
 f share/vgs/themes/targets/icons/icons.theme
 f share/vgs/themes/targets/icons/target.json
 f share/vgs/themes/targets/kcolorscheme/kcolorscheme.colors

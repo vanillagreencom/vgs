@@ -4,8 +4,11 @@ import qs.Ui
 import "PolkitModel.js" as PolkitModel
 
 // The polkit prompt: a scrim over the screen and one dialog asking for the
-// response the agent's authentication flow wants, usually the password, as
-// the identity the flow names. The service summons it when a request
+// response the agent's authentication flow wants, usually the password. It
+// names the action that asks, by its message and its polkit action id, and
+// the identity it authenticates as; with several identities, such as the
+// members of an administrators' group, a choice selects another, which
+// starts the conversation again as that identity. The service summons it when a request
 // starts and hides it when the request ends; a summon with no request live
 // throws, so the host refuses it and no prompt shows without a flow.
 //
@@ -45,6 +48,14 @@ Item {
         flow.submit(response);
     }
 
+    // Authenticate as the flow's identity at INDEX; the flow starts its
+    // conversation again, so the field is cleared.
+    function selectIdentity(index) {
+        if (flow === null || index < 0 || index >= flow.identities.length || flow.identities[index] === flow.selectedIdentity) return;
+        secret.text = "";
+        flow.selectedIdentity = flow.identities[index];
+    }
+
     // PAM asks again after a failed attempt: the field takes the focus back.
     Connections {
         target: root.flow
@@ -70,9 +81,36 @@ Item {
         onAccepted: root.submit()
         onRejected: root.cancel()
 
+        Label {
+            role: "code"
+            width: parent.width
+            elide: Text.ElideMiddle
+            color: Theme.color.textMuted
+            visible: text !== ""
+            text: root.view === null ? "" : root.view.action
+        }
+
+        Field {
+            width: parent.width
+            label: "Authenticate as"
+            visible: root.view !== null && root.view.identities.length > 1
+
+            Select {
+                width: parent.width
+                model: root.view === null ? [] : root.view.identities
+                currentIndex: root.view === null ? 0 : Math.max(0, root.view.identityIndex)
+                // A choice writes the flow, then the control follows the
+                // flow's selected identity again.
+                onCurrentIndexChanged: {
+                    root.selectIdentity(currentIndex);
+                    currentIndex = Qt.binding(() => root.view === null ? 0 : Math.max(0, root.view.identityIndex));
+                }
+            }
+        }
+
         Row {
             spacing: Theme.space.sm
-            visible: root.view !== null && root.view.identity !== ""
+            visible: root.view !== null && root.view.identity !== "" && root.view.identities.length <= 1
             Icon {
                 name: "user"
                 size: Theme.icon.size.sm

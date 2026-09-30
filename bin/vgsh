@@ -77,7 +77,7 @@
 #                                  run one command in a floating terminal under the VGS presentation
 #   vgsh tui list                  every floating TUI the running shell lists: the core's and every enabled plugin's
 #   vgsh tui open <key>            open one listed floating TUI, `core/<name>` or `<plugin id>/<name>`, with no arguments
-#   vgsh lock                      lock the session with hyprlock in the applied theme's look; needs no shell running
+#   vgsh lock                      ask the running shell's lock plugin to lock the session
 #
 # `run` takes no arguments: the shell always runs as this process's child,
 # and this process stays in the foreground until the shell exits, then

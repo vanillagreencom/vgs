@@ -95,12 +95,12 @@ function verify(model) {
     assert.equal(alone.items["system.reboot"].parent, "system");
     same(["install", "remove", "update"].map(id => [alone.items[id].kind, alone.items[id].tui, alone.items[id].tuiGroup]),
         [["tui", "core/pkg-install", ""], ["tui", "core/pkg-remove", ""], ["tui", "", "Update"]]);
-    // Lock runs a real locker through `vgsh lock`, which themes hyprlock:
-    // loginctl only asks a logind listener the shell does not provide.
-    // Without hyprlock, or without vgsh on PATH, the row says so.
+    // Lock asks the shell's own lock through `vgsh lock`: loginctl only
+    // asks a logind listener the shell does not provide. Without vgsh on
+    // PATH the row says so.
     same(alone.items["system.lock"].run, ["vgsh", "lock"]);
-    same(alone.items["system.lock"].requires, ["vgsh", "hyprlock"]);
-    same(model.menuRows(alone.items, alone.itemOrder, "system", ["hyprlock"]).filter(r => r.label === "Lock").map(r => [r.kind, r.detail]), [["unavailable", "needs hyprlock"]]);
+    same(alone.items["system.lock"].requires, ["vgsh"]);
+    same(model.menuRows(alone.items, alone.itemOrder, "system", ["vgsh"]).filter(r => r.label === "Lock").map(r => [r.kind, r.detail]), [["unavailable", "needs vgsh"]]);
 
     for (const [label, text, start] of MENU_REFUSED) {
         const result = model.parseMenu(text);

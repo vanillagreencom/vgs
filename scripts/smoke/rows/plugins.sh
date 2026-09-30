@@ -61,7 +61,7 @@ if [[ $got == True ]]; then ok "the service host built the fixture service"; els
 expect_widgets "the fixture widget joined the right section" '["acme.tick","acme.probe"]'
 expect "the fixture widget can call its compositor capability" true read_widget hasCompositor
 expect "the fixture widget's settings array stayed an array" true read_widget tagsAreArray
-all_caps='"compositor,configure,ipc,lock,manifest,notifications,polkit,run,screens,settings,shortcut,theme,toasts,tui"'
+all_caps='"compositor,configure,idle,ipc,lock,manifest,notifications,polkit,run,screens,settings,shortcut,theme,toasts,tui"'
 expect "the fixture widget's shell holds exactly what it named" "$all_caps" read_widget shellKeys
 expect "the fixture service's shell holds exactly what it named" "$all_caps" read_service shellKeys
 expect_poll "a plugin naming no capability receives none" '"manifest,settings"' ipc smoke readInstance service acme.bare shellKeys

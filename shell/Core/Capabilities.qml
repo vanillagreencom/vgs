@@ -15,6 +15,7 @@ Singleton {
     property var held: ({})
 
     ShortcutRegistry { id: shortcuts }
+    IdleRegistry { id: idleWatches }
     IpcRegistry { id: commands }
     NotificationHub { id: notifications; active: root.notificationsHeld }
     SessionLock { id: sessionLock }
@@ -98,6 +99,7 @@ Singleton {
         configure: ctx => ({
             set: (key, value) => Plugins.writeSetting(ctx.id, key, value, [Logic.settingTargetOf(ctx.kind)], ctx.locator)
         }),
+        idle: idleWatches.provider,
         ipc: commands.provider,
         lock: sessionLock.provider,
         session: sessionLock.sessionProvider,
@@ -208,6 +210,7 @@ Singleton {
         return JSON.stringify({
             holders: holders,
             shortcuts: Object.keys(shortcuts.shortcuts).sort(),
+            idle: idleWatches.record(),
             ipcTargets: Object.keys(commands.ipcTargets).sort(),
             subscribers: notifications.subscribers.map(s => s.id),
             notificationServer: notifications.server !== null,

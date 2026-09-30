@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# sleep-watch: vgs.lock's before-sleep hook, run under
+#   systemd-inhibit --what=sleep --mode=delay -- sleep-watch
+# so logind holds every suspend until this process exits, for at most its
+# InhibitDelayMaxUSec. It prints, one line each, on stdout:
+#   ready budget_ms=<n>     the inhibitor holds; n is the lock budget
+#   sleep budget_ms=<n>     logind prepares for sleep: lock now
+#   released reason=<r>     secure, timeout or closed; the process exits
+# After `sleep` it waits for the line `secure` on stdin, the service's word
+# that the session lock is confirmed, for at most the budget, then exits
+# 0, which releases the inhibitor and lets the suspend go on. stdin closing
+# is reason=closed. The service starts it again after each exit.
+#
+# The budget follows Omarchy's bin/omarchy-system-sleep-lock: logind's
+# InhibitDelayMaxUSec less a fifth of it, at least 1000 ms kept for logind,
+# capped at 12000 ms; 5 s, logind's default, when the window is unreadable.
+# An overrun is what the budget prevents: past its window logind stops
+# honouring the inhibitor and suspends with the lock half taken.
+#
+# Refusals, one keyed line on stderr, exit 1:
+#   sleep-watch: refused: monitor=exited status=<n>   dbus-monitor ended
+set -euo pipefail
+
+budget_cap_ms=12000
+
+derive_budget_ms() {
+  local window
+  window="$(timeout --kill-after=0.1s 1s busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager InhibitDelayMaxUSec 2>/dev/null)" || window=""
+  window="${window##* }"
+  [[ $window =~ ^[0-9]+$ ]] && ((window > 0)) || window=5000000
+  window=$((window / 1000))
+  window=$((window - (window / 5 > 1000 ? window / 5 : 1000)))
+  ((window > 0)) || window=1
+  if ((window < budget_cap_ms)); then echo "$window"; else echo "$budget_cap_ms"; fi
+}
+
+budget_ms="$(derive_budget_ms)"
+printf -v budget_s '%d.%03d' $((budget_ms / 1000)) $((budget_ms % 1000))
+
+coproc MONITOR { exec dbus-monitor --system "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"; }
+monitor_pid=$MONITOR_PID
+trap 'kill "$monitor_pid" 2>/dev/null || :' EXIT
+echo "ready budget_ms=$budget_ms"
+
+while IFS= read -r line <&"${MONITOR[0]}"; do
+  [[ $line == *"boolean true"* ]] || continue
+  echo "sleep budget_ms=$budget_ms"
+  if IFS= read -r -t "$budget_s" reply; then
+    if [[ $reply == secure ]]; then echo "released reason=secure"; else echo "released reason=timeout"; fi
+  elif (($? > 128)); then
+    echo "released reason=timeout"
+  else
+    echo "released reason=closed"
+  fi
+  exit 0
+done
+status=0
+wait "$monitor_pid" || status=$?
+printf 'sleep-watch: refused: monitor=exited status=%s\n' "$status" >&2
+exit 1

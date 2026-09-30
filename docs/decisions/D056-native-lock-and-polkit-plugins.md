@@ -1,0 +1,30 @@
+# D056: A native lock plugin on the core's session lock, and a native polkit agent
+
+[← Decision Index](INDEX.md)
+
+**Date**: 2026-09-30
+**Status**: Active
+**Research**: VGS-611
+
+**Context**: A VGS-only session had no lock screen and no polkit agent. The core already owns the one `WlSessionLock` and the one `PolkitAgent` and lends each through the exclusive `lock` and `polkit` capabilities ([D012](D012-core-owns-lent-objects.md)). No plugin held either, and the launcher's Lock row ran bare `hyprlock`. Omarchy's default branch (`basecamp/omarchy` 8b4eae6) retired `hyprlock`, `hypridle` and `hyprpolkitagent`. It ships a native `omarchy.lock` service, with `WlSessionLock` and two PAM services under `/etc/pam.d`; a native `omarchy.idle` service on `IdleMonitor`; a before-sleep lock, a user unit that holds a logind delay inhibitor; `misc.allow_session_lock_restore = true`; and a lock service that locks again a session a dead shell left locked. The owner directed, on 2026-09-30, that VGS follow Omarchy with no hyprlock.
+
+**Decision**:
+- `vgs.lock` is a service on the core's `lock` capability. It hands the core its lock screen, which `shell/Hosts/LockHost.qml` draws on every screen. It locks from the shortcut `SUPER+L`, its IPC function, which `vgsh lock` and the launcher's Lock row call, an idle watch, and a before-sleep hook. At start it reads `hyprctl -j monitors` and locks again a session a dead shell left locked. It checks passwords through Quickshell's `PamContext`, on the plugin's own `pam/vgs-lock` stack, Omarchy's password stack.
+- The core gains the `idle` capability, one `IdleMonitor` per watch, and the Hyprland layer sets `misc.allow_session_lock_restore = true`.
+- `vgs.polkit` is a native agent on the core's `polkit` capability. It draws its prompt from the tokens and `qs.Ui`, names the requesting action, offers a choice of identity and shows every error.
+
+**Rationale**:
+- **Fails closed.** The session stays locked if the plugin or the shell goes. The core keeps a locked session locked when the plugin is disabled or rebuilt (D012). Hyprland keeps an ext-session-lock whose client died, and with the restore option a restarted shell takes it over.
+- **Reload hazard.** A Quickshell 0.3.1 reload while locked can unlock the session ([runtime.md](../architecture/runtime.md)). `vgsh run` turns the engine's file watcher off and no code path reloads the engine, so no reload reaches the lock. `vgsh restart` refuses while locked.
+- **Capabilities stay in the core.** A plugin cannot import `Quickshell.Wayland`. Idle becomes a core capability, as the session lock and the polkit agent are, rather than a plugin-owned monitor.
+- **PAM stack in the plugin.** `PamContext.configDirectory` reads the stack from the plugin's own directory, so no install step writes `/etc` and a checkout locks as a package does. VGS differs from Omarchy here: Omarchy writes `/etc/pam.d` with `sudo`. The stack holds the `auth` lines alone, since `PamContext` runs only that type. Nothing reaches PAM until the user presses Enter, so no background conversation can count a failed login.
+- **Sleep hook inside the plugin.** The hook is a child process of `vgs.lock`: `systemd-inhibit --mode=delay` over `bin/sleep-watch`. Omarchy runs the same monitor from a systemd user unit. The hook's lifetime is the plugin's, a checkout needs no unit, and the lock it waits for lives in the same shell. The budget is Omarchy's: logind's `InhibitDelayMaxUSec` less a fifth, at least one second kept, capped at 12 s.
+- **Restore option trade-off.** `misc.allow_session_lock_restore` lets any Wayland client take over, and so release, a lock whose client died. Omarchy accepts this. Without it, a crashed lock screen leaves Hyprland's dead-lock screen, which only a TTY clears.
+- **Polkit.** A polkit agent fails closed: with no agent, polkitd denies the request. A native agent gains the tokens and components, which `hyprpolkitagent`'s own style never reads. This matches Omarchy.
+- **Left out.** Omarchy's fingerprint stack, display blanking and video wallpaper are not carried. The first two need hardware and a brightness command VGS does not ship; the lock draws the theme's still image.
+
+**Revisit When**: Quickshell keeps a session lock across a reload, or the runner supervises and restarts a crashed shell; or a lock needs a fingerprint.
+
+**Verification**: `scripts/smoke/rows/lock.sh`, `scripts/smoke/rows/polkit.sh`, the `idle` rows in `scripts/smoke/rows/capabilities.sh`, `scripts/test-lock-model.js`, `scripts/test-lock-sleep-watch.sh`, `scripts/test-vgsh-lock.sh`, `scripts/test-polkit-model.js` and `scripts/test-hyprland-layer.js`, each with its controls. [lock-polkit.md](../architecture/lock-polkit.md) names what each proves.
+
+**References**: [D012](D012-core-owns-lent-objects.md), [D028](D028-one-generated-hyprland-layer.md), [D035](D035-manifest-requirements.md), [lock-polkit.md](../architecture/lock-polkit.md)

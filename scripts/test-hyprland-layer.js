@@ -44,6 +44,12 @@ const APP_SECTION = [
     "-- Application windows: the shell's windows float, centred, at the size they ask.",
     "hl.window_rule({ name = \"vgs:window\", match = { class = \"^org\\\\.vgs\\\\.shell$\" }, float = true, center = true })"
 ];
+// The session lock's restore, byte for byte: Omarchy's looknfeel.lua
+// setting, so a shell started after a crash while locked locks again.
+const LOCK_SECTION = [
+    "-- Session lock: a restarted shell takes over a lock whose client died.",
+    "hl.config({ misc = { allow_session_lock_restore = true } })"
+];
 
 function captureSection(pluginLines) {
     return [
@@ -242,7 +248,7 @@ function verify(logic, layer, shellText) {
     assert.ok(bareLines.indexOf("-- Theme appearance: corner radius.") < bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off."), "radius is before motion");
     assert.ok(bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off.") < bareLines.indexOf(TUI_SECTION[0]), "theme appearance is before floating TUIs");
     assert.ok(bareLines.indexOf(TUI_SECTION[0]) < bareLines.indexOf(APP_SECTION[0]), "floating TUIs are before application windows");
-    same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, "", ...captureSection([]), ""], "a layer with no plugin section ends with the floating TUIs window rules, the application window rule, then overlay capture");
+    same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, "", ...captureSection([]), "", ...LOCK_SECTION, ""], "a layer with no plugin section ends with the floating TUIs window rules, the application window rule, overlay capture, then the session lock's restore");
     same(layer.OVERLAY_CAPTURE, { submap: "vgs:capture", namespace: "vgs:overlay", appid: "vgs", shortcuts: { left: "overlay-left", right: "overlay-right", up: "overlay-up", down: "overlay-down" } }, "the overlay capture names its submap, namespace and shortcuts");
     same(layer.overlayCaptureDirections(), ["left", "right", "up", "down"], "the overlay capture direction list");
     assert.equal(layer.overlayCaptureGlobal("left"), "vgs:overlay-left", "the overlay capture global is derived");
@@ -344,6 +350,8 @@ function verify(logic, layer, shellText) {
             "    hl.bind(\"SUPER + SPACE\", hl.dsp.global(\"acme.keys:toggle\"), { description = \"acme.keys:toggle\" })",
             "    hl.bind(\"SUPER + N\", hl.dsp.global(\"vgs.notes:inbox\"), { description = \"vgs.notes:inbox\" })",
         ]),
+        "",
+        ...LOCK_SECTION,
         "",
         "-- acme.keys 2?os.exit(): binds and layer rules from its manifest",
         "hl.layer_rule({ name = \"acme.keys:overlay\", match = { namespace = \"^vgs:overlay$\" }, blur = true, ignore_alpha = 0.6 })",
@@ -495,12 +503,14 @@ const CONTROLS = [
     [layerFile, "smooth motion preset", "    smooth: {\n        curves: {", "    silky: {\n        curves: {"],
     [layerFile, "appearance defaults", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: false };", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: true };"],
     [layerFile, "appearance owner sorted", "}).sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });", "});"],
-    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));"],
-    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));"],
+    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());"],
+    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());"],
     [layerFile, "floating TUI class escapes each dot", ".join(\"\\\\\\\\.\")", ".join(\".\")"],
     [layerFile, "floating TUI class anchored", "return \"\\\"^\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"$\\\"\";", "return \"\\\"\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"\\\"\";"],
-    [layerFile, "application window rule written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan));"],
-    [layerFile, "application window rule after the TUIs", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan));"],
+    [layerFile, "application window rule written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());"],
+    [layerFile, "application window rule after the TUIs", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());"],
+    [layerFile, "session lock restore written", "overlayCaptureLines(plan), [\"\"], sessionLockLines());", "overlayCaptureLines(plan));"],
+    [layerFile, "session lock restore allowed", "misc = { allow_session_lock_restore = true }", "misc = { allow_session_lock_restore = false }"],
     [layerFile, "application window class is the shell's app-id", "match = { class = \" + classLiteral(APP_WINDOW.appId) + \" }", "match = { class = \" + classLiteral(\"org.quickshell\") + \" }"],
     [shellFile, "shell.qml sets the shell's app-id", "//@ pragma AppId org.vgs.shell\n", ""],
     [shellFile, "shell.qml's app-id is the layer's", "//@ pragma AppId org.vgs.shell\n", "//@ pragma AppId org.vgs.other\n"],

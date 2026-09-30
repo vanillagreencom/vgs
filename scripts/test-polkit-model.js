@@ -17,8 +17,11 @@ const same = (got, want, message) => assert.deepEqual(JSON.parse(JSON.stringify(
 
 // A flow as the agent holds one while PAM waits for a password, with
 // FIELDS over it.
+const alice = { string: "alice", displayName: "Alice Liddell", isGroup: false };
+const wheel = { string: "wheel", displayName: "wheel", isGroup: true };
 const flow = fields => Object.assign({
     message: "Authentication is required to change the system time.",
+    actionId: "org.freedesktop.timedate1.set-time",
     inputPrompt: "Password: ",
     isResponseRequired: true,
     responseVisible: false,
@@ -27,7 +30,8 @@ const flow = fields => Object.assign({
     failed: false,
     isCompleted: false,
     isCancelled: false,
-    selectedIdentity: { string: "alice", displayName: "Alice Liddell", isGroup: false }
+    identities: [alice],
+    selectedIdentity: alice
 }, fields);
 
 function verify(model) {
@@ -53,10 +57,14 @@ function verify(model) {
     assert.equal(model.viewOf(null), null, "no flow draws nothing");
     same(model.viewOf(flow({})), {
         title: "Authentication required", message: "Authentication is required to change the system time.",
-        identity: "Alice Liddell", prompt: "Password", echo: false, inputEnabled: true, waiting: false, note: null
+        action: "org.freedesktop.timedate1.set-time", identity: "Alice Liddell", identities: ["Alice Liddell"], identityIndex: 0, prompt: "Password", echo: false, inputEnabled: true, waiting: false, note: null
     }, "a flow waiting for the password");
     const VIEWS = [
         ["a submitted response waits", { isResponseRequired: false, inputPrompt: "" }, { inputEnabled: false, waiting: true }],
+        ["several identities are offered in order, the selected one found", { identities: [wheel, alice], selectedIdentity: alice }, { identities: ["Group wheel", "Alice Liddell"], identityIndex: 1, identity: "Alice Liddell" }],
+        ["a selected identity outside the list is found nowhere", { identities: [wheel], selectedIdentity: alice }, { identityIndex: -1 }],
+        ["a flow with no identity list offers none", { identities: undefined }, { identities: [], identityIndex: -1 }],
+        ["a flow with no action id names none", { actionId: undefined }, { action: "" }],
         ["a visible response echoes", { responseVisible: true }, { echo: true }],
         ["PAM's error shows in danger", { supplementaryMessage: "Account locked", supplementaryIsError: true }, { note: { text: "Account locked", tone: "danger" } }],
         ["PAM's information shows as a hint", { supplementaryMessage: "Touch the key" }, { note: { text: "Touch the key", tone: "info" } }],
@@ -102,6 +110,9 @@ const CONTROLS = [
     ["no flow draws nothing", "if (flow === null || flow === undefined) return null;", "if (flow === undefined) return null;"],
     ["a cancelled flow is not cancelled again", " && flow.isCancelled !== true", ""],
     ["a completed flow is not cancelled", " && flow.isCompleted !== true", ""],
+    ["the action id is shown", "action: String(flow.actionId || \"\"),", "action: \"\","],
+    ["every identity is offered", "for (var i = 0; i < list.length; i++) out.push(identityOf(list[i]));", "if (list.length > 0) out.push(identityOf(list[0]));"],
+    ["the selected identity is found by its object", "if (list[i] === flow.selectedIdentity) return i;", "if (i === 0) return i;"],
     ["an unchanged state is not published again", "return previous === null || previous.tone !== next.tone || previous.text !== next.text;", "return true;"],
     ["no state is never published", "    if (next === null) return false;\n", ""],
     ["an unregistered agent warns", 'if (registered === true) return { tone: "ok"', 'if (true) return { tone: "ok"']

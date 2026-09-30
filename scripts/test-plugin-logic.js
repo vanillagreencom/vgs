@@ -390,6 +390,18 @@ function suite(ctx, check) {
     check("layers is a capability", ctx.CAPABILITIES.indexOf("layers") !== -1, true);
     check("requirements is a capability", ctx.CAPABILITIES.indexOf("requirements") !== -1, true);
     check("session readers coexist with a lock holder", ctx.lendRefusal({ lock: "acme.locker", session: "acme.other" }, { id: "acme.reader", capabilities: ["session"] }), "");
+    check("idle is a capability", ctx.CAPABILITIES.indexOf("idle") !== -1, true);
+    const handler = () => {};
+    const idleRows = [
+        ["one second", 1, handler, ""],
+        ["a day", 86400, handler, ""],
+        ["zero seconds", 0, handler, "refused: idle-timeout=0 want=1..86400"],
+        ["past a day", 86401, handler, "refused: idle-timeout=86401 want=1..86400"],
+        ["a fraction", 1.5, handler, "refused: idle-timeout=1.5 want=1..86400"],
+        ["a string", "300", handler, "refused: idle-timeout=\"300\" want=1..86400"],
+        ["no handler", 300, null, "refused: idle-handler=not-a-function"]
+    ];
+    for (const [name, seconds, onChange, want] of idleRows) check("idleWatchRefusal: " + name, ctx.idleWatchRefusal(seconds, onChange), want);
 
     const refusalRows = [
         ["a string fits a string entry", "label", "y", ""],
@@ -644,6 +656,10 @@ const CONTROLS = [
     ["an absent requirement packages is normalized", "packages: entry.packages === undefined ? {} : clone(entry.packages)", "packages: clone(entry.packages)"],
     ["an absent requirement optional is normalized", "optional: entry.optional === true", "optional: entry.optional"],
     ["a manifest carries its requirements normalized", "manifest.requirements = normalRequirements(requirements);", ""],
+    ["an idle watch takes one second at least", "seconds < 1 || ", ""],
+    ["an idle watch takes a day at most", " || seconds > IDLE_WATCH_MAX_SECONDS)", ")"],
+    ["an idle watch takes whole seconds", "!Number.isInteger(seconds) || ", ""],
+    ["an idle watch needs a handler", "if (typeof onChange !== \"function\") return \"refused: idle-handler=not-a-function\";", ""],
     ["a requirement the scan missed is reported missing", "missing.indexOf(entry.command) === -1 ? \"present\" : \"missing\"", "\"present\""],
 ];
 

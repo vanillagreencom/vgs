@@ -93,7 +93,7 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 | [Dev Tools](shell/plugins/vgs.devtools/README.md) | A window over a catalog of coding agents, developer apps, CLI tools, languages, editors, databases and terminals, with each tool's state and version, and Install, Update and Remove in a floating TUI. Its VGS section shows how VGS is installed and every command VGS or an enabled plugin needs that is missing, with Install. `bin/vgsh ipc call vgs.devtools invoke open` opens it. |
 | [Gallery](shell/plugins/vgs.gallery/README.md) | A window with every component of the design system in every variant and state, to preview a theme. `bin/vgsh ipc call shell summon window vgs.gallery '{}'` opens it. |
 | [Automations](shell/plugins/vgs.automations/README.md) | Runs your shell commands on a schedule through systemd user timers, such as every weekday at 09:00 or the second Tuesday of each month, keeps each run's transcript for up to 30 days, and sends a notification for every failure whose click opens the transcript. |
-| [Lock](shell/plugins/vgs.lock/README.md) | Locks the session with hyprlock in the applied theme's colours over its background image. `SUPER+L` or `vgsh lock` locks; the lock stays if the shell stops. |
+| [Lock](shell/plugins/vgs.lock/README.md) | The lock screen: `SUPER+L`, `vgsh lock`, five minutes without input and every suspend lock the session, and your password unlocks it. The session stays locked if the shell stops. |
 | [Polkit](shell/plugins/vgs.polkit/README.md) | The session's polkit agent: a themed dialog asks for your password when an application needs administrator rights. |
 
 ## How it works
