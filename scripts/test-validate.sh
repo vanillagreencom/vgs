@@ -244,6 +244,7 @@ readme_rows=$'node scripts/check-readme.js\nnode scripts/test-check-readme.js\ns
 readme_plan="$readme_rows$repo_plan"
 curl_installer_plan="$readme_rows"$'scripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
+jarvis_env_plan=$'node scripts/test-jarvis-env.js\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\n'"$repo_plan"
 session_plan=$'scripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\n'"$repo_plan"$'\nscripts/qml-unit.sh\nscripts/test-qml-unit.sh\nscripts/test-session-lock.sh\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
@@ -277,6 +278,9 @@ cases=(
   "copr-entry|.copr/Makefile|all|scripts/test-fedora-srpm.sh"$'\n'"$repo_plan"
   "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
   "suite|scripts/test-attribute-heap-profile.py|offline|$heap_plan"
+  "jarvis-env|scripts/lib/jarvis-env.sh|all|$jarvis_env_plan"
+  "jarvis-env-suite|scripts/test-jarvis-env.js|offline|$jarvis_env_plan"
+  "jarvis-env-fixture|scripts/fixtures/jarvis-env/probe.py|all|$jarvis_env_plan"
   "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"
   "session|shell/Core/SessionLock.qml|all|$session_plan"
   "fixture|scripts/smoke/fixtures/plugins/acme.contention/Background.qml|all|$fixture_plan"
@@ -361,6 +365,52 @@ if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate --list 2>"$tmp/pl
 else
   fail "selector change plan: $out"
 fi
+
+# The Jarvis row must select the real environment helper, not only its suite.
+# A harmless row fixture fails on a planted helper defect. Removing only the
+# dependency edge lets that defect escape, without starting any test daemon.
+d="$tmp/plan-jarvis-edge"; fresh "$d"
+mkdir -p "$d/scripts/lib"
+printf 'const fs = require("node:fs"); process.exit(fs.readFileSync("scripts/lib/jarvis-env.sh", "utf8") === "clean\\n" ? 0 : 1);\n' >"$d/scripts/test-jarvis-env.js"
+printf 'clean\n' >"$d/scripts/lib/jarvis-env.sh"
+"${base_env[@]}" git -C "$d" add -A
+"${base_env[@]}" git -C "$d" commit -q -m jarvis-row
+printf 'defect\n' >"$d/scripts/lib/jarvis-env.sh"
+test_area=tools
+test_args=(--changed HEAD)
+row "a Jarvis helper change runs its row and fails on the defect" "$d" 1 "" \
+  "validate: failed=Jarvis test environment controls (exit 1)"
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+old = 'node scripts/test-jarvis-env.js|scripts/lib/jarvis-env.sh scripts/fixtures/jarvis-env/*'
+assert source.count(old) == 1
+changed = source.replace(old, old.replace('scripts/lib/jarvis-env.sh ', ''))
+assert changed != source
+path.write_text(changed)
+PY
+"${base_env[@]}" git -C "$d" add scripts/validate
+"${base_env[@]}" git -C "$d" commit -q -m control
+# An unknown source would select the whole area. Keep the input known to
+# another area, so this control isolates the lost tools dependency edge.
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+old = 'logic|plugin logic table|node scripts/test-plugin-logic.js|'
+assert source.count(old) == 1
+changed = source.replace(old, old + 'scripts/lib/jarvis-env.sh ')
+assert changed != source
+path.write_text(changed)
+PY
+"${base_env[@]}" git -C "$d" add scripts/validate
+"${base_env[@]}" git -C "$d" commit -q -m known-input
+row "control: losing the Jarvis helper edge skips its failing row" "$d" 0 "" "validate: ok"
+test_area=offline
+test_args=()
 
 d="$tmp/range-whitespace"; fresh "$d"
 printf 'old defect \n' >"$d/clean.txt"
