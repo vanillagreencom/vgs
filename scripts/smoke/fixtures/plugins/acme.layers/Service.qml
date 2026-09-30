@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Ui
 
 // Draws one passive layer through the `layers` capability. The content
 // counts the presses that reach it and reports the screens it is built on;
@@ -19,6 +20,7 @@ Item {
     property var release: null
     property var bareRelease: null
     property bool full: false
+    property bool voice: false
     property int pads: 2
     property int presses: 0
     property int releases: 0
@@ -55,6 +57,14 @@ Item {
                 root.note(noted, true);
             }
             Component.onDestruction: if (noted !== "") root.note(noted, false)
+
+            VoiceOrb {
+                anchors.centerIn: parent
+                visible: root !== null && root.voice
+                active: visible
+                level: 0.8
+                secondaryLevel: 0.5
+            }
 
             MouseArea {
                 anchors.fill: parent
@@ -119,6 +129,7 @@ Item {
             return "ok";
         });
         shell.ipc.handle("full", arg => { root.full = arg === "1"; return "ok"; });
+        shell.ipc.handle("voice", arg => { root.voice = arg === "1"; return "ok"; });
         shell.ipc.handle("pads", arg => {
             if (arg !== "0" && arg !== "1" && arg !== "2") return "refused: pads";
             root.pads = Number(arg);

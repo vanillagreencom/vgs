@@ -1,6 +1,6 @@
 # Runtime: QML shaders
 
-Covers: shell/Ui/feedback/VoiceOrb.qml, shell/Ui/feedback/shaders/**, scripts/check-voiceorb-shader.py, scripts/test-check-voiceorb-shader.py
+Covers: shell/Ui/feedback/VoiceOrb.qml, shell/Ui/feedback/shaders/**, scripts/check-voiceorb-shader.py, scripts/test-check-voiceorb-shader.py, scripts/shader/**
 
 The Qt facts the passive shader component rests on. Its component contract is in [components-media.md § VoiceOrb](components-media.md#voiceorb).
 
@@ -25,3 +25,9 @@ The Qt facts the passive shader component rests on. Its component contract is in
 ## Decisions
 
 - A generic passive visual belongs to `qs.Ui`: [D060](../decisions/D060-passive-voice-orb.md).
+
+## Frame timing
+
+- The threaded renderer's `qt.scenegraph.time.renderloop` messages identify the `QQuickWindow` by address. `sync` and `render` are CPU-side timings, truncated to integer milliseconds. They are not GPU execution times. `QSG_RHI_PROFILE=1` enables GPU timestamps; the same category prints `last retrieved GPU frame time` for completed GPU work. Qt retrieves timestamps asynchronously. Each stream therefore discards its own warmup samples. Sources: [Qt render loop](https://github.com/qt/qtdeclarative/blob/v6.11.2/src/quick/scenegraph/qsgthreadedrenderloop.cpp), [QQuickGraphicsConfiguration.setTimestamps](https://doc.qt.io/qt-6/qquickgraphicsconfiguration.html#setTimestamps).
+- `QSG_NO_VSYNC=1` requests swap interval 0. It does not remove Wayland compositor pacing. The instrument uses GPU timestamp frame time on minus off, not the interval between `frameSwapped` signals, for GPU cost. Presentation keeps its own reading. Qt's Vulkan device log identifies the selected physical device and its type; a CPU device cannot establish hardware shader cost. Source: [Qt Vulkan device selection](https://github.com/qt/qtbase/blob/v6.11.2/src/gui/rhi/qrhivulkan.cpp).
+- The standalone scene and the measured ceilings are in [validation-shaders.md](validation-shaders.md). They do not set a cost claim for another shader, device or backend.

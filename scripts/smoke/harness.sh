@@ -112,6 +112,17 @@ for name, old, new in (
     changed = text.replace(old, new)
     assert changed != text
     (target / f"shell/Hosts/OverlaySurface{name}.qml").write_text(changed)
+# The component module's directory is cached before the frame row runs.
+text = (source / "shell/Ui/feedback/VoiceOrb.qml").read_text()
+changed = text
+for old, new in (
+    ("Theme.motion.scale > 0 && Theme.voiceOrb.period > 0", "true"),
+    (" / Theme.voiceOrb.period", " / Math.max(1, Theme.voiceOrb.period)"),
+):
+    assert changed.count(old) == 1, "orb frame control: mutation must match once"
+    changed = changed.replace(old, new)
+assert changed != text
+(target / "shell/Ui/feedback/VoiceOrbFrameControl.qml").write_text(changed)
 PY
 tree_smoke_observer "$repo" "$sandbox/repo"
 [[ -z ${source_tree:-} ]] || tree_overlay_helpers "$source_tree" "$sandbox/repo"
@@ -1308,7 +1319,10 @@ case "${shell_output_scale:=1}" in
     ;;
   *) printf 'qml-smoke: refused: shell-output-scale=%s\n' "$shell_output_scale"; exit 2 ;;
 esac
-start_shell "$repo" "$sandbox/qs.log" || exit 1
+# The shader-cost runner uses this sandbox without loading product services.
+if [[ ${harness_scene_only:-false} != true ]]; then
+  start_shell "$repo" "$sandbox/qs.log" || exit 1
+fi
 # The one live layer with a namespace as [x, y, w, h], or layers=<n>.
 one_layer() { layers_of "$1" | python3 -c 'import json,sys; l=json.load(sys.stdin); print(json.dumps(l[0]) if len(l) == 1 else "layers=%d" % len(l))'; }
 # The shell's application windows are the nested instance's clients of the

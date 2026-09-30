@@ -1,0 +1,75 @@
+{
+  "machine": "cachy",
+  "date": "2026-09-30T09:53:25.060508+00:00",
+  "backend": "Vulkan",
+  "device": "NVIDIA GeForce RTX 5090",
+  "warmup": 120,
+  "samples": 600,
+  "method": "GPU timestamp frame time on minus off; QSG_NO_VSYNC=1",
+  "readings": {
+    "1": {
+      "cpu_sync_ms": 0.0,
+      "cpu_render_ms": 0.0,
+      "gpu_cost_ms": 0.0036,
+      "presentation_ms": 41
+    },
+    "2": {
+      "cpu_sync_ms": 0.0,
+      "cpu_render_ms": 0.0,
+      "gpu_cost_ms": 0.0042,
+      "presentation_ms": 72
+    }
+  },
+  "ceilings": {
+    "cpu_sync_ms": 2.0,
+    "cpu_render_ms": 0.0,
+    "gpu_cost_ms": 0.0084,
+    "presentation_ms": 144
+  },
+  "costly_control": {
+    "1": {
+      "cpu_sync_ms": 0.0,
+      "cpu_render_ms": 0.0,
+      "gpu_cost_ms": 0.016300000000000002,
+      "presentation_ms": 37
+    },
+    "2": {
+      "cpu_sync_ms": 1.0,
+      "cpu_render_ms": 0.0,
+      "gpu_cost_ms": 0.022099999999999998,
+      "presentation_ms": 41
+    }
+  },
+  "calibration_runs": [
+    {
+      "run": "shader-cost-1790761591-2346990",
+      "valid_scales": [1],
+      "readings": {
+        "1": {
+          "cpu_sync_ms": 1.0,
+          "cpu_render_ms": 0.0,
+          "gpu_cost_ms": 0.0034000000000000002,
+          "presentation_ms": 35
+        }
+      }
+    },
+    {
+      "run": "shader-cost-1790761862-2753669",
+      "valid_scales": [1, 2],
+      "readings": {
+        "1": {
+          "cpu_sync_ms": 0.0,
+          "cpu_render_ms": 0.0,
+          "gpu_cost_ms": 0.0036,
+          "presentation_ms": 41
+        },
+        "2": {
+          "cpu_sync_ms": 0.0,
+          "cpu_render_ms": 0.0,
+          "gpu_cost_ms": 0.0042,
+          "presentation_ms": 72
+        }
+      }
+    }
+  ]
+}

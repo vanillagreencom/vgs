@@ -191,6 +191,7 @@ smoke_row theme-browse
 smoke_row theme-browser
 smoke_row toasts
 smoke_row layers
+smoke_row shader-frames
 smoke_row tui
 smoke_row notices
 smoke_row devtools

@@ -14,6 +14,10 @@ Scope {
     id: root
     property int builds: 0
     property int frames: 0
+    property var layerFrameSurface: null
+    readonly property var layerFrameWindow: layerFrameSurface === null ? null : layerFrameSurface.contentItem.Window.window
+    property int layerFrames: 0
+    property bool layerFrameListening: true
     property int changes: 0
     property int userLoads: 0
     property var previousRows: []
@@ -166,6 +170,11 @@ Scope {
     }
 
     FileView { id: uiModule; path: Qt.resolvedUrl("Ui/qmldir"); blockLoading: true }
+
+    Connections {
+        target: root.layerFrameListening ? root.layerFrameWindow : null
+        function onFrameSwapped() { root.layerFrames += 1; }
+    }
 
     function instance(hostKey, id) {
         const rows = Plugins.built[hostKey] || [];
@@ -623,6 +632,46 @@ Scope {
         function fontAvailable(family: string): bool { return Qt.fontFamilies().indexOf(family) !== -1; }
         function buildCount(): int { return root.builds; }
         function frames(): int { return root.frames; }
+        // Observe only the selected layer's own QQuickWindow, not any bar.
+        function watchLayerFrames(id: string): string {
+            const entry = Layers.entries.find(e => e.pluginId === id);
+            if (entry === undefined) return "absent";
+            const surface = entry.screens[Object.keys(entry.screens).sort()[0]];
+            if (surface === undefined) return "no-screen";
+            root.layerFrameSurface = surface.QsWindow.window;
+            root.layerFrames = 0;
+            return root.layerFrameSurface.contentItem.Window.window === null ? "no-window" : "ok";
+        }
+        function layerFrames(): string {
+            return root.layerFrameSurface === null ? "absent" : String(root.layerFrames);
+        }
+        function layerFrameListening(listen: bool): string {
+            root.layerFrameListening = listen;
+            return "ok";
+        }
+        function layerFrameVisible(show: bool): string {
+            if (root.layerFrameSurface === null) return "absent";
+            root.layerFrameSurface.visible = show;
+            return "ok";
+        }
+        // A driver mutant draws in the same real layer as the fixture.
+        // popupDrop owns it with the other disposable object copies.
+        function layerOrbLoad(name: string, file: string): string {
+            if (name in root.popupCopies) return "loaded";
+            if (root.layerFrameSurface === null) return "absent";
+            const component = Qt.createComponent("file://" + file);
+            if (component.status !== Component.Ready) return "error: " + component.errorString();
+            const made = component.createObject(root.layerFrameSurface.contentItem, { active: true, level: 0.8 });
+            if (made === null) return "error: create";
+            const next = Object.assign({}, root.popupCopies);
+            next[name] = made;
+            root.popupCopies = next;
+            return "ok";
+        }
+        function dropLayerFrames(): string {
+            root.layerFrameSurface = null;
+            return "ok";
+        }
         function startOrder(): string { return root.json(root.startOrder); }
         // A detached process the shell starts that runs until GATE exists,
         // for SECONDS at most, so it can outlive the shell and never the

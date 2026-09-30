@@ -205,6 +205,7 @@ rows=(
   "boundary|design tokens|python3 scripts/check-design-tokens.py|shell/* .agents/skills/vgs-plugin/templates/* scripts/smoke/fixtures/* bin/vgsh-scan scripts/qml_source.py bin/lib/qml-library.js"
   "tools|VoiceOrb shader source and pack|python3 scripts/check-voiceorb-shader.py|shell/Ui/feedback/shaders/*"
   "tools|VoiceOrb shader controls|python3 scripts/test-check-voiceorb-shader.py|scripts/check-voiceorb-shader.py shell/Ui/feedback/shaders/*"
+  "tools|shader measurement controls|python3 scripts/test-measure-shader.py|scripts/measure-shader.sh scripts/shader/* scripts/test-measure-shader.py"
   "boundary|design token controls|python3 scripts/test-check-design-tokens.py|scripts/check-design-tokens.py bin/vgsh-scan scripts/qml_source.py bin/lib/qml-library.js shell/Commons/Tokens.js shell/Commons/ThemeLogic.js shell/Commons/Theme.qml shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js"
   "boundary|pointer cursor|python3 scripts/check-pointer-cursor.py|shell/* .agents/skills/vgs-plugin/templates/* bin/vgsh-scan scripts/qml_source.py"
   "boundary|pointer cursor controls|python3 scripts/test-check-pointer-cursor.py|scripts/check-pointer-cursor.py shell/* .agents/skills/vgs-plugin/templates/* bin/vgsh-scan scripts/qml_source.py"
@@ -232,6 +233,7 @@ rows=(
   "nix|nix flake package|scripts/test-flake.sh|flake.nix flake.lock config/requirements.json packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
   "package|Arch package build|scripts/arch-packages.sh|scripts/lib/release-tarball.sh packaging/arch/* packaging/install-system.sh"
   "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION LICENSE README.md scripts/smoke/* scripts/sample-shell-memory.sh"
+  "qml|shader GPU cost|scripts/measure-shader.sh|scripts/measure-shader.sh scripts/shader/* scripts/check-voiceorb-shader.py shell/Ui/feedback/VoiceOrb.qml shell/Ui/feedback/shaders/* shell/Commons/* config/shell.json bin/lib/qml-library.js shell/Core/HyprlandLayer.js scripts/smoke/harness.sh scripts/smoke/teardown.sh scripts/smoke/verdict.sh scripts/smoke/tree.sh scripts/smoke/shot.sh scripts/smoke/app-window.sh scripts/smoke/pointer/* scripts/smoke/toplevel/*"
 )
 
 # The branch point, printed on stdout: the merge base of HEAD with the
