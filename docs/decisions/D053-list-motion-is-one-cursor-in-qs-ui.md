@@ -1,4 +1,4 @@
-# D051: The list motion is one cursor in qs.Ui, and a plugin that owns its look hands it its own timings
+# D053: The list motion is one cursor in qs.Ui, and a plugin that owns its look hands it its own timings
 
 [← Decision Index](INDEX.md)
 
