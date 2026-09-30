@@ -50,7 +50,10 @@ const COLOR_OVERRIDE_ORDER = ["textMuted", "textFaint", "success", "warning", "d
 // colour its token default reads. Other roles derive from that colour too,
 // so the fix changes the palette colour, not the role's expression.
 const PALETTE_OVERRIDE_ROLES = { text: "foreground", accent: "accent" };
-const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.concat(Object.keys(PALETTE_OVERRIDE_ROLES)).map(role => `color.${role}`));
+// The selected indicators that draw in color.accent: a shortfall of one
+// against a surface is fixed by the accent's lift, as accent text is.
+const ACCENT_BOUNDARIES = ["checkbox.checked", "radio.checked", "toggle.on"];
+const FIXABLE_READABILITY = new Set(COLOR_OVERRIDE_ORDER.concat(Object.keys(PALETTE_OVERRIDE_ROLES)).map(role => `color.${role}`).concat(PALETTE_OVERRIDE_ROLES.accent ? ACCENT_BOUNDARIES : []));
 const STATUS_ROLES = ["success", "warning", "danger", "info"];
 const TERMINAL_SLOTS = Array.from({ length: 16 }, (_, index) => `color${index}`);
 const REPO_HOST = "https://github.com/";
@@ -326,16 +329,17 @@ function addReadabilityOverrides(theme, shell) {
     // foreground, so the later families fix what fails in the lifted theme.
     const shortfalls = shortfallsFor(theme, fixed);
 
-    if (roleShortfall(shortfalls, "accent") !== undefined) {
+    const accentShortfall = list => roleShortfall(list, "accent") || list.find(shortfall => ACCENT_BOUNDARIES.includes(shortfall.text));
+    if (accentShortfall(shortfalls) !== undefined) {
         let chosen = null;
         for (let step = 1; step <= 100; step++) {
             const candidate = withPaletteOverride(fixed, "accent", liftedPaletteLiteral(theme, fixed, "accent", step));
-            if (roleShortfall(shortfallsFor(theme, candidate), "accent") === undefined) {
+            if (accentShortfall(shortfallsFor(theme, candidate)) === undefined) {
                 chosen = candidate;
                 break;
             }
         }
-        if (chosen === null) return { held: true, shortfall: roleShortfall(shortfalls, "accent") };
+        if (chosen === null) return { held: true, shortfall: accentShortfall(shortfalls) };
         fixed = chosen;
     }
 

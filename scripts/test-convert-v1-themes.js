@@ -334,8 +334,8 @@ try {
         assert.equal(mismatch.status, 1, mismatch.stdout + mismatch.stderr);
         assert.match(mismatch.stderr, /catalog-palette-mismatch/);
 
-        const smallestNeedle = "if (roleShortfall(shortfalls, \"accent\") !== undefined) {\n        let chosen = null;\n        for (let step = 1; step <= 100; step++)";
-        const largestAccent = converterCopy(path.join(dir, "largest-accent"), smallestNeedle, "if (roleShortfall(shortfalls, \"accent\") !== undefined) {\n        let chosen = null;\n        for (let step = 100; step >= 1; step--)");
+        const smallestNeedle = "if (accentShortfall(shortfalls) !== undefined) {\n        let chosen = null;\n        for (let step = 1; step <= 100; step++)";
+        const largestAccent = converterCopy(path.join(dir, "largest-accent"), smallestNeedle, "if (accentShortfall(shortfalls) !== undefined) {\n        let chosen = null;\n        for (let step = 100; step >= 1; step--)");
         const mutantDir = path.join(dir, "largest-accent-run");
         freshRoot(mutantDir);
         copyFixtureArchives(mutantDir);
@@ -343,6 +343,17 @@ try {
         assert.equal(mutant.status, 0, mutant.stdout + mutant.stderr);
         const mutantTheme = JSON.parse(fs.readFileSync(path.join(mutantDir, "themes", "catalog", "accent", "theme.json"), "utf8"));
         assert.notEqual(mutantTheme.tokens.palette.accent, "#838084");
+
+        // A selected indicator draws in the accent, so its 3:1 boundary
+        // shortfall is fixed by the accent's lift; a copy that does not
+        // count it holds the theme back on it.
+        const noBoundary = converterCopy(path.join(dir, "no-boundary"), "const ACCENT_BOUNDARIES = [\"checkbox.checked\", \"radio.checked\", \"toggle.on\"];", "const ACCENT_BOUNDARIES = [];");
+        const noBoundaryDir = path.join(dir, "no-boundary-run");
+        freshRoot(noBoundaryDir);
+        copyFixtureArchives(noBoundaryDir);
+        const heldBoundary = runThemes(noBoundaryDir, ["accent"], [], noBoundary);
+        assert.equal(heldBoundary.status, 0, heldBoundary.stdout + heldBoundary.stderr);
+        assert.match(heldBoundary.stdout, /held-back theme=accent text=checkbox\.checked/, "the accent's lift still fixed a selected indicator it did not count");
     });
 
     row("text override lifts the palette foreground", dir => {
