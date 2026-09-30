@@ -2,6 +2,10 @@
 
 Jarvis runs a service-owned Node child and shows its health in Settings. This skeleton has no voice control, capture, provider connection or desktop actions.
 
+![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Features
 
 - The child ends when the service closes its stdin.
