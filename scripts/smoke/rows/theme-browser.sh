@@ -53,8 +53,20 @@ card_source_size_matches() { # PATH
 # SUPER+T typed on the nested seat.
 press_themes() { type_keys -M logo -k t -m logo; }
 rail_focused() { ipc smoke readDescendant overlay vgs.themes CardCarousel activeFocus; }
-# Whether the selected card is no longer NAME: moved or same.
-selection_moved() { [[ $(view_selected_name) != "$1" ]] && echo moved || echo same; }
+# The selected card as `card=<name>`, read from the view's card object
+# through py_reply; `no-selection` for none, and a state word the probe
+# answers in its place, such as `absent` for a closed browser, passes
+# through without the prefix, so no failed read ever names a card.
+selected_card() { view_value selected | py_reply 'import json,sys; c=json.load(sys.stdin); print("card=" + c["name"] if isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"] else "no-selection")'; }
+# selection_moved CARD: `moved` once the view selects a card other than
+# CARD, a `card=<name>` selected_card read, `same` while it selects CARD,
+# and anything selected_card answers that names no card as it came.
+selection_moved() {
+  local now
+  now="$(selected_card)" || return 1
+  [[ $now == card=* ]] || { printf '%s\n' "$now"; return 0; }
+  [[ $now != "$1" ]] && echo moved || echo same
+}
 # rail_band: a point on the band beside the cards, 2 px into the rail's
 # top-left corner, above the slices and left of the selected card, as
 # `X Y`: inside the browser's pane, over no card.
@@ -367,11 +379,16 @@ clear_filter() { # LABEL
 clear_filter "Clear filter"
 expect_poll "Clear filter clears the filter" '""' view_value filterText
 expect_poll "Clear filter hands the keyboard back to the rail" true rail_focused
-cleared_on="$(view_selected_name)" || cleared_on=""
+cleared_on="$(selected_card)" || cleared_on="unreadable"
+[[ $cleared_on == card=* ]] || fail "the card selected after Clear filter is unreadable: $cleared_on"
 type_keys -k Right || fail "sending Right after Clear filter failed"
 expect_poll "Right after Clear filter steps the rail" moved selection_moved "$cleared_on"
+expect "the browser stays open after Right" 1 layer_count vgs:overlay
 type_keys -k Escape || fail "sending Escape after Clear filter failed"
 expect_poll "Escape after Clear filter closes the browser" 0 layer_count vgs:overlay
+# Control: the closed browser answers a state word, which names no card
+# and so reads as no move.
+expect "control: a closed browser is no step of the rail" absent selection_moved "$cleared_on"
 # SUPER+T closes the view it opened, and a click on the scrim closes it.
 press_themes || fail "typing SUPER+T failed"
 expect_poll "SUPER+T opens the browser" 1 layer_count vgs:overlay
