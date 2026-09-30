@@ -5,7 +5,9 @@
 # plugin's status reply, and each refusal. A stub qs, first on the suite's
 # PATH, records the argv of its lock call and answers it from STUB_REPLY
 # and STUB_STATUS after STUB_NOISE; it answers the first status call from
-# STUB_BEFORE and every later one from STUB_AFTER. The instance lock names
+# STUB_BEFORE and every later one from STUB_AFTER. STUB_CLIENT_FAILURE
+# answers every call with that line and exit 0, as Quickshell 0.3.1's
+# client answers a failure of its own. The instance lock names
 # this suite's own pid, a live process that is no shell. Expected values
 # are the ones each row planted.
 set -euo pipefail
@@ -16,6 +18,7 @@ source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
 cat >"$tmp/qs" <<'SH'
 #!/usr/bin/env bash
 [[ -z ${STUB_NOISE:-} ]] || printf '%s\n' "$STUB_NOISE"
+if [[ -n ${STUB_CLIENT_FAILURE:-} ]]; then printf '%s\n' "$STUB_CLIENT_FAILURE"; exit 0; fi
 if [[ ${7:-} == status ]]; then
   [[ ${STUB_STATUS:-0} == 0 ]] || exit "$STUB_STATUS"
   before='{"secure":false,"refusals":0}' after='{"secure":true,"refusals":0}'
@@ -53,6 +56,8 @@ lock_row "a plugin refusal is the command's" 1 "" "vgsh: refused: lock=not-ready
 lock_row "a core refusal keeps its key" 1 "" "vgsh: refused: lock-content=not-a-component" STUB_REPLY="refused: lock-content=not-a-component"
 lock_row "a lock function not registered yet is no answer" 1 "" "vgsh: refused: lock=no-answer pid=$$" STUB_REPLY="unknown: lock"
 lock_row "a failed qs call is no answer" 1 "" "vgsh: refused: lock=no-answer pid=$$" STUB_STATUS=1
+lock_row "a missing vgs.lock target is no answer" 1 "" "vgsh: refused: lock=no-answer pid=$$" STUB_CLIENT_FAILURE="Target not found."
+lock_row "a coloured client error is no answer" 1 "" "vgsh: refused: lock=no-answer pid=$$" STUB_CLIENT_FAILURE=$'\e[31mERROR quickshell.ipc: no instance\e[0m'
 lock_row "a lock the compositor refused is refused" 1 "" "vgsh: refused: lock=refused-by-compositor" STUB_AFTER='{"secure":false,"refusals":1}'
 lock_row "a lock never confirmed is refused" 1 "" "vgsh: refused: lock=unconfirmed" STUB_AFTER='{"secure":false,"refusals":0}'
 lock_row "a lock already confirmed is ok" 0 ok "" STUB_BEFORE='{"secure":true,"refusals":2}' STUB_AFTER='{"secure":true,"refusals":2}'
@@ -87,6 +92,8 @@ control no-wait '  if [[ $now == *'"'"'"secure":true'"'"'* ]]; then echo ok; exi
 control_row "a copy that answers before the compositor does" 1 "vgsh: refused: lock=refused-by-compositor" STUB_AFTER='{"secure":false,"refusals":1}'
 control refusal-ignored '    refuse 1 "lock=refused-by-compositor"' '    : "lock=refused-by-compositor"'
 control_row "a copy that waits out a refusal" 1 "vgsh: refused: lock=refused-by-compositor" STUB_AFTER='{"secure":false,"refusals":1}'
+control client-failure-unjudged '  [[ $status != 0 ]] || return 1' '  :'
+control_row "a copy that reads a missing target as the plugin's answer" 1 "vgsh: refused: lock=no-answer pid=$$" STUB_CLIENT_FAILURE="Target not found."
 control whole-output '  printf '"'"'%s\n'"'"' "${out##*$'"'"'\n'"'"'}"' '  printf '"'"'%s\n'"'"' "$out"'
 control_row "a copy that reads qs's log as the answer" 0 "" STUB_NOISE="INFO: log line"
 
