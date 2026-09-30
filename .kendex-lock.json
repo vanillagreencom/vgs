@@ -3932,15 +3932,6 @@
             "name": "reviewer",
             "harness": "claude"
           }
-        },
-        {
-          "reason": "required-by",
-          "by": {
-            "source": "kendex",
-            "kind": "skill",
-            "name": "slack",
-            "harness": "claude"
-          }
         }
       ]
     },
@@ -3998,15 +3989,6 @@
             "source": "kendex",
             "kind": "skill",
             "name": "reviewer",
-            "harness": "codex"
-          }
-        },
-        {
-          "reason": "required-by",
-          "by": {
-            "source": "kendex",
-            "kind": "skill",
-            "name": "slack",
             "harness": "codex"
           }
         }
@@ -4068,15 +4050,6 @@
             "name": "reviewer",
             "harness": "copilot"
           }
-        },
-        {
-          "reason": "required-by",
-          "by": {
-            "source": "kendex",
-            "kind": "skill",
-            "name": "slack",
-            "harness": "copilot"
-          }
         }
       ]
     },
@@ -4134,15 +4107,6 @@
             "source": "kendex",
             "kind": "skill",
             "name": "reviewer",
-            "harness": "pi"
-          }
-        },
-        {
-          "reason": "required-by",
-          "by": {
-            "source": "kendex",
-            "kind": "skill",
-            "name": "slack",
             "harness": "pi"
           }
         }
@@ -4584,99 +4548,6 @@
         "name": "second-opinion",
         "paths": [
           ".agents/skills/second-opinion"
-        ]
-      },
-      "reasons": [
-        {
-          "reason": "requested"
-        }
-      ]
-    },
-    "skill:slack:claude": {
-      "name": "slack",
-      "kind": "skill",
-      "harness": "claude",
-      "source": "kendex",
-      "sourceRepo": "vanillagreencom/kendex",
-      "sourceHash": "de8737bfee57ff85951dfcc0f5e694a229644c8dfe99800dce823bb55a047e0c",
-      "sourceCommit": "1d025267d41db99ef15706eb69550f11c8d0478f",
-      "renderedHash": "c8db621c5d0a5b5f4c652bba666126c1add0b715efb91b94ae95bc820e8b0a53",
-      "enabled": true,
-      "emitted": {
-        "kind": "skill",
-        "name": "slack",
-        "paths": [
-          ".agents/skills/slack",
-          ".claude/skills/slack"
-        ]
-      },
-      "reasons": [
-        {
-          "reason": "requested"
-        }
-      ]
-    },
-    "skill:slack:codex": {
-      "name": "slack",
-      "kind": "skill",
-      "harness": "codex",
-      "source": "kendex",
-      "sourceRepo": "vanillagreencom/kendex",
-      "sourceHash": "de8737bfee57ff85951dfcc0f5e694a229644c8dfe99800dce823bb55a047e0c",
-      "sourceCommit": "1d025267d41db99ef15706eb69550f11c8d0478f",
-      "renderedHash": "c8db621c5d0a5b5f4c652bba666126c1add0b715efb91b94ae95bc820e8b0a53",
-      "enabled": true,
-      "emitted": {
-        "kind": "skill",
-        "name": "slack",
-        "paths": [
-          ".agents/skills/slack"
-        ]
-      },
-      "reasons": [
-        {
-          "reason": "requested"
-        }
-      ]
-    },
-    "skill:slack:copilot": {
-      "name": "slack",
-      "kind": "skill",
-      "harness": "copilot",
-      "source": "kendex",
-      "sourceRepo": "vanillagreencom/kendex",
-      "sourceHash": "de8737bfee57ff85951dfcc0f5e694a229644c8dfe99800dce823bb55a047e0c",
-      "sourceCommit": "1d025267d41db99ef15706eb69550f11c8d0478f",
-      "renderedHash": "c8db621c5d0a5b5f4c652bba666126c1add0b715efb91b94ae95bc820e8b0a53",
-      "enabled": true,
-      "emitted": {
-        "kind": "skill",
-        "name": "slack",
-        "paths": [
-          ".agents/skills/slack"
-        ]
-      },
-      "reasons": [
-        {
-          "reason": "requested"
-        }
-      ]
-    },
-    "skill:slack:pi": {
-      "name": "slack",
-      "kind": "skill",
-      "harness": "pi",
-      "source": "kendex",
-      "sourceRepo": "vanillagreencom/kendex",
-      "sourceHash": "de8737bfee57ff85951dfcc0f5e694a229644c8dfe99800dce823bb55a047e0c",
-      "sourceCommit": "1d025267d41db99ef15706eb69550f11c8d0478f",
-      "renderedHash": "c8db621c5d0a5b5f4c652bba666126c1add0b715efb91b94ae95bc820e8b0a53",
-      "enabled": true,
-      "emitted": {
-        "kind": "skill",
-        "name": "slack",
-        "paths": [
-          ".agents/skills/slack"
         ]
       },
       "reasons": [

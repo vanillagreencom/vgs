@@ -199,10 +199,6 @@ enabled = true
 source = "kendex"
 enabled = true
 
-[skills.slack]
-source = "kendex"
-enabled = true
-
 [skills.project-management]
 source = "kendex"
 enabled = true

@@ -4,8 +4,6 @@
 # `.env` is never read.
 
 [env]
-# Slack control channel for the local vgs overseer (owner request 2026-09-30).
-SLACK_OWNERS = "brad@vanillagreen.com"
 CI_FIX_MAX_CYCLES = "6"
 # Reviews are optional; no reviewer wait or required evidence.
 PR_REVIEW_GATE = "off"
