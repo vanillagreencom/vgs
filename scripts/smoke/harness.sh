@@ -635,24 +635,19 @@ ipc_strip_ansi() { sed $'s/\x1b\[[0-9;]*m//g' <<<"$1"; }
 
 # Quickshell 0.3.1 prints these forms in src/io/ipccomm.cpp callFunction
 # and src/ipc/ipc.hpp waitForResponse.
-ipc_failure_text() { # LINE
-  local line="$1" stripped
-  stripped="$(ipc_strip_ansi "$line")" || return 1
-  if [[ $line == *quickshell.ipc* && $stripped == *"ERROR quickshell.ipc"* ]]; then
-    printf '%s\n' "$stripped"
+ipc_failed() { # TARGET FUNCTION LINE
+  local target="$1" fn="$2" line="$3" stripped
+  if [[ $line == *quickshell.ipc* ]]; then
+    IFS= read -r stripped < <(ipc_strip_ansi "$line") || return 1
+    [[ $stripped == *"ERROR quickshell.ipc"* ]] || return 1
+    printf 'ipc: %s %s: %s\n' "$target" "$fn" "$stripped" >>"$sandbox/ipc.log"
     return 0
   fi
-  case "$stripped" in
-    "Function not found."|"Target not found."|"Not ready to accept queries yet."|"Target required to send message."|"Function required to send message."|Too\ many\ arguments\ provided*|Too\ few\ arguments\ provided*|Unable\ to\ parse\ argument*|Function\ definition:*) printf '%s\n' "$stripped" ;;
+  case "$line" in
+    "Function not found."|"Target not found."|"Not ready to accept queries yet."|"Target required to send message."|"Function required to send message."|Too\ many\ arguments\ provided*|Too\ few\ arguments\ provided*|Unable\ to\ parse\ argument*|Function\ definition:*)
+      printf 'ipc: %s %s: %s\n' "$target" "$fn" "$line" >>"$sandbox/ipc.log" ;;
     *) return 1 ;;
   esac
-}
-
-ipc_failed() { # TARGET FUNCTION LINE
-  local text
-  text="$(ipc_failure_text "$3")" || return 1
-  printf 'ipc: %s %s: %s\n' "$1" "$2" "$text" >>"$sandbox/ipc.log"
-  return 0
 }
 
 ipc_page_failed() { # TEXT
