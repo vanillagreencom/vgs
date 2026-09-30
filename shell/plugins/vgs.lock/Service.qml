@@ -285,7 +285,7 @@ Item {
         id: sleepWatch
         running: root.shell !== null && root.lockBeforeSleep && root.sleepMissing.length === 0 && !sleepRetry.running
         stdinEnabled: true
-        command: ["systemd-inhibit", "--what=sleep", "--mode=delay", "--who=VGS", "--why=Lock the screen before sleep", String(Qt.resolvedUrl("bin/sleep-watch")).replace(/^file:\/\//, "")]
+        command: ["systemd-inhibit", "--what=sleep", "--mode=delay", "--who=VGS", "--why=Lock the screen before sleep", "setpriv", "--pdeathsig", "TERM", "--", String(Qt.resolvedUrl("bin/sleep-watch")).replace(/^file:\/\//, "")]
         stdout: SplitParser {
             onRead: line => {
                 const event = LockModel.sleepLine(line);

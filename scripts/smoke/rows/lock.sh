@@ -4,14 +4,12 @@
 # lock`, SUPER+L on the nested seat, its idle watch and its before-sleep
 # hook. Each lock is read back from the compositor, a monitor naming LOCK
 # among the reasons it cannot go solitary in `hyprctl -j monitors`, and
-# from the core's lending record. A second lock client, the harness's
-# lock-client standing in for another locker, holds the session twice.
-# With the restore option on, the plugin's lock takes over, the client's
-# unlock then unlocks the session, and the core ends the plugin's lock. With
-# it off, Hyprland refuses the plugin's lock: `vgsh lock` answers the
-# refusal, the core drops the request, the plugin publishes it, and a sleep
-# then is released as refused with a toast. Each time the plugin locks
-# again once the client lets go.
+# from the core's lending record. While a second lock client, the harness's
+# lock-client standing in for another locker, holds the session, the
+# plugin's lock takes over under the restore option; the client's unlock
+# then unlocks the session, the core ends the plugin's lock, and the plugin
+# publishes it and locks again. A sleep whose budget runs out before the
+# lock is confirmed is published and shown as a toast once unlocked.
 # A hook that cannot start is published as such and taken again once the
 # setting turns it back on. Disabling the plugin while locked keeps
 # the session locked, and the rebuilt plugin hands its lock screen over
@@ -173,7 +171,7 @@ expect "the last sleep is published as locked" '["ok", "The session was locked b
 # replace the client's and tells the client nothing; the client's unlock
 # then unlocks the session under the plugin's confirmed lock, and the
 # core's reading of Hyprland ends that lock as the compositor's.
-expected_errors+=('capabilities: lock=ended-by-compositor' 'lock: sleep=unlocked reason=refused')
+expected_errors+=('capabilities: lock=ended-by-compositor')
 # Wait up to 12 s for CMD to print WANT, and fail nothing: the expect that
 # follows reads it. The core reads Hyprland every 2 s and ends a lock on
 # the second unlocked reading.
@@ -206,32 +204,30 @@ expect_poll "takeover: the core holds the confirmed lock again" '[true, true, tr
 expect "takeover: the lock status is ready again" '["ok", "Ready"]' status_value lock
 release "the lock after the takeover"
 
-# With the option off, Hyprland refuses the plugin's lock while the client
-# holds the session: `vgsh lock` answers the refusal, the core drops the
-# request, and a sleep then is released as refused with a toast. Once the
-# client lets go, the plugin locks again.
-printf '%s\n' 'hl.config({ misc = { allow_session_lock_restore = false } })' >>"$lock_hypr_lua"
-expect "the nested instance reloads with the restore option off" ok hypr reload config-only
-expect_poll "the restore option reads off" '{"bool": false}' restore_option
-start_lock_client "refusal"
-expect "refusal: vgsh lock answers the compositor's refusal" "vgsh: refused: lock=refused-by-compositor exit=1" vgsh_lock
-expect_poll "refusal: the core dropped the refused request" '[false, false, true]' core_lock
-expect "refusal: the plugin counted the refusal" '[2, false]' lock_status refusals secure
-expect "refusal: the lock status warns of it" '["warning", "Hyprland refused or ended the last lock: another lock screen may hold the session"]' status_value lock
+# A sleep whose budget runs out before the lock is confirmed: logind's delay
+# reads 1 s, so the hook's budget is 1 ms. The hook lets the sleep go as
+# timed out, the plugin publishes it, and the user sees the toast once back
+# at the desktop, not over the lock screen.
+expected_errors+=('lock: sleep=unlocked reason=timeout')
+retake_hook() { # LABEL
+  set_setting lockBeforeSleep false
+  expect_poll "$1: turning the setting off publishes the hook off" info sleep_status
+  set_setting lockBeforeSleep null
+  expect_poll "$1: the hook holds again" ok sleep_status
+}
+printf '#!/bin/sh\ncase "$5" in PreparingForSleep) echo "b false" ;; *) echo "t 1000000" ;; esac\n' >"$shim/busctl"
+retake_hook "a 1 s delay"
+expect_poll "timeout: the hook read the short delay" "ready budget_ms=1" tail -n 1 -- "$sleep_log"
 : >"$sleep_trigger"
-expect_poll "refusal: a sleep is released as refused" "released reason=refused" bash -c 'grep -x "released reason=refused" -- "$1" || :' _ "$sleep_log"
-expect_poll "refusal: the last sleep is published as unlocked" '["danger", "The last suspend went ahead unlocked: Hyprland refused the lock"]' status_value lastSleep
-expect_poll "refusal: the user is told the machine slept unlocked" '[["The session was not locked before sleep", "danger"]]' lock_toasts
-expect_poll "refusal: the hook is taken again after the refused sleep" 3 bash -c 'grep -c -x "ready budget_ms=4000" -- "$1" || :' _ "$sleep_log"
-stop_lock_client "refusal"
-expect_poll "refusal: the session is unlocked after the other client" unlocked session_lock
-expect "refusal: vgsh lock locks again once the other client let go" "ok exit=0" vgsh_lock
-expect_poll "refusal: the core holds the confirmed lock again" '[true, true, true]' core_lock
-expect "refusal: the lock status is ready again" '["ok", "Ready"]' status_value lock
-release "the lock after the refusal"
-restore_lock_hypr_lua || fail "hyprland.lua is put back after the refusal"
-expect "the nested instance reloads the first run's hyprland.lua" ok hypr reload config-only
-expect_poll "the restore option reads on again" '{"bool": true}' restore_option
+expect_poll "timeout: the hook let the sleep go on its budget" "released reason=timeout" bash -c 'grep -x "released reason=timeout" -- "$1" || :' _ "$sleep_log"
+expect_poll "timeout: the sleep still locked the session" locked session_lock
+expect_poll "timeout: the last sleep is published as unconfirmed" '["danger", "The last suspend went ahead before the lock was confirmed"]' status_value lastSleep
+expect "timeout: no toast shows over the lock screen" '[]' lock_toasts
+release "the timed-out sleep lock"
+expect_poll "timeout: the user is told once back at the desktop" '[["The session was not locked before sleep", "danger"]]' lock_toasts
+printf '#!/bin/sh\ncase "$5" in PreparingForSleep) echo "b false" ;; *) echo "t 5000000" ;; esac\n' >"$shim/busctl"
+retake_hook "logind's default delay"
+expect_poll "the hook read logind's default delay again" "ready budget_ms=4000" tail -n 1 -- "$sleep_log"
 
 # A hook that cannot start, here a systemd-inhibit whose interpreter does
 # not exist, is published as such, and turning the setting back on takes it

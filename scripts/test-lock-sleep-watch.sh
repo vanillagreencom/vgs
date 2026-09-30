@@ -2,8 +2,9 @@
 # Controls for vgs.lock's before-sleep hook, shell/plugins/vgs.lock/bin/
 # sleep-watch: the budget it derives from logind's InhibitDelayMaxUSec, the
 # lines it prints, a preparation already under way when it subscribes, the
-# release on `secure`, `refused`, the budget's end and a closed stdin, and
-# its refusals when dbus-monitor stays silent or ends. Stand-in busctl and
+# release on `secure`, `refused`, the budget's end and a closed stdin, its
+# refusals when dbus-monitor stays silent or ends, and TERM ending its
+# dbus-monitor with it. Stand-in busctl and
 # dbus-monitor, first on PATH, answer from STUB_WINDOW and STUB_PREPARING;
 # the monitor prints the bus's NameAcquired, then one PrepareForSleep
 # unless STUB_NO_SIGNAL or STUB_QUIET is set, nothing with STUB_SILENT. No
@@ -84,6 +85,24 @@ watch_row "the budget's end releases the sleep" 0 "ready budget_ms=250|sleep bud
 watch_row "a closed stdin releases the sleep" 0 "ready budget_ms=4000|sleep budget_ms=4000|released reason=closed" "" closed STUB_WINDOW=5000000
 watch_row "dbus-monitor ending is refused" 1 "ready budget_ms=4000" "sleep-watch: refused: monitor=exited status=3" closed STUB_WINDOW=5000000 STUB_QUIET=1
 
+# TERM to the hook, as setpriv delivers when systemd-inhibit is stopped,
+# ends its dbus-monitor with it: `gone`, or `alive` when the monitor
+# outlived it. The monitor is found as the hook's child by its pid.
+term_row() { # SCRIPT
+  local path="$1" pid child="" state
+  sleep 5 | env -i PATH="$stub:/usr/bin:/bin" STUB_WINDOW=5000000 STUB_NO_SIGNAL=1 "$path" >"$TMP_ROOT/term.out" 2>/dev/null &
+  pid=$!
+  for _ in $(seq 1 30); do grep -q '^ready ' "$TMP_ROOT/term.out" 2>/dev/null && break; sleep 0.1; done
+  child="$(ps -o pid= --ppid "$pid" | head -n 1 | tr -d ' ')"
+  kill -TERM "$pid" 2>/dev/null || :
+  wait "$pid" 2>/dev/null || :
+  sleep 0.3
+  if [[ -z $child ]]; then state=no-monitor; elif kill -0 "$child" 2>/dev/null; then state=alive; kill -TERM "$child" 2>/dev/null || :; else state=gone; fi
+  echo "$state"
+}
+got="$(term_row "$script")"
+if [[ $got == gone ]]; then ok "TERM ends the hook's dbus-monitor"; else fail "TERM ends the hook's dbus-monitor: got $got"; fi
+
 # Must-fail controls, one per rule, each on a copy of the script.
 control() { # NAME NEEDLE REPLACEMENT
   local copy="$TMP_ROOT/control-$1"
@@ -122,6 +141,9 @@ control no-refused '      refused) echo "released reason=refused" ;;' '      ref
 control_row "a copy that takes a refusal for a timeout" "ready budget_ms=4000|sleep budget_ms=4000|released reason=refused" refused STUB_WINDOW=5000000
 control any-signal '[[ $line == *"boolean true"* ]] || continue' ':'
 control_row "a copy that takes any bus line for a sleep" "ready budget_ms=4000" closed STUB_WINDOW=5000000 STUB_QUIET=1
+control no-exit-trap "trap 'kill \"\$monitor_pid\" 2>/dev/null || :' EXIT" ':'
+got="$(term_row "$WATCH_CONTROL")"
+if [[ $got == alive ]]; then ok "control: a copy whose monitor outlives TERM"; else fail "control: a copy whose monitor outlives TERM got $got"; fi
 
 if ((failures > 0)); then echo "test-lock-sleep-watch: failed=$failures"; exit 1; fi
 echo "test-lock-sleep-watch: ok"

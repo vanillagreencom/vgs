@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sleep-watch: vgs.lock's before-sleep hook, run under
-#   systemd-inhibit --what=sleep --mode=delay -- sleep-watch
+#   systemd-inhibit --what=sleep --mode=delay -- setpriv --pdeathsig TERM -- sleep-watch
 # so logind holds every suspend until this process exits, for at most its
 # InhibitDelayMaxUSec. It prints, one line each, on stdout:
 #   ready budget_ms=<n>     the inhibitor holds and the listener is live;
@@ -11,7 +11,10 @@
 # `secure`, the service's word that the session lock is confirmed, or
 # `refused`, that the compositor refused it. Then it exits 0, which
 # releases the inhibitor and lets the suspend go on. stdin closing is
-# reason=closed. The service starts it again after each exit.
+# reason=closed. The service starts it again after each exit. TERM, such as
+# the one setpriv delivers when systemd-inhibit is stopped, ends it, and
+# bash runs its EXIT trap, which ends its dbus-monitor, so no listener
+# outlives the hook.
 #
 # No PrepareForSleep is lost between taking the inhibitor and listening.
 # It subscribes first and waits for dbus-monitor's first line, the bus's
