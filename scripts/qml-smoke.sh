@@ -213,5 +213,7 @@ smoke_row notices-control
 smoke_row hidpi
 smoke_row start-order
 smoke_row overlay-capture
+# Last: every row above has run, so its reading covers the whole run.
+smoke_row auth-sentinel
 
 smoke_finish

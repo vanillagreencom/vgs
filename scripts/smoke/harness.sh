@@ -128,6 +128,19 @@ PY
 tree_smoke_observer "$repo" "$sandbox/repo"
 [[ -z ${source_tree:-} ]] || tree_overlay_helpers "$source_tree" "$sandbox/repo"
 repo="$sandbox/repo"
+# The one authentication log: every sentinel below appends `<name> <argv>`
+# to it, and rows/auth-sentinel.sh, the last row, requires it empty.
+auth_log="$sandbox/auth-sentinel.calls"
+# bin/vgsh-browser-policy sets its own PATH to the system directories and
+# runs sudo from there, so no PATH sentinel can stand before its sudo. The
+# copy's writer is a sentinel for the whole run: a plugin TUI the stand-in
+# terminal runs for real, such as vgs.themes's browser-policy, reaches it
+# and never the host's sudo. A row that presses that step swaps in its own
+# stand-in and puts the sentinel back.
+if [[ -e $repo/bin/vgsh-browser-policy ]]; then
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "vgsh-browser-policy $*" >>%q\nexit 1\n' "$auth_log" >"$repo/bin/vgsh-browser-policy"
+  chmod 755 "$repo/bin/vgsh-browser-policy"
+fi
 
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
@@ -215,6 +228,43 @@ case "\${1:-}" in
 esac
 EOF
 chmod 755 "$shim/crontab"
+# Authentication sentinels. No row may start a PAM conversation, a polkit
+# authentication, a sudo, a keyring unlock or any other authentication
+# against the host user: the nested sandbox shares the host's PAM, polkit
+# and faillock. Every command that asks for one stands in the shell's own
+# PATH directory for the whole run, ahead of the host's: sudo, doas, run0,
+# pkexec and su log their argv to $auth_log and exit 1, running nothing;
+# loginctl answers `show-user` with lingering off, the read the automations
+# engine makes, and logs any other verb, such as enable-linger, which
+# polkit may ask about; secret-tool answers `search` with nothing stored
+# and `lookup` with no secret, the reads a background probe makes without
+# unlocking, and logs any other verb, a store, a clear or an unlock. A row
+# that needs one of them stands its own stub over the sentinel;
+# rows/auth-sentinel.sh reads the log empty at the end of the run.
+for sentinel in sudo doas run0 pkexec su; do
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s $*" >>%q\nexit 1\n' "$sentinel" "$auth_log" >"$shim/$sentinel"
+  chmod 755 "$shim/$sentinel"
+done
+cat >"$shim/loginctl" <<EOF
+#!/usr/bin/env bash
+if [[ \${1:-} == show-user ]]; then echo no; exit 0; fi
+printf '%s\n' "loginctl \$*" >>"$auth_log"
+exit 1
+EOF
+cat >"$shim/secret-tool" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+  search) exit 0 ;;
+  lookup) exit 1 ;;
+esac
+printf '%s\n' "secret-tool \$*" >>"$auth_log"
+exit 1
+EOF
+chmod 755 "$shim/loginctl" "$shim/secret-tool"
+auth_sentinels=(sudo doas run0 pkexec su loginctl secret-tool)
+# shell_resolves NAME: the file NAME resolves to on the PATH every sandbox
+# shell starts with, and so every process it starts, a TUI included.
+shell_resolves() { PATH="$shell_start_path" command -v -- "$1" || echo none; }
 # The PATH every sandbox shell starts with: the shell's stand-in directory,
 # then node's, then the host's. A row that stands in more commands puts
 # its own directory ahead of it. shell_start_words are the environment

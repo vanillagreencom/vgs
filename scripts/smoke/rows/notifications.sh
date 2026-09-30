@@ -1544,6 +1544,9 @@ last_secret_call() { if [[ -e $shim/secret-tool.calls ]]; then tail -n 1 -- "$sh
 acme_stdin() { python3 -c 'import os,sys; p=sys.argv[1]; print(repr(open(p, "rb").read()) if os.path.exists(p) else "absent")' "$shim/secret-tool.stdin.slack:T0ACME"; }
 row_inputs() { ipc smoke statusRowInputs window vgs.settings; }
 calls_before="$(secret_calls)"
+# The core runs secret-tool by the shell's PATH: the row's stand-in, never
+# the host's keyring.
+expect "secret-tool resolves to the stand-in on the shell's PATH" "$shim/secret-tool" shell_resolves secret-tool
 expect "the absent Acme line takes no edit before Connect" '[[]]' row_inputs
 expect "the manager refuses a clear the absent line does not offer" "refused: secret=slack:T0ACME reason=not-offered" ipc smoke invokeInstance window vgs.settings clearSecret '{"id":"vgs.notifications","key":"slackTokens","account":"slack:T0ACME"}'
 settings_press "Connect" StatusLine "Acme Corp (acme)" || fail "the click on Acme's Connect failed"

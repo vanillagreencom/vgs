@@ -109,10 +109,16 @@ expected_errors+=('settings: vgs\.automations/linger refused: action=linger reas
 settings_page_open vgs.automations
 expect_poll "lingering off offers Enable while logged out" '[["linger", "Enable while logged out", true]]' offered_actions vgs.automations
 forget_record
-printf '#!/usr/bin/env bash\necho yes\n' >"$shim/loginctl"
+# The linger TUI runs for real under the stand-in terminal, so loginctl
+# must be the row's stand-in on the shell's PATH; it logs every call and
+# answers lingering on, so the TUI asks nothing and enables nothing.
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\necho yes\n' "$auto_stub/loginctl.calls" >"$shim/loginctl"
+expect "loginctl resolves to the row's stand-in on the shell's PATH" "$shim/loginctl" shell_resolves loginctl
 settings_press "Enable while logged out" || fail "the click on Enable while logged out failed"
 expect_poll "Enable while logged out hands the terminal the linger TUI" "$(words vgs.automations/linger tui/linger.sh)" recorded_tail
 expect_run_end "the button's linger run ends" vgs.automations/linger
+linger_enables() { grep -c -F -- enable-linger "$auto_stub/loginctl.calls" || true; }
+expect "the TUI asked the stand-in loginctl and enabled nothing" 0 linger_enables
 expect_poll "the run's end lists again and lingering reads on" '{"tone": "ok", "text": "Automations run while you are logged out"}' auto_status linger
 expect_poll "lingering on offers no action" '[["linger", "Enable while logged out", false]]' offered_actions vgs.automations
 forget_record

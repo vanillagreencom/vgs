@@ -381,9 +381,13 @@ expect_run_end "the setup run ends" vgs.agent-warden/setup
 settings_page_open vgs.agent-warden
 expect_poll "a warden not set up offers Set up, and a present vsys no install" '[["warden", "Set up", true], ["vsys", "Install vsys", false]]' offered_actions vgs.agent-warden
 forget_record
+# The setup TUI runs for real under the stand-in terminal, so vsys must be
+# the stand-in on the PATH every process of the shell starts with.
+expect "vsys resolves to the row's stand-in on the shell's PATH" "$shim/vsys" shell_resolves vsys
 settings_press "Set up" || fail "the click on the Settings page's Set up failed"
 expect_poll "the Settings page's Set up hands the terminal the setup TUI" "$(words vgs.agent-warden/setup tui/setup.sh)" recorded_tail
 expect_run_end "the Settings page's setup run ends" vgs.agent-warden/setup
+expect "the setup ran the stand-in vsys's warden install" '"warden install"' warden_last_vsys
 settings_page_close vgs.agent-warden
 
 cp -- "$warden_fixtures/state.json" "$warden_dir/state.json"

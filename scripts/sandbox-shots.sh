@@ -1506,6 +1506,9 @@ for mode in "${mode_list[@]}"; do
   for scene in "${scenes[@]}"; do "scene_$scene" "$mode"; done
 done
 
+# No scene may authenticate against the host user: harness.sh's sentinels
+# log any call, and a logged one fails the run (rows/auth-sentinel.sh).
+if [[ -s $auth_log ]]; then fail "a scene reached an authentication sentinel: $(tr '\n' ';' <"$auth_log")"; else ok "no scene reached an authentication sentinel"; fi
 echo "sandbox-shots: dir=$SHOT_DIR shots=$(wc -l <"$SHOT_DIR/shots.tsv" 2>/dev/null || echo 0) failures=$failures hidden=$(awk -F '\t' '$5 == "hidden"' "$SHOT_DIR/shots.tsv" 2>/dev/null | wc -l)"
 if [[ $failures -gt 0 && $failures -eq $undrawn ]]; then
   printf 'sandbox-shots: status=not-measured nested-window=not-drawn\n'
