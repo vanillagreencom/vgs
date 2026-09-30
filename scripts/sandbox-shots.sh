@@ -901,7 +901,7 @@ scene_panels() { # MODE
   hover_on "the pointer rests on the panel's Open vsys" panel vgs.agent-warden Button "Open vsys" && take "panels-$1-warden-hover"
   park_pointer
   expect "the warden's panel hides" ok ipc shell hide panel vgs.agent-warden
-  expect_poll "the warden's panel is gone" False warden_panel_lines
+  expect_poll "the warden's panel is gone" absent warden_panel_texts
   warden_status calm calm
   click_centre "$(bar_key)" vgs.updates || fail "the click on the updates widget failed"
   expect_poll "the widget opens the updates flyout" open updates_flyout
