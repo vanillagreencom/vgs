@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
+import qs.Ui
 import "Appearance.js" as Appearance
 
 // The stack on one screen, the content the service hands its layer: the
@@ -27,6 +28,12 @@ Item {
     readonly property bool panelClosing: service !== null && service.panelClosing
     readonly property bool inputAll: panelOpen
     readonly property var inputItems: [column]
+
+    // One animation step on the look's motion, in the shape ListAnimation
+    // takes: a duration token and a curve token.
+    function motionStep(duration, curve) {
+        return { duration: duration, easing: Easing.BezierSpline, curve: [curve.x1, curve.y1, curve.x2, curve.y2, 1, 1] };
+    }
 
     // pointer-cursor-exempt: a press here is a click away from the open panel, not a control
     MouseArea {
@@ -89,45 +96,23 @@ Item {
 
             // A slim bar in the side room while the stack overflows, thin
             // at rest and wide under the pointer; it drags the stack.
-            Item {
+            SlimScrollBar {
                 id: scrollbar
                 objectName: "notificationScrollBar"
-                readonly property real ratio: view.contentHeight <= 0 ? 1 : view.height / view.contentHeight
-                readonly property real travel: Math.max(1, view.contentHeight - view.height)
-                readonly property bool active: scrollMouse.containsMouse || scrollMouse.pressed
                 parent: view
-                visible: ratio < 1
+                flickable: view
                 x: cards.x + cards.width + stack.look.scrollbar.gap
                 width: stack.look.scrollbar.width
-                height: Math.max(stack.look.scrollbar.minHeight, view.height * ratio)
-                y: (view.height - height) * Math.max(0, Math.min(1, view.contentY / travel))
-
-                Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: scrollbar.active ? stack.look.scrollbar.wide : stack.look.scrollbar.thin
-                    height: parent.height
-                    radius: stack.look.radius.full
-                    color: stack.look.text.foreground
-                    opacity: scrollbar.active ? stack.look.scrollbar.active : (view.moving ? stack.look.scrollbar.moving : stack.look.scrollbar.idle)
-                    Behavior on width { Anim { duration: stack.look.motion.duration.short4; curve: stack.look.motion.curve.standard } }
-                    Behavior on opacity { Anim { duration: stack.look.motion.duration.medium2; curve: stack.look.motion.curve.standard } }
-                }
-
-                // pointer-cursor-exempt: a scroll bar keeps the arrow, as Qt's own scroll bars do
-                MouseArea {
-                    id: scrollMouse
-                    property real grab: 0
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    preventStealing: true
-                    onPressed: mouse => { grab = mouse.y; }
-                    onPositionChanged: mouse => {
-                        if (!pressed) return;
-                        const track = Math.max(1, view.height - scrollbar.height);
-                        const top = scrollbar.y + mouse.y - grab;
-                        view.contentY = Math.max(0, Math.min(1, top / track)) * scrollbar.travel;
-                    }
-                }
+                thin: stack.look.scrollbar.thin
+                wide: stack.look.scrollbar.wide
+                minLength: stack.look.scrollbar.minHeight
+                color: stack.look.text.foreground
+                radius: stack.look.radius.full
+                idleOpacity: stack.look.scrollbar.idle
+                movingOpacity: stack.look.scrollbar.moving
+                activeOpacity: stack.look.scrollbar.active
+                widthStep: stack.motionStep(stack.look.motion.duration.short4, stack.look.motion.curve.standard)
+                opacityStep: stack.motionStep(stack.look.motion.duration.medium2, stack.look.motion.curve.standard)
             }
         }
     }

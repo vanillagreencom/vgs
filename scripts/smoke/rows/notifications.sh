@@ -808,6 +808,24 @@ done
 render expect "the glass predicate rejects glass drawn outside the capsule" violation glass_clear_shrunk "$sandbox/glass-clamped.png" "Even max"
 expect "the inbox opens for header geometry" ok notes inbox
 expect_poll "the inbox header title starts on a card's text column and clears its rounded end" ok checked_header "Even two"
+# The Silence toggle takes a press over the pills' height, a strip above
+# and below its 20 px track: a click 2 px above the track turns Silence on,
+# and a click past the strip, 2 px above its top, changes nothing, so the
+# strip is the look's `toggle.hitHeight` and no taller.
+toggle_press() { # CHECKED DY: one click DY px above the shown toggle's top
+  local rect x y
+  rect="$(control_box vgs:layer vgs.notifications Toggle checked "$1")" && [[ $rect == \[* ]] || return 1
+  read -r x y < <(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(int(r[0] + r[2] / 2), int(r[1]) - int(sys.argv[2]))' "$rect" "$2") || return 1
+  hover "$((x - 1))" "$y" && click "$x" "$y"
+}
+# (toggle.hitHeight 28 - toggle.height 20) / 2 in vgs.notifications/Appearance.js.
+toggle_strip=4
+toggle_press false 2 || fail "the click in the Silence toggle's strip failed"
+expect_poll "a click in the toggle's strip above its track turns Silence on" true read_notes silenced
+expect "Silence turns off before the strip's edge" off notes silence off
+toggle_press false "$((toggle_strip + 2))" || fail "the click past the Silence toggle's strip failed"
+sleep 0.3
+expect "a click past the strip leaves Silence off" false read_notes silenced
 note_card_reading "one-line card geometry measured" "Even one"
 note_card_reading "two-line card geometry measured" "Even two"
 note_card_reading "multiline card geometry measured" "Even multi"
@@ -1181,9 +1199,22 @@ expect "the raw emoji inbox text reply is paged" paged raw_paged
 emoji_layer_images_hold_all() { [[ $(emoji_layer_images) -ge $((40 * monitors)) ]] && echo True || echo False; }
 expect "the paged emoji inbox text reply reassembles whole through ipc" True emoji_layer_images_hold_all
 expect "the probe counts exactly the forty visible emoji inbox texts" "$((40 * monitors))" emoji_texts
+# The history's slim scroll bar shows while forty cards overflow the
+# screen and hides on a history that fits. The control for its rule is the
+# SlimScrollBar mutation "a slim bar shows on content that fits"
+# (tst_slimscrollbar.qml).
+note_scroll_bars() { ipc smoke layerItems vgs.notifications SlimScrollBar visible | py_reply 'import json,sys; print(json.dumps(sorted(set(v["visible"] for s, r, v in json.load(sys.stdin)))))'; }
+expect_poll "the forty-card history shows its scroll bar" '[true]' note_scroll_bars
 expect "the emoji inbox closes" ok notes close
 expect_poll "the emoji inbox closed" '""' read_notes panelMode
 expect "clearing the emoji history is allowed" ok notes clear-history
+notify_now "[acme] a history that fits"
+expect_poll "the one-card history holds its card" 1 note_status history
+notes history >/dev/null
+expect_poll "a history that fits shows no scroll bar" '[false]' note_scroll_bars
+expect "the one-card history closes" ok notes close
+expect_poll "the one-card history closed" '""' read_notes panelMode
+expect "clearing the one-card history is allowed" ok notes clear-history
 expect "Silence turns off after the inbox latency" off notes silence off
 expect_poll "no card is left before the run-per-card copy" 0 note_status onScreen
 # The control: a copy of the service whose card lookup runs the helper.

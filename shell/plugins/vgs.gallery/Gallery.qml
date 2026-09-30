@@ -414,7 +414,7 @@ Item {
                 Section {
                     title: "Titles and scrolling"
                     rowSpacing: Theme.stack.group
-                    description: "A title that opens a long menu, the current choice checked; a scroll area and its bar"
+                    description: "A title that opens a long menu, the current choice checked; a scroll area and its bar; a slim bar beside a plain list"
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline
@@ -451,6 +451,42 @@ Item {
                             // the repeater tears the row down.
                             ListItem { required property int index; text: "Row " + (index + 1); iconName: "list"; width: scrolledRows.width }
                         }
+                    }
+                }
+                // The slim bar a plugin that owns its look draws beside its
+                // own list, here with the shell's scroll bar values.
+                Item {
+                    width: parent.width
+                    height: Theme.size.panel.sm / 2
+                    Flickable {
+                        id: slimList
+                        width: parent.width - Theme.scrollArea.gutter
+                        height: parent.height
+                        contentHeight: slimRows.height
+                        clip: true
+                        Column {
+                            id: slimRows
+                            width: slimList.width
+                            Repeater {
+                                model: 12
+                                ListItem { required property int index; text: "Slim " + (index + 1); iconName: "list"; width: slimRows.width }
+                            }
+                        }
+                    }
+                    SlimScrollBar {
+                        flickable: slimList
+                        x: parent.width - width
+                        width: Theme.scrollArea.gutter
+                        thin: Theme.scrollArea.barWidth / 2
+                        wide: Theme.scrollArea.barWidth
+                        minLength: Theme.scrollArea.minThumb
+                        color: Theme.scrollArea.bar
+                        radius: Theme.scrollArea.barRadius
+                        idleOpacity: 1
+                        movingOpacity: 1
+                        activeOpacity: 1
+                        widthStep: Theme.motion.list.fade
+                        opacityStep: Theme.motion.list.fade
                     }
                 }
 

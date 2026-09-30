@@ -460,6 +460,11 @@ mutations=(
   "a clearing inset clears by no step|../Commons/ClearingInset.qml|property real step: Theme.inset.cornerStep|property real step: 0|tst_spacing.qml"
   "a control's padding clears by no step|../Commons/Theme.qml|return Inset.controlPadding(pad, radius, height, contentHeight, inset.cornerStep);|return Inset.controlPadding(pad, radius, height, contentHeight, 0);|tst_button.qml"
   "an indicator sits on a fractional pixel|controls/IndicatorLabel.qml|control.text !== \"\" ? Math.round(lineTop + capCentre - height / 2)|control.text !== \"\" ? (lineTop + capCentre - height / 2 + 0.5)|tst_toggles.qml"
+  "a slim bar shows on content that fits|layout/SlimScrollBar.qml|    visible: ratio < 1|    visible: true|tst_slimscrollbar.qml"
+  "a slim bar's thumb ignores the view's share|layout/SlimScrollBar.qml|    height: Math.max(minLength, flickable.height * ratio)|    height: minLength|tst_slimscrollbar.qml"
+  "a slim bar's thumb stays at the top|layout/SlimScrollBar.qml|    y: (flickable.height - height) * progress|    y: 0|tst_slimscrollbar.qml"
+  "a drag on a slim bar scrolls nothing|layout/SlimScrollBar.qml|            root.flickable.contentY = root.flickable.originY + Math.max(0, Math.min(1, top / track)) * root.travel;|            return;|tst_slimscrollbar.qml"
+  "a slim bar never widens|layout/SlimScrollBar.qml|        width: root.active ? root.wide : root.thin|        width: root.thin|tst_slimscrollbar.qml"
 )
 
 copy="$tmp/ui"

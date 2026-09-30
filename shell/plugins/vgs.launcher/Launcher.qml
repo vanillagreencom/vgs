@@ -1091,48 +1091,22 @@ Item {
                 }
 
                 // A slim scrollbar that widens under the pointer and drags.
-                Item {
+                SlimScrollBar {
                     id: scrollbar
-                    readonly property real ratio: resultList.contentHeight <= 0 ? 1 : resultList.height / resultList.contentHeight
-                    readonly property real travel: Math.max(1, resultList.contentHeight - resultList.height)
-                    readonly property bool active: scrollMouse.containsMouse || scrollMouse.pressed
-                    visible: ratio < 1
+                    flickable: resultList
                     anchors.right: parent.right
                     anchors.rightMargin: -root.look.scrollbar.width
                     width: root.look.scrollbar.width
-                    height: Math.max(root.look.scrollbar.minHeight, resultList.height * ratio)
-                    y: (resultList.height - height) * Math.max(0, Math.min(1, (resultList.contentY - resultList.originY) / travel))
-
-                    Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: scrollbar.active ? root.look.scrollbar.wide : root.look.scrollbar.thin
-                        height: parent.height
-                        radius: root.look.radius.full
-                        color: root.look.text.foreground
-                        opacity: scrollbar.active ? root.look.scrollbar.active : (resultList.moving ? root.look.scrollbar.moving : root.look.scrollbar.idle)
-                        Behavior on width {
-                            Anim { duration: root.look.motion.duration.short4; curve: root.look.motion.curve.standard }
-                        }
-                        Behavior on opacity {
-                            Anim { duration: root.look.motion.duration.medium2; curve: root.look.motion.curve.standard }
-                        }
-                    }
-
-                    // pointer-cursor-exempt: a scroll bar keeps the arrow, as Qt's own scroll bars do
-                    MouseArea {
-                        id: scrollMouse
-                        property real grab: 0
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        preventStealing: true
-                        onPressed: mouse => { grab = mouse.y; }
-                        onPositionChanged: mouse => {
-                            if (!pressed) return;
-                            const track = Math.max(1, resultList.height - scrollbar.height);
-                            const top = scrollbar.y + mouse.y - grab;
-                            resultList.contentY = resultList.originY + Math.max(0, Math.min(1, top / track)) * scrollbar.travel;
-                        }
-                    }
+                    thin: root.look.scrollbar.thin
+                    wide: root.look.scrollbar.wide
+                    minLength: root.look.scrollbar.minHeight
+                    color: root.look.text.foreground
+                    radius: root.look.radius.full
+                    idleOpacity: root.look.scrollbar.idle
+                    movingOpacity: root.look.scrollbar.moving
+                    activeOpacity: root.look.scrollbar.active
+                    widthStep: root.bezierStep(root.look.motion.duration.short4, root.look.motion.curve.standard)
+                    opacityStep: root.bezierStep(root.look.motion.duration.medium2, root.look.motion.curve.standard)
                 }
             }
         }
