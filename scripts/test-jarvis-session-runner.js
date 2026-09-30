@@ -142,6 +142,20 @@ const tests = [
         w.runner.close();
         assert.equal(w.timers.size, 0, "EOF cannot retain a deadline");
         assert.equal(w.runner.state.conversation.kind, "ended");
+        assert.equal(w.calls.at(-1).name, "brain-close", "EOF cannot await an adapter acknowledgment");
+    }],
+    ["closed-clock", impl => {
+        const w = world(impl);
+        thinking(w);
+        w.pending.send("tool", { tool: "fixture", timeoutMs: 50, cancellable: true });
+        w.runner.close();
+        assert.equal(w.timers.size, 0);
+        w.pending.send("brain-done");
+        assert.equal(w.runner.state.stale, 1);
+        assert.equal(w.timers.size, 0, "a late callback cannot rearm a closed owner");
+        w.pending.tool("completed");
+        assert.equal(w.calls.at(-1).name, "outcome");
+        assert.equal(w.calls.at(-1).e.outcome, "completed");
     }],
     ["unavailable", impl => {
         const ports = impl.unavailable();
@@ -169,7 +183,8 @@ try {
         ["identity", 'gen: e.gen, op: e.op', 'gen: e.gen, op: e.op + 1', "identity"],
         ["deadline", 'owner.deadline - this.clock.now()', 'owner.deadline - this.clock.now() + 1', "deadlines"],
         ["deadline-cancel", 'op: e.target', 'op: e.op', "identity"],
-        ["timer-replace", 'if (this.timer !== null) this.clock.clear(this.timer);', 'if (false && this.timer !== null) this.clock.clear(this.timer);', "timer-release", 2],
+        ["timer-replace", 'if (this.timer !== null) this.clock.clear(this.timer);', 'if (false && this.timer !== null) this.clock.clear(this.timer);', "timer-release"],
+        ["closed-clock", 'if (this.lifetime.kind === "closed") return;', 'if (false && this.lifetime.kind === "closed") return;', "closed-clock"],
         ["outcome", 'this.ports.brain.outcome(e);', 'void this.ports.brain.outcome;', "approval-and-tool"],
         ["unavailable", 'function refuse() { throw new Error("jarvis: session=adapter-unavailable"); }',
             'function refuse() { if (false) throw new Error("jarvis: session=adapter-unavailable"); }', "unavailable"]

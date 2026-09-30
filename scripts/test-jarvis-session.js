@@ -13,7 +13,7 @@ const copy = value => JSON.parse(JSON.stringify(value));
 const events = ["snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "stop",
     "cancel", "interrupt", "capture-opened", "capture-closed", "partial", "final", "brain-done",
     "brain-failed", "cancelled", "play", "played", "flushed", "tool", "tool-done", "approval",
-    "shown", "approval-cancel", "deadline"];
+    "shown", "approval-cancel", "deadline", "lease-ended"];
 assert.deepEqual(copy(Session.EVENTS), events, "every supported event enters the pair matrix");
 const snapshot = extra => ({ type: "snapshot", at: 0, locked: false, configured: true,
     echoCancel: false, settings: {}, ...extra });
@@ -169,6 +169,14 @@ const table = [
         const r = step(logic, s, callback("deadline", s.turn, 2100));
         assert.equal(r.state.turn.kind, "none");
         assert.deepEqual(kinds(r), ["brain-close"]);
+    }],
+    ["lease-close", logic => {
+        const s = thinking(logic);
+        const r = step(logic, s, event("lease-ended", 100));
+        assert.equal(r.state.conversation.kind, "ended");
+        assert.equal(r.state.turn.kind, "none");
+        assert.deepEqual(kinds(r), ["brain-cancel", "brain-close"]);
+        assert.equal(r.effects[1].target, s.turn.op);
     }],
     ["thinking-timeout", logic => {
         const s = thinking(logic);
@@ -445,7 +453,7 @@ for (const seed of seeds) for (const a of pairEvents) for (const b of pairEvents
     }
     pairs++;
 }
-assert.equal(pairs, 13454, "matrix discovery floor and exact event set");
+assert.equal(pairs, 14336, "matrix discovery floor and exact event set");
 
 const parent = path.resolve(__dirname, "../tmp");
 fs.mkdirSync(parent, { recursive: true });
@@ -478,6 +486,9 @@ try {
             's.approval.kind === "held" && false && at >= s.approval.deadline', "approval-timeout"],
         ["late-callback", 'if (e.type !== "deadline") expire(s, effects, e.at);',
             'if (false && e.type !== "deadline") expire(s, effects, e.at);', "late-callback"],
+        ["lease-close", 'if (s.turn.kind === "cancelling") {\n            effect',
+            'if (false && s.turn.kind === "cancelling") {\n            effect', "lease-close"],
+        ["stale-count", 'function stale(s) { s.stale++; }', 'function stale(s) { if (false) s.stale++; }', "stale-op"],
         ["flush", 'if (s.playback.kind !== "playing") return;', 'if (true || s.playback.kind !== "playing") return;', "interrupt"],
         ["cancel-capture", 's.turn.kind !== "cancelling"', '(true || s.turn.kind !== "cancelling")', "cancel-capture-gate"],
         ["tool-cancel", 's.action.kind !== "running" || s.action.cancellation.kind !== "available"',

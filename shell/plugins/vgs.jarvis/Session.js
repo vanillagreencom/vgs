@@ -10,7 +10,7 @@ var EVENTS = [
     "snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute",
     "stop", "cancel", "interrupt", "capture-opened", "capture-closed", "partial",
     "final", "brain-done", "brain-failed", "cancelled", "play", "played",
-    "flushed", "tool", "tool-done", "approval", "shown", "approval-cancel", "deadline"
+    "flushed", "tool", "tool-done", "approval",     "shown", "approval-cancel", "deadline", "lease-ended"
 ];
 
 function initial() {
@@ -232,6 +232,15 @@ function reduce(state, e) {
         break;
     case "stop":
         end(s, effects, e.at, "stop", true);
+        break;
+    case "lease-ended":
+        end(s, effects, e.at, "lease", true);
+        // EOF is teardown, not an interactive cancellation. No adapter may
+        // retain the daemon while waiting for an acknowledgment.
+        if (s.turn.kind === "cancelling") {
+            effect(s, effects, "brain-close", { gen: s.turn.gen, target: s.turn.op });
+            s.turn = { kind: "none" };
+        }
         break;
     case "cancel":
         s.input = { kind: "released" };

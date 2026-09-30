@@ -13,6 +13,7 @@ class SessionRunner {
         this.timer = null;
         this.queue = [];
         this.draining = false;
+        this.lifetime = { kind: "open" };
     }
 
     dispatch(event) {
@@ -55,6 +56,7 @@ class SessionRunner {
     schedule() {
         if (this.timer !== null) this.clock.clear(this.timer);
         this.timer = null;
+        if (this.lifetime.kind === "closed") return;
         const action = this.state.action;
         const toolDeadline = action.kind === "running" && action.limit.kind === "pending"
             ? { gen: action.gen, op: action.op, deadline: action.limit.deadline } : {};
@@ -70,9 +72,8 @@ class SessionRunner {
 
     // Lease loss also releases a deadline which could otherwise retain Node.
     close() {
-        this.dispatch({ type: "stop" });
-        if (this.timer !== null) this.clock.clear(this.timer);
-        this.timer = null;
+        this.lifetime = { kind: "closed" };
+        this.dispatch({ type: "lease-ended" });
     }
 }
 
