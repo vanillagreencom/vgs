@@ -950,6 +950,27 @@ function clickRoute(choice, row) {
     return "default";
 }
 
+// What the service does with shell.tui.run's reply to an `open` click:
+// { leave, notice }. `ok` lets the card leave. A refusal keeps the card, so
+// its file stays one click away, and `notice` is the core toast that says
+// why: `busy` while another notification's file is open, since the open
+// TUI is one key whatever the file, and `launcher-missing` with no
+// terminal to open it in. Any other refusal names the reply.
+function openOutcome(reply) {
+    var text = String(reply);
+    if (text === "ok") return { leave: true, notice: null };
+    var match = /^refused: tui=\S+ reason=(\S+)$/.exec(text);
+    var reason = match === null ? "" : match[1];
+    switch (reason) {
+    case "busy":
+        return { leave: false, notice: { title: "Another file is open", message: "Close the editor a notification opened, then click this one again.", tone: "warning", icon: "file-lock" } };
+    case "launcher-missing":
+        return { leave: false, notice: { title: "No terminal to open the file in", message: "Install xdg-terminal-exec and a terminal, then click the notification again.", tone: "danger", icon: "square-terminal" } };
+    default:
+        return { leave: false, notice: { title: "The file did not open", message: text.slice(0, 200), tone: "danger", icon: "file-x" } };
+    }
+}
+
 // ------------------------------------------------------------ entries
 
 function clip(text, max) {

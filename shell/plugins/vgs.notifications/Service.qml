@@ -673,7 +673,9 @@ Item {
     // dismiss. An open on a card whose VGS hints name a click
     // (NotificationLogic.clickRoute) opens the hinted file in the `open` TUI
     // or only dismisses; every other choice goes as
-    // NotificationLogic.choicePlan says. Then the row leaves.
+    // NotificationLogic.choicePlan says. Then the row leaves, bar an open
+    // the TUI refuses, which keeps the row and shows why
+    // (NotificationLogic.openOutcome).
     // The sender's window comes into view through the core's reveal, which
     // after a delivered action first gives the sender the chance to raise
     // it itself. Logs what the choice reached, with no content.
@@ -683,8 +685,17 @@ Item {
         const route = Logic.clickRoute(choice, rowModel.get(at));
         if (route === "open") {
             const reply = shell.tui.run("open", [rowModel.get(at).hintOpen]);
-            if (reply !== "ok") console.warn("notifications: open " + reply);
-            leave(key, "invoke");
+            const outcome = Logic.openOutcome(reply);
+            if (outcome.leave) {
+                leave(key, "invoke");
+                return;
+            }
+            console.warn("notifications: open " + reply);
+            try {
+                shell.toasts.show(outcome.notice);
+            } catch (e) {
+                console.error("notifications: open notice " + e.message);
+            }
             return;
         }
         if (route === "dismiss") {

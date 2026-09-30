@@ -182,6 +182,19 @@ function verify(logic) {
         assert.equal(logic.clickRoute("dismiss", made), "default", "dismiss ignores the click hints: " + label);
         same(logic.parseState(stateText({ history: [logic.persistable(made, IMAGES).entry] })).ok, true, "a stored hinted entry reads back: " + label);
     }
+    // An open click's reply: ok lets the card leave; a refusal keeps it and
+    // says why in a core toast whose options the core's judge accepts.
+    same(logic.openOutcome("ok"), { leave: true, notice: null });
+    for (const [reply, title, tone] of [
+        ["refused: tui=open reason=busy", "Another file is open", "warning"],
+        ["refused: tui=open reason=launcher-missing", "No terminal to open the file in", "danger"],
+        ["refused: tui=open reason=disabled", "The file did not open", "danger"],
+        ["something else", "The file did not open", "danger"]
+    ]) {
+        const outcome = logic.openOutcome(reply);
+        same([outcome.leave, outcome.notice.title, outcome.notice.tone], [false, title, tone], "open reply: " + reply);
+        same(pluginLogic.toastOptions(outcome.notice).ok, true, "the core accepts the notice for " + reply);
+    }
     const hinted = logic.entryOf(Object.assign({}, fields, { hints: HINT_ROWS[2][1] }), 1000, null);
     assert.equal(logic.entryChanged(hinted, logic.updatedEntry(hinted, Object.assign({}, fields, { hints: HINT_ROWS[3][1] }))), true, "a replacement with other hints is a change");
     assert.equal(logic.entryOf(fields, 1000, k => k === "1000-7" || k === "1001-7").key, "1002-7", "a taken key moves the timestamp on");
@@ -778,6 +791,9 @@ const CONTROLS = [
     ["a click opens the hinted file", "if (row.hintClick === \"open\" && row.hintOpen !== \"\") return \"open\";", "if (false) return \"open\";"],
     ["a none click only dismisses", "if (row.hintClick === \"none\") return \"dismiss\";", "if (false) return \"dismiss\";"],
     ["only an open reads the click hints", "if (choice !== \"open\") return \"default\";", ""],
+    ["a refused open keeps the card", "if (text === \"ok\") return { leave: true, notice: null };", "if (true) return { leave: true, notice: null };"],
+    ["a busy open names the open file", "    case \"busy\":\n", "    case \"busy-never\":\n"],
+    ["a missing launcher names the terminal", "    case \"launcher-missing\":\n", "    case \"launcher-never\":\n"],
     ["the state judge reads the hint values", "if (!hintValueFits(HINT_ROLES[h], hint)) return where + \".\" + HINT_ROLES[h] + \" refused\";", "if (false) return \"\";"],
     ["the state judge refuses a hint role that is no string", "if (typeof hint !== \"string\") return where + \".\" + HINT_ROLES[h] + \" want=string\";", "if (false) return \"\";"],
     ["the state judge refuses an open click with no file", "if (value.hintClick === \"open\" && !value.hintOpen) return where + \".hintClick open without hintOpen\";", "if (false) return \"\";"],

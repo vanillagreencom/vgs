@@ -226,11 +226,19 @@ expect_poll "the closed toast is in the history" True in_history "First toast, u
 # whose presenter runs the plugin's script; with no EDITOR in the shell's
 # environment the script hands the file to xdg-open, here a stand-in that
 # records its argv, so no opener runs. A `none` card is only dismissed.
+# While $hint_gate exists the stand-in holds the open run live, so a second
+# card's open finds the one open TUI busy: that card stays and a core toast
+# says why, and once the first run ends its click opens its own file.
 terminal_stand_in
 hint_file="$sandbox/hint-transcript.log"
+hint_other="$sandbox/hint-other.log"
 printf 'transcript\n' >"$hint_file"
+printf 'other\n' >"$hint_other"
 hint_opened="$sandbox/xdg-open-argv"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >%q\n' "$hint_opened" >"$shim/xdg-open"
+hint_gate="$sandbox/xdg-open-gate"
+# The wait ends after 1200 polls, 60 s, whatever the gate does: a ceiling
+# past the rows that hold it, so an interrupted run leaves no opener behind.
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >%q\nn=0; while [[ -e %q && $n -lt 1200 ]]; do sleep 0.05; n=$((n + 1)); done\n' "$hint_opened" "$hint_gate" >"$shim/xdg-open"
 chmod 755 "$shim/xdg-open"
 hint_roles() { ipc smoke modelRows vgs.notifications rows summary,hintIcon,hintTone,hintOpen,hintClick | py_reply 'import json,sys; print(json.dumps(next((r[1:] for r in json.load(sys.stdin) if r[0] == sys.argv[1]), None)))' "$1"; }
 hint_drawn() { ipc smoke layerItems vgs.notifications NotificationCard summary,mediaKind,showsSlot | py_reply 'import json,sys; print(json.dumps(next(([v["mediaKind"], v["showsSlot"]] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None)))' "$1"; }
@@ -239,10 +247,27 @@ forget_record
 notify smoke-app 0 "Hinted error" "Exit code 3" '[]' "{\"x-vgs-icon\": <\"circle-x\">, \"x-vgs-tone\": <\"danger\">, \"x-vgs-open\": <\"$hint_file\">, \"x-vgs-click\": <\"open\">}" 0 >/dev/null
 expect_poll "a hinted notification keeps its hints" "[\"circle-x\", \"danger\", \"$hint_file\", \"open\"]" hint_roles "Hinted error"
 expect_poll "its card's media slot draws the hinted icon in place of the application icon" '["glyph", true]' hint_drawn "Hinted error"
+: >"$hint_gate"
 expect "a click on the newest card is allowed" ok notes invoke-latest
 expect_poll "the click hands the open TUI the hinted file" "$(words vgs.notifications/open tui/open.sh "$hint_file")" recorded_tail
 expect_poll "the open TUI hands the file to xdg-open without an EDITOR" "$hint_file" opened_file
 expect_poll "the clicked card leaves" none key_of "Hinted error"
+open_toasts() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps([[t["title"], t["tone"]] for t in json.load(sys.stdin)["toasts"]["visible"] if t["plugin"] == "vgs.notifications"]))'; }
+forget_record
+notify smoke-app 0 "Hinted other" "Exit code 4" '[]' "{\"x-vgs-icon\": <\"circle-x\">, \"x-vgs-tone\": <\"danger\">, \"x-vgs-open\": <\"$hint_other\">, \"x-vgs-click\": <\"open\">}" 0 >/dev/null
+expect_poll "a second hinted card shows while the first file is open" True has_row live "Hinted other"
+expect "a click on it while the open TUI is busy is allowed" ok notes invoke-latest
+expect_poll "the busy open shows why as a core toast" '[["Another file is open", "warning"]]' open_toasts
+expect_log "the busy open is logged" 1 'notifications: open refused: tui=open reason=busy'
+expected_errors+=('notifications: open refused: tui=open reason=busy')
+expect "the busy open keeps its card" True has_row live "Hinted other"
+expect "the busy open reaches no terminal" absent recorded
+rm -f -- "$hint_gate"
+expect_poll "the first open run ends" idle key_idle vgs.notifications/open
+expect "a click on the kept card is allowed" ok notes invoke-latest
+expect_poll "the kept card's click hands the open TUI its own file" "$(words vgs.notifications/open tui/open.sh "$hint_other")" recorded_tail
+expect_poll "the kept card leaves once its file opens" none key_of "Hinted other"
+wait_for "the open notice leaves after its five seconds" '[]' 9 open_toasts
 forget_record
 notify smoke-app 0 "Hinted start" "" '[]' '{"x-vgs-icon": <"play">, "x-vgs-tone": <"warning">, "x-vgs-click": <"none">}' 0 >/dev/null
 expect_poll "a none card shows" '["play", "warning", "", "none"]' hint_roles "Hinted start"
