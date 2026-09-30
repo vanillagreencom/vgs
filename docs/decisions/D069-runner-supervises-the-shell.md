@@ -18,7 +18,7 @@
 2. The shell exited 0, a deliberate stop: it exits 0.
 3. `hyprctl -j monitors` gives no answer in three tries 0.5 s apart: Hyprland is gone or going, and it exits with the shell's status.
 4. Otherwise it counts the exit in a streak. A run of 60 s or more starts a new streak. The relaunches of a streak wait 0.5, 1, 2, 4 and 8 s, and the lock file is empty while it waits.
-5. The sixth exit of a streak gives up: a `vgsh: shell=gave-up` line, a `hyprctl notify` error notice for 10 minutes that tells the user to log out and back in, and an exit with the shell's status. While `LockModel.sessionLockState` reads the monitors as other than `unlocked`, it never gives up and relaunches every 8 s.
+5. The sixth exit of a streak gives up: a `vgsh: shell=gave-up` line, a `hyprctl notify` error notice for 10 minutes that tells the user to log out and back in, and an exit with the shell's status. While `shell/Commons/SessionLockState.js` reads the monitors as other than `unlocked`, it never gives up and relaunches every 8 s. A stop signal during the session read ends the runner with no give-up, no notice and no relaunch line.
 
 `vgsh restart` sends TERM to the runner, the parent of the shell's pid when that parent holds the lock on descriptor 9, so the runner stops the shell and starts none again. A parent that holds no lock, as a runner from before D053 that execed `qs` in place, leaves the TERM to the shell's pid. The numbers are one table in `bin/vgsh`, beside the preflight table. The contract is [runtime.md § Process](../architecture/runtime.md#process).
 
@@ -35,13 +35,13 @@
 
 - The runner already waits on the shell and holds the lock, so a loop around its start keeps one owner of the shell's lifetime. The lock stays held from the first start to the runner's exit, so no second `vgsh run` starts in a relaunch gap.
 - A relaunch while locked needs no new lock code. The Hyprland layer sets `misc.allow_session_lock_restore`, and the new shell's `vgs.lock` reads the stranded lock at start and takes it over ([lock-polkit.md](../architecture/lock-polkit.md)).
-- The session lock reading is `vgs.lock`'s `LockModel.sessionLockState`, which the runner runs under node through `bin/lib/qml-library.js`. A reading that is not `unlocked` counts as locked, since giving up then can strand the user.
+- The session lock reading is the core's one judge, `shell/Commons/SessionLockState.js`, which the core's session lock and `vgs.lock`'s stranded-lock check read in QML and the runner runs under node through `bin/lib/qml-library.js`. The core runs no plugin code for it. A reading that is not `unlocked`, a read that cannot run included, counts as locked, since giving up then can strand the user.
 - A streak that a healthy run resets gives each crash after a long run the short first delay. A window counter would count a crash an hour ago the same as one a second ago.
 
 **Consequences**:
 
-- A shell that crashes at every start costs five starts over 15.5 s before the notice. While locked, it costs one start every 8 s until the session ends.
-- Between two starts the lock file is empty, so `vgsh pid`, `ipc` and `restart` refuse `shell=not-running` for up to 8 s.
+- A shell that crashes at every start costs six starts, five of them relaunches, over 15.5 s of delays before the notice. While locked, it costs one start every 8 s until the session ends.
+- From a shell's exit to the next start, and after the runner's exit, the lock file is empty, so `vgsh pid`, `ipc` and `restart` refuse `shell=not-running` for up to 8 s.
 - The nested smoke's rows take up a relaunched shell with the harness's `adopt_shell` instead of starting one by hand.
 
 ## Where VGS differs from Omarchy
@@ -59,6 +59,6 @@ Checked against basecamp/omarchy at `8b4eae6`: `bin/omarchy-launch-shell`, `bin/
 
 **Revisit When**: Quickshell relaunches itself after every exit that is not a clean one; VGS ships a systemd user unit; or a relaunch while locked stops taking the lock over.
 
-**Verification**: `scripts/test-vgsh-run.sh` runs the runner against a stub `qs` and a stub `hyprctl` and pins the relaunch after a SIGKILL with the lock held throughout, no relaunch after exit 0, a stop or a gone Hyprland, a stop during the delay, the give-up and its notice, no give-up while locked or unreadable, the healthy-run reset and `vgsh restart`'s stop of the runner or the shell, each with a control on a copy of `bin/vgsh`. `scripts/smoke/rows/supervise.sh` reads, in the nested sandbox, the relaunch within its budget and the give-up after six quick deaths with a notice Hyprland answers ok, with a copy that relaunches nothing and a copy whose limit is out of reach as controls. `scripts/smoke/rows/lock.sh` reads the lock screen back within its budget after a kill while locked, and a sampler that finds the session locked from before the kill to the new lock, with the second lock client's unlock as the sampler's control. `scripts/smoke/rows/start-order.sh` reads the relaunch after a crash with a live child while the runner holds the lock.
+**Verification**: `scripts/test-vgsh-run.sh` runs the runner against a stub `qs` and a stub `hyprctl` and pins the relaunch after a SIGKILL with the lock held throughout, no relaunch after exit 0, a stop or a gone Hyprland, a stop during the delay, the give-up and its notice, no give-up while locked or unreadable, the healthy-run reset, the delays of a streak, an empty lock file during the delay and after the runner's end, a read that cannot run, a notice Hyprland refuses, a stop during the session read and `vgsh restart`'s stop of the runner or the shell, each with a control on a copy of `bin/vgsh`. `scripts/test-session-lock-state.js` pins the session lock reading. `scripts/smoke/rows/supervise.sh` reads, in the nested sandbox, the relaunch within its budget and the give-up after six quick deaths with a notice Hyprland answers ok, with a copy that relaunches nothing and a copy whose limit is out of reach as controls. `scripts/smoke/rows/lock.sh` reads the lock screen back within its budget after a kill while locked, and a sampler that finds the session locked from before the kill to the new lock, with the second lock client's unlock as the sampler's control. `scripts/smoke/rows/start-order.sh` reads the relaunch after a crash with a live child while the runner holds the lock.
 
 **References**: [runtime.md § Process](../architecture/runtime.md#process), [lock-polkit.md](../architecture/lock-polkit.md), [validation-smoke-harness.md](../architecture/validation-smoke-harness.md), [validation-latency.md](../architecture/validation-latency.md)
