@@ -52,6 +52,23 @@ card_source_size_matches() { # PATH
 }
 # SUPER+T typed on the nested seat.
 press_themes() { type_keys -M logo -k t -m logo; }
+rail_focused() { ipc smoke readDescendant overlay vgs.themes CardCarousel activeFocus; }
+# Whether the selected card is no longer NAME: moved or same.
+selection_moved() { [[ $(view_selected_name) != "$1" ]] && echo moved || echo same; }
+# rail_band: a point on the band beside the cards, 2 px into the rail's
+# top-left corner, above the slices and left of the selected card, as
+# `X Y`: inside the browser's pane, over no card.
+rail_band() { ipc smoke descendantGeometry overlay vgs.themes | py_reply 'import json,sys; r=[x["box"] for x in json.load(sys.stdin) if x["type"] == "CardCarousel" and x["box"][2] > 0]; print("%d %d" % (r[0][0] + 2, r[0][1] + 2) if len(r) == 1 else "rails=%d" % len(r))'; }
+# band_click LABEL: summon the theme view and click the rail's band.
+band_click() {
+  local at x y
+  expect "$1: a summon over IPC opens the theme view" ok ipc shell summon overlay vgs.themes '{}'
+  expect_poll "$1: the summon maps the browser" 1 layer_count vgs:overlay
+  expect_poll "$1: the summoned browser read its cards" true view_value loaded
+  at="$(rail_band)" && [[ $at =~ ^[0-9]+\ [0-9]+$ ]] || { fail "$1: the rail's band is unreadable: ${at:-failed}"; return 1; }
+  read -r x y <<<"$at"
+  click "$x" "$y"
+}
 browser_focused() { expect_poll "${1:-the browser holds the keyboard}" true ipc smoke activeFocusIn overlay vgs.themes; }
 all_theme_cards_have_palette() {
   local shown
@@ -336,6 +353,25 @@ expect_poll "Escape clears the filter" '""' view_value filterText
 expect "Escape with a filter keeps the browser open" 1 layer_count vgs:overlay
 type_keys -k Escape || fail "sending Escape again failed"
 expect_poll "Escape with no filter closes the browser" 0 layer_count vgs:overlay
+# A filter no card matches shows the empty state; its Clear filter clears
+# the filter and hands the keyboard back to the rail, so Right steps and
+# Escape closes.
+clear_filter() { # LABEL
+  press_themes || { fail "$1: typing SUPER+T failed"; return 1; }
+  expect_poll "$1: SUPER+T opens the browser" 1 layer_count vgs:overlay
+  expect_poll "$1: the browser read its cards" true view_value loaded
+  type_keys zzqx || { fail "$1: typing the filter failed"; return 1; }
+  expect_poll "$1: a filter no card matches empties the rail" 0 view_count
+  click_in vgs:overlay overlay vgs.themes Button "Clear filter" || { fail "$1: the click on Clear filter failed"; return 1; }
+}
+clear_filter "Clear filter"
+expect_poll "Clear filter clears the filter" '""' view_value filterText
+expect_poll "Clear filter hands the keyboard back to the rail" true rail_focused
+cleared_on="$(view_selected_name)" || cleared_on=""
+type_keys -k Right || fail "sending Right after Clear filter failed"
+expect_poll "Right after Clear filter steps the rail" moved selection_moved "$cleared_on"
+type_keys -k Escape || fail "sending Escape after Clear filter failed"
+expect_poll "Escape after Clear filter closes the browser" 0 layer_count vgs:overlay
 # SUPER+T closes the view it opened, and a click on the scrim closes it.
 press_themes || fail "typing SUPER+T failed"
 expect_poll "SUPER+T opens the browser" 1 layer_count vgs:overlay
@@ -346,6 +382,10 @@ expect_poll "the summon maps the browser" 1 layer_count vgs:overlay
 expect_poll "the summoned browser read its cards" true view_value loaded
 click 4 4
 expect_poll "a click on the scrim closes the browser" 0 layer_count vgs:overlay
+# The band beside the cards lies in the browser's pane, whose body fits
+# and so takes no press: the click reaches the scrim.
+band_click "the band beside the cards" || fail "the click on the band beside the cards failed"
+expect_poll "a click on the band beside the cards closes the browser" 0 layer_count vgs:overlay
 expected_errors+=('summon host: vgs\.themes open\(\) failed: payload=')
 expect "a payload naming no view is refused" "refused: open-failed=vgs.themes" ipc shell summon overlay vgs.themes '{"view":"fonts"}'
 expect "a payload with an unknown key is refused" "refused: open-failed=vgs.themes" ipc shell summon overlay vgs.themes '{"view":"themes","source":"all"}'
@@ -499,6 +539,61 @@ type_keys -k Escape || fail "clearing the preview precedence control filter fail
 type_keys -k Escape || fail "closing the preview precedence control browser failed"
 expect_poll "the preview precedence control browser closes" 0 layer_count vgs:overlay
 plugin_restore ThemeCard.qml "preview precedence"
+
+# Controls for the recovery flows and the band: a copy of the theme view
+# whose Clear filter clears nothing, one that leaves the keyboard off the
+# rail, and one whose rail band takes the press.
+plugin_control ThemeView.qml "clear filter" 'root.editFilter({ kind: "clear" });' ''
+clear_filter "control: the clear filter copy"
+expect "control: a Clear filter that clears nothing keeps the filter" '"zzqx"' view_value filterText
+type_keys -k Escape || fail "clearing the clear filter control's filter failed"
+type_keys -k Escape || fail "closing the clear filter control failed"
+expect_poll "the clear filter control browser closes" 0 layer_count vgs:overlay
+plugin_restore ThemeView.qml "clear filter"
+plugin_control ThemeView.qml "clear filter focus" 'Qt.callLater(root.focusRail);' ''
+clear_filter "control: the clear filter focus copy"
+expect_poll "the clear filter focus control clears the filter" '""' view_value filterText
+expect "control: a Clear filter that keeps the keyboard leaves the rail unfocused" false rail_focused
+expect "the clear filter focus control browser hides" ok ipc shell hide overlay vgs.themes
+expect_poll "the clear filter focus control browser closes" 0 layer_count vgs:overlay
+plugin_restore ThemeView.qml "clear filter focus"
+plugin_control ThemeView.qml "rail band" '            // No card to show: the list loading, no theme at all, or a' $'            MouseArea { anchors.fill: parent }\n            // No card to show: the list loading, no theme at all, or a'
+band_click "control: a rail band that takes the press" || fail "the rail band control's click failed"
+expect "control: a band that takes the press leaves the browser open" 1 layer_count vgs:overlay
+expect "the rail band control browser hides" ok ipc shell hide overlay vgs.themes
+expect_poll "the rail band control browser closes" 0 layer_count vgs:overlay
+plugin_restore ThemeView.qml "rail band"
+
+# vgs, applied, ships no wallpaper, so the wallpaper view's theme source is
+# empty; Show every source switches to all and hands the keys back to the
+# view, so Alt+S flips it back.
+show_every() { # LABEL
+  type_keys -M logo -k w -m logo || { fail "$1: typing SUPER+W failed"; return 1; }
+  expect_poll "$1: SUPER+W opens the browser" 1 layer_count vgs:overlay
+  expect_poll "$1: the wallpaper view read its lists" true ipc smoke readDescendant overlay vgs.themes WallpaperView loaded
+  expect "$1: vgs's theme source lists no image" '[]' ipc smoke readDescendant overlay vgs.themes WallpaperView cards
+  click_in vgs:overlay overlay vgs.themes Button "Show every source" || { fail "$1: the click on Show every source failed"; return 1; }
+}
+show_every "Show every source"
+expect_poll "Show every source shows every source" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+type_keys -M alt -k s -m alt || fail "sending Alt+S after Show every source failed"
+expect_poll "Show every source hands the keys back to the view" '"theme"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+type_keys -k Escape || fail "sending Escape after Show every source failed"
+expect_poll "Escape after Show every source closes the browser" 0 layer_count vgs:overlay
+plugin_control WallpaperView.qml "show every source" $'onActivated: {\n                    root.flipSource();' 'onActivated: {'
+show_every "control: the show every source copy"
+expect "control: a Show every source that flips nothing keeps the theme source" '"theme"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+expect "the show every source control browser hides" ok ipc shell hide overlay vgs.themes
+expect_poll "the show every source control browser closes" 0 layer_count vgs:overlay
+plugin_restore WallpaperView.qml "show every source"
+plugin_control WallpaperView.qml "show every source keys" 'Qt.callLater(root.takeKeys);' ''
+show_every "control: the show every source keys copy"
+expect_poll "the show every source keys control shows every source" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+type_keys -M alt -k s -m alt || fail "sending Alt+S to the show every source keys control failed"
+expect "control: a Show every source that keeps the keys leaves Alt+S unread" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+expect "the show every source keys control browser hides" ok ipc shell hide overlay vgs.themes
+expect_poll "the show every source keys control browser closes" 0 layer_count vgs:overlay
+plugin_restore WallpaperView.qml "show every source keys"
 
 expect "the follow before the wallpaper rows ends" idle theme_idle
 expect "nord applies for the wallpaper rows" "ok theme=nord state=applied shell=applied" vgsh_theme apply nord
