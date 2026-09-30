@@ -30,8 +30,9 @@
 # (shell_output_scale in scripts/smoke/harness.sh), so the layout keeps its
 # logical size and the shell draws each PNG in device pixels. Each shot at
 # scale 2 checks before and after its capture that the output still reads
-# that mode, since a host resize or refocus resets it (held_mode_state in
-# scripts/smoke/harness.sh), and fails when it does not. Another value is refused as
+# that mode, since a host resize or refocus, or a writer not identified,
+# resets it (held_mode_state in scripts/smoke/harness.sh), and fails when
+# it does not. Another value is refused as
 # `sandbox-shots: refused: scale=<value>`.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
@@ -170,7 +171,7 @@ undrawn=0
 # output reads.
 hold_kept() {
   [[ ${#mode_hold[@]} -eq 0 || $(held_mode_state) == held ]] && return 0
-  fail "$1: ${mode_hold[0]} reads $(mode_scale_of "${mode_hold[0]}" || echo unreadable), not the held ${mode_hold[1]}; a host resize or refocus reset it"
+  fail "$1: ${mode_hold[0]} reads $(mode_scale_of "${mode_hold[0]}" || echo unreadable), not the held ${mode_hold[1]}; a host resize or refocus, or another writer, reset it"
   return 1
 }
 # take NAME: one shot, refused while the output has left a mode the run

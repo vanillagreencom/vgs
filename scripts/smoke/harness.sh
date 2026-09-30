@@ -139,7 +139,7 @@ hl.workspace_rule({ workspace = "100", persistent = true })
 LUA
 # mode_hold_file: the monitor rule a row holds, which hold_mode writes and
 # release_mode removes. The configuration loads it after its default rule,
-# on every load, so a reload keeps the hold.
+# on every load, so a reload applies the held rule again.
 mode_hold_file="$rt_dir/monitor-hold.lua"
 printf 'local hold_file = "%s"\nlocal hold = io.open(hold_file)\nif hold then hold:close(); dofile(hold_file) end\n' "$mode_hold_file" >>"$home/.config/hypr/hyprland.lua"
 # The shell's first run wires this file (rows/hyprland.sh), so the rows
@@ -922,9 +922,11 @@ layer_bar_clear() { # NAMESPACE TOKEN
 monitor_rule() { printf 'hl.monitor({ output = "%s", mode = "%s", position = "0x0", scale = %s })\n' "$1" "$2" "${3:-1}"; }
 # output_mode NAME MODE [SCALE]: the nested compositor applies
 # monitor_rule's rule now through `hyprctl eval`; the reply is hyprctl's.
-# The rule lasts until the next configuration reload. Under a hold it
-# stands for a reset the host makes, and a reload brings the held rule
-# back. A row restores the mode it read first.
+# A configuration reload drops the rule but leaves the output at its mode
+# and scale, unless a rule the configuration loads gives the output
+# another (docs/architecture/runtime-hyprland.md). Under a hold it stands
+# for a reset, and a reload applies the held rule again from
+# mode_hold_file. A row restores the mode it read first.
 output_mode() { hypr eval "$(monitor_rule "$@")"; }
 # mode_scale_of NAME: output NAME's mode and scale as `WxH scale=S`, such
 # as `3510x1866 scale=2`, the mode in device pixels; returns 1 when no
@@ -955,18 +957,22 @@ hold_mode() {
 }
 # held_mode_state: what became of the held mode, as one word. `held`: the
 # output reads its mode and scale. `reset`: the output reads another mode
-# or another scale. Once the hold began, one writer moves a nested output
-# off it, and it is not what a held row measures. Hyprland gives a
-# Wayland-backend output the size of every configure the host sends the
-# nested window that differs from its rule's mode (src/output/Monitor.cpp,
-# the output's state listener, Hyprland v0.56.2), and the host sends one
-# whenever it resizes the window or changes its state, focus included. It
-# changes the size, not the scale. A configuration reload, which the shell
-# runs when its Hyprland layer changes, drops every rule `hyprctl eval`
-# added (src/config/lua/ConfigManager.cpp, CConfigManager::reload), but it
-# runs mode_hold_file again and so keeps the hold. The shell writes no
-# monitor rule of its own. `unreadable`: the monitor cannot be read, which
-# excuses nothing.
+# or another scale. Once the hold began, a writer the row does not control
+# can move a nested output off it, and that is not what a held row
+# measures. The host is one. Hyprland gives a Wayland-backend output the
+# size of every configure the host sends the nested window that differs
+# from its rule's mode (src/output/Monitor.cpp, the output's state
+# listener, Hyprland v0.56.2), and the host sends one whenever it resizes
+# the window or changes its state, focus included. It changes the size,
+# not the scale. A scale-2 run of scripts/sandbox-shots.sh once read the
+# output at its own mode and scale 1, from a writer not identified
+# (docs/architecture/validation-smoke-faults.md).
+# A configuration reload, which the shell runs when its Hyprland layer
+# changes, drops every rule `hyprctl eval` added
+# (src/config/lua/ConfigManager.cpp, CConfigManager::reload, v0.56.2) and
+# applies the rule mode_hold_file names again. The shell writes no monitor
+# rule of its own.
+# `unreadable`: the monitor cannot be read, which excuses nothing.
 held_mode_state() {
   local state
   state="$(mode_scale_of "${mode_hold[0]}")" || { echo unreadable; return; }
