@@ -71,10 +71,10 @@
 # images on every screen, and VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS on the time
 # from the history call to forty such cards naming theirs
 # (rows/notifications.sh), each counted by the probe and polled back to
-# back, one reading per IPC round trip of about 22 ms. The defaults are twice the
-# highest reading of two passes of that procedure on the same machine on
-# 2026-09-29, at load average 4 to 7, with 10 toast and 6 inbox readings a
-# pass: 43 to 61 ms and 101 to 114 ms.
+# back, one reading per IPC round trip of about 22 ms. The defaults are
+# twice the highest reading of 14 runs of that row in the nested sandbox on
+# the same machine on 2026-09-30, at load average 4 to 8, one toast and one
+# inbox reading a run: 43 to 50 ms and 79 to 95 ms.
 set -euo pipefail
 
 timeout_s=60
@@ -107,8 +107,8 @@ rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-574064}"
 first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-620}"
 default_first_bar_budget_ms="${VGSH_SMOKE_DEFAULT_FIRST_BAR_BUDGET_MS:-542}"
 reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
-emoji_toast_budget_ms="${VGSH_SMOKE_EMOJI_TOAST_BUDGET_MS:-122}"
-emoji_inbox_budget_ms="${VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS:-228}"
+emoji_toast_budget_ms="${VGSH_SMOKE_EMOJI_TOAST_BUDGET_MS:-100}"
+emoji_inbox_budget_ms="${VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS:-190}"
 
 # The measurement mode. Each run sources the harness in its own subshell,
 # so its teardown runs when the subshell exits, and the harness's output
