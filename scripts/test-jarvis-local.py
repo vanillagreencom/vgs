@@ -511,6 +511,7 @@ class ConsumerContract(unittest.TestCase):
         self.env = {k: os.environ[k] for k in ("PATH", "HOME", "XDG_CONFIG_HOME",
                     "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
                     "TMPDIR", "LC_ALL", "VGS_TEST_RUN")}
+        self.env["JARVIS_TEST_SCRATCH_ROOT"] = str(self.root)
         tools = self.root / "tools"
         tools.mkdir()
         # The shared world deliberately omits host mktemp. This neutral
