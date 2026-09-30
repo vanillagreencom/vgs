@@ -38,7 +38,7 @@ What each component of `qs.Ui` guarantees. The tokens they draw from and the lay
 
 The `voiceOrb` group owns its size, line geometry, amplitude, arc coverage, colours and timings. The fragment shader draws one ring from the primary level and concentric arcs from the secondary level. The active driver smooths both levels with attack and release timings. It runs only while the item and its ancestors are visible, its host window is visible and not minimized, `active` holds, `motion.scale` is above 0 and its period is above 0. A stopped driver holds its phase; levels and tone still update without a tick. A theme change rebuilds no component.
 
-`scripts/qml-tests/tst_voiceorb.qml` holds the input, token, pass-through and driver guarantees, with controls in `scripts/test-qml-unit.sh`. Those tests read properties and triggered signals, not rendered pixels. Shader API facts, compilation and the installed asset contract are in [runtime-qml-shaders.md](runtime-qml-shaders.md). The Gallery row reads compiled status; GPU cost and no-frame-swap measurements remain J08.
+`scripts/qml-tests/tst_voiceorb.qml` holds the input, token, pass-through and driver guarantees, with controls in `scripts/test-qml-unit.sh`. Those tests read properties and triggered signals, not rendered pixels. Shader API facts, compilation and the installed asset contract are in [runtime-qml-shaders.md](runtime-qml-shaders.md). The Gallery row captures actual tone pixels; GPU cost and no-frame-swap measurements remain J08.
 
 ## Gallery
 

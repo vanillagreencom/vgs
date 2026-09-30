@@ -20,6 +20,6 @@
 
 **Revisit When**: A consumer needs an interactive visual, or J08's GPU readings require a different rendering mechanism.
 
-**Verification**: `scripts/qml-tests/tst_voiceorb.qml` reads properties and animation lifetime, with mutations in `scripts/test-qml-unit.sh`. `scripts/check-voiceorb-shader.py` compiles and checks the shipped pack, with controls in `scripts/test-check-voiceorb-shader.py`. `scripts/smoke/rows/gallery.sh` reads the examples and compiled shader status, beside an uncompiled control. The read-only prefix row runs the installed component.
+**Verification**: `scripts/qml-tests/tst_voiceorb.qml` reads properties and animation lifetime, with mutations in `scripts/test-qml-unit.sh`. `scripts/check-voiceorb-shader.py` compiles and checks the shipped pack, with controls in `scripts/test-check-voiceorb-shader.py`. `scripts/smoke/rows/gallery.sh` captures each example's actual tone pixels, beside a control that must draw before its shader is hidden. The read-only prefix row runs the installed component.
 
 **References**: [Jarvis plan §4.3](../plans/v2-jarvis-plan.md#43-bubble-and-orb), [runtime-qml-shaders.md](../architecture/runtime-qml-shaders.md)

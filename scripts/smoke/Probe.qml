@@ -498,14 +498,30 @@ Scope {
             if (item === null || item === undefined) return "absent";
             const orbs = copyName === "" ? root.descendants(item).filter(child => root.typeName(child) === "VoiceOrb") : [item];
             const title = root.descendants(item).find(child => root.typeName(child) === "Label" && child.text === "Gallery");
+            const viewport = root.shownScrollAreas(item)[0];
             return JSON.stringify(orbs.map(orb => {
                 const shader = root.descendants(orb).find(child => child instanceof ShaderEffect);
+                const point = orb.mapToGlobal(0, 0);
+                const viewPoint = viewport === undefined ? null : orb.mapToItem(viewport, 0, 0);
+                const window = orb.Window.window;
                 return {
                     tone: orb.tone, active: orb.active, level: orb.level, secondaryLevel: orb.secondaryLevel,
                     width: orb.width, height: orb.height,
+                    box: root.windowBox(orb),
+                    ink: ThemeLogic.formatColor(Qt.color(Theme.voiceOrb.tone[orb.tone])),
                     scrollOffset: title === undefined ? null : Math.round(orb.mapToGlobal(0, 0).y - title.mapToGlobal(0, 0).y),
                     url: shader === undefined ? "" : String(shader.fragmentShader),
                     shaderLog: shader === undefined ? "no-shader" : shader.log,
+                    shaderStatus: shader === undefined ? null : shader.status,
+                    visible: orb.visible, shaderVisible: shader !== undefined && shader.visible,
+                    windowVisible: window !== null && window.visible,
+                    windowVisibility: window === null ? null : window.visibility,
+                    global: [point.x, point.y],
+                    viewportPosition: viewPoint === null ? null : [viewPoint.x, viewPoint.y],
+                    viewport: viewport === undefined ? null : {
+                        contentY: viewport.contentY, originY: viewport.originY,
+                        contentHeight: viewport.contentHeight, width: viewport.width, height: viewport.height
+                    },
                     compiled: shader !== undefined && shader.status === ShaderEffect.Compiled
                 };
             }));

@@ -138,7 +138,7 @@ expect "theme apply runs from the non-writable installed prefix" ok installed_ap
 expect "the installed Gallery summons from the read-only prefix" ok ipc shell summon window vgs.gallery '{}'
 expect_poll "the installed Gallery maps" 1 window_count Gallery
 expect_poll "the installed Gallery builds the VoiceOrb examples" True orb_examples_ok
-gallery_compile_orbs "the read-only installed VoiceOrb pack"
+gallery_draw_orbs "the read-only installed VoiceOrb pack"
 expect "the installed Gallery hides" ok ipc shell hide window vgs.gallery
 expect_poll "the installed Gallery is gone" 0 window_count Gallery
 if calls="$(read_only_prefix_signal_calls "$signal_log")" && [[ -z $calls ]]; then
