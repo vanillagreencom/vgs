@@ -35,6 +35,7 @@ function suite(ctx, check) {
     // same fixture does not pass for it.
     const manifestRows = [
         ["valid bar manifest", {}, null],
+        ["session is a shared capability", { capabilities: ["session"] }, null],
         ["unknown top-level key", { keepLoaded: true }, "unknown key"],
         ["schemaVersion 2", { schemaVersion: 2 }, "schemaVersion must be 1"],
         ["id without namespace", { id: "bar" }, "id must be dotted"],
@@ -376,6 +377,7 @@ function suite(ctx, check) {
     check("theme is a capability", ctx.CAPABILITIES.indexOf("theme") !== -1, true);
     check("layers is a capability", ctx.CAPABILITIES.indexOf("layers") !== -1, true);
     check("requirements is a capability", ctx.CAPABILITIES.indexOf("requirements") !== -1, true);
+    check("session readers coexist with a lock holder", ctx.lendRefusal({ lock: "acme.locker", session: "acme.other" }, { id: "acme.reader", capabilities: ["session"] }), "");
 
     const refusalRows = [
         ["a string fits a string entry", "label", "y", ""],
@@ -550,6 +552,8 @@ suite(load(LOGIC), report);
 // judge's own place in a temporary tree, beside the icon set, the
 // package-manager table and the Hyprland layer's table it imports.
 const CONTROLS = [
+    ["session is a known capability", '"lock", "session",', '"lock", ("session" && "planted"),'],
+    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"].concat(["session"]);'],
     ["packages is an object", "if (!isPlainObject(config.packages))\n            return \"packages must be an object\";", "if (false)\n            return \"packages must be an object\";"],
     ["packages.elevate is an elevation command", "config.packages.elevate !== undefined && PackageManagers.ELEVATORS.indexOf(config.packages.elevate) === -1", "false"],
     ["icon is a manifest key", "\"license\", \"icon\", \"kinds\"", "\"license\", \"kinds\""],

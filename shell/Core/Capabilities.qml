@@ -100,6 +100,7 @@ Singleton {
         }),
         ipc: commands.provider,
         lock: sessionLock.provider,
+        session: sessionLock.sessionProvider,
         notifications: notifications.provider,
         polkit: ctx => ({
             get agent() { return polkitLoader.item; },

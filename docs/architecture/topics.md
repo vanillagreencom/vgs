@@ -16,6 +16,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [notification-layout.md](notification-layout.md): read before touching where a notification card's text and media sit, or the media slot's tiers.
 - [notification-hints.md](notification-hints.md): read before touching the VGS notification hints, a card's hinted icon or click, or the notifications' `open` TUI.
 - [automations.md](automations.md): read before touching `vgs.automations`, its schedule compiler, its units, its runner or its records.
+- [jarvis.md](jarvis.md): read before implementing a Jarvis core boundary or its voice service.
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the Settings window.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.

@@ -10,6 +10,14 @@ Scope {
     property bool lockSecure: false
     property var lockContentOwner: null
 
+    // REVISIT(D056): A session observer needs a lock not owned by this shell.
+    // Report locked from the request until the compositor releases it.
+    function sessionProvider(ctx) {
+        return Object.freeze({
+            get locked() { return root.lockRequested || root.lockSecure; }
+        });
+    }
+
     function provider(ctx) {
         ctx.onDispose(() => root.dropLock(ctx));
         return {

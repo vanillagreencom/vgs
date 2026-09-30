@@ -1,0 +1,11 @@
+{
+    "schemaVersion": 1,
+    "id": "acme.session",
+    "name": "Session reader",
+    "version": "0.1.0",
+    "author": "Smoke",
+    "description": "Reads the core lock state without lock authority",
+    "kinds": ["service"],
+    "entryPoints": { "service": "Service.qml" },
+    "capabilities": ["session", "ipc"]
+}

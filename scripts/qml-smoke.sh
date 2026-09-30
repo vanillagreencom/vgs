@@ -171,6 +171,7 @@ if compositor_logs_on; then ok "the nested compositor logs from here on"; else f
 smoke_row plugins
 smoke_row sources
 smoke_row capabilities
+smoke_row session
 smoke_row status
 smoke_row manager
 smoke_row updates

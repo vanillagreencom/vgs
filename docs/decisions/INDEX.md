@@ -58,6 +58,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-29 | D053 | VGS-609 | The runner holds the instance lock and waits on the shell as its child | No process the shell starts holds the lock, so a restart or a run after a crash never waits on a download | Quickshell gives QML a file lock, or the runner gains crash supervision | Active | [Full](D053-runner-holds-the-instance-lock.md) |
 | 2026-09-29 | D054 | VGS-579 | The list motion is one cursor in qs.Ui; a plugin that owns its look hands it its own timings | One highlight under keyboard and pointer, and D023's look stays the plugin's own | A list needs more than one plate, or a view highlight takes an easing | Active | [Full](D054-list-motion-is-one-cursor-in-qs-ui.md) |
 | 2026-09-29 | D055 | VGS-598 | Prefer package preview images, then live token previews | Sharp previews without shipping generated screenshots | Preview cache grows memory or catalog authors need screenshots | Active | [Full](D055-theme-browser-previews.md) |
+| 2026-09-30 | D056 | VGS-617 | Plugins read session lock state without receiving lock authority | One owner, shared readers, immutable providers, no polling | A reader must observe a lock another process owns | Active | [Full](D056-read-only-session-state.md) |
 
 ---
 

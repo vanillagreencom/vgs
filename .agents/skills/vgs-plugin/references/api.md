@@ -57,6 +57,7 @@ A bar never creates, destroys or reads a plugin widget. It may draw built-in wid
 | `shell.configure.set(key, value)` | capability `configure` | writes one schema-declared setting to the entry `PluginLogic.settingTargetOf` names for this instance's kind (the layout entry for a bar widget, the `plugins` row otherwise); returns `ok`, `refused: setting=<key> ...` or `refused: user-config=...` when the user file cannot be written |
 | `shell.ipc.handle(name, fn)`, `.call(name, arg)` | capability `ipc` | `vgsh ipc call <plugin id> invoke <name> <arg>` calls `fn(arg)` and answers its result; `handle` returns a disposer; `call` does the same for this plugin's own `name` from inside the shell, so a panel asks the plugin's service for work the service owns: `arg` a string, the answer the handler's result as text, `unknown: <name>` while no instance registered it, or `error: <message>` when it threw; a non-string `arg` throws `refused: ipc=<name> arg=not-a-string` |
 | `shell.lock.lock(component)`, `.unlock()`, `.locked`, `.secure`, `.hasContent` | capability `lock` | the session lock; the component declares `property var screen` and is built on every screen. `locked` is what was asked for, `secure` what the compositor confirmed. A holder rebuilt while `locked` is true calls `lock(component)` again: the session stays locked but shows only the background colour until it does |
+| `shell.session.locked` | capability `session` | read-only, bindable boolean for this shell's lock: true while a lock is requested or the compositor still confirms it as secure; false only when both are false. The provider is frozen and has no lock or unlock member. It can be held by several readers beside the exclusive `lock` holder |
 | `shell.notifications.subscribe(fn)`, `.tracked` | capability `notifications` | `fn(notification)` for every notification; set `notification.tracked = true` to keep one; returns a disposer |
 | `shell.polkit.agent`, `.registered` | capability `polkit` | the polkit agent: `isActive`, `flow`; `registered` is false while polkitd has not accepted it |
 | `shell.run.detached(argv)` | capability `run` | a detached process from a list of non-empty strings, with the shell's environment less `VGSH_RUNNER_PID`; returns `ok` once handed over, or `refused: argv=...`; a program that fails to start is not reported |
@@ -96,6 +97,7 @@ A widget reads its capabilities from its own `shell`, never from the bar.
 | `configure` | `shell.configure`; needs a manifest `schema` |
 | `ipc` | `shell.ipc` |
 | `lock` | `shell.lock`; exclusive |
+| `session` | `shell.session`; read-only lock state, shared |
 | `notifications` | `shell.notifications` |
 | `polkit` | `shell.polkit`; exclusive |
 | `run` | `shell.run` |

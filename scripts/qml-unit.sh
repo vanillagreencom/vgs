@@ -91,11 +91,11 @@ for file in Theme.qml Tokens.js ThemeLogic.js Inset.js ClearingInset.qml Watched
 done
 cp -- "$tests/stand-ins/ThemeSource.qml" "$imports/qs/Commons/ThemeSource.qml"
 printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nInset 1.0 Inset.js\nClearingInset 1.0 ClearingInset.qml\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
-for file in TuiRecords.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
+for file in TuiRecords.qml SessionLock.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
   [[ -f $core/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$core/$file" >&2; exit 2; }
   ln -s -- "$core/$file" "$imports/qs/Core/$file"
 done
-printf 'module qs.Core\nTuiRecords 1.0 TuiRecords.qml\nPluginLogic 1.0 PluginLogic.js\nPackageManagers 1.0 PackageManagers.js\nHyprlandLayer 1.0 HyprlandLayer.js\n' >"$imports/qs/Core/qmldir"
+printf 'module qs.Core\nTuiRecords 1.0 TuiRecords.qml\nSessionLock 1.0 SessionLock.qml\nPluginLogic 1.0 PluginLogic.js\nPackageManagers 1.0 PackageManagers.js\nHyprlandLayer 1.0 HyprlandLayer.js\n' >"$imports/qs/Core/qmldir"
 cp -- "$tests/stand-ins/UnitTheme.qml" "$imports/qs/Unit/UnitTheme.qml"
 # Where the module under test is, for the test that reads its qmldir.
 printf '.pragma library\nvar UI_DIR = %s;\n' "$(python3 -c 'import json, sys; print(json.dumps("file://" + sys.argv[1]))' "$ui")" >"$imports/qs/Unit/UnitPaths.js"
