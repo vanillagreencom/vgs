@@ -65,7 +65,9 @@ lock_toasts() { ipc shell lent | py_reply 'import json,sys; print(json.dumps([[t
 # `vgsh lock`'s first line and its exit status.
 vgsh_lock() { local out status=0; out="$("${shell_env[@]}" "$repo/bin/vgsh" lock 2>&1)" || status=$?; printf '%s exit=%s\n' "$(head -n 1 <<<"$out")" "$status"; }
 client_said() { if grep -q -x -- "$2" "$1" 2>/dev/null; then echo "$2"; else echo waiting; fi; }
-lock_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs.lock"))))'; }
+# The lock's binds in the default map; the overlay capture submap repeats
+# every plugin bind (hyprland.md).
+lock_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs.lock") and b.get("submap", "") in ("", "default"))))'; }
 lock_lent() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.lock")], [t for t in d["ipcTargets"] if t == "vgs.lock"], [[w["id"], w["timeout"]] for w in d["idle"] if w["id"] == "vgs.lock"]]))'; }
 restore_option() { hypr -j getoption misc:allow_session_lock_restore | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps({k: v[k] for k in v if k not in ("option", "set")}))'; }
 # The `lock: check=started` lines in every shell log of the row: the kept
