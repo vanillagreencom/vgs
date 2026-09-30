@@ -26,7 +26,12 @@ controls = [
     ("ended", "        if (!lockRequested) return;\n        lockRequested = false;\n        lockSecure = false;",
      "        if (!lockRequested) return;\n        lockSecure = false;"),
     ("ended-unrequested", "        if (!lockRequested) return;\n        lockRequested = false;",
-     "        lockRequested = false;")
+     "        lockRequested = false;"),
+    ("reading-once", "if (unlockedReadings >= 2) compositorEnded", "if (unlockedReadings >= 1) compositorEnded"),
+    ("reading-lock", "&& !reasons.some(r => r.indexOf(\"LOCK\") !== -1);", ";"),
+    ("reading-workspace", "&& reasons.some(r => r.indexOf(\"WORKSPACE\") === -1)", "&& reasons.length > 0"),
+    ("reading-unconfirmed", "const unlocked = lockSecure\n", "const unlocked = true\n"),
+    ("reading-no-reset", "unlockedReadings = unlocked ? unlockedReadings + 1 : 0;", "unlockedReadings = unlocked ? unlockedReadings + 1 : unlockedReadings;")
 ]
 for name, needle, replacement in controls:
     assert source.count(needle) == 1, (name, "control match count")
@@ -38,7 +43,7 @@ for name, needle, replacement in controls:
     assert not path.is_symlink(), (name, "control symlink")
     path.write_text(changed)
 PY
-for rule in request secure frozen unload ended ended-unrequested; do
+for rule in request secure frozen unload ended ended-unrequested reading-once reading-lock reading-workspace reading-unconfirmed reading-no-reset; do
   status=0
   out="$("$repo/scripts/qml-unit.sh" --core "$TMP_ROOT/$rule" "$repo/scripts/qml-tests/tst_session_lock.qml" 2>&1)" || status=$?
   if [[ $status == 1 && $out == *"::session-lock::"* && $out == *"FAIL!  :"* ]]; then

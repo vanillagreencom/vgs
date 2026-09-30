@@ -12,6 +12,9 @@ Scope {
     // How many requested locks the compositor refused or ended while the
     // holder still asked for them, bindable, so the holder sees each one.
     property int compositorEnds: 0
+    // Hyprland readings in a row that found the session unlocked while
+    // this lock is confirmed (compositorReading).
+    property int unlockedReadings: 0
 
     // REVISIT(D056): A session observer needs a lock not owned by this shell.
     // Report locked from the request until the compositor releases it.
@@ -50,21 +53,51 @@ Scope {
         return "ok";
     }
 
-    // The compositor ended a lock the holder still requests: it refused it,
-    // as Hyprland does while another client such as hyprlock holds the
-    // session, or it ended it. Quickshell 0.3.1 then drops the lock itself
+    // The compositor ended a lock the holder still requests. REASON is
+    // `finished` when it refused or ended it, as Hyprland does while another
+    // client holds the session with misc:allow_session_lock_restore off:
+    // Quickshell 0.3.1 then drops the lock itself
     // (`ext_session_lock_v1_finished` unlocks, and `WlSessionLock::unlock`
-    // clears its target), so the request is dropped with it: the session
-    // reads unlocked, for the holder and for `session` readers alike, and
-    // the next request locks again. LockHost calls it when the compositor's
-    // lock goes; a release the holder asked for finds no request and does
+    // clears its target). It is `unlocked-elsewhere` when compositorReading
+    // found the session unlocked under a confirmed lock. The request is
+    // dropped with it: the session reads unlocked, for the holder and for
+    // `session` readers alike, and the next request locks again. LockHost
+    // calls it; a release the holder asked for finds no request and does
     // nothing.
-    function compositorEnded() {
+    function compositorEnded(reason) {
         if (!lockRequested) return;
         lockRequested = false;
         lockSecure = false;
+        unlockedReadings = 0;
         compositorEnds += 1;
-        console.warn("capabilities: lock=ended-by-compositor; another client may hold the session lock, and this shell's lock is dropped");
+        console.warn("capabilities: lock=ended-by-compositor reason=" + reason + "; another client holds or released the session lock, and this shell's lock is dropped");
+    }
+
+    // One reading of Hyprland's session lock, `hyprctl -j monitors` TEXT,
+    // which LockHost takes every two seconds while this lock is confirmed.
+    // Hyprland 0.56.2 with misc:allow_session_lock_restore on, which the
+    // VGS layer sets, lets another client's lock replace this one and sends
+    // this one nothing; that client's unlock then unlocks the session
+    // (`CSessionLockManager::onNewSessionLock`, `CSessionLock`'s
+    // unlock_and_destroy). A monitor names LOCK among the reasons it cannot
+    // go solitary while any session lock holds; one with no workspace
+    // names only WORKSPACE and says nothing. Two readings in a row in which
+    // a monitor with a workspace is readable and none names LOCK end the
+    // lock as the compositor's; any other reading starts the count again.
+    function compositorReading(text) {
+        let monitors = null;
+        try {
+            monitors = JSON.parse(String(text));
+        } catch (e) {
+            monitors = null;
+        }
+        const reasons = (Array.isArray(monitors) ? monitors : [])
+            .map(m => m !== null && typeof m === "object" && Array.isArray(m.solitaryBlockedBy) ? m.solitaryBlockedBy : []);
+        const unlocked = lockSecure
+            && reasons.some(r => r.indexOf("WORKSPACE") === -1)
+            && !reasons.some(r => r.indexOf("LOCK") !== -1);
+        unlockedReadings = unlocked ? unlockedReadings + 1 : 0;
+        if (unlockedReadings >= 2) compositorEnded("unlocked-elsewhere");
     }
 
     // A lock request the compositor has not confirmed by the time this

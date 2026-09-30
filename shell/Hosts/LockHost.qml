@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import qs.Core
 import qs.Commons
@@ -16,7 +17,7 @@ Scope {
         onSecureChanged: Capabilities.sessionLock.lockSecure = secure
         // A lock that goes while still requested was refused or ended by
         // the compositor; the owner drops the request (SessionLock).
-        onLockedChanged: if (!locked) Capabilities.sessionLock.compositorEnded()
+        onLockedChanged: if (!locked) Capabilities.sessionLock.compositorEnded("finished")
 
         WlSessionLockSurface {
             id: surface
@@ -34,5 +35,22 @@ Scope {
                 }
             }
         }
+    }
+
+    // Another client can replace a confirmed lock and unlock the session
+    // with no event to this one; SessionLock.compositorReading reads
+    // Hyprland's own state every two seconds while the lock is confirmed.
+    Timer {
+        interval: 2000
+        repeat: true
+        running: Capabilities.sessionLock.lockSecure
+        onTriggered: if (!lockReading.running) lockReading.running = true
+    }
+
+    Process {
+        id: lockReading
+        command: ["hyprctl", "-j", "monitors"]
+        stdout: StdioCollector { id: lockReadingOut; waitForEnd: true }
+        onExited: code => Capabilities.sessionLock.compositorReading(code === 0 ? lockReadingOut.text : "")
     }
 }

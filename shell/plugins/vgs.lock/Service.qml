@@ -8,8 +8,10 @@ import "LockModel.js" as LockModel
 // The lock's service. It asks the core for the one session lock and hands
 // it LockView, which the core's lock host builds on every screen; the core
 // keeps the session locked when this plugin is disabled, rebuilt or gone,
-// and the compositor keeps it locked when the shell dies. Only a password
-// PAM accepts, checked through this plugin's own stack in pam/, unlocks.
+// and the compositor keeps it locked when the shell dies. Within the shell,
+// only a password PAM accepts, checked through this plugin's own stack in
+// pam/, unlocks; with the restore option on, another client of the session
+// can take the lock over and release it (D058).
 //
 // Entry points: the shortcut `lock` (SUPER+L in the manifest), the IPC
 // function `vgsh ipc call vgs.lock invoke lock ''`, which `vgsh lock`
@@ -18,10 +20,10 @@ import "LockModel.js" as LockModel
 // it reads Hyprland's monitors and locks again a session a shell that died
 // left locked, as Omarchy's lock service does.
 //
-// A lock the compositor refuses, as while another locker such as hyprlock
-// holds the session, drops the core's request (SessionLock); the service
-// publishes it in the `lock` status, and a sleep waiting on it is released
-// as refused. A suspend that went ahead unconfirmed is published in
+// A lock the compositor refuses or ends, as while another locker such as
+// hyprlock holds the session or releases it under this lock, drops the
+// core's request (SessionLock); the service publishes it in the `lock`
+// status, and a sleep waiting on it is released as refused. A suspend that went ahead unconfirmed is published in
 // `lastSleep`, logged, and shown as a toast once the user is back at the
 // desktop, as Omarchy sends a critical notification.
 //

@@ -4,11 +4,14 @@
 # lock`, SUPER+L on the nested seat, its idle watch and its before-sleep
 # hook. Each lock is read back from the compositor, a monitor naming LOCK
 # among the reasons it cannot go solitary in `hyprctl -j monitors`, and
-# from the core's lending record. While a second lock client, the harness's
-# lock-client standing in for another locker, holds the session, Hyprland
-# refuses the plugin's lock: `vgsh lock` answers the refusal, the core
-# drops the request, the plugin publishes it, and a sleep then is released
-# as refused with a toast; once that client lets go, the plugin locks again.
+# from the core's lending record. A second lock client, the harness's
+# lock-client standing in for another locker, holds the session twice.
+# With the restore option on, the plugin's lock takes over, the client's
+# unlock then unlocks the session, and the core ends the plugin's lock. With
+# it off, Hyprland refuses the plugin's lock: `vgsh lock` answers the
+# refusal, the core drops the request, the plugin publishes it, and a sleep
+# then is released as refused with a toast. Each time the plugin locks
+# again once the client lets go.
 # A hook that cannot start is published as such and taken again once the
 # setting turns it back on. Disabling the plugin while locked keeps
 # the session locked, and the rebuilt plugin hands its lock screen over
@@ -164,29 +167,71 @@ release "the sleep lock"
 expect_poll "the hook is taken again after the sleep" 2 bash -c 'grep -c -x "ready budget_ms=4000" -- "$1" || :' _ "$sleep_log"
 expect "the last sleep is published as locked" '["ok", "The session was locked before the last suspend"]' status_value lastSleep
 
-# Another client holds the session lock: Hyprland refuses the plugin's.
-# The client runs no authentication and is stopped by its pid.
+# A second lock client, the harness's lock-client, holds the session. It
+# runs no authentication and is stopped by its pid. With the VGS layer's
+# misc:allow_session_lock_restore on, Hyprland lets the plugin's lock
+# replace the client's and tells the client nothing; the client's unlock
+# then unlocks the session under the plugin's confirmed lock, and the
+# core's reading of Hyprland ends that lock as the compositor's.
 expected_errors+=('capabilities: lock=ended-by-compositor' 'lock: sleep=unlocked reason=refused')
-spawn "$sandbox/lock-client.log" "${shell_env[@]}" "$sandbox/lock-client"
-client_pid="$spawn_pid"
-expect_poll "the second lock client holds the session" locked client_said "$sandbox/lock-client.log" locked
-expect "the session is locked by the other client" locked session_lock
-expect "vgsh lock answers the compositor's refusal" "vgsh: refused: lock=refused-by-compositor exit=1" vgsh_lock
-expect_poll "the core dropped the refused request" '[false, false, true]' core_lock
-expect "the plugin counted the refusal" '[1, false]' lock_status refusals secure
-expect "the lock status warns of the refusal" '["warning", "Hyprland refused or ended the last lock: another lock screen may hold the session"]' status_value lock
+# Wait up to 12 s for CMD to print WANT, and fail nothing: the expect that
+# follows reads it. The core reads Hyprland every 2 s and ends a lock on
+# the second unlocked reading.
+settle() { # WANT CMD...
+  local want="$1"; shift
+  for _ in $(seq 1 60); do [[ $("$@" 2>/dev/null) == "$want" ]] && return 0; sleep 0.2; done
+}
+# spawn truncates the client's log, so each start reads its own lines.
+start_lock_client() { # LABEL
+  spawn "$sandbox/lock-client.log" "${shell_env[@]}" "$sandbox/lock-client"
+  client_pid="$spawn_pid"
+  expect_poll "$1: the second lock client holds the session" locked client_said "$sandbox/lock-client.log" locked
+  expect "$1: the session is locked by the other client" locked session_lock
+}
+stop_lock_client() { # LABEL
+  kill -TERM "$client_pid" || fail "$1: SIGTERM to the lock client pid $client_pid failed"
+  expect_poll "$1: the other client let the session go" unlocked client_said "$sandbox/lock-client.log" unlocked
+}
+start_lock_client "takeover"
+expect "takeover: vgsh lock takes the lock over" "ok exit=0" vgsh_lock
+expect_poll "takeover: the core holds the confirmed lock" '[true, true, true]' core_lock
+stop_lock_client "takeover"
+settle '[false, false, true]' core_lock
+expect "takeover: the core ended the lock the other client's unlock released" '[false, false, true]' core_lock
+expect "takeover: the session is unlocked" unlocked session_lock
+expect_poll "takeover: the plugin counted the end" '[1, false, false]' lock_status refusals locked secure
+expect "takeover: the lock status warns of it" '["warning", "Hyprland refused or ended the last lock: another lock screen may hold the session"]' status_value lock
+expect "takeover: vgsh lock locks again" "ok exit=0" vgsh_lock
+expect_poll "takeover: the core holds the confirmed lock again" '[true, true, true]' core_lock
+expect "takeover: the lock status is ready again" '["ok", "Ready"]' status_value lock
+release "the lock after the takeover"
+
+# With the option off, Hyprland refuses the plugin's lock while the client
+# holds the session: `vgsh lock` answers the refusal, the core drops the
+# request, and a sleep then is released as refused with a toast. Once the
+# client lets go, the plugin locks again.
+printf '%s\n' 'hl.config({ misc = { allow_session_lock_restore = false } })' >>"$lock_hypr_lua"
+expect "the nested instance reloads with the restore option off" ok hypr reload config-only
+expect_poll "the restore option reads off" '{"bool": false}' restore_option
+start_lock_client "refusal"
+expect "refusal: vgsh lock answers the compositor's refusal" "vgsh: refused: lock=refused-by-compositor exit=1" vgsh_lock
+expect_poll "refusal: the core dropped the refused request" '[false, false, true]' core_lock
+expect "refusal: the plugin counted the refusal" '[2, false]' lock_status refusals secure
+expect "refusal: the lock status warns of it" '["warning", "Hyprland refused or ended the last lock: another lock screen may hold the session"]' status_value lock
 : >"$sleep_trigger"
-expect_poll "a sleep under the other client's lock is released as refused" "released reason=refused" bash -c 'grep -x "released reason=refused" -- "$1" || :' _ "$sleep_log"
-expect_poll "the last sleep is published as unlocked" '["danger", "The last suspend went ahead unlocked: Hyprland refused the lock"]' status_value lastSleep
-expect_poll "the user is told the machine slept unlocked" '[["The session was not locked before sleep", "danger"]]' lock_toasts
-expect_poll "the hook is taken again after the refused sleep" 3 bash -c 'grep -c -x "ready budget_ms=4000" -- "$1" || :' _ "$sleep_log"
-kill -TERM "$client_pid" || fail "SIGTERM to the lock client pid $client_pid failed"
-expect_poll "the other client let the session go" unlocked client_said "$sandbox/lock-client.log" unlocked
-expect_poll "the session is unlocked after the other client" unlocked session_lock
-expect "vgsh lock locks again once the other client let go" "ok exit=0" vgsh_lock
-expect_poll "the core holds the confirmed lock again" '[true, true, true]' core_lock
-expect "the lock status is ready again" '["ok", "Ready"]' status_value lock
-release "the lock after the other client"
+expect_poll "refusal: a sleep is released as refused" "released reason=refused" bash -c 'grep -x "released reason=refused" -- "$1" || :' _ "$sleep_log"
+expect_poll "refusal: the last sleep is published as unlocked" '["danger", "The last suspend went ahead unlocked: Hyprland refused the lock"]' status_value lastSleep
+expect_poll "refusal: the user is told the machine slept unlocked" '[["The session was not locked before sleep", "danger"]]' lock_toasts
+expect_poll "refusal: the hook is taken again after the refused sleep" 3 bash -c 'grep -c -x "ready budget_ms=4000" -- "$1" || :' _ "$sleep_log"
+stop_lock_client "refusal"
+expect_poll "refusal: the session is unlocked after the other client" unlocked session_lock
+expect "refusal: vgsh lock locks again once the other client let go" "ok exit=0" vgsh_lock
+expect_poll "refusal: the core holds the confirmed lock again" '[true, true, true]' core_lock
+expect "refusal: the lock status is ready again" '["ok", "Ready"]' status_value lock
+release "the lock after the refusal"
+restore_lock_hypr_lua || fail "hyprland.lua is put back after the refusal"
+expect "the nested instance reloads the first run's hyprland.lua" ok hypr reload config-only
+expect_poll "the restore option reads on again" '{"bool": true}' restore_option
 
 # A hook that cannot start, here a systemd-inhibit whose interpreter does
 # not exist, is published as such, and turning the setting back on takes it

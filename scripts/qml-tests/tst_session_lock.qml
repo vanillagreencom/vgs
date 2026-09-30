@@ -66,13 +66,13 @@ Item {
             tryCompare(reader, "locked", true, 100);
         }
 
-        // expected-log: capabilities: lock=ended-by-compositor; another client may hold the session lock, and this shell's lock is dropped -- the compositor refuses the requested lock
+        // expected-log: capabilities: lock=ended-by-compositor reason=finished -- the compositor refuses the requested lock
         function test_compositor_end_drops_the_request() {
             const holder = owner.provider({ onDispose: fn => {} });
             compare(holder.lock(contentComponent), "ok");
             owner.lockSecure = true;
             tryCompare(reader, "locked", true);
-            owner.compositorEnded();
+            owner.compositorEnded("finished");
             compare(owner.lockRequested, false);
             compare(holder.locked, false);
             compare(holder.secure, false);
@@ -87,9 +87,59 @@ Item {
             const holder = owner.provider({ onDispose: fn => {} });
             compare(holder.lock(contentComponent), "ok");
             compare(holder.unlock(), "ok");
-            owner.compositorEnded();
+            owner.compositorEnded("finished");
             compare(holder.compositorEnds, 0);
             compare(holder.locked, false);
+        }
+
+        function monitors(...reasons) {
+            return JSON.stringify(reasons.map((r, i) => ({ name: "DP-" + i, solitaryBlockedBy: r })));
+        }
+
+        // expected-log: capabilities: lock=ended-by-compositor reason=unlocked-elsewhere -- another client released the session under the confirmed lock
+        function test_two_unlocked_readings_end_a_confirmed_lock() {
+            const holder = owner.provider({ onDispose: fn => {} });
+            compare(holder.lock(contentComponent), "ok");
+            owner.lockSecure = true;
+            owner.compositorReading(monitors(["WINDOWED"]));
+            compare(holder.locked, true, "one reading is not enough");
+            owner.compositorReading(monitors(["WINDOWED", "CANDIDATE"], []));
+            compare(holder.locked, false);
+            compare(holder.secure, false);
+            compare(holder.compositorEnds, 1);
+            tryCompare(reader, "locked", false);
+        }
+
+        function test_readings_that_do_not_show_an_unlocked_session_keep_the_lock_data() {
+            return [
+                { tag: "LOCK named", between: monitors(["WINDOWED", "LOCK"]) },
+                { tag: "LOCK on the second monitor", between: monitors(["WINDOWED"], ["LOCK"]) },
+                { tag: "only a monitor with no workspace", between: monitors(["WORKSPACE"]) },
+                { tag: "no monitor", between: "[]" },
+                { tag: "unreadable", between: "" },
+                { tag: "not JSON", between: "hyprctl: no instance" }
+            ];
+        }
+
+        function test_readings_that_do_not_show_an_unlocked_session_keep_the_lock(data) {
+            const holder = owner.provider({ onDispose: fn => {} });
+            compare(holder.lock(contentComponent), "ok");
+            owner.lockSecure = true;
+            // An unlocked reading, then this one, then an unlocked one: the
+            // count starts again, so the lock stays.
+            owner.compositorReading(monitors(["WINDOWED"]));
+            owner.compositorReading(data.between);
+            owner.compositorReading(monitors(["WINDOWED"]));
+            compare(holder.locked, true);
+            compare(holder.compositorEnds, 0);
+        }
+
+        function test_an_unconfirmed_lock_is_not_read() {
+            const holder = owner.provider({ onDispose: fn => {} });
+            compare(holder.lock(contentComponent), "ok");
+            for (let i = 0; i < 3; i++) owner.compositorReading(monitors(["WINDOWED"]));
+            compare(holder.locked, true);
+            compare(holder.compositorEnds, 0);
         }
 
         function test_holder_unload_keeps_lock() {
