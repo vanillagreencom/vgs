@@ -1101,7 +1101,7 @@ layer_bar_clear() { # NAMESPACE TOKEN
 # NAME the mode MODE, such as 480x720, at SCALE, 1 by default, and the
 # layout's origin. The nested Wayland output takes any mode and an integer
 # scale; a headless output stays 0x0 in the sandbox
-# (docs/architecture/runtime-hyprland.md).
+# (docs/architecture/runtime-hyprland-nested.md).
 monitor_rule() { printf 'hl.monitor({ output = "%s", mode = "%s", position = "0x0", scale = %s })\n' "$1" "$2" "${3:-1}"; }
 # output_mode NAME MODE [SCALE]: the nested compositor applies
 # monitor_rule's rule now through `hyprctl eval`; the reply is hyprctl's.

@@ -17,8 +17,16 @@
 # fails. A grim that does not return within SHOT_GRIM_TIMEOUT_S means the
 # nested compositor drew no frame at all, which the caller reports as 77.
 #
+# A shot captures the one output SHOT_OUTPUT names, not the whole layout:
+# grim captures a layout one output at a time and fails the whole capture
+# with `failed to create buffer` on an output with no size, as a headless
+# output of the nested compositor is on an NVIDIA host.
+#
 # Every shot is one line in shots.tsv beside the images: name, sha256 of
-# the file, the previous shot's name, and `settled` or `animated`.
+# the file, the previous shot's name, `settled` or `animated`, and the
+# nested window's state on the host: the word SHOT_WINDOW_READER prints
+# when it reads the same before the first capture and after the last,
+# `changed` when it does not, `-` when no reader is set.
 
 shot_refuse() { # REASON VALUE
   printf 'shot: refused: reason=%s value=%s\n' "$1" "$2" >&2
@@ -76,28 +84,40 @@ if len(head) == 4 and head[:3] == [b"P6", b"1 1", b"255"] and len(head[3]) == 3:
 shot_last_name=""
 shot_last_hash=""
 
-# shot_grab SOCKET RUNTIME_DIR FILE: one capture, grim alone in an empty
-# environment beside the nested socket. Exit 2 when grim timed out.
+# shot_grab SOCKET RUNTIME_DIR OUTPUT FILE: one capture of OUTPUT, grim
+# alone in an empty environment beside the nested socket. Exit 2 when grim
+# timed out.
 shot_grab() {
   local status=0
-  shot_grim "$1" "$2" -t png "$3" >/dev/null 2>>"${3%/*}/grim.log" || status=$?
+  shot_grim "$1" "$2" -o "$3" -t png "$4" >/dev/null 2>>"${4%/*}/grim.log" || status=$?
   [[ $status -eq 0 ]] && return 0
   [[ $status -eq 124 ]] && return 2
   return 1
 }
 
+# shot_window: the nested window's host state from SHOT_WINDOW_READER, a
+# command the caller sets; `-` when it is unset. A reader that fails keeps
+# the word it printed, such as `unreadable`.
+shot_window() {
+  [[ -n ${SHOT_WINDOW_READER:-} ]] || { echo -; return; }
+  $SHOT_WINDOW_READER || true
+}
+
 # shot NAME: SHOT_DIR/NAME.png, proved current against the previous shot.
-# Needs SHOT_DIR, SHOT_SOCKET and SHOT_RUNTIME_DIR. Returns 1 for a stale
-# or failed capture, 2 when grim timed out; prints what it wrote.
+# Needs SHOT_DIR, SHOT_SOCKET, SHOT_RUNTIME_DIR and SHOT_OUTPUT. Returns 1
+# for a stale or failed capture, 2 when grim timed out; prints what it
+# wrote.
 shot() {
-  local name="$1" file part hash stable="" last="" kind="" deadline status
+  local name="$1" file part hash stable="" last="" kind="" deadline status window_before window_after window
   [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { shot_refuse name "$name"; return 1; }
+  [[ -n ${SHOT_OUTPUT:-} ]] || { shot_refuse output-unnamed "$name"; return 1; }
+  window_before="$(shot_window)"
   file="$SHOT_DIR/$name.png"
   part="$SHOT_DIR/.$name.part.png"
   deadline=$(( $(date +%s%N) / 1000000 + ${SHOT_SETTLE_S:-5} * 1000 ))
   while :; do
     status=0
-    shot_grab "$SHOT_SOCKET" "$SHOT_RUNTIME_DIR" "$part" || status=$?
+    shot_grab "$SHOT_SOCKET" "$SHOT_RUNTIME_DIR" "$SHOT_OUTPUT" "$part" || status=$?
     if [[ $status -ne 0 ]]; then
       rm -f -- "$part"
       printf 'shot: capture-failed name=%s grim-status=%s\n' "$name" "$([[ $status -eq 2 ]] && echo timeout || echo error)" >&2
@@ -120,10 +140,13 @@ shot() {
   done
   [[ $kind == settled ]] && mv -f -- "$part" "$file"
   rm -f -- "$part"
-  printf '%s\t%s\t%s\t%s\n' "$name" "${stable:-$last}" "${shot_last_name:--}" "$kind" >>"$SHOT_DIR/shots.tsv"
+  window_after="$(shot_window)"
+  window="$window_before"
+  [[ $window_after == "$window_before" ]] || window=changed
+  printf '%s\t%s\t%s\t%s\t%s\n' "$name" "${stable:-$last}" "${shot_last_name:--}" "$kind" "$window" >>"$SHOT_DIR/shots.tsv"
   shot_last_name="$name"
   shot_last_hash="${stable:-$last}"
-  printf '  shot  %s (%s)\n' "$file" "$kind"
+  printf '  shot  %s (%s, window %s)\n' "$file" "$kind" "$window"
 }
 
 # shot_held NAME READER [ARGS...]: `shot NAME` under a held output mode.

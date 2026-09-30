@@ -41,17 +41,26 @@
 # scale, for every scene, so a shot's width does not depend on the host's
 # window; another shape is refused as `sandbox-shots: refused: size=<value>`.
 # --theme-card NAME is the catalog theme the theme-browser scene selects,
-# frankenstein by default.
+# frankenstein by default; a name that is not a catalog directory name
+# (lowercase letters, digits and hyphens) is refused as
+# `sandbox-shots: refused: theme-card=<value>`.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
 # tmp/sandbox-shots/<UTC time>[-REV][-x2]. shots.tsv beside them lists each shot
-# with the sha256 of its file and how it was proved current (shot.sh).
+# with the sha256 of its file, how it was proved current and whether the
+# host showed the nested window while it was taken (shot.sh). Each shot is
+# of the nested compositor's first output alone, which the harness sized
+# (grim -o), so an output a scene adds never enters a capture. The last
+# line counts the shots taken with the window hidden as hidden=N; the host
+# window's state is the one read this runner makes of the host compositor
+# (scripts/smoke/host-window.sh).
 #
 # Exit 0 when every shot was taken. Exit 77 when a prerequisite is missing
 # or when every failure was a grim that got no frame from the nested
-# compositor (nested-window=not-drawn: enable render_unfocused for class
-# aquamarine in the host Hyprland window rules, or keep the window visible).
-# Exit 1 when any other step or shot failed.
+# compositor (nested-window=not-drawn: the host sends a hidden window no
+# frame callbacks unless a host window rule gives class aquamarine
+# render_unfocused, docs/architecture/validation-smoke-faults.md). Exit 1
+# when any other step or shot failed.
 set -euo pipefail
 
 timeout_s=60
@@ -85,6 +94,7 @@ for mode in "${mode_list[@]}"; do
 done
 [[ $scale == 1 || $scale == 2 ]] || { printf 'sandbox-shots: refused: scale=%s\n' "$scale" >&2; exit 2; }
 [[ -z $shot_size || $shot_size =~ ^[1-9][0-9]*x[1-9][0-9]*$ ]] || { printf 'sandbox-shots: refused: size=%s\n' "$shot_size" >&2; exit 2; }
+[[ $theme_card =~ ^[a-z0-9][a-z0-9-]*$ ]] || { printf 'sandbox-shots: refused: theme-card=%s\n' "$theme_card" >&2; exit 2; }
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
@@ -175,10 +185,19 @@ if ! SHOT_SOCKET="$(shot_socket "$rt_dir" "$nested_socket" "$host_socket")"; the
   exit 1
 fi
 ok "grim captures only $SHOT_SOCKET"
+# Each shot records whether the host showed the nested window while it was
+# taken: the one read this runner makes of the host compositor.
+source "$checkout/scripts/smoke/host-window.sh"
+nested_window_state() { host_window_state "$compositor_pid"; }
+SHOT_WINDOW_READER=nested_window_state
 # Hyprland's own notice that it was not started through start-hyprland
 # would sit over the top right of every shot.
 expect "the nested compositor's notices are dismissed" ok hypr dismissnotify
 main_name="$(first_name)" || { fail "the monitor is unreadable"; exit 1; }
+# Every shot is of this output alone, so an output a scene adds, such as a
+# headless one with no size, never enters a capture.
+SHOT_OUTPUT="$main_name"
+ok "grim captures only the output $SHOT_OUTPUT"
 # --size: the output holds WxH logical pixels at the run's scale for every
 # scene. At scale 2 the harness's own hold ends first and the run's mode
 # becomes the doubled size, which a scene that leaves the hold returns to.
@@ -447,8 +466,10 @@ scene_theme-browser() { # MODE
   preview_path_of() { ipc smoke readDescendant overlay vgs.themes ThemeView previewCache | python3 -c 'import json,sys; t=sys.stdin.read(); d=json.loads(t) if t.startswith("{") else {}; print(d.get(sys.argv[1], ""))' "$1"; }
   wait_preview_cached() { local _; for _ in $(seq 1 50); do [[ $(preview_cached "$1") == True ]] && return 0; sleep 0.2; done; return 1; }
   expect "vgs.themes enables for the theme browser shot" ok ipc shell setPluginEnabled vgs.themes true
+  expect_poll "vgs.themes is built for the theme browser shot" True record_exists vgs.themes
   expect "the theme browser opens" ok ipc shell summon overlay vgs.themes '{"view":"themes"}'
   expect_poll "the theme browser maps" 1 layer_count vgs:overlay
+  expect_poll "the theme browser holds the keyboard" true ipc smoke activeFocusIn overlay vgs.themes
   expect_poll "the theme browser reads its cards" true ipc smoke readDescendant overlay vgs.themes ThemeView loaded
   type_keys "$theme_card" || fail "typing the theme-browser card failed"
   expect_poll "the theme browser selects $theme_card" "\"$theme_card\"" ipc smoke readDescendant overlay vgs.themes ThemeView selectedName
@@ -475,16 +496,38 @@ scene_theme-browser() { # MODE
   take "theme-browser-$1-installed-$theme_card"
   expect "the theme browser hides" ok ipc shell hide overlay vgs.themes
   expect_poll "the theme browser is gone" 0 layer_count vgs:overlay
+  # The next mode's catalog shot must show the card as the catalog has it.
+  rm -rf -- "${home:?}/.config/vgs/themes/${theme_card:?}"
 }
 
+# The wallpaper browser over nord, applied with two images, and a second
+# monitor, which gives the browser its monitor scope. The scene removes the
+# monitor and restores the mode's theme, so a later scene starts from the
+# run's own state.
+wallpaper_output="VGS-SHOT"
 scene_wallpaper-browser() { # MODE
+  local theme_dir="$home/.config/vgs/themes/nord"
+  mkdir -p -- "$theme_dir/backgrounds"
+  cp -- "$checkout/themes/catalog/nord/theme.json" "$theme_dir/theme.json"
+  cp -- "$checkout/themes/catalog/nord/terminal.json" "$theme_dir/terminal.json"
+  cp -- "$checkout/themes/catalog/thumbnails/nord.jpg" "$theme_dir/backgrounds/a.jpg"
+  cp -- "$checkout/themes/catalog/thumbnails/akane.jpg" "$theme_dir/backgrounds/b.jpg"
+  "${shell_env[@]}" "$repo/bin/vgsh" theme apply nord >/dev/null || fail "nord applies for the wallpaper browser shot"
+  expect_poll "nord is published for the wallpaper browser shot" nord ipc smoke themeName
+  expect "the nested compositor adds a monitor for the wallpaper browser shot" ok hypr output create headless "$wallpaper_output"
   expect "vgs.themes enables for the wallpaper browser shot" ok ipc shell setPluginEnabled vgs.themes true
+  expect_poll "vgs.themes is built for the wallpaper browser shot" True record_exists vgs.themes
   expect "the wallpaper browser opens" ok ipc shell summon overlay vgs.themes '{"view":"wallpapers"}'
   expect_poll "the wallpaper browser maps" 1 layer_count vgs:overlay
+  expect_poll "the wallpaper browser holds the keyboard" true ipc smoke activeFocusIn overlay vgs.themes
   expect_poll "the wallpaper browser reads its cards" true ipc smoke readDescendant overlay vgs.themes WallpaperView loaded
   take "wallpaper-browser-$1"
   expect "the wallpaper browser hides" ok ipc shell hide overlay vgs.themes
   expect_poll "the wallpaper browser is gone" 0 layer_count vgs:overlay
+  expect "the wallpaper browser shot's monitor is removed" ok hypr output remove "$wallpaper_output"
+  # vgs has no backgrounds, so applying it removes nord's image.
+  "${shell_env[@]}" "$repo/bin/vgsh" theme apply vgs >/dev/null || fail "vgs applies after the wallpaper browser shot"
+  set_mode "$1"
 }
 
 # The bar's manager panel of a tree before the Settings plugin: opened by a
@@ -550,48 +593,6 @@ scene_launcher() { # MODE
   park_pointer
   type_keys -k Escape -k Escape -k Escape || fail "sending Escape failed"
   expect_poll "the launcher closes" 0 layer_count vgs:overlay
-}
-
-
-
-prepare_theme_browser_scene() {
-  local theme_dir="$home/.config/vgs/themes/nord"
-  if ! hypr -j monitors | grep -q 'VGS-SHOT'; then
-    hypr output create headless VGS-SHOT >/dev/null || true
-  fi
-  mkdir -p -- "$theme_dir/backgrounds"
-  cp -- "$checkout/themes/catalog/nord/theme.json" "$theme_dir/theme.json"
-  cp -- "$checkout/themes/catalog/nord/terminal.json" "$theme_dir/terminal.json"
-  cp -- "$checkout/themes/catalog/thumbnails/nord.jpg" "$theme_dir/backgrounds/a.jpg"
-  cp -- "$checkout/themes/catalog/thumbnails/akane.jpg" "$theme_dir/backgrounds/b.jpg"
-  "${shell_env[@]}" "$repo/bin/vgsh" theme apply nord >/dev/null || fail "nord applies for browser screenshots"
-  expect_poll "nord is published for browser screenshots" nord ipc smoke themeName
-}
-
-scene_theme-browser() { # MODE
-  prepare_theme_browser_scene
-  expect "enabling vgs.themes is allowed" ok ipc shell setPluginEnabled vgs.themes true
-  expect_poll "vgs.themes is built" True record_exists vgs.themes
-  expect "the theme browser summons" ok ipc shell summon overlay vgs.themes '{"view":"themes"}'
-  expect_poll "the theme browser maps its overlay" 1 layer_count vgs:overlay
-  expect_poll "the theme browser holds the keyboard" true ipc smoke activeFocusIn overlay vgs.themes
-  expect_poll "the theme browser loads its cards" true ipc smoke readDescendant overlay vgs.themes ThemeView loaded
-  take "theme-browser-$1-open"
-  expect "the theme browser hides" ok ipc shell hide overlay vgs.themes
-  expect_poll "the theme browser overlay is gone" 0 layer_count vgs:overlay
-}
-
-scene_wallpaper-browser() { # MODE
-  prepare_theme_browser_scene
-  expect "enabling vgs.themes is allowed" ok ipc shell setPluginEnabled vgs.themes true
-  expect_poll "vgs.themes is built" True record_exists vgs.themes
-  expect "the wallpaper browser summons" ok ipc shell summon overlay vgs.themes '{"view":"wallpapers"}'
-  expect_poll "the wallpaper browser maps its overlay" 1 layer_count vgs:overlay
-  expect_poll "the wallpaper browser holds the keyboard" true ipc smoke activeFocusIn overlay vgs.themes
-  expect_poll "the wallpaper browser loads its cards" true ipc smoke readDescendant overlay vgs.themes WallpaperView loaded
-  take "wallpaper-browser-$1-open"
-  expect "the wallpaper browser hides" ok ipc shell hide overlay vgs.themes
-  expect_poll "the wallpaper browser overlay is gone" 0 layer_count vgs:overlay
 }
 
 notify() { # APP SUMMARY BODY ACTIONS HINTS: prints the id
@@ -729,7 +730,7 @@ for mode in "${mode_list[@]}"; do
   for scene in "${scenes[@]}"; do "scene_$scene" "$mode"; done
 done
 
-echo "sandbox-shots: dir=$SHOT_DIR shots=$(wc -l <"$SHOT_DIR/shots.tsv" 2>/dev/null || echo 0) failures=$failures"
+echo "sandbox-shots: dir=$SHOT_DIR shots=$(wc -l <"$SHOT_DIR/shots.tsv" 2>/dev/null || echo 0) failures=$failures hidden=$(awk -F '\t' '$5 == "hidden"' "$SHOT_DIR/shots.tsv" 2>/dev/null | wc -l)"
 if [[ $failures -gt 0 && $failures -eq $undrawn ]]; then
   printf 'sandbox-shots: status=not-measured nested-window=not-drawn\n'
   exit 77

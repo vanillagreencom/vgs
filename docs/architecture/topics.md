@@ -44,6 +44,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [tui.md](tui.md), [tui-capability.md](tui-capability.md), [tui-records.md](tui-records.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability, its exit records or `vgsh sudo`.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [runtime-hyprland.md](runtime-hyprland.md): read before touching a dispatch, `Compositor` or `Dispatch.js`, or relying on what Hyprland does.
+- [runtime-hyprland-nested.md](runtime-hyprland-nested.md): read before touching the nested sandbox's outputs, `scripts/smoke/shot.sh` or a fault that names the nested window.
 - [runtime-hyprland-capture.md](runtime-hyprland-capture.md): read before touching the overlay keyboard capture, its submap or `scripts/smoke/rows/overlay-capture.sh`.
 - [runtime-pointer.md](runtime-pointer.md): read before touching a pointer handler, a cursor, a hover reading or a popup.
 - [validation.md](validation.md), [validation-smoke.md](validation-smoke.md) and [validation-smoke-harness.md](validation-smoke-harness.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.

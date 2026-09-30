@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Drive scripts/smoke/shot.sh, the sandbox capture helpers, with no
 # sandbox: plain Unix sockets stand in for the host and nested Wayland
-# sockets, and a stub grim on PATH writes the image each case needs. Each
+# sockets, and a stub grim on PATH writes the image each case needs. A stub
+# hyprctl on PATH answers for the host compositor, so the cases of
+# scripts/smoke/host-window.sh read a planted host world. Each
 # case pins the exit status and the first line on stderr. The controls at
 # the end plant one defect per guard in a copy of the file and require the
 # case that guard owns to go red. The scene cases drive
@@ -41,7 +43,9 @@ ln -s "$host/wayland-1" "$rt/wayland-9"
 # The stub grim: the mode file beside it picks what it writes to its last
 # argument, since shot.sh runs grim in an empty environment. fixed-a and
 # fixed-b write one image each time; counter writes a new one each call;
-# hang never returns. It records its environment in env.log beside it.
+# hang never returns; unsized-layout fails as grim 1.5.0 does when the
+# layout holds an output with no size, unless -o names the sized output
+# WAYLAND-1. It records its environment in env.log beside it.
 cat >"$tmp/bin/grim" <<'SH'
 #!/usr/bin/env bash
 out="${!#}"
@@ -52,9 +56,35 @@ case "$(cat "$here/mode")" in
   fixed-b) printf 'image-b' >"$out" ;;
   counter) n=$(( $(cat "$here/count" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$here/count"; printf 'image-%s' "$n" >"$out" ;;
   hang) sleep 5 ;;
+  unsized-layout) if [[ $1 == -o && $2 == WAYLAND-1 ]]; then printf 'image-b' >"$out"; else echo "failed to create buffer" >&2; exit 1; fi ;;
 esac
 SH
 chmod 755 "$tmp/bin/grim"
+# The stub hyprctl answers `-j clients` and `-j monitors` from the host
+# world below, and fails after printing an empty list for the request a
+# fail-<request> file beside it names. Two host monitors: DP-1 shows
+# workspace 1, DP-2 shows workspace 2 and the special workspace -98.
+# Windows: pid 41 on workspace 1, 42 on workspace 3, 43 on the shown
+# special workspace, 44 on the special workspace -99 no monitor shows, 45
+# on workspace 1 hidden in a group.
+cat >"$tmp/bin/hyprctl" <<'SH'
+#!/usr/bin/env bash
+here="${0%/*}"
+[[ $1 == -j && ( $2 == clients || $2 == monitors ) && $# -eq 2 ]] || exit 2
+if [[ -e $here/fail-$2 ]]; then echo '[]'; exit 1; fi
+cat -- "$here/host-$2.json"
+SH
+chmod 755 "$tmp/bin/hyprctl"
+python3 - "$tmp/bin" <<'PY'
+import json, sys
+here = sys.argv[1]
+def monitor(name, active, special):
+    return {"name": name, "activeWorkspace": {"id": active, "name": str(active)}, "specialWorkspace": {"id": special, "name": "special:shown" if special else ""}}
+def window(pid, workspace, hidden=False):
+    return {"pid": pid, "class": "aquamarine", "mapped": True, "hidden": hidden, "workspace": {"id": workspace, "name": str(workspace)}}
+json.dump([monitor("DP-1", 1, 0), monitor("DP-2", 2, -98)], open(f"{here}/host-monitors.json", "w"))
+json.dump([window(41, 1), window(42, 3), window(43, -98), window(44, -99), window(45, 1, hidden=True)], open(f"{here}/host-clients.json", "w"))
+PY
 hash_a="$(printf 'image-a' | sha256sum | cut -d' ' -f1)"
 # The hold cases replace shot with a stub that records its name in
 # called, so shot_held is driven alone. Their reader, hold, prints the
@@ -66,13 +96,13 @@ held_stubs='shot() { echo "$1" >"$D/called"; }; '
 # sourced, in an empty environment holding a marker that must never reach
 # grim: T the test dir, RT the sandbox's runtime dir, HOST the host's, D
 # an empty dir under the checkout's tmp/, and SHOT_DIR, SHOT_SOCKET and
-# SHOT_RUNTIME_DIR set for `shot`.
+# SHOT_RUNTIME_DIR and SHOT_OUTPUT set for `shot`.
 run_case() {
   local file="$1" label="$2" snippet="$3" want_status="$4" want_line="$5" err status=0 dir
   dir="$tmp/checkout/tmp/case-$RANDOM$RANDOM"
   mkdir -p "$dir"
   env -i PATH="$tmp/bin:$PATH" HOST_MARKER=live T="$tmp" RT="$rt" HOST="$host" D="$dir" HASH_A="$hash_a" \
-    SHOT_DIR="$dir" SHOT_SOCKET="$rt/wayland-1" SHOT_RUNTIME_DIR="$rt" \
+    SHOT_DIR="$dir" SHOT_SOCKET="$rt/wayland-1" SHOT_RUNTIME_DIR="$rt" SHOT_OUTPUT=WAYLAND-1 \
     bash -c 'set -euo pipefail; source "$1"; eval "$2"' _ "$file" "$snippet" >"$dir/out" 2>"$dir/err" || status=$?
   err="$(head -n 1 "$dir/err")"
   [[ $status -eq $want_status && $err == "$want_line" ]] && return 0
@@ -99,7 +129,7 @@ cases=(
   "an output dir outside tmp/ is refused"
   'shot_dir_under "$T/checkout" "$T/elsewhere"' 1 "shot: refused: reason=out-dir-outside-tmp value=$tmp/elsewhere"
   "a new settled capture is taken"
-  'echo fixed-b >"$T/bin/mode"; shot one >/dev/null; want="$(printf "one\t%s\t-\tsettled" "$(printf image-b | sha256sum | cut -d" " -f1)")"; [[ $(cat "$D/shots.tsv") == "$want" && $(cat "$D/one.png") == image-b ]]' 0 ""
+  'echo fixed-b >"$T/bin/mode"; shot one >/dev/null; want="$(printf "one\t%s\t-\tsettled\t-" "$(printf image-b | sha256sum | cut -d" " -f1)")"; [[ $(cat "$D/shots.tsv") == "$want" && $(cat "$D/one.png") == image-b ]]' 0 ""
   "a capture equal to the previous shot is stale"
   'echo fixed-a >"$T/bin/mode"; shot_last_name=before; shot_last_hash="$HASH_A"; SHOT_SETTLE_S=1 shot two' 1 "shot: stale name=two previous=before sha256=$hash_a"
   "a capture that keeps changing is taken as animated"
@@ -114,25 +144,55 @@ cases=(
   "$held_stubs"'hold() { echo reset; }; s=0; shot_held seven hold || s=$?; [[ ! -e $D/called ]] || exit 9; exit "$s"' 3 "shot: refused: reason=hold-left-before value=reset"
   "a hold reset during the capture refuses it after"
   "$held_stubs"'hold() { if [[ -e $D/called ]]; then echo reset; else echo held; fi; }; shot_held eight hold' 4 "shot: refused: reason=hold-left-after value=reset"
+  "a capture of its own output is taken while another output has no size"
+  'echo unsized-layout >"$T/bin/mode"; shot nine >/dev/null; [[ $(cat "$D/nine.png") == image-b ]]' 0 ""
+  "a shot with no output named is refused"
+  'echo fixed-b >"$T/bin/mode"; SHOT_OUTPUT= shot ten' 1 "shot: refused: reason=output-unnamed value=ten"
+  "a shot records the window state read around it"
+  'echo fixed-b >"$T/bin/mode"; state() { echo hidden; }; SHOT_WINDOW_READER=state shot eleven >/dev/null; [[ $(cut -f5 "$D/shots.tsv") == hidden ]]' 0 ""
+  "a window state that changes during a shot reads changed"
+  'echo fixed-b >"$T/bin/mode"; state() { if [[ -e $D/read ]]; then echo shown; else : >"$D/read"; echo hidden; fi; }; SHOT_WINDOW_READER=state shot twelve >/dev/null; [[ $(cut -f5 "$D/shots.tsv") == changed ]]' 0 ""
 )
-for (( i = 0; i < ${#cases[@]}; i += 4 )); do
-  if run_case "$helper" "${cases[@]:i:4}"; then ok "${cases[i]}"; else fail "${cases[i]}"; fi
-done
+# run_cases FILE CASES: every case of the array CASES against FILE.
+run_cases() {
+  local file="$1" i
+  local -n rows="$2"
+  for (( i = 0; i < ${#rows[@]}; i += 4 )); do
+    if run_case "$file" "${rows[@]:i:4}"; then ok "${rows[i]}"; else fail "${rows[i]}"; fi
+  done
+}
+run_cases "$helper" cases
 
-# mutate OLD NEW OUT: a copy of the helper with OLD, which must occur once,
+# mutate FILE OLD NEW OUT: a copy of FILE with OLD, which must occur once,
 # replaced by NEW.
 mutate() {
   local text rest count
-  text="$(<"$helper")"
-  rest="${text//"$1"/}"
-  count=$(( (${#text} - ${#rest}) / ${#1} ))
+  text="$(<"$1")"
+  rest="${text//"$2"/}"
+  count=$(( (${#text} - ${#rest}) / ${#2} ))
   if [[ $count -ne 1 ]]; then
-    printf '        mutation matched %s times: %s\n' "$count" "$1"
+    printf '        mutation matched %s times: %s\n' "$count" "$2"
     return 1
   fi
-  printf '%s\n' "${text/"$1"/"$2"}" >"$3"
-  cmp -s -- "$helper" "$3" && { printf '        mutation left the file unchanged: %s\n' "$1"; return 1; }
+  printf '%s\n' "${text/"$2"/"$3"}" >"$4"
+  cmp -s -- "$1" "$4" && { printf '        mutation left the file unchanged: %s\n' "$2"; return 1; }
   return 0
+}
+
+# run_controls FILE CASES CONTROLS: each control of the array CONTROLS
+# planted in a copy of FILE must turn its case of the array CASES red.
+run_controls() {
+  local file="$1" i j label target mutant row
+  local -n rows="$2" plants="$3"
+  for (( i = 0; i < ${#plants[@]}; i += 4 )); do
+    label="${plants[i]}"; target="${plants[i + 3]}"
+    mutant="$tmp/mutant-${file##*/}-$i.sh"
+    if ! mutate "$file" "${plants[i + 1]}" "${plants[i + 2]}" "$mutant"; then fail "control: $label"; continue; fi
+    row=()
+    for (( j = 0; j < ${#rows[@]}; j += 4 )); do [[ ${rows[j]} == "$target" ]] && row=("${rows[@]:j:4}"); done
+    if [[ ${#row[@]} -eq 0 ]]; then fail "control: $label names no case: $target"; continue; fi
+    if run_case "$mutant" "${row[@]}" >/dev/null; then fail "control: $label left '$target' green"; else ok "control: $label"; fi
+  done
 }
 
 # Controls, four fields each: label, text, replacement, and the case that
@@ -156,16 +216,55 @@ controls=(
   '[[ $state == held ]] || { shot_refuse hold-left-before' 'true || { shot_refuse hold-left-before' "a hold left before the capture refuses it untaken"
   "a hold reset during the capture is not read"
   '[[ $state == held ]] || { shot_refuse hold-left-after' 'true || { shot_refuse hold-left-after' "a hold reset during the capture refuses it after"
+  "the capture takes the whole layout"
+  '-o "$3" -t png "$4"' '-t png "$4"' "a capture of its own output is taken while another output has no size"
+  "an unnamed output goes on to grim"
+  '[[ -n ${SHOT_OUTPUT:-} ]] ||' 'true ||' "a shot with no output named is refused"
+  "the window state read is not recorded"
+  '"$kind" "$window" >>' '"$kind" - >>' "a shot records the window state read around it"
+  "the window state after the shot is not compared"
+  '[[ $window_after == "$window_before" ]] ||' 'true ||' "a window state that changes during a shot reads changed"
 )
-for (( i = 0; i < ${#controls[@]}; i += 4 )); do
-  label="${controls[i]}"; target="${controls[i + 3]}"
-  mutant="$tmp/mutant-$i.sh"
-  if ! mutate "${controls[i + 1]}" "${controls[i + 2]}" "$mutant"; then fail "control: $label"; continue; fi
-  row=()
-  for (( j = 0; j < ${#cases[@]}; j += 4 )); do [[ ${cases[j]} == "$target" ]] && row=("${cases[@]:j:4}"); done
-  if [[ ${#row[@]} -eq 0 ]]; then fail "control: $label names no case: $target"; continue; fi
-  if run_case "$mutant" "${row[@]}" >/dev/null; then fail "control: $label left '$target' green"; else ok "control: $label"; fi
-done
+run_controls "$helper" cases controls
+
+# The host window reader, scripts/smoke/host-window.sh, against the stub
+# hyprctl's host world. Cases and controls have the shape of the capture
+# helper's above.
+window_helper="$repo/scripts/smoke/host-window.sh"
+window_cases=(
+  "a window on a monitor's active workspace is shown"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 41) == shown ]]' 0 ""
+  "a window on a workspace no monitor shows is hidden"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 42) == hidden ]]' 0 ""
+  "a window on a shown special workspace is shown"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 43) == shown ]]' 0 ""
+  "a window on a hidden special workspace is hidden"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 44) == hidden ]]' 0 ""
+  "a window hidden in a group is hidden"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 45) == hidden ]]' 0 ""
+  "a pid that owns no window is absent"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; [[ $(host_window_state 99) == absent ]]' 0 ""
+  "no host instance is unreadable"
+  's=0; out="$(host_window_state 41)" || s=$?; [[ $out == unreadable && $s -eq 1 ]]' 0 ""
+  "a failed host read is unreadable"
+  'HYPRLAND_INSTANCE_SIGNATURE=x; s=0; mkdir -p "$D/bin"; cp -- "$T/bin/hyprctl" "$T/bin/host-clients.json" "$T/bin/host-monitors.json" "$D/bin/"; : >"$D/bin/fail-clients"; out="$(PATH="$D/bin:$PATH" host_window_state 41)" || s=$?; [[ $out == unreadable && $s -eq 1 ]]' 0 ""
+)
+run_cases "$window_helper" window_cases
+window_controls=(
+  "the pid is not matched"
+  'c["pid"] == pid' 'True' "a pid that owns no window is absent"
+  "an active workspace does not count as shown"
+  '{m["activeWorkspace"]["id"] for m in monitors} | ' '' "a window on a monitor's active workspace is shown"
+  "a shown special workspace does not count as shown"
+  ' | {m["specialWorkspace"]["id"] for m in monitors}' '' "a window on a shown special workspace is shown"
+  "a window hidden in a group counts as shown"
+  ' and not c["hidden"]' '' "a window hidden in a group is hidden"
+  "a missing host instance is read"
+  'if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then echo unreadable; return 1; fi' 'true' "no host instance is unreadable"
+  "a failed host read is parsed"
+  'clients="$(timeout 2 hyprctl -j clients 2>/dev/null)" || { echo unreadable; return 1; }' 'clients="$(timeout 2 hyprctl -j clients 2>/dev/null)" || true' "a failed host read is unreadable"
+)
+run_controls "$window_helper" window_cases window_controls
 
 # The scene choice of scripts/sandbox-shots.sh, before any sandbox starts:
 # a tree ships either the Settings plugin or the bar's manager built-in, and
@@ -208,10 +307,11 @@ scene_cases=(
   "a checkout with the Settings plugin takes the settings scene" 77 "qml-smoke: status=not-measured" settings
   "a scale other than 1 or 2 is refused" 2 "sandbox-shots: refused: scale=3" --scale 3 settings
   "scale 2 is taken" 77 "qml-smoke: status=not-measured" --scale 2 settings
+  "a theme card that is no catalog name is refused" 2 "sandbox-shots: refused: theme-card=../x" --theme-card ../x settings
 )
 # Each case is label, status, line, then its arguments up to the next case,
 # counted by the arguments each row above carries.
-scene_arity=(1 3 3 1 3 3)
+scene_arity=(1 3 3 1 3 3 3)
 # Where each case starts in scene_cases and how many arguments it takes, by
 # label, for the controls below.
 declare -A scene_at scene_argc
@@ -235,6 +335,9 @@ shots_controls=(
   "a refused scale goes on to the harness"
   "refused: scale=%s\\n' \"\$scale\" >&2; exit 2; }" "refused: scale=%s\\n' \"\$scale\" >&2; }"
   "a scale other than 1 or 2 is refused"
+  "a refused theme card goes on to the harness"
+  "refused: theme-card=%s\\n' \"\$theme_card\" >&2; exit 2; }" "refused: theme-card=%s\\n' \"\$theme_card\" >&2; }"
+  "a theme card that is no catalog name is refused"
 )
 shots_mutant="$tmp/sandbox-shots-mutant.sh"
 for (( i = 0; i < ${#shots_controls[@]}; i += 4 )); do
@@ -399,11 +502,10 @@ observer_controls=(
   'the user view gets no readable alias|property alias smokeUserView:|property alias unusedUserView:'
   'background failures get no observer|onBrokenKeysChanged:|onParentChanged:'
 )
-helper="$repo/scripts/smoke/tree.sh"
 for spec in "${observer_controls[@]}"; do
   IFS='|' read -r label needle replacement <<<"$spec"
   observer_mutant="$tmp/observer-mutant.sh"
-  if ! mutate "$needle" "$replacement" "$observer_mutant"; then
+  if ! mutate "$repo/scripts/smoke/tree.sh" "$needle" "$replacement" "$observer_mutant"; then
     fail "control: $label could not be planted"
   elif observer_case "$observer_mutant" >/dev/null; then
     fail "control: $label left the observer setup green"
