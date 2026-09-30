@@ -51,6 +51,8 @@ Any sender can add the VGS hints, a Lucide icon, a status tone and a file a clic
 
 A per-application rule reads Slack's notifications: their senders as faces, their workspace as its icon, one card per message, optional sender photos from a token per workspace, and each workspace's custom emoji in the body. [slack.md](slack.md) holds what each shows, how to store a token and how to turn the custom emoji off.
 
+The Slack features run commands the plugin declares as optional requirements. `vgsh plugin requirements vgs.notifications` lists each one, whether it is installed and the package that provides it. Toasts, the panel and Silence need none of them.
+
 ## State
 
 Where the notifications keep their state, what a restart restores and how a bad file is treated: [notification-state.md](../../../docs/architecture/notification-state.md).

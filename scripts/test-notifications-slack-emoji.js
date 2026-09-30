@@ -361,11 +361,12 @@ exec "${magick}" "$@"
 function controls() {
     const source = fs.readFileSync(emojiSource, "utf8");
     const photos = fs.readFileSync(path.join(pluginDir, "slack-photos.js"), "utf8");
+    const reader = fs.readFileSync(path.join(pluginDir, "slack-cache.js"), "utf8");
     const dir = path.join(scratch, "controls");
     const table = [
         ["a team with no token keeps its photos", "slack-photos.js", "if (emojiTeams.has(name)) sweepTeam(path.join(root, name), new Set(), null);", "if (emojiTeams.has(name)) continue;", /keeps its emoji and loses its photos/],
         ["newest entry wins", "slack-emoji.js", "mtimeMs > prior.mtimeMs", "mtimeMs < prior.mtimeMs", /the newest cache entry of a name wins/],
-        ["name rule", "slack-emoji.js", "if (!NAME.test(match[3])) {", "if (false) {", /a name outside the rule is skipped/],
+        ["name rule", "slack-emoji.js", "if (!NAME.test(match[2])) {", "if (false) {", /a name outside the rule is skipped/],
         ["first frame", "slack-emoji.js", "job.coder + \":\" + job.input + \"[0]\"", "job.coder + \":\" + job.input", /a GIF gives its first frame|a name outside the rule is skipped/],
         ["reuse", "slack-emoji.js", "previous.sources.get(candidate.name) === candidate.url ? previousHex(candidate.name) : \"\"", "\"\"", /a second run converts nothing/],
         ["alias resolution", "slack-emoji.js", "const target = map.get(value.slice(\"alias:\".length));", "const target = undefined;", /an alias resolves/],
@@ -379,7 +380,7 @@ function controls() {
     let passed = 0;
     for (let index = 0; index < table.length; index++) {
         const [label, target, needle, replacement, failure] = table[index];
-        const sources = { "slack-emoji.js": source, "slack-photos.js": photos };
+        const sources = { "slack-emoji.js": source, "slack-photos.js": photos, "slack-cache.js": reader };
         assert.equal(sources[target].split(needle).length, 2, `control "${label}": the text to replace must occur once`);
         const copyDir = path.join(dir, String(index));
         fs.mkdirSync(copyDir, { recursive: true });

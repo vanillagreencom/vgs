@@ -407,7 +407,8 @@ function controls() {
         const copy = path.join(dir, String(index), "slack-photos.js");
         fs.mkdirSync(path.dirname(copy), { recursive: true });
         fs.writeFileSync(copy, source.replace(needle, () => replacement), { mode: 0o700 });
-        fs.copyFileSync(path.join(path.dirname(helperSource), "slack-emoji.js"), path.join(path.dirname(copy), "slack-emoji.js"));
+        for (const name of ["slack-emoji.js", "slack-cache.js"])
+            fs.copyFileSync(path.join(path.dirname(helperSource), name), path.join(path.dirname(copy), name));
         const syntax = childProcess.spawnSync(process.execPath, ["--check", copy], { cwd: repo, encoding: "utf8" });
         assert.equal(syntax.status, 0, `control "${label}": the mutated helper must remain valid JavaScript`);
         const result = childProcess.spawnSync(process.execPath, [__filename], {

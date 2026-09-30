@@ -8,10 +8,10 @@ import "NotificationLogic.js" as Logic
 // workspace list, and the icon images its disk cache already holds. The
 // list is read when the service starts, and again when a notification names
 // a workspace it lacks or holds with no icon, at most once per
-// NotificationLogic.WORKSPACE_RELOAD_GAP. images.sh copies each icon out of
-// the cache into this rule's own directory under the cache home, which it
-// empties first, so the directory holds at most two icons for each of
-// NotificationLogic.WORKSPACES_MAX workspaces. A workspace with no icon
+// NotificationLogic.WORKSPACE_RELOAD_GAP. slack-cache.js, the one reader
+// of that cache, copies each icon out of it into this rule's own directory
+// under the cache home, which it empties first, so the directory holds at
+// most two icons for each of NotificationLogic.WORKSPACES_MAX workspaces. A workspace with no icon
 // keeps its name as text on the card. `known` is the list as last read, for
 // the rule's other readers.
 Scope {
@@ -21,7 +21,7 @@ Scope {
     readonly property string ruleId: modelData
     readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")
     readonly property string dir: (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")) + "/vgs/notifications/workspaces/" + ruleId
-    readonly property string script: String(Qt.resolvedUrl("images.sh")).replace(/^file:\/\//, "")
+    readonly property string script: String(Qt.resolvedUrl("slack-cache.js")).replace(/^file:\/\//, "")
 
     // Workspace name, case folded -> its icon's file URL, or "" for none
     // (NotificationLogic.workspaceIconMap).
@@ -89,7 +89,7 @@ Scope {
         }
         if (read.skipped > 0) console.warn("notifications: workspace list entries skipped: file=" + index.path + " count=" + read.skipped);
         listed = read.workspaces;
-        const argv = ["bash", script, "cached", configHome + "/" + workspaces().cache, dir];
+        const argv = ["node", script, "copy", configHome + "/" + workspaces().cache, dir];
         for (const pair of Logic.workspaceCopies(read.workspaces, dir)) argv.push(pair.to, pair.url);
         helper.command = argv;
         helper.running = true;
@@ -107,8 +107,8 @@ Scope {
             completion = null;
             const copied = [];
             if (done === null || done.code !== 0) {
-                const first = String(helperErr.text || "").split("\n").find(l => l.indexOf("notifications-images: ") === 0);
-                console.error(first !== undefined ? first : "notifications-images: " + (done === null ? "start=failed" : "exit=" + done.code) + " verb=cached");
+                const first = String(helperErr.text || "").split("\n").find(l => l.indexOf("notifications-slack-cache: ") === 0);
+                console.error(first !== undefined ? first : "notifications-slack-cache: " + (done === null ? "start=failed" : "exit=" + done.code) + " verb=copy");
             } else {
                 for (const line of String(helperOut.text || "").split("\n"))
                     if (line.indexOf("copied ") === 0) {

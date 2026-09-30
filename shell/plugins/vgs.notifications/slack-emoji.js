@@ -5,13 +5,11 @@
 // SlackPhotos.qml, so an emoji write never races a photo sweep.
 //
 // Sources, per listed team id:
-//  1. Slack's own disk cache, read-only and with no token: the simple-cache
-//     entries whose key is 1/0/https://emoji.slack-edge.com/<team id>/
-//     <emoji name>/<16 hex>.<png|gif|jpg>, the key form images.sh reads for
-//     workspace icons. One pass per run lists every entry's key, in sorted
-//     order, reading each file's 24-byte header and key alone; a body is
-//     read only for an entry the run converts. A name cached twice takes
-//     the entry with the newest mtime.
+//  1. Slack's own disk cache, read-only and with no token, through its one
+//     reader, slack-cache.js: the entries whose URL is https://
+//     emoji.slack-edge.com/<team id>/<emoji name>/<16 hex>.<png|gif|jpg>.
+//     One listing per run; a body is read only for an entry the run
+//     converts. A name cached twice takes the entry with the newest mtime.
 //  2. emoji.list, with the token that serves the team, at most once a day:
 //     a name the cache lacks, a name whose image changed since Slack cached
 //     it, and aliases, `alias:<target>`, which take their target's image.
@@ -36,6 +34,7 @@ const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const cache = require("./slack-cache.js");
 
 const EMOJI_FILE = "emoji.json";
 const EMOJI_DIR = "emoji";
@@ -44,19 +43,9 @@ const EMOJI_DIR = "emoji";
 const NAME = /^[a-z0-9_+-]{1,100}$/;
 const HEX = /^[0-9a-f]{16}$/;
 const FILE_NAME = /^([0-9a-f]{16})\.png$/;
-const ENTRY_NAME = /^[0-9a-f]{16}_0$/;
-const KEY_PREFIX = "1/0/https://emoji.slack-edge.com/";
-const KEY = /^1\/0\/(https:\/\/emoji\.slack-edge\.com\/([A-Za-z0-9]{1,32})\/([^/]{1,100})\/[0-9a-f]{16}\.(?:png|gif|jpg))$/;
-// The simple cache's entry header, read against Slack 4.52.162 on
-// 2026-09-29: bytes 12-15 are the key's length, little-endian, and the
-// body ends at the first end record.
-const HEADER_BYTES = 24;
-const KEY_MAX = 256;
-const END_RECORD = Buffer.from([0xd8, 0x41, 0x0d, 0x97, 0x45, 0x6f, 0xfa, 0xf4]);
-// Limits. One pass lists at most SCAN_MAX entries (the owner's cache held
-// 17,765 on 2026-09-29); past it the pass is refused, never cut short, so
-// no entry is starved by the order.
-const SCAN_MAX = 262144;
+const URL_PREFIX = "https://emoji.slack-edge.com/";
+const EMOJI_URL = /^https:\/\/emoji\.slack-edge\.com\/([A-Za-z0-9]{1,32})\/([^/]{1,100})\/[0-9a-f]{16}\.(?:png|gif|jpg)$/;
+// Limits.
 const SOURCE_MAX = 256 * 1024;
 const FILE_MAX = 64 * 1024;
 const TEAM_COUNT_MAX = 2048;
@@ -105,95 +94,26 @@ function hexOf(bytes) {
     return crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 }
 
-// A regular file opened for reading, never through a link and never
-// blocking on a FIFO, or -1 when it cannot be.
-function openEntry(file) {
-    try {
-        const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-        if (fs.fstatSync(fd).isFile()) return fd;
-        fs.closeSync(fd);
-    } catch (_e) {
-        // Missing, removed since the listing, or not readable.
-    }
-    return -1;
-}
-
-// One pass over Slack's cache: team id -> Map name -> { url, file,
-// mtimeMs, keyLength } for the listed teams, the newest entry per name.
-// `skipped` counts emoji keys of a listed team whose name the card would
-// not substitute. A missing cache is no Slack on this machine, quiet.
+// One listing of Slack's cache: team id -> Map name -> { url, mtimeMs }
+// for the listed teams, the newest entry per name. `skipped` counts emoji
+// of a listed team whose name the card would not substitute.
 function scanCache(dir, listed) {
     const found = new Map();
-    const result = { found, skipped: 0, problem: "" };
-    let names;
-    try {
-        names = fs.readdirSync(dir);
-    } catch (e) {
-        if (e.code !== "ENOENT") result.problem = problem("cache=unreadable");
-        return result;
-    }
-    const entries = names.filter(name => ENTRY_NAME.test(name)).sort();
-    if (entries.length > SCAN_MAX) {
-        result.problem = problem("cache=too-many count=" + entries.length + " want<=" + SCAN_MAX);
-        return result;
-    }
-    const head = Buffer.alloc(HEADER_BYTES + KEY_MAX);
-    for (const name of entries) {
-        const file = path.join(dir, name);
-        const fd = openEntry(file);
-        if (fd === -1) continue;
-        let read = 0;
-        let mtimeMs = 0;
-        try {
-            mtimeMs = fs.fstatSync(fd).mtimeMs;
-            read = fs.readSync(fd, head, 0, head.length, 0);
-        } catch (_e) {
-            read = 0;
-        } finally {
-            fs.closeSync(fd);
-        }
-        if (read < HEADER_BYTES) continue;
-        const keyLength = head.readUInt32LE(12);
-        if (keyLength < KEY_PREFIX.length || keyLength > KEY_MAX || HEADER_BYTES + keyLength > read) continue;
-        const key = head.toString("latin1", HEADER_BYTES, HEADER_BYTES + keyLength);
-        if (!key.startsWith(KEY_PREFIX)) continue;
-        const match = KEY.exec(key);
-        if (match === null || !listed.has(match[2])) continue;
-        if (!NAME.test(match[3])) {
+    const listing = cache.list(dir, URL_PREFIX);
+    const result = { found, skipped: 0, problem: listing.problem === "" ? "" : problem("cache=" + listing.problem) };
+    for (const { url, mtimeMs } of listing.entries) {
+        const match = EMOJI_URL.exec(url);
+        if (match === null || !listed.has(match[1])) continue;
+        if (!NAME.test(match[2])) {
             result.skipped += 1;
             continue;
         }
-        if (!found.has(match[2])) found.set(match[2], new Map());
-        const team = found.get(match[2]);
-        const prior = team.get(match[3]);
-        if (prior === undefined || mtimeMs > prior.mtimeMs) team.set(match[3], { url: match[1], file, mtimeMs, keyLength });
+        if (!found.has(match[1])) found.set(match[1], new Map());
+        const team = found.get(match[1]);
+        const prior = team.get(match[2]);
+        if (prior === undefined || mtimeMs > prior.mtimeMs) team.set(match[2], { url, mtimeMs });
     }
     return result;
-}
-
-// The body of a cache entry scanCache found: the bytes after its key up to
-// the first end record, at most SOURCE_MAX, or null.
-function cacheBody(entry) {
-    const fd = openEntry(entry.file);
-    if (fd === -1) return null;
-    try {
-        const start = HEADER_BYTES + entry.keyLength;
-        const limit = Math.min(fs.fstatSync(fd).size, start + SOURCE_MAX + END_RECORD.length);
-        const bytes = Buffer.alloc(limit);
-        let read = 0;
-        while (read < limit) {
-            const got = fs.readSync(fd, bytes, read, limit - read, read);
-            if (got === 0) break;
-            read += got;
-        }
-        if (bytes.toString("latin1", HEADER_BYTES, start) !== "1/0/" + entry.url) return null;
-        const end = bytes.indexOf(END_RECORD, start);
-        return end > start ? Buffer.from(bytes.subarray(start, end)) : null;
-    } catch (_e) {
-        return null;
-    } finally {
-        fs.closeSync(fd);
-    }
 }
 
 // Name-keyed values read from JSON: a Map of the own properties whose name
@@ -399,7 +319,7 @@ function install(root, id, bytes, atomicWrite) {
 
 // The run for one team: its new state and how many images wait for a
 // later run. `work` is the run's conversion budget, shared by the teams.
-function buildTeam(root, id, cached, list, previous, work, deps, stats) {
+function buildTeam(root, id, cacheDir, cached, list, previous, work, deps, stats) {
     const chosen = [];
     const jobs = [];
     let pending = 0;
@@ -432,7 +352,8 @@ function buildTeam(root, id, cached, list, previous, work, deps, stats) {
             const input = path.join(work.dir(), String(work.next++));
             let bytes = null;
             if (slot.candidate.entry !== null) {
-                bytes = cacheBody(slot.candidate.entry);
+                const body = cache.read(cacheDir, slot.candidate.entry.url, SOURCE_MAX);
+                if (body.ok) bytes = body.bytes;
             } else if (deps.download(slot.candidate.url, input, SOURCE_MAX) === "saved") {
                 bytes = fs.readFileSync(input);
             }
@@ -528,7 +449,7 @@ function refresh(root, cacheDir, ids, deps, lines) {
         for (const id of ids) {
             const previous = readState(root, id, deps.readJson);
             const list = teamList(id, previous, deps.tokenFor(id), deps, lines);
-            const built = buildTeam(root, id, scan.found.get(id), list, previous, work, runDeps, stats);
+            const built = buildTeam(root, id, cacheDir, scan.found.get(id), list, previous, work, runDeps, stats);
             const { map } = built.state;
             if (map.size === 0 && previous.map.size === 0 && list === null && built.pending === 0) {
                 removeState(root, id);

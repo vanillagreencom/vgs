@@ -55,7 +55,36 @@
     "open": { "script": "tui/open.sh", "title": "Open a notification's file", "presentation": "plain" }
   },
   "requirements": [
-    { "command": "xdg-open", "packages": { "pacman": "xdg-utils", "apt": "xdg-utils", "dnf": "xdg-utils" }, "optional": true, "purpose": "Opens the file a notification's x-vgs-open hint names when EDITOR is unset" }
+    {
+      "command": "xdg-open",
+      "packages": { "pacman": "xdg-utils", "apt": "xdg-utils", "dnf": "xdg-utils" },
+      "optional": true,
+      "purpose": "Opens the file a notification's x-vgs-open hint names when EDITOR is unset"
+    },
+    {
+      "command": "node",
+      "packages": { "pacman": "nodejs", "apt": "nodejs", "dnf": "nodejs", "xbps": "nodejs", "emerge": "net-libs/nodejs", "nix": "nodejs" },
+      "optional": true,
+      "purpose": "Runs the Slack workspace icon, photo and custom emoji helpers"
+    },
+    {
+      "command": "curl",
+      "packages": { "pacman": "curl", "apt": "curl", "dnf": "curl", "xbps": "curl", "emerge": "net-misc/curl", "nix": "curl" },
+      "optional": true,
+      "purpose": "Calls the Slack Web API and downloads Slack profile photos and custom emoji"
+    },
+    {
+      "command": "secret-tool",
+      "packages": { "pacman": "libsecret", "apt": "libsecret-tools", "dnf": "libsecret", "xbps": "libsecret", "emerge": "app-crypt/libsecret", "nix": "libsecret" },
+      "optional": true,
+      "purpose": "Reads each workspace's Slack token from the keyring"
+    },
+    {
+      "command": "magick",
+      "packages": { "pacman": "imagemagick", "apt": "imagemagick", "dnf": "ImageMagick", "xbps": "ImageMagick", "emerge": "media-gfx/imagemagick", "nix": "imagemagick" },
+      "optional": true,
+      "purpose": "Draws Slack custom emoji and crops Slack photos; ImageMagick 6's convert also serves"
+    }
   ],
   "appearance": "Appearance.js",
   "hyprland": {
