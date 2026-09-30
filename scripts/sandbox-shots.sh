@@ -819,7 +819,7 @@ hover_widget() {
   if ! hover "$((x - 6))" "$y" || ! hover "$x" "$y"; then fail "$1: the hover failed"; return 1; fi
 }
 tooltip_opened() { ipc smoke readDescendant "$(bar_key)" "$1" Tooltip opened; }
-warden_detail_state() { ipc vgs.agent-warden invoke status '' | python3 -c 'import json,sys; d=json.load(sys.stdin).get("detail"); print(d["state"] if d else "unpublished")'; }
+warden_detail_state() { ipc vgs.agent-warden invoke status '' | py_reply 'import json,sys; d=json.load(sys.stdin).get("detail"); print(d["state"] if d else "unpublished")'; }
 # warden_status NAME STATE: the warden's status-NAME.json written fresh,
 # read back as STATE, so a surface never shows the status gone stale.
 warden_status() {
@@ -852,10 +852,10 @@ scene_bar() { # MODE
 # planted snapshot, with its System row expanded and then the pointer on
 # a row. Nothing presses Refresh, so no check runs.
 warden_panel_texts() { ipc smoke itemTexts panel vgs.agent-warden Panel; }
-warden_panel_lines() { warden_panel_texts | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(t != "absent" and sys.argv[1] in json.loads(t)[0])' "$shots_vsys_line"; }
+warden_panel_lines() { warden_panel_texts | py_reply 'import json,sys; print(sys.argv[1] in json.load(sys.stdin)[0])' "$shots_vsys_line"; }
 updates_flyout() { [[ $(ipc smoke readInstance panel vgs.updates rows) != absent ]] && echo open || echo closed; }
-updates_pending() { ipc vgs.updates invoke status '' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pending"))'; }
-updates_checking() { ipc vgs.updates invoke status '' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("checking"))'; }
+updates_pending() { ipc vgs.updates invoke status '' | py_reply 'import json,sys; print(json.load(sys.stdin).get("pending"))'; }
+updates_checking() { ipc vgs.updates invoke status '' | py_reply 'import json,sys; print(json.load(sys.stdin).get("checking"))'; }
 scene_panels() { # MODE
   warden_status calm calm
   click_centre "$(bar_key)" vgs.agent-warden || fail "the click on the shield failed"
@@ -886,7 +886,7 @@ scene_panels() { # MODE
 # The Dev Tools window: its top, the pointer on an Install button, and one
 # shot per page down its list, at most four.
 devtools_shown() { [[ $(ipc smoke instanceGeometry window vgs.devtools) != absent ]] && echo shown || echo hidden; }
-devtools_sections() { ipc smoke itemTexts window vgs.devtools SectionHeader | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(t.startswith("[") and len(json.loads(t)) > 1)'; }
+devtools_sections() { ipc smoke itemTexts window vgs.devtools SectionHeader | py_reply 'import json,sys; print(len(json.load(sys.stdin)) > 1)'; }
 scene_devtools() { # MODE
   local page=1 y=0 at cy ch h
   expect "the Dev Tools window summons" ok ipc vgs.devtools invoke open ''
@@ -911,7 +911,7 @@ scene_devtools() { # MODE
 # The core's requirement notice, raised by enabling the acme.needs
 # fixture, which misses a command it needs; Escape closes it, and the
 # fixture is disabled again so the next mode raises it anew.
-notice_plugin() { notice_shown | python3 -c 'import json,sys; s=json.load(sys.stdin); print(json.dumps(s[0] if s else None))'; }
+notice_plugin() { notice_shown | py_reply 'import json,sys; s=json.load(sys.stdin); print(json.dumps(s[0] if s else None))'; }
 scene_dialog() { # MODE
   expect "enabling acme.needs is allowed" ok ipc shell setPluginEnabled acme.needs true
   expect_poll "the notice shows for acme.needs" '"acme.needs"' notice_plugin

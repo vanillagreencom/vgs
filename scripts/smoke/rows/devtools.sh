@@ -96,7 +96,7 @@ expect_poll "the window draws the VGS section and every catalog section in order
 # Details button, which shows the whole line in a CodeLine to copy.
 expect_poll "the VGS row names the version and the install method it could not read" \
   "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" error=method=unknown Details Unknown)" vgs_texts
-vgs_error_lines() { ipc smoke itemTexts window vgs.devtools CodeLine | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(sum(1 for r in json.loads(t) if r and r[0].startswith("method=")) if t.startswith("[") else t)'; }
+vgs_error_lines() { ipc smoke itemTexts window vgs.devtools CodeLine | py_reply 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r and r[0].startswith("method=")))'; }
 expect "the VGS row keeps its detail folded" 0 vgs_error_lines
 click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow VGS Button Details || fail "the click on the VGS row's Details failed"
 expect_poll "Details shows the whole error line to copy" 1 vgs_error_lines
@@ -118,7 +118,7 @@ left, right = head[0], width - (chip[0] + chip[2] - (8 if plant else 0))
 print(json.dumps([] if abs(left - right) <= 1 else ["left=%.2f right=%.2f" % (left, right)]))
 PY
 }
-devtools_insets_planted() { devtools_insets narrow | python3 -c 'import json,sys; print(len(json.load(sys.stdin)) > 0)'; }
+devtools_insets_planted() { devtools_insets narrow | py_reply 'import json,sys; print(len(json.load(sys.stdin)) > 0)'; }
 geometry expect_poll "the content sits the same distance in from both window sides" '[]' devtools_insets
 expect "control: a row narrowed on one side is refused" True devtools_insets_planted
 expect_poll "the absent agent draws Not installed and Install" "$(texts "$agent_name" "Not installed" Install)" row_texts "$agent_name"

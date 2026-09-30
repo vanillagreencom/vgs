@@ -426,7 +426,7 @@ print(json.dumps(out))
 PY
 }
 geometry expect_poll "the flyout's counts share one right edge and its footer stays inside the panel" '[]' flyout_geometry
-flyout_shifted() { flyout_geometry shift | python3 -c 'import json,sys; print(any(e.startswith("count.right") for e in json.load(sys.stdin)))'; }
+flyout_shifted() { flyout_geometry shift | py_reply 'import json,sys; print(any(e.startswith("count.right") for e in json.load(sys.stdin)))'; }
 expect "control: a count moved off the column is refused" True flyout_shifted
 
 # Each button's argv, as the terminal stand-in records it. The first
