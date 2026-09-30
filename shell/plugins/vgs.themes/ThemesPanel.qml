@@ -257,6 +257,7 @@ Item {
 
         header: [
             Label {
+                width: layout.contentWidth
                 role: "h3"
                 text: "Themes"
             }

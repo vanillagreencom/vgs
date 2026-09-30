@@ -9,8 +9,9 @@ import qs.Commons
 // A dimmed card draws `angledCard.dim` over its content; by default a card
 // is dimmed while it is not selected. A selected card draws the selected
 // outline. While `hovered`, which the caller sets from its pointer area, a
-// card not selected lifts its wash to `angledCard.hoverDim` and draws the
-// `hoverBorder` outline; a selected card keeps its look. The caller sizes
+// dimmed card lifts its wash to `angledCard.hoverDim`, and a card not
+// selected draws the `hoverBorder` outline; a selected card keeps its
+// outline. The caller sizes
 // the card and places it; `corners` is the parallelogram, so a row of
 // cards can overlap them edge to edge.
 //
@@ -26,7 +27,6 @@ Item {
     property bool selected: false
     property bool hovered: false
     property bool dimmed: !selected
-    readonly property bool lifted: hovered && !selected
     default property alias content: body.data
     // Top-left, top-right, bottom-right and bottom-left, in the card's own
     // coordinates.
@@ -68,7 +68,7 @@ Item {
         Rectangle {
             id: wash
             anchors.fill: parent
-            color: root.lifted ? Theme.angledCard.hoverDim : Theme.angledCard.dim
+            color: root.hovered ? Theme.angledCard.hoverDim : Theme.angledCard.dim
             visible: root.dimmed
             Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
         }
@@ -81,7 +81,7 @@ Item {
 
         ShapePath {
             fillColor: "transparent"
-            strokeColor: root.selected ? Theme.angledCard.selectedBorder : root.lifted ? Theme.angledCard.hoverBorder : Theme.angledCard.border
+            strokeColor: root.selected ? Theme.angledCard.selectedBorder : root.hovered ? Theme.angledCard.hoverBorder : Theme.angledCard.border
             strokeWidth: root.selected ? Theme.angledCard.selectedBorderWidth : Theme.angledCard.borderWidth
             PathPolyline { path: root.outline }
         }

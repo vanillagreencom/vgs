@@ -456,6 +456,11 @@ Item {
             compare(box(21), [1184, 22, 108, 432]);
             compare(shown(), indices(11, 29));
             tryVerify(() => builtNames().length === 21);
+            // Overlapping by 40 past the 28 pixel lean, card 21 at 1184 and
+            // card 22 at 1252 share 1266 to 1278 halfway down, where the
+            // nearer card, 21, is drawn on top and takes the click.
+            mouseClick(carousel, 1272, 238);
+            compare(carousel.currentIndex, 21);
         }
     }
 }

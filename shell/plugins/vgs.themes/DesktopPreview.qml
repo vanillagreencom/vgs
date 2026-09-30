@@ -191,6 +191,7 @@ Item {
                     }
                 }
                 Grid {
+                    id: swatches
                     width: parent.width
                     columns: 8
                     spacing: Theme.space.xs
@@ -198,7 +199,7 @@ Item {
                         model: 16
                         Rectangle {
                             required property int index
-                            width: (parent.width - 7 * Theme.space.xs) / 8
+                            width: (swatches.width - 7 * Theme.space.xs) / 8
                             height: Theme.space.lg
                             color: root.terminalColor(index)
                         }

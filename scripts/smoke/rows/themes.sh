@@ -493,11 +493,11 @@ expect_poll "the applied row is displayed and shows its failed target" '[["smoke
 # passes. PLANT moves one box in a copy of the same reading, and each
 # rule's control requires its own finding.
 panel_geometry() { # [PLANT]
-  local rows ring
-  rows="$(ipc smoke descendantGeometry panel vgs.themes)" && ring="$(ipc smoke themeValue focusRing.width)" && ring=$((ring + $(ipc smoke themeValue focusRing.offset))) || return
-  python3 - "$rows" "$ring" "${1:-}" <<'PY'
+  local width offset
+  width="$(ipc smoke themeValue focusRing.width)" && offset="$(ipc smoke themeValue focusRing.offset)" || return
+  ipc smoke descendantGeometry panel vgs.themes | py_reply '
 import json, sys
-rows, ring, plant = json.loads(sys.argv[1]), float(sys.argv[2]), sys.argv[3]
+rows, ring, plant = json.load(sys.stdin), float(sys.argv[1]) + float(sys.argv[2]), sys.argv[3]
 out = []
 def shown(r): return r["box"][2] > 0 and r["box"][3] > 0
 def inside(j, i):
@@ -529,8 +529,7 @@ elif abs(line[0][0] - name[0][0]) > 1: out.append("column line=%.2f name=%.2f" %
 b, s = add[0], scroll[0]
 if b[0] < panel[0] - 1 or b[0] + b[2] > panel[0] + panel[2] + 1 or b[1] + b[3] > panel[1] + panel[3] + 1: out.append("footer box=%s panel=%s" % (b, panel))
 if b[1] < s[1] + s[3] - ring - 1: out.append("footer top=%.2f body.bottom=%.2f" % (b[1], s[1] + s[3] - ring))
-print(json.dumps(out))
-PY
+print(json.dumps(out))' "$width" "$offset" "${1:-}"
 }
 panel_planted() { panel_geometry "$1" | py_reply 'import json,sys; print(any(e.startswith(sys.argv[1] + " ") for e in json.load(sys.stdin)))' "$1"; }
 geometry expect_poll "the themes panel keeps one content edge, the text column and its footer" '[]' panel_geometry

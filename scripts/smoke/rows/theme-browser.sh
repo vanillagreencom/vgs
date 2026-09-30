@@ -159,11 +159,11 @@ expect_poll "the applied theme is badged Displayed" '["Displayed"]' badges
 # moves one box in a copy of the same reading, and each rule's control
 # requires its own finding.
 browser_geometry() { # [PLANT]
-  local rows inset
-  rows="$(ipc smoke descendantGeometry overlay vgs.themes)" && inset="$(ipc smoke themeValue inset.overlay)" || return
-  python3 - "$rows" "$inset" "$mon_w" "$mon_h" "${1:-}" <<'PY'
+  local inset
+  inset="$(ipc smoke themeValue inset.overlay)" || return
+  ipc smoke descendantGeometry overlay vgs.themes | py_reply '
 import json, sys
-rows, inset, width, height, plant = json.loads(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), sys.argv[5]
+rows, inset, width, height, plant = json.load(sys.stdin), float(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]), sys.argv[4]
 out = []
 def shown(r): return r["box"][2] > 0 and r["box"][3] > 0
 def inside(j, i):
@@ -198,8 +198,7 @@ else:
 if abs(rail[0] - (width - rail[0] - rail[2])) > 1: out.append("centre left=%.2f right=%.2f" % (rail[0], width - rail[0] - rail[2]))
 if len(texts) < 3: out.append("hints texts=%d" % len(texts))
 elif max(b[1] for b in texts) - min(b[1] for b in texts) > 1: out.append("hints tops=%s" % [round(b[1], 2) for b in texts])
-print(json.dumps(out))
-PY
+print(json.dumps(out))' "$inset" "$mon_w" "$mon_h" "${1:-}"
 }
 browser_planted() { browser_geometry "$1" | py_reply 'import json,sys; print(any(e.startswith(sys.argv[1] + " ") for e in json.load(sys.stdin)))' "$1"; }
 geometry expect_poll "the browser's chrome, rail and key line keep their places" '[]' browser_geometry
