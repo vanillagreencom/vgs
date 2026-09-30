@@ -134,7 +134,7 @@ expect_poll "the notice holds the keyboard" true ipc smoke noticeFocused
 # layer's count then still reads the one click beside the dialog.
 expect "the Tick widget is on the bar under the notice" True record_exists acme.tick
 tick_presses="$(read_tick presses)"
-tick_rect="$(ipc smoke instanceGeometry "$(bar_key)" acme.tick)"
+tick_rect="$(ipc smoke instanceGeometry "$(bar_key)" acme.tick)" || tick_rect=""
 read -r tick_x tick_y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(int(x+w/2), int(y+h/2))' "$tick_rect") || fail "the Tick widget was not measured"
 hover_click "$tick_x" "$tick_y" || fail "the click on the Tick widget failed"
 expect_poll "a click on the bar's widget while the notice shows reaches it" "$((tick_presses + 1))" read_tick presses
@@ -142,7 +142,7 @@ read -r gap_x gap_y < <(notice_gap_point) || fail "the notice surface beside the
 presses="$(read_layers presses)"
 hover_click "$gap_x" "$gap_y" || fail "the click beside the dialog failed"
 expect_poll "a click on the notice surface beside the dialog reaches the layer below" "$((presses + 1))" read_layers presses
-title_rect="$(ipc smoke noticeWindowGeometry title)"
+title_rect="$(ipc smoke noticeWindowGeometry title)" || title_rect=""
 read -r title_x title_y < <(at_centre vgs:notice "$title_rect") || fail "the dialog's title was not measured"
 hover_click "$title_x" "$title_y" || fail "the click on the dialog's title failed"
 hover_click "$tick_x" "$tick_y" || fail "the marker click on the Tick widget failed"

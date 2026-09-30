@@ -52,12 +52,25 @@ Scope {
 
     // Large replies are paged because Quickshell can close the socket
     // before a reply past its send buffer drains (runtime.md). Keep at
-    // most the eight newest replies, and answer with the page id.
+    // most the eight newest replies, split without breaking surrogate
+    // pairs, and answer with the page id.
     function answer(text) {
         if (typeof text !== "string") return text;
         if (text.length <= root.replyChars) return text;
         const id = String(root.nextReplyId++);
-        root.replyPages[id] = text;
+        const sliceChars = root.replyChars - 16;
+        const slices = [];
+        let start = 0;
+        while (start < text.length) {
+            let end = Math.min(start + sliceChars, text.length);
+            if (end < text.length) {
+                const before = text.charCodeAt(end - 1);
+                if (before >= 0xd800 && before <= 0xdbff) end -= 1;
+            }
+            slices.push(text.slice(start, end));
+            start = end;
+        }
+        root.replyPages[id] = slices;
         root.replyPageOrder = root.replyPageOrder.concat([id]);
         while (root.replyPageOrder.length > 8) {
             const drop = root.replyPageOrder.shift();
@@ -331,14 +344,14 @@ Scope {
     IpcHandler {
         target: "smoke"
         function pageChars(): int { return root.replyChars; }
-        // Page replies are `<pages> <slice>`. The last page drops the reply.
+        // Page replies are `<pages> <slice>` from precomputed slices. The
+        // last page drops the reply.
         function page(id: string, index: int): string {
-            const text = root.replyPages[id];
-            if (text === undefined) return "absent";
-            const sliceChars = root.replyChars - 16;
-            const pages = Math.ceil(text.length / sliceChars);
+            const slices = root.replyPages[id];
+            if (slices === undefined) return "absent";
+            const pages = slices.length;
             if (index < 0 || index >= pages) return "refused: page=" + index + " pages=" + pages;
-            const out = pages + " " + text.slice(index * sliceChars, (index + 1) * sliceChars);
+            const out = pages + " " + slices[index];
             if (index === pages - 1) {
                 delete root.replyPages[id];
                 root.replyPageOrder = root.replyPageOrder.filter(replyId => replyId !== id);

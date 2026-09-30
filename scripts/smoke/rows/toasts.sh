@@ -69,7 +69,7 @@ expect "a service shows a toast" ok toast "Saved|success|0"
 expect "the shown toast is in the lending record under its plugin" '[{"plugin": "acme.probe", "title": "Saved", "tone": "success"}]' py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["toasts"]["visible"]))' < <(ipc shell lent)
 expect_poll "the toast host maps one surface" 1 layer_count vgs:toast
 expect "the toast sits on the focused screen" "$(bar_key | sed 's/^bar://')" toast_screen
-toast_margin="$(ipc smoke themeValue toast.margin)"
+toast_margin="$(ipc smoke themeValue toast.margin)" || toast_margin=""
 geometry expect "the toast surface sits below the bar in the top-right corner" "[[$((mon_w - toast_margin - 360)), $((bar_reserved + toast_margin)), 360, $(toast_surface_height)]]" layers_of vgs:toast
 expect "the layer/bar overlap predicate rejects an overlap" "violation overlap" layer_bar_contract_value <<<"layer=1400,10,360,44 bar=0,0,$mon_w,$bar_reserved margin=$toast_margin"
 geometry expect "the toast surface clears the bar by the toast margin" ok layer_bar_clear vgs:toast toast.margin

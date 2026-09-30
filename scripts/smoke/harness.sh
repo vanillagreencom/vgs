@@ -617,6 +617,7 @@ expect_cursor_at() { # LABEL SHAPE X Y
 
 # Probe.qml uses the same bound before it pages a reply.
 ipc_reply_chars=32768
+ipc_oversize_log="$sandbox/ipc-oversize.log"
 ipc_last_reply=""
 
 # ipc_call_last VGSH TARGET FUNCTION [ARG...]: run one IPC call and keep
@@ -718,7 +719,7 @@ ipc_via() {
     return
   fi
   if ((${#reply} > ipc_reply_chars)); then
-    printf '%s %s chars=%d bound=%d\n' "$target" "$fn" "${#reply}" "$ipc_reply_chars" >>"$sandbox/ipc-oversize.log"
+    printf '%s %s chars=%d bound=%d\n' "$target" "$fn" "${#reply}" "$ipc_reply_chars" >>"$ipc_oversize_log"
   fi
   printf '%s\n' "$reply"
 }
@@ -728,10 +729,10 @@ ipc_via() {
 ipc() { ipc_via "$repo/bin/vgsh" "$@"; }
 
 ipc_oversize_check() { # ROW
-  [[ -s $sandbox/ipc-oversize.log ]] || return 0
+  [[ -s $ipc_oversize_log ]] || return 0
   fail "$1: unpaged IPC replies exceeded $ipc_reply_chars chars"
-  sed 's/^/        /' -- "$sandbox/ipc-oversize.log"
-  : >"$sandbox/ipc-oversize.log"
+  sed 's/^/        /' -- "$ipc_oversize_log"
+  : >"$ipc_oversize_log"
 }
 # py_reply PROGRAM [ARG...]: python3 -c PROGRAM ARG... over the reply on
 # stdin, or the reply itself when it is a state word such as `absent`,
@@ -1014,7 +1015,10 @@ expect() {
   shift 2
   got="$("$@" 2>"$err")" || status=$?
   reader_stderr "$label" "$err" || return 0
-  if [[ $status -ne 0 ]]; then fail "$label: command failed: $*"; return; fi
+  if [[ $status -ne 0 ]]; then
+    if [[ -n $got ]]; then fail "$label: command failed: $*: got $got"; else fail "$label: command failed: $*"; fi
+    return
+  fi
   if [[ $got == "$want" ]]; then ok "$label"; else fail "$label: got $got"; fi
 }
 # expect_poll LABEL WANT CMD...: as expect, retried for up to 5 s, for a

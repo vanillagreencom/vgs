@@ -1046,9 +1046,10 @@ latency_bound_ms=5000
 # reader_stderr says, and leaves -1. It runs in the row's shell, so the
 # failure counts.
 latency_since() {
-  local label="$1" start="$2" want="$3" got=0 last=0 err="$sandbox/reader-$BASHPID.stderr" last_ipc=""
+  local label="$1" start="$2" want="$3" got=0 last=0 err="$sandbox/reader-$BASHPID.stderr" ipc_start_line=0 ipc_lines=""
   shift 3
   latency_ms=-1
+  [[ -f $sandbox/ipc.log ]] && ipc_start_line="$(wc -l <"$sandbox/ipc.log")"
   while (( $(date +%s%3N) - start < latency_bound_ms )); do
     got="$("$@" 2>"$err")" || :
     reader_stderr "$label" "$err" || return 0
@@ -1058,8 +1059,8 @@ latency_since() {
   done
   printf '        %s: no reading of %s within %s ms; the last reading was %q\n' "$label" "$want" "$latency_bound_ms" "$last"
   if [[ -f $sandbox/ipc.log ]]; then
-    last_ipc="$(grep -E '^ipc: ' -- "$sandbox/ipc.log" | tail -n 1 || true)"
-    [[ -z $last_ipc ]] || printf '        %s\n' "$last_ipc"
+    ipc_lines="$(awk -v start="$ipc_start_line" 'NR > start && /^ipc: / { line = $0 } END { if (line != "") print line }' "$sandbox/ipc.log")"
+    [[ -z $ipc_lines ]] || printf '        %s\n' "$ipc_lines"
   fi
 }
 ipc_cut_stand_in() { # PATH FAIL_COUNT|always THEN_REPLY
@@ -1146,7 +1147,7 @@ head -c $chars /dev/zero | tr '\\0' x
 echo
 SH
   chmod 755 "$fake"
-  (failures=0; ipc_via "$fake" product target >/dev/null; ipc_oversize_check control >/dev/null; [[ $failures -eq 1 && ! -s $sandbox/ipc-oversize.log ]] && echo failed-once || echo "failures=$failures")
+  (failures=0; ipc_oversize_log="$sandbox/ipc-oversize-control.log"; rm -f -- "$ipc_oversize_log"; ipc_via "$fake" product target >/dev/null; ipc_oversize_check control >/dev/null; [[ $failures -eq 1 && ! -s $ipc_oversize_log ]] && echo failed-once || echo "failures=$failures")
 }
 expect "control: an unpaged oversize reply fails its row once" failed-once ipc_oversize_control
 expect "the smoke probe and harness agree on the page size" "$ipc_reply_chars" ipc smoke pageChars

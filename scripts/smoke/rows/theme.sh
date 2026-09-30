@@ -21,7 +21,7 @@ expect "a length resolves to whole pixels" 26 theme_value bar.height
 expect "a write to a published token changes nothing" '"#ff000000"' ipc smoke themeWrite color.onAccent '#ffffffff'
 group_after_write() { ipc smoke themeWrite color '{}' >/dev/null && theme_value color.onAccent; }
 expect "a write to a published group changes nothing" '"#ff000000"' group_after_write
-revision_before="$(ipc smoke themeRevision)"
+revision_before="$(ipc smoke themeRevision)" || revision_before=""
 
 write_theme '{ "schemaVersion": 1, "name": "probe", "tokens": { "palette": { "foreground": "#123456" }, "bar": { "active": "#ffffff" } } }'
 expect_poll "a theme file recolours the bar's foreground" '#123456' bar_foreground

@@ -39,7 +39,7 @@ listed='[{"key": "acme.tui/hello", "plugin": "acme.tui", "name": "hello", "title
 expect "listTuis lists the fixture's script" "$listed" respaced ipc shell listTuis
 expect "the capability publishes the same list" "$listed" respaced tui entries
 
-revision="$(ipc shell listPlugins | py_reply 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.tui"][0])')"
+revision="$(ipc shell listPlugins | py_reply 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.tui"][0])')" || revision=""
 snapshot="$rt_dir/vgsh-sources-$shell_qs_pid/$revision"
 check_snapshot() { [[ -x $snapshot/tui/hello.sh && ! -L $snapshot/tui/hello.sh ]] && echo present || echo absent; }
 # The words the terminal is handed for the fixture's hello script with

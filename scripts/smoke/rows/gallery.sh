@@ -96,10 +96,10 @@ for needle, replacement in [
     text = changed
 destination.write_text(text)
 PY
-control_gap="$(ipc smoke themeValue space.sm)" || exit 1
+control_gap="$(ipc smoke themeValue space.sm)" || control_gap=""
 control_position="$(ipc smoke galleryOrbs window vgs.gallery '' | py_reply 'import json,sys
 orb=json.load(sys.stdin)[-1]; x,y,w,h=orb["box"]
-print(json.dumps({"x":x+w+json.loads(sys.argv[1]),"y":y,"tone":"info"}))' "$control_gap")" || exit 1
+print(json.dumps({"x":x+w+json.loads(sys.argv[1]),"y":y,"tone":"info"}))' "$control_gap")" || control_position=""
 expect "the orb drawing control builds" ok ipc smoke popupLoad orb-control "$repo/shell/plugins/vgs.gallery/VoiceOrbControl.qml" window vgs.gallery "$control_position"
 render expect_poll "the normal orb control draws before the defect" True orb_drawn orb-control 0
 expect "the control hides only its shader" ok ipc smoke popupCall orb-control hideShader

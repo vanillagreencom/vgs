@@ -123,7 +123,7 @@ expect "the running service kept its in-memory state across the rescans" 1 read_
 # scanner is installed in the sandbox copy, never in the live checkout.
 scan_error() { ipc shell listPlugins | py_reply 'import json,sys; print(json.load(sys.stdin)["scanError"])'; }
 cp -p -- "$repo/bin/vgsh-scan" "$sandbox/vgsh-scan.good"
-scan_plugins_before="$(ipc shell listPlugins | py_reply 'import json,sys; print(json.load(sys.stdin)["plugins"])')"
+scan_plugins_before="$(ipc shell listPlugins | py_reply 'import json,sys; print(json.load(sys.stdin)["plugins"])')" || scan_plugins_before=""
 scan_plugins() { ipc shell listPlugins | py_reply 'import json,sys; print(json.load(sys.stdin)["plugins"])'; }
 expected_errors+=('plugins: vgsh-scan exited 9 status=0' 'plugins: vgsh-scan did not start' 'plugins: scan output does not parse: ')
 printf '#!/bin/sh\nprintf "[]\\n"\nexit 9\n' >"$repo/bin/vgsh-scan"
