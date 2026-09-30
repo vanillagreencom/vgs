@@ -826,4 +826,32 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
+// The libsecret service the manifest's `secrets` declares, the one the
+// core stores and clears under, is the one the photo helper, the token
+// probe and the Show command lines name: each names it as a literal, so
+// each literal is read back against the manifest. The controls: a
+// manifest naming another service, and a helper naming another one.
+const pluginDir = path.dirname(file);
+const SERVICE_SOURCES = [
+    ["slack-photos.js", /const SERVICE = \["service", "([^"]+)", "account"\];/g],
+    ["token-status.sh", /secret-tool search service (\S+) account/g],
+    ["NotificationLogic.js", /service ([A-Za-z0-9._-]+) account/g],
+];
+function serviceMismatches(manifestText, read) {
+    const declared = JSON.parse(manifestText).secrets.service;
+    const out = [];
+    for (const [name, pattern] of SERVICE_SOURCES) {
+        const found = [...read(name).matchAll(pattern)].map(m => m[1]);
+        if (found.length === 0) out.push(name + " names no service");
+        for (const service of found) if (service !== declared) out.push(name + " names " + service + ", the manifest " + declared);
+    }
+    return out;
+}
+const manifestText = fs.readFileSync(path.join(pluginDir, "manifest.json"), "utf8");
+const readSource = name => fs.readFileSync(path.join(pluginDir, name), "utf8");
+assert.deepEqual(serviceMismatches(manifestText, readSource), [], "every script names the manifest's secrets service");
+const otherManifest = JSON.stringify(Object.assign({}, JSON.parse(manifestText), { secrets: { service: "vgs-other", label: "x" } }));
+assert.deepEqual([...new Set(serviceMismatches(otherManifest, readSource).map(line => line.split(" ")[0]))], SERVICE_SOURCES.map(([name]) => name), "control: a manifest naming another service fails every script");
+assert.deepEqual(serviceMismatches(manifestText, name => name === "slack-photos.js" ? readSource(name).replace('"service", "vgs-notifications"', '"service", "vgs-other"') : readSource(name)), ["slack-photos.js names vgs-other, the manifest vgs-notifications"], "control: a helper naming another service fails");
+
 console.log(`test-notifications-logic: ok bodies=${BODIES.length} states=${STATE_REFUSED.length} hints=${HINT_ROWS.length} enriched=${ENRICHED.length} controls=${CONTROLS.length}`);

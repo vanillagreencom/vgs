@@ -129,7 +129,7 @@ rows=(
   "cli|IPC reply judge controls|scripts/test-ipc-reply.sh|scripts/test-ipc-reply.sh bin/lib/ipc-reply.sh"
   "logic|themes browser theming row|node scripts/test-themes-setup.js|shell/plugins/vgs.themes/SetupLogic.js shell/plugins/vgs.themes/manifest.json shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "logic|theme browser logic|node scripts/test-themes-browser.js|shell/plugins/vgs.themes/BrowserLogic.js shell/plugins/vgs.themes/Files.js bin/lib/qml-library.js"
-  "logic|notifications logic|node scripts/test-notifications-logic.js|shell/plugins/vgs.notifications/NotificationLogic.js shell/plugins/vgs.notifications/Appearance.js shell/plugins/vgs.notifications/manifest.json shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
+  "logic|notifications logic|node scripts/test-notifications-logic.js|shell/plugins/vgs.notifications/NotificationLogic.js shell/plugins/vgs.notifications/Appearance.js shell/plugins/vgs.notifications/manifest.json shell/plugins/vgs.notifications/slack-photos.js shell/plugins/vgs.notifications/token-status.sh shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "logic|lock model|node scripts/test-lock-model.js|shell/plugins/vgs.lock/LockModel.js bin/lib/qml-library.js"
   "logic|polkit prompt model|node scripts/test-polkit-model.js|shell/plugins/vgs.polkit/PolkitModel.js bin/lib/qml-library.js"
   "logic|updates logic|node scripts/test-updates-logic.js|shell/plugins/vgs.updates/UpdatesLogic.js bin/lib/qml-library.js"
