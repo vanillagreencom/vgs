@@ -26,14 +26,15 @@ orb_pixels() {
   local rows window sample geometry colour socket count
   rows="$(ipc smoke galleryOrbs window vgs.gallery "$1")" || return 1
   window="$(surface_box window:Gallery)" || return 1
-  sample="$(python3 -c 'import json,sys
-rows=json.loads(sys.argv[1]); window=json.loads(sys.argv[2]); index=int(sys.argv[3])
+  if [[ $window != \[* ]]; then printf '%s\n' "$window"; return; fi
+  sample="$(py_reply 'import json,sys
+rows=json.load(sys.stdin); window=json.loads(sys.argv[1]); index=int(sys.argv[2])
 if not isinstance(rows,list) or index>=len(rows): print("absent"); sys.exit()
 orb=rows[index]
 if not orb["visible"] or not orb["windowVisible"] or not orb["url"].endswith("/voiceorb.frag.qsb"):
     print("not-drawn"); sys.exit()
 x,y,w,h=orb["box"]
-print("%d,%d %dx%d|%s" % (round(window[0]+x),round(window[1]+y),round(w),round(h),orb["ink"][1:7]))' "$rows" "$window" "$2")" || return 1
+print("%d,%d %dx%d|%s" % (round(window[0]+x),round(window[1]+y),round(w),round(h),orb["ink"][1:7]))' "$window" "$2" <<<"$rows")" || return 1
   if [[ $sample != *'|'* ]]; then printf '%s\n' "$sample"; return; fi
   IFS='|' read -r geometry colour <<<"$sample"
   socket="$(shot_socket "$rt_dir" "$nested_socket" "$host_socket")" || return 1
