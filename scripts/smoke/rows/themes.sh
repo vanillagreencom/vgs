@@ -154,7 +154,7 @@ expect "a failed list leaves no swatch" null theme_member swatch=smoke
 
 # A runner that cannot start: the rows reach the shell through qs itself,
 # since the sandbox's vgsh is the file that cannot start.
-qs_call() { "${shell_env[@]}" qs ipc --pid "$shell_pid" call "$@" 2>>"$sandbox/ipc.log" | tail -n 1; }
+qs_call() { "${shell_env[@]}" qs ipc --pid "$shell_qs_pid" call "$@" 2>>"$sandbox/ipc.log" | tail -n 1; }
 expected_errors+=('theme: vgsh theme apply reason=start-failed name=smoke')
 chmod 000 -- "$repo/bin/vgsh"
 expect "an apply whose runner cannot start is accepted" ok qs_call acme.probe invoke theme-apply smoke

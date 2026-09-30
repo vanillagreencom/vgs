@@ -93,7 +93,7 @@ reconcile_ms=""
 if disable_reply="$(ipc shell setPluginEnabled acme.tick false)"; then
   replied_ms="$(now_ms)"
   for _ in $(seq 1 500); do
-    if built_now="$("${shell_env[@]}" qs ipc --pid "$shell_pid" call shell built 2>>"$sandbox/ipc.log" | tail -n 1)" && [[ -n $built_now && $built_now != *'"id":"acme.tick"'* ]]; then
+    if built_now="$("${shell_env[@]}" qs ipc --pid "$shell_qs_pid" call shell built 2>>"$sandbox/ipc.log" | tail -n 1)" && [[ -n $built_now && $built_now != *'"id":"acme.tick"'* ]]; then
       reconcile_ms=$(( $(now_ms) - replied_ms ))
       break
     fi

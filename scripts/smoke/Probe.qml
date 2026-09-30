@@ -488,8 +488,10 @@ Scope {
         function startOrder(): string { return JSON.stringify(root.startOrder); }
         // A detached process the shell starts that runs until GATE exists,
         // for SECONDS at most, so it can outlive the shell and never the
-        // row. It inherits the shell's descriptors, the instance lock's
-        // among them, for rows/start-order.sh's stop controls.
+        // row. It stands in for a long child of the shell, such as a
+        // download, in rows/start-order.sh's instance lock readings: it
+        // inherits the shell's descriptors, and holds the instance lock
+        // only under a runner that hands the shell the lock's descriptor.
         function holdUntil(gate: string, seconds: int): string {
             Quickshell.execDetached(["timeout", String(seconds), "sh", "-c", 'until [ -e "$1" ]; do sleep 0.05; done', "sh", gate]);
             return "ok";

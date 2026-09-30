@@ -18,7 +18,7 @@ windows_lua="$home/.config/hypr/hyprland.lua"
 cp -- "$windows_lua" "$sandbox/hyprland-before-windows.lua"
 restore_windows_lua() { cp -- "$sandbox/hyprland-before-windows.lua" "$windows_lua.next" && mv -T -- "$windows_lua.next" "$windows_lua"; }
 # The titles of the shell process's clients, sorted.
-shell_clients() { hypr -j clients | python3 -c 'import json,sys; print(json.dumps(sorted(c["title"] for c in json.load(sys.stdin) if c["pid"] == int(sys.argv[1]))))' "$shell_pid"; }
+shell_clients() { hypr -j clients | python3 -c 'import json,sys; print(json.dumps(sorted(c["title"] for c in json.load(sys.stdin) if c["pid"] == int(sys.argv[1]))))' "$shell_qs_pid"; }
 settings_search() { ipc smoke readDescendant window vgs.settings TextField text; }
 
 expect "enabling the Settings plugin for the window rows is allowed" ok ipc shell setPluginEnabled vgs.settings true

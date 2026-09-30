@@ -7,7 +7,7 @@ source "$repo/scripts/smoke/app-window.sh"
 missing=()
 # fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs;
 # grim reads the pixels app-window.sh checks.
-for tool in Hyprland qs hyprctl python3 node flock setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim; do
+for tool in Hyprland qs hyprctl python3 node flock setpriv setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 # ImageMagick, `magick` or `convert`, converts the Slack custom emoji the
@@ -191,6 +191,12 @@ case "\${1:-}" in
 esac
 EOF
 chmod 755 "$shim/crontab"
+# The PATH every sandbox shell starts with: the shell's stand-in directory,
+# then node's, then the host's. A row that stands in more commands puts
+# its own directory ahead of it. shell_start_words are the environment
+# words start_shell gives every shell over shell_env's.
+shell_start_path="$shim:$(dirname -- "$node_bin"):$PATH"
+shell_start_words=(PATH="$shell_start_path" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim")
 
 # The test helpers, built from the repository into the sandbox, each with
 # the client code wayland-scanner generates from the one protocol file
@@ -250,7 +256,14 @@ for _ in $(seq 1 50); do [[ -S $rt_dir/bus && -S $rt_dir/system-bus ]] && break;
 if [[ ! -S $rt_dir/bus || ! -S $rt_dir/system-bus ]]; then
   printf 'qml-smoke: status=not-measured missing=sandbox-bus\n'; exit 77
 fi
-spawn "$sandbox/hyprland.log" "${sandbox_env[@]}" WAYLAND_DISPLAY="$host_socket" Hyprland --config "$home/.config/hypr/hyprland.lua"
+# The nested compositor carries the words start_shell gives a shell and
+# the sandbox's buses, so a shell `vgsh restart` relaunches through its
+# dispatch finds the same stand-ins and reaches no bus of the user's
+# (rows/start-order.sh). It sets the Wayland and Hyprland variables of its
+# children itself.
+spawn "$sandbox/hyprland.log" "${sandbox_env[@]}" "${shell_start_words[@]}" \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=$rt_dir/bus" DBUS_SYSTEM_BUS_ADDRESS="unix:path=$rt_dir/system-bus" \
+  WAYLAND_DISPLAY="$host_socket" Hyprland --config "$home/.config/hypr/hyprland.lua"
 compositor_pid="$spawn_pid"
 
 nested_socket=""
@@ -667,25 +680,24 @@ theme_idle() { # [IPC_FN]
   printf '%s\n' "$state"
 }
 
-# The PATH every sandbox shell starts with: the shell's stand-in directory,
-# then node's, then the host's. A row that stands in more commands puts
-# its own directory ahead of it.
-shell_start_path="$shim:$(dirname -- "$node_bin"):$PATH"
 # start_shell TREE LOG [BAR [NAME=VALUE...]]: start the runner of TREE, a
 # product tree holding its own bin/vgsh, as the sandbox's shell, its
 # output in LOG, and wait for it through the ipc function, which a row
 # that starts another tree's runner redefines first. The NAME=VALUE words
 # go to env after the harness's own, so a row's PATH wins over
-# shell_start_path. Sets shell_pid, the first-bar reading, shell_qs_pid
-# and instance_log, which it clears first, so a failed start leaves no
-# earlier shell's log in its place. BAR `no-bar` takes no first-bar
+# shell_start_path. Sets shell_pid, the runner's pid, which stop_shell
+# signals, the first-bar reading, shell_qs_pid, the pid of the qs the
+# runner started, which a row addresses the shell by, and instance_log.
+# It clears the last two first, so a failed start leaves no earlier
+# shell's pid or log in their place. BAR `no-bar` takes no first-bar
 # reading, for a start that maps no bar. Returns 1, with the row failed,
-# when the shell does not answer ping within timeout_s or names no
-# instance log. The instance is found by pid among every instance in the
-# sandbox's runtime dir, so an installed prefix, whose shell is not
-# TREE/shell, is found as a checkout is.
+# when the shell does not answer ping within timeout_s, when the runner
+# has no one qs child or when no instance log names that pid. The
+# instance is found by pid among every instance in the sandbox's runtime
+# dir, so an installed prefix, whose shell is not TREE/shell, is found as
+# a checkout is.
 #
-# The first-bar reading is the latency from the runner's exec to the first
+# The first-bar reading is the latency from the runner's spawn to the first
 # bar surface with a client, polled every 10 ms from the compositor's
 # layer list, which answers in a few milliseconds; the reading carries at
 # most one poll interval. first_bar_cpu_some_pct records beside it the
@@ -699,17 +711,20 @@ shell_start_path="$shim:$(dirname -- "$node_bin"):$PATH"
 #
 # qs buffers stdout when redirected, so the shell's own per-instance log
 # file is the record: it is line-flushed and holds every QML warning. The
-# runner execs qs, so the shell's pid is the runner's unless setsid forked.
+# runner starts qs as its child and waits on it (runtime.md § Process), so
+# the shell's pid is never the runner's. spawn's setsid does not fork, as
+# a background job is no process group leader, so the runner is
+# spawn_pid itself.
 start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
   local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths pong up=false child instance_id
   shift $(( $# < 3 ? $# : 3 ))
   [[ $bar == bar || $bar == no-bar ]] || { fail "start_shell: refused: bar=$bar want=bar|no-bar"; return 1; }
   instance_log=""
+  shell_qs_pid=""
   start_cpu_some_us="$(cpu_some_us)"
   start_ms="$(now_ms)"
-  spawn "$log" "${shell_env[@]}" PATH="$shell_start_path" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim" "$@" "$tree/bin/vgsh" run
+  spawn "$log" "${shell_env[@]}" "${shell_start_words[@]}" "$@" "$tree/bin/vgsh" run
   shell_pid="$spawn_pid"
-  shell_qs_pid="$shell_pid"
   first_bar_ms=""
   first_bar_cpu_some_pct=unmeasured
   if [[ $bar == bar ]]; then
@@ -740,7 +755,11 @@ start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
     return 1
   fi
   ok "shell answers ping"
-  if child="$(pgrep -P "$shell_pid" -x qs)"; then shell_qs_pid="$child"; fi
+  if ! child="$(pgrep -P "$shell_pid" -x qs)" || [[ ! $child =~ ^[0-9]+$ ]]; then
+    fail "start_shell: runner pid $shell_pid has no one qs child: [${child//$'\n'/ }]"
+    return 1
+  fi
+  shell_qs_pid="$child"
   for _ in $(seq 1 50); do
     if instance_id="$("${shell_env[@]}" qs list --all -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
       instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
@@ -750,16 +769,17 @@ start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
   done
   if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; instance_log=""; return 1; fi
 }
-# stop_shell: TERM to the runner start_shell started, then a wait on the
-# instance lock the runner took, before a row starts another. Every
-# process the shell starts inherits the lock's descriptor (runtime.md
-# § Process), so the shell's own exit does not free the lock, and the next
-# `vgsh run` refuses while any of them lives. The bound is
-# stop_lock_wait_s, the 10 s `vgsh restart` gives the same wait. On the
-# bound the row fails, naming each process that holds the lock, and it
-# returns 1 with the shell unreaped. Once the lock is free it reaps the
-# runner and clears shell_pid, so a second stop signals no stale pid.
-# rows/start-order.sh holds the controls.
+# stop_shell: TERM to the runner start_shell started, which passes it to
+# the shell, then a wait on the instance lock the runner holds, before a
+# row starts another. The runner exits after the shell and holds the lock
+# until then, and no process the shell starts holds it (runtime.md
+# § Process), so the lock frees when the shell has exited, whatever
+# processes the shell left behind; the next `vgsh run` refuses until
+# then. The bound is stop_lock_wait_s, the 10 s `vgsh restart` gives the
+# same wait. On the bound the row fails, naming each process that holds
+# the lock, and it returns 1 with the runner unreaped. Once the lock is
+# free it reaps the runner and clears shell_pid, so a second stop signals
+# no stale pid. rows/start-order.sh holds the controls.
 stop_lock_wait_s=10
 stop_shell() {
   local lock="$rt_dir/vgsh.lock"

@@ -26,7 +26,7 @@ expect "the compositor triggers the fixture's shortcut" ok hypr dispatch 'hl.dsp
 expect_poll "the fixture's shortcut handler ran" "$((presses_before + 1))" read_service presses
 expect "a second shortcut with the same name is refused" '"refused: shortcut=acme.probe:ping held"' read_service duplicateShortcut
 
-ipc_targets() { "${shell_env[@]}" qs ipc --pid "$shell_pid" show 2>>"$sandbox/ipc.log" | count_lines 'target acme.probe'; }
+ipc_targets() { "${shell_env[@]}" qs ipc --pid "$shell_qs_pid" show 2>>"$sandbox/ipc.log" | count_lines 'target acme.probe'; }
 expect "qs lists the fixture's IPC target" 1 ipc_targets
 expect "the fixture answers on its IPC target" hello probe echo hello
 expect "a second IPC handler with the same name is refused" '"refused: ipc=acme.probe:echo held"' read_service duplicateIpc
