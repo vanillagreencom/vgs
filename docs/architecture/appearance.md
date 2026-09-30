@@ -2,7 +2,7 @@
 
 Covers: scripts/qml-tests/tst_appearance.qml, scripts/smoke/rows/launcher.sh, scripts/smoke/rows/notifications.sh
 
-Most plugins draw from the shell's tokens, so a theme restyles them. A plugin whose design must look the same under every theme owns its look instead, and takes from the theme exactly three values: whether it is light or dark, its accent, and the motion scale. [D023](../decisions/D023-plugin-owned-appearance.md) records the choice; `shell/plugins/vgs.launcher` and `shell/plugins/vgs.notifications` are such plugins.
+Most plugins draw from the shell's tokens, so a theme restyles them. A plugin whose design must look the same under every theme owns its look instead, and takes from the theme exactly three values: whether it is light or dark, its accent, and the motion scale. [D023](../decisions/D023-plugin-owned-appearance.md) records the choice; `shell/plugins/vgs.launcher`, `shell/plugins/vgs.notifications` and `shell/plugins/vgs.devtools` are such plugins.
 
 ## The contract
 
@@ -11,6 +11,7 @@ Most plugins draw from the shell's tokens, so a theme restyles them. A plugin wh
 - `LIGHT` is an overrides tree in theme-document shape. It names paths of `TOKENS`, sets neither input, and applies only while the theme's `scheme.mode` is `light`.
 - `scheme.mode` is a shell token, `dark` or `light`, that a theme states; the shipped `light` package sets it. No component and no plugin infers a mode from a colour.
 - A file reads the look as `Theme.appearance(TOKENS, LIGHT)`, bound once, conventionally to a property named `look`, and every value it draws with as `look.<path>`. A binding on it re-evaluates on a theme change and answers the same values for every theme with the same mode, accent and scale.
+- A plugin that owns its look composes `qs.Ui` components, which follow the theme, and hands a container its own values: `Pane` takes the look's padding, corner and gaps as inputs, so the plugin reads no shared spacing token. A look value may equal a shipped token's value; it stays the plugin's own, and a theme that moves the shared value does not move it. A widget a look-owning plugin puts in the bar is a `BarItem` and draws with the bar's tokens, as every widget does.
 - The motion scale reaches every duration of the table as it reaches the shell's, so a user who stills the shell stills the plugin. An animation that is not a duration token, such as a continuous orbit, stops while the scale is 0.
 
 ## The judge

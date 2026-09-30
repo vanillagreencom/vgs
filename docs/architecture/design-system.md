@@ -44,7 +44,7 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 
 ## Readability
 
-`ThemeLogic.readabilityShortfalls` owns the contrast table for resting text, accent text and status text on resting surfaces. `scripts/check-theme-contrast.js` runs that table over the shipped `vgs` and `light` packages and every catalog entry, so a token default or converted theme that makes text unreadable fails offline validation. The table excludes hover surfaces and disabled text for the reasons in [theme-conversion.md § Readability](theme-conversion.md#readability).
+`ThemeLogic.readabilityShortfalls` owns the contrast table for resting text, accent text and status text on resting surfaces. The same table holds each enabled control's boundary (a checkbox's, a radio's and a text field's border, and the switch's off track) and each selected indicator (a checked checkbox, a checked radio, the switch's on track) at 3:1 against the surfaces it sits on, and a switch knob and a check mark at 3:1 against their track, WCAG 1.4.11's floor for non-text contrast. `color.borderControl` is the boundary colour those borders read. `scripts/check-theme-contrast.js` runs that table over the shipped `vgs` and `light` packages and every catalog entry, so a token default or converted theme that makes text unreadable fails offline validation. The table excludes hover surfaces and disabled text for the reasons in [theme-conversion.md § Readability](theme-conversion.md#readability).
 
 ## Components
 
@@ -96,3 +96,4 @@ The grid, type scale, control sizes, container classes and states every surface 
 - Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).
 - A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D023](../decisions/D023-plugin-owned-appearance.md).
 - Containers use one inset box, an inner scroll gutter and fitted popup height: [D050](../decisions/D050-container-layout-contract.md).
+- Every layout dimension sits on a 4 px grid, and row heights are their own tokens: [D058](../decisions/D058-design-scale-on-the-4-px-grid.md).

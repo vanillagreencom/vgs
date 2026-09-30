@@ -833,7 +833,7 @@ var TOKENS = {
         // its corner, and its fills under hover and a press.
         item: {
             height: length("{size.control.sm}"),
-            paddingX: length("{space.sm}"),
+            paddingX: length("{space.md}"),
             icon: length("{icon.size.md}"),
             gap: length("{space.xs}"),
             iconGap: length("{control.gap}"),

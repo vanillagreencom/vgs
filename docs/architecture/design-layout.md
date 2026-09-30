@@ -8,7 +8,11 @@ Where a container puts its content and how far apart a component spaces its part
 
 A container owns one inset box, [D050](../decisions/D050-container-layout-contract.md). A boxed child, such as a button, list-row highlight or card, puts its outer box on that inset edge. Unboxed container content, such as a heading, notice, hint, description or field label, puts its text on that edge. A child then uses its own component padding for its internal text, icon or control. A scroll area in a container extends into the right inset strip: its content ends on the inset box, and its bar sits to the right of that content. A rounded container follows the shared corner-clearing rule below.
 
-Dialogs and popovers use the same container. They fit their content until their max-height share is reached; after that, only the body scrolls. The Settings window's outer size is outside this contract and is owned by the window host.
+Dialogs and popovers use the same container. They fit their content until their max-height share is reached; after that, only the body scrolls, and a footer stays in view below it. `Pane` is the contract's one implementation. A plugin that owns its look composes `Pane` with its own padding, corner and gaps, so its values stay its own ([appearance.md](appearance.md)). A popup the summon host places is at most its output less `size.window.gutter` a side, and the plugin is laid out at that size. The Settings window's outer size is outside this contract and is owned by the window host.
+
+## Headers
+
+A header is the one row whose leading control may reach past the content edge, an exception to D050's boxed-child rule. A back or close `IconButton` puts its glyph's painted bounds on the content edge, read from `IconButton.glyphStart` and `glyphEnd`, so the glyph lines up with the text below it. Its box and its focus ring then reach into the container's inset, which is at least as wide as the ring's room. The title starts `control.gap` after the glyph's ink. Every item of the header centres on the row, and the title centres by its capital height. `shell/plugins/vgs.settings/PageHeader.qml` implements it for Settings.
 
 ## Component spacing
 
@@ -23,3 +27,4 @@ A notification's media sits in one square slot whose size is a tier, not a prope
 ## Decisions
 
 - Containers use one inset box, an inner scroll gutter and fitted popup height: [D050](../decisions/D050-container-layout-contract.md).
+- Every layout dimension sits on a 4 px grid: [D058](../decisions/D058-design-scale-on-the-4-px-grid.md).

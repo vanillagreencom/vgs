@@ -158,7 +158,7 @@ page = [i for i, r in enumerate(rows) if r["type"] == "ListPage"]
 if len(page) != 1: print(json.dumps(["pages=%d" % len(page)])); sys.exit()
 under = lambda kind: [i for i, r in enumerate(rows) if r["type"] == kind and inside(i, page[0])]
 search, areas, items = under("TextField"), under("ScrollArea"), under("ListItem")
-heading = [i for i in under("Label") if rows[i].get("role") == "h2"]
+heading = [i for i in under("Label") if rows[i].get("role") == "h3"]
 if len(search) != 1 or len(areas) != 1 or len(heading) != 1 or len(items) < 3:
     print(json.dumps(["search=%d areas=%d heading=%d items=%d" % (len(search), len(areas), len(heading), len(items))])); sys.exit()
 edge_l, edge_r = rows[search[0]]["box"][0], right(rows[search[0]])

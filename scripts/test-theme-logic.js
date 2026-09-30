@@ -91,7 +91,7 @@ const DEFAULTS = [
     ["bar.item.height", 24],
     ["bar.item.icon", 16],
     ["bar.onActive", "#000000ff"],
-    ["bar.item.paddingX", 6],
+    ["bar.item.paddingX", 8],
     ["bar.item.gap", 4],
     // The control and row rhythm, Radix Themes' button sizes on the 4 px
     // unit: 24, 32 and 40 px controls with mul(4, 2) = 8, mul(4, 3) = 12
@@ -276,7 +276,7 @@ const ACCEPTED = [
     { tokens: { bar: { active: "#ffffff" } }, want: [["bar.active", "#ffffffff"], ["bar.onActive", "#000000ff"], ["color.accent", "#ff5a36ff"]] },
     { tokens: { space: { unit: 5 } }, want: [["space.xs", 5], ["space.sm", 8], ["space.xl", 20], ["bar.gap", 10], ["row.paddingX", 15], ["listItem.paddingX", 15], ["field.paddingX", 0], ["stack.row", 5], ["badge.size.sm.paddingX", 8], ["codeLine.padding", 10], ["kbd.paddingX", 8], ["control.paddingX", 15], ["control.sm.gap", 5]] },
     // One shared token moves every control that follows the rhythm.
-    { tokens: { control: { paddingX: 12, gap: 5 } }, want: [["button.paddingX", 12], ["textField.paddingX", 12], ["segmented.paddingX", 12], ["button.gap", 5], ["textField.gap", 5], ["listItem.gap", 5], ["menu.item.gap", 5], ["toast.contentGap", 5], ["bar.item.iconGap", 5], ["bar.item.paddingX", 6]] },
+    { tokens: { control: { paddingX: 12, gap: 5 } }, want: [["button.paddingX", 12], ["textField.paddingX", 12], ["segmented.paddingX", 12], ["button.gap", 5], ["textField.gap", 5], ["listItem.gap", 5], ["menu.item.gap", 5], ["toast.contentGap", 5], ["bar.item.iconGap", 5], ["bar.item.paddingX", 8]] },
     // Control sizes move the controls and never the rows' density.
     { tokens: { size: { control: { md: 34, lg: 44 } } }, want: [["textField.height", 34], ["segmented.height", 34], ["menu.item.height", 34], ["menu.maxHeight", 306], ["row.height", 36], ["listItem.height", 36], ["listItem.twoLineHeight", 56]] },
     { tokens: { row: { height: 40, twoLineHeight: 60 } }, want: [["listItem.height", 40], ["listItem.twoLineHeight", 60], ["textField.height", 32]] },
