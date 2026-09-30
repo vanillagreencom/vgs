@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Table-driven checks for shell/Core/Dispatch.js, loaded under node through
 // bin/lib/qml-library.js: every dispatcher in both syntaxes, one refusal
-// per argument class, and the reveal decisions with a control per rule. The Lua forms are the ones scripts/qml-smoke.sh sends
-// to a nested Hyprland; the classic forms are pinned here only.
+// per argument class, and a control per rule. The compositor-dispatchers
+// smoke row also reads the new effects back from nested Hyprland.
 "use strict";
 const path = require("path");
 
@@ -24,14 +24,22 @@ const formRows = [
     ["moveWindowToWorkspace", ["0xabc", 3], "hl.dsp.window.move({ workspace = \"3\", window = \"address:0xabc\", follow = false })", "movetoworkspacesilent 3,address:0xabc"],
     ["toggleSpecialWorkspace", ["magic"], "hl.dsp.workspace.toggle_special(\"magic\")", "togglespecialworkspace magic"],
     ["closeWindow", ["0xabc"], "hl.dsp.window.close({ window = \"address:0xabc\" })", "closewindow address:0xabc"],
+    ["fullscreenWindow", ["fullscreen", "set"], 'hl.dsp.window.fullscreen({ mode = "fullscreen", action = "set" })', "fullscreen 0 set"],
+    ["fullscreenWindow", ["fullscreen", "unset"], 'hl.dsp.window.fullscreen({ mode = "fullscreen", action = "unset" })', "fullscreen 0 unset"],
+    ["fullscreenWindow", ["maximized", "toggle"], 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" })', "fullscreen 1 toggle"],
+    ["floatWindow", ["0xabc", "toggle"], 'hl.dsp.window.float({ action = "toggle", window = "address:0xabc" })', "togglefloating address:0xabc"],
+    ["floatWindow", ["0xabc", "set"], 'hl.dsp.window.float({ action = "enable", window = "address:0xabc" })', "setfloating address:0xabc"],
+    ["floatWindow", ["0xabc", "unset"], 'hl.dsp.window.float({ action = "disable", window = "address:0xabc" })', "settiled address:0xabc"],
+    ["moveWindow", ["0xabc", -40, 0], 'hl.dsp.window.move({ x = -40, y = 0, relative = false, window = "address:0xabc" })', "movewindowpixel exact -40 0,address:0xabc"],
+    ["resizeWindow", ["0xabc", 640, "480"], 'hl.dsp.window.resize({ x = 640, y = 480, relative = false, window = "address:0xabc" })', "resizewindowpixel exact 640 480,address:0xabc"],
+    ["resizeWindow", ["0xABC", 1, 2147483647], 'hl.dsp.window.resize({ x = 1, y = 2147483647, relative = false, window = "address:0xABC" })', "resizewindowpixel exact 1 2147483647,address:0xABC"],
+    ["focusMonitor", ["DP-1"], 'hl.dsp.focus({ monitor = "DP-1" })', "focusmonitor DP-1"],
+    ["focusMonitor", [0], 'hl.dsp.focus({ monitor = "0" })', "focusmonitor 0"],
+    ["focusMonitor", ["+1"], 'hl.dsp.focus({ monitor = "+1" })', "focusmonitor +1"],
+    ["focusMonitor", ["desc:Built-in"], 'hl.dsp.focus({ monitor = "desc:Built-in" })', "focusmonitor desc:Built-in"],
+    ["moveCursor", [120, -30], 'hl.dsp.cursor.move({ x = 120, y = -30 })', "movecursor 120 -30"],
+    ["moveCursor", [-2147483648, 2147483647], 'hl.dsp.cursor.move({ x = -2147483648, y = 2147483647 })', "movecursor -2147483648 2147483647"],
 ];
-for (const [name, args, lua, classic] of formRows) {
-    check("lua " + name + " " + JSON.stringify(args), ctx.request(name, args, true), { ok: true, request: lua });
-    check("classic " + name + " " + JSON.stringify(args), ctx.request(name, args, false), { ok: true, request: classic });
-}
-for (const name of ctx.PLUGIN_DISPATCHERS)
-    check("plugin dispatcher " + name + " has a form row", formRows.some(r => r[0] === name), true);
-check("every dispatcher is a plugin dispatcher", ctx.PLUGIN_DISPATCHERS.slice().sort(), Object.keys(ctx.DISPATCHERS).sort());
 
 // rows: [name, dispatcher, args, want error]
 const refusalRows = [
@@ -45,11 +53,51 @@ const refusalRows = [
     ["an address must be hexadecimal", "focusWindow", ["0xzz"], "refused: dispatcher=focusWindow argument=0 value=\"0xzz\""],
     ["a backslash is refused", "focusWorkspace", ["a\\"], "refused: dispatcher=focusWorkspace argument=0 value=\"a\\\\\""],
     ["NaN is not a workspace", "focusWorkspace", [NaN], "refused: dispatcher=focusWorkspace argument=0 value=null"],
+    ["fullscreen mode is an enum", "fullscreenWindow", ["2", "set"], 'refused: dispatcher=fullscreenWindow argument=0 value="2"'],
+    ["fullscreen action is an enum", "fullscreenWindow", ["fullscreen", "enable"], 'refused: dispatcher=fullscreenWindow argument=1 value="enable"'],
+    ["fullscreen cannot take an address", "fullscreenWindow", ["fullscreen", "set", "0xabc"], "refused: dispatcher=fullscreenWindow arguments=3 want=2"],
+    ["float address is checked", "floatWindow", ["0xabc,0xdef", "set"], 'refused: dispatcher=floatWindow argument=0 value="0xabc,0xdef"'],
+    ["float action is an enum", "floatWindow", ["0xabc", true], "refused: dispatcher=floatWindow argument=1 value=true"],
+    ["move address is checked", "moveWindow", ["active", 0, 0], 'refused: dispatcher=moveWindow argument=0 value="active"'],
+    ["move x cannot carry Lua", "moveWindow", ["0xabc", "0;hl.dsp.exit()", 0], 'refused: dispatcher=moveWindow argument=1 value="0;hl.dsp.exit()"'],
+    ["move y must be an integer", "moveWindow", ["0xabc", 0, 1.5], 'refused: dispatcher=moveWindow argument=2 value=1.5'],
+    ["resize address is checked", "resizeWindow", ["0xgg", 640, 480], 'refused: dispatcher=resizeWindow argument=0 value="0xgg"'],
+    ["resize width must be positive", "resizeWindow", ["0xabc", 0, 480], "refused: dispatcher=resizeWindow argument=1 value=0"],
+    ["resize height must be positive", "resizeWindow", ["0xabc", 640, -1], "refused: dispatcher=resizeWindow argument=2 value=-1"],
+    ["resize width must be an integer", "resizeWindow", ["0xabc", "1.5", 480], 'refused: dispatcher=resizeWindow argument=1 value="1.5"'],
+    ["resize height cannot add an argument", "resizeWindow", ["0xabc", 640, "480,address:0xdef"], 'refused: dispatcher=resizeWindow argument=2 value="480,address:0xdef"'],
+    ["monitor cannot end a Lua string", "focusMonitor", ['DP-1"'], 'refused: dispatcher=focusMonitor argument=0 value="DP-1\\\""'],
+    ["monitor cannot add a classic argument", "focusMonitor", ["DP-1 DP-2"], 'refused: dispatcher=focusMonitor argument=0 value="DP-1 DP-2"'],
+    ["empty monitor is refused", "focusMonitor", [""], 'refused: dispatcher=focusMonitor argument=0 value=""'],
+    ["cursor x must be finite", "moveCursor", [Infinity, 0], "refused: dispatcher=moveCursor argument=0 value=null"],
+    ["cursor y must be an integer", "moveCursor", [0, "1e2"], 'refused: dispatcher=moveCursor argument=1 value="1e2"'],
+    ["cursor x cannot overflow stoi", "moveCursor", [2147483648, 0], "refused: dispatcher=moveCursor argument=0 value=2147483648"],
+    ["cursor y cannot underflow stoi", "moveCursor", [0, -2147483649], "refused: dispatcher=moveCursor argument=1 value=-2147483649"],
+    ["cursor x cannot use Lua's leading-zero spelling", "moveCursor", ["01", 0], 'refused: dispatcher=moveCursor argument=0 value="01"'],
+    ["cursor y cannot be an object", "moveCursor", [0, {}], "refused: dispatcher=moveCursor argument=1 value={}"],
 ];
-for (const [name, dispatcher, args, want] of refusalRows) {
-    const r = ctx.request(dispatcher, args, true);
-    check("refusal: " + name, r.ok ? "accepted" : r.error, want);
+
+function verifyDispatch(lib, report) {
+    let bad = 0;
+    const row = (name, got, want) => {
+        if (JSON.stringify(got) !== JSON.stringify(want)) bad += 1;
+        if (report) check(name, got, want);
+    };
+    for (const [name, args, lua, classic] of formRows) {
+        row("lua " + name + " " + JSON.stringify(args), lib.request(name, args, true), { ok: true, request: lua });
+        row("classic " + name + " " + JSON.stringify(args), lib.request(name, args, false), { ok: true, request: classic });
+    }
+    row("the provider exposes every supported operation", lib.PLUGIN_DISPATCHERS.slice().sort(),
+        ["closeWindow", "floatWindow", "focusMonitor", "focusWindow", "focusWorkspace", "fullscreenWindow", "moveCursor", "moveWindow", "moveWindowToWorkspace", "resizeWindow", "toggleSpecialWorkspace"]);
+    for (const [name, dispatcher, args, want] of refusalRows) {
+        for (const lua of [true, false]) {
+            const r = lib.request(dispatcher, args, lua);
+            row("refusal " + (lua ? "lua: " : "classic: ") + name, r.ok ? "accepted" : r.error, want);
+        }
+    }
+    return bad;
 }
+verifyDispatch(ctx, true);
 
 // Bringing a window into view: the request's judge, what a Hyprland event
 // means to a waiting reveal and which window a reveal focuses. Every value
@@ -148,8 +196,43 @@ const revealControls = [
 ];
 const dispatchFile = path.join(__dirname, "..", "shell", "Core", "Dispatch.js");
 const source = fs.readFileSync(dispatchFile, "utf8");
-const scratch = fs.mkdtempSync(path.join(require("os").tmpdir(), "test-dispatch-"));
+fs.mkdirSync(path.join(__dirname, "..", "tmp"), { recursive: true });
+const scratch = fs.mkdtempSync(path.join(__dirname, "..", "tmp", "test-dispatch-"));
 try {
+    const dispatchControls = [
+        ["known dispatcher", "if (!Object.prototype.hasOwnProperty.call(DISPATCHERS, name))", "if (false)"],
+        ["argument count", "if (!Array.isArray(args) || args.length !== d.args.length)", "if (!Array.isArray(args))"],
+        ["argument type", 'typeof value !== "string"', "false"],
+        ["window address", "var ADDRESS = /^0x[0-9a-fA-F]+$/;", "var ADDRESS = /.*/;"],
+        ["selector syntax", "var WORKSPACE = /^[A-Za-z0-9_.:+-]+$/;", "var WORKSPACE = /.*/;"],
+        ["special name", "var SPECIAL = /^[A-Za-z0-9_-]+$/;", "var SPECIAL = /.*/;"],
+        ["action enum", "var ACTION = /^(toggle|set|unset)$/;", "var ACTION = /.*/;"],
+        ["fullscreen mode", "var FULLSCREEN_MODE = /^(fullscreen|maximized)$/;", "var FULLSCREEN_MODE = /.*/;"],
+        ["decimal integer", "/^-?(0|[1-9][0-9]*)$/.test(value)", "true"],
+        ["signed lower bound", "Number(value) >= -2147483648", "true"],
+        ["signed upper bound", "Number(value) <= 2147483647", "true"],
+        ["positive size", "INTEGER.test(value) && Number(value) > 0", "INTEGER.test(value)"]
+    ];
+    for (const [name, needle, replacement] of dispatchControls) {
+        if (source.split(needle).length !== 2) { check("control " + name + " matches once", false, true); continue; }
+        const mutant = path.join(scratch, "Dispatch.js");
+        fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        let bad;
+        try { bad = verifyDispatch(require("../bin/lib/qml-library.js").load(mutant), false); }
+        catch (e) { bad = 1; }
+        check("control " + name + " fails the dispatcher rows", bad > 0, true);
+    }
+    // One dropped effect per new dispatcher, in each dialect. Mutate the
+    // table in a separately loaded copy, never the live judge or its file.
+    for (const name of ["fullscreenWindow", "floatWindow", "moveWindow", "resizeWindow", "focusMonitor", "moveCursor"]) {
+        for (const dialect of ["lua", "classic"]) {
+            const mutant = path.join(scratch, "Dispatch.js");
+            fs.writeFileSync(mutant, source);
+            const lib = require("../bin/lib/qml-library.js").load(mutant);
+            lib.DISPATCHERS[name][dialect] = () => dialect === "lua" ? "hl.dsp.no_op()" : "nop";
+            check("control " + dialect + " drops " + name, verifyDispatch(lib, false) > 0, true);
+        }
+    }
     for (const [name, needle, replacement] of revealControls) {
         if (source.split(needle).length !== 2) { failures += 1; console.log("  FAIL  control " + name + ": the text to replace must occur once"); continue; }
         const mutant = path.join(scratch, "Dispatch.js");

@@ -13,6 +13,18 @@
 var WORKSPACE = /^[A-Za-z0-9_.:+-]+$/;
 var ADDRESS = /^0x[0-9a-fA-F]+$/;
 var SPECIAL = /^[A-Za-z0-9_-]+$/;
+var ACTION = /^(toggle|set|unset)$/;
+var FULLSCREEN_MODE = /^(fullscreen|maximized)$/;
+// Classic movecursor uses std::stoi. Keep numeric arguments in its signed
+// 32-bit range in both dialects, with decimal spelling safe in Lua too.
+var INTEGER = {
+    test: function (value) {
+        return /^-?(0|[1-9][0-9]*)$/.test(value) && Number(value) >= -2147483648 && Number(value) <= 2147483647;
+    }
+};
+var SIZE = {
+    test: function (value) { return INTEGER.test(value) && Number(value) > 0; }
+};
 
 // Bound pending input independently of how long the compositor takes.
 var QUEUE_LIMIT = 32;
@@ -43,6 +55,38 @@ var DISPATCHERS = {
         args: [ADDRESS],
         lua: function (a) { return "hl.dsp.window.close({ window = \"address:" + a[0] + "\" })"; },
         classic: function (a) { return "closewindow address:" + a[0]; }
+    },
+    // Classic fullscreen has no window selector. Both forms act on the
+    // focused window; a caller targeting an address must focus it first.
+    fullscreenWindow: {
+        args: [FULLSCREEN_MODE, ACTION],
+        lua: function (a) { return "hl.dsp.window.fullscreen({ mode = \"" + a[0] + "\", action = \"" + a[1] + "\" })"; },
+        classic: function (a) { return "fullscreen " + (a[0] === "maximized" ? "1" : "0") + " " + a[1]; }
+    },
+    floatWindow: {
+        args: [ADDRESS, ACTION],
+        lua: function (a) { return "hl.dsp.window.float({ action = \"" + (a[1] === "set" ? "enable" : a[1] === "unset" ? "disable" : "toggle") + "\", window = \"address:" + a[0] + "\" })"; },
+        classic: function (a) { return (a[1] === "set" ? "setfloating" : a[1] === "unset" ? "settiled" : "togglefloating") + " address:" + a[0]; }
+    },
+    moveWindow: {
+        args: [ADDRESS, INTEGER, INTEGER],
+        lua: function (a) { return "hl.dsp.window.move({ x = " + a[1] + ", y = " + a[2] + ", relative = false, window = \"address:" + a[0] + "\" })"; },
+        classic: function (a) { return "movewindowpixel exact " + a[1] + " " + a[2] + ",address:" + a[0]; }
+    },
+    resizeWindow: {
+        args: [ADDRESS, SIZE, SIZE],
+        lua: function (a) { return "hl.dsp.window.resize({ x = " + a[1] + ", y = " + a[2] + ", relative = false, window = \"address:" + a[0] + "\" })"; },
+        classic: function (a) { return "resizewindowpixel exact " + a[1] + " " + a[2] + ",address:" + a[0]; }
+    },
+    focusMonitor: {
+        args: [WORKSPACE],
+        lua: function (a) { return "hl.dsp.focus({ monitor = \"" + a[0] + "\" })"; },
+        classic: function (a) { return "focusmonitor " + a[0]; }
+    },
+    moveCursor: {
+        args: [INTEGER, INTEGER],
+        lua: function (a) { return "hl.dsp.cursor.move({ x = " + a[0] + ", y = " + a[1] + " })"; },
+        classic: function (a) { return "movecursor " + a[0] + " " + a[1]; }
     }
 };
 

@@ -177,6 +177,7 @@ smoke_row manager
 smoke_row updates
 smoke_row settings
 smoke_row windows
+smoke_row compositor-dispatchers
 smoke_row compositor-reveal
 smoke_row agent-warden
 smoke_row capability-release

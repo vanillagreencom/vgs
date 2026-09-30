@@ -19,6 +19,8 @@ Each capability's members are listed in [`.agents/skills/vgs-plugin/references/a
 
 A capability lands with its name, its provider and a fixture consumer with its smoke rows in the same change.
 
+The compositor provider derives its operation list from `Dispatch.PLUGIN_DISPATCHERS`; adding an operation changes that table, not the provider factory. The fixture's existing dispatch handler consumes the added methods. `scripts/smoke/rows/compositor-dispatchers.sh` proves the window, monitor and pointer effects by compositor readback, including controls that return `ok` without an effect. [Runtime: Hyprland](runtime-hyprland.md#window-and-pointer-operations) fixes the dialect constraints.
+
 `Capabilities` maps providers and accounts for holds. Each resource owner keeps its state, registration and release together; a stateless provider needs no separate component.
 
 ## Toasts
