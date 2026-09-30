@@ -103,26 +103,16 @@ expect_poll "the redrawn layer maps again" "$monitors" layer_count vgs:layer
 layer_input_begin left "$left_x" "$pad_y" || { fail "the restored host click failed"; exit 1; }
 expect_poll "the restored host binding passes the shared input assertion" ok layer_input_result
 
-# Each mutant removes a mask behavior, not the test or its fixture. All
-# copies are written before any is loaded, so Qt's directory cache sees
-# them. The real layer is released after the copy maps; it cannot catch a
-# click a mutant wrongly lets through.
+# The harness prepares the mask copies before shell startup, so Qt's
+# directory cache sees every file. Each mutant removes a mask behavior,
+# not the test or its fixture. The real layer is released after the copy
+# maps; it cannot catch a click a mutant wrongly lets through.
 expect "the original registration is released before mask controls" ok layered undraw
 expect_poll "the original layer is gone before mask controls" 0 layer_count vgs:layer
-python3 - "$repo/shell/Hosts/OverlaySurface.qml" "$repo/shell/Hosts" "$repo/scripts/smoke/toplevel/toplevel.c" "$sandbox/toplevel-silent.c" <<'PY'
+python3 - "$repo/scripts/smoke/toplevel/toplevel.c" "$sandbox/toplevel-silent.c" <<'PY'
 from pathlib import Path
 import sys
-source, directory, helper, silent = map(Path, sys.argv[1:])
-text = source.read_text()
-for name, old, new in (
-    ("NoLeft", "model: surface.inputItems", "model: surface.inputItems.slice(1)"),
-    ("NoRight", "model: surface.inputItems", "model: surface.inputItems.slice(0, 1)"),
-    ("NoMask", "mask: inputAll ? null : inputRegion", "mask: inputAll ? null : null"),
-):
-    assert text.count(old) == 1, f"{name}: mutation must match once"
-    changed = text.replace(old, new)
-    assert changed != text
-    (directory / f"OverlaySurface{name}.qml").write_text(changed)
+helper, silent = map(Path, sys.argv[1:])
 text = helper.read_text()
 old = 'printf("button %u %s\\n", button, state == WL_POINTER_BUTTON_STATE_PRESSED ? "pressed" : "released");'
 assert text.count(old) == 1, "button observer mutation must match once"

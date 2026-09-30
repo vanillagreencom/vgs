@@ -100,6 +100,18 @@ if (target / "themes/targets").exists():
     shutil.rmtree(target / "themes/targets")
 (target / "themes/targets").mkdir()
 shutil.copyfile(source / "scripts/smoke/Probe.qml", target / "shell/Probe.qml")
+# Qt caches a directory's file names when it first loads from it. Prepare
+# every layer mask copy before any host or earlier control reads Hosts.
+text = (source / "shell/Hosts/OverlaySurface.qml").read_text()
+for name, old, new in (
+    ("NoLeft", "model: surface.inputItems", "model: surface.inputItems.slice(1)"),
+    ("NoRight", "model: surface.inputItems", "model: surface.inputItems.slice(0, 1)"),
+    ("NoMask", "mask: inputAll ? null : inputRegion", "mask: inputAll ? null : null"),
+):
+    assert text.count(old) == 1, f"{name}: mutation must match once"
+    changed = text.replace(old, new)
+    assert changed != text
+    (target / f"shell/Hosts/OverlaySurface{name}.qml").write_text(changed)
 path = target / "shell/shell.qml"
 text = path.read_text()
 needle = "ShellRoot {\n"
