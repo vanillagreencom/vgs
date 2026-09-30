@@ -25,7 +25,7 @@ The standard every surface is judged against, and the evidence that proves a sur
 | `text.label`, `text.eyebrow`, `text.button` | 11 / line 1, mono, uppercase | a field label, a section heading, a button |
 | `text.tooltip` | 12 / 16 / 500 | a tooltip line |
 
-- A surface uses `h3` for its title. `h1` and `h2` are for documents. The full-screen theme and wallpaper browsers name their selected card in `text.display`, as Omarchy's picker does; no other surface uses it.
+- A surface uses `h3` for its title. `h1` and `h2` are for documents. The full-screen theme and wallpaper browsers name their selected card in `text.display`, as Omarchy's picker does, and the lock screen draws its clock in it.
 - Reading text is at least 13 px and chrome at least 11 px. Reading text is a description, a message, a card's body and a list row's detail line; chrome is a label, a count, a button's text and a menu entry. A plugin that owns its look ([appearance.md](appearance.md)) meets the same floor.
 - A control's label, a checkbox's, a radio's and a switch's, draws in `item`, so its line centres on the control. An indicator centres on the label's capital centre on a whole pixel.
 
