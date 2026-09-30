@@ -1,7 +1,8 @@
 # The polkit agent, vgs.polkit: a first-party service and overlay. The
 # harness starts it disabled, since polkit is exclusive and the capability
-# rows' fixture holds it until rows/theme-browse.sh disables it. This row
-# enables it once no plugin holds polkit, reads the agent the core lends it
+# rows' fixture, acme.probe, holds it. This row disables the fixture when
+# an earlier row left it enabled, enables vgs.polkit once no plugin holds
+# polkit, reads the agent the core lends it
 # and the agent status its service publishes back, asserts that no prompt
 # surface exists without an authentication flow and that a summon with none
 # is refused, and disables it again, which destroys the agent.
@@ -14,7 +15,8 @@
 #
 # The control installs a copy of the plugin in the user directory, whose id
 # wins, with the prompt's refusal of a flowless summon removed: the same
-# summon reading maps a prompt then, so the reading is not vacuous.
+# summon reading maps a prompt then, so the reading is not vacuous. The
+# row ends with vgs.polkit disabled and the fixture as it found it.
 set -euo pipefail
 polkit_lent() { ipc shell lent | python3 -c 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v=v.get(k) if isinstance(v, dict) else None
@@ -26,8 +28,14 @@ flowless_summon() { local reply; reply="$(ipc shell summon overlay vgs.polkit '{
 unregistered='["warning", "Not registered with polkitd: another polkit agent holds this session, or polkitd is not running"]'
 
 expect "the polkit plugin starts disabled in the sandbox" False plugin_enabled vgs.polkit
-expect "no plugin holds polkit before the row" null polkit_lent holders.polkit
-expect "the core builds no agent while nothing holds polkit" false polkit_lent polkitAgent
+probe_enabled="$(plugin_enabled acme.probe)" || probe_enabled=unreadable
+case "$probe_enabled" in
+  True) expect "disabling the capability fixture, which holds polkit, is allowed" ok ipc shell setPluginEnabled acme.probe false ;;
+  False) ;;
+  *) fail "the capability fixture's enabled state is unreadable: $probe_enabled" ;;
+esac
+expect_poll "no plugin holds polkit before the row" null polkit_lent holders.polkit
+expect_poll "the core builds no agent while nothing holds polkit" false polkit_lent polkitAgent
 expect "enabling the polkit plugin is allowed" ok ipc shell setPluginEnabled vgs.polkit true
 expect_poll "the polkit service is built" True record_exists vgs.polkit
 expect_poll "vgs.polkit holds polkit" '["vgs.polkit"]' polkit_lent holders.polkit
@@ -68,3 +76,7 @@ expect_poll "disable destroyed the agent" false polkit_lent polkitAgent
 expect "disable released polkit" null polkit_lent holders.polkit
 polkit_record() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["status"].get("vgs.polkit")))'; }
 expect "disable dropped the plugin's status record" null polkit_record
+if [[ $probe_enabled == True ]]; then
+  expect "re-enabling the capability fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
+  expect_poll "the fixture holds polkit again" '["acme.probe"]' polkit_lent holders.polkit
+fi
