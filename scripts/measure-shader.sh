@@ -7,7 +7,7 @@
 # keeps 600 samples. GPU timestamps keep compositor pacing out of GPU cost.
 # Vulkan is required for device identity and timestamps. QSG_NO_VSYNC=1
 # requests swap interval 0; Wayland can still pace frameSwapped callbacks.
-# Exit 77: missing dependency, software device, or unavailable sandbox.
+# Exit 77: missing dependency, uncalibrated/software device, or sandbox fault.
 # Exit 1: missing samples, failed scene, ceiling exceeded, or accepted control.
 # The result names the machine, UTC date, backend, GPU, and separate readings.
 set -euo pipefail
@@ -26,17 +26,22 @@ while (($#)); do
   esac
 done
 source_repo="$repo"
+if ! mkdir -p -- "$source_repo/tmp"; then
+  printf 'shader-cost: failed scratch=%s\n' "$source_repo/tmp"; exit 1
+fi
 export TMPDIR="$source_repo/tmp"
 # The compiler owner has a hyphenated filename; import through its path.
-qsb="$(python3 - "$repo/scripts/check-voiceorb-shader.py" <<'PY'
+compiler="$(python3 - "$repo/scripts/check-voiceorb-shader.py" <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("shader", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 print(module.qsb_tool() or "")
+print(*module.OPTIONS, sep="\n")
 PY
 )" || exit 1
-[[ -n $qsb ]] || { echo 'shader-cost: status=not-measured missing=qsb'; exit 77; }
+mapfile -t compiler_words <<<"$compiler"
+[[ -n ${compiler_words[0]} ]] || { echo 'shader-cost: status=not-measured missing=qsb'; exit 77; }
 timeout_s=90
 plugin_set=smoke
 harness_scene_only=true
@@ -58,7 +63,7 @@ fragColor = ink * max(ring, arcs) * qt_Opacity * (0.99 + 0.01 * sin(cost));
 assert changed != text
 output.write_text(changed)
 PY
-if ! env -i PATH=/usr/bin:/bin HOME="$home" LC_ALL=C "$qsb" --qt6 --qsbversion 64 -o "$repo/shell/costly.frag.qsb" "$sandbox/costly.frag"; then
+if ! env -i PATH=/usr/bin:/bin HOME="$home" LC_ALL=C "${compiler_words[@]}" -o "$repo/shell/costly.frag.qsb" "$sandbox/costly.frag"; then
   echo 'shader-cost: failed costly-shader=compile'; exit 1
 fi
 logs="$source_repo/tmp/shader-cost-$(date +%s)-$$"
@@ -107,7 +112,15 @@ for scale in 1 2; do
       printf 'shader-cost: failed scene=%s scale=%s exit=%s\n' "$scene" "$scale" "$scene_exit"; exit 1;
     }
     [[ $done == true ]] || { echo "shader-cost: failed scene=$scene scale=$scale samples=incomplete"; exit 1; }
-    [[ $(held_mode_state) == held ]] || { echo 'shader-cost: failed output=mode-reset'; exit 1; }
+    mode_state="$(held_mode_state)" || { echo 'shader-cost: failed output=unreadable'; exit 1; }
+    case "$mode_state" in
+      held) ;;
+      reset)
+        smoke_verdict "$((failures + 1))" "$behaviour_failures" "$stalled_render" "$((mode_resets + 1))" "$sandbox/hyprland.log"
+        exit $? ;;
+      *)
+        printf 'shader-cost: failed output=%s\n' "$mode_state"; exit 1 ;;
+    esac
     printf 'shader-cost: scene=%s scale=%s samples=600 log=%s\n' "$scene" "$scale" "$stem.log"
   done
   release_mode "release shader scale $scale" "$output" "$mode" 1

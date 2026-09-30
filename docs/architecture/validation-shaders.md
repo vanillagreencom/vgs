@@ -14,9 +14,11 @@ The instrument measures the generic passive visual, not a voice service. [D060](
 | GPU cost | GPU timestamp frame time with the shader on minus the off baseline, paired by sample index | Incremental GPU frame cost at requested swap interval 0 |
 | Presentation | The layer's own `frameSwapped` interval, read in the GUI thread | Compositor-paced presentation, not GPU execution |
 
-Each stream discards 120 warmup readings and keeps 600 samples. Missing, empty or incomplete streams fail. The reader refuses a wrong window, scale, selected device or swap interval. A software device exits 77. The Vulkan backend supplies device identity and GPU timestamps; absent GPU timestamps fail rather than substituting presentation intervals.
+Each stream discards 120 warmup readings and keeps 600 samples. Missing, empty or incomplete streams fail. The reader refuses a wrong window, scale or swap interval. A software device exits 77. Check mode also requires every scene at every scale to match the baseline's backend and device; a mismatch exits 77 as uncalibrated. The Vulkan backend supplies device identity and GPU timestamps; absent GPU timestamps fail rather than substituting presentation intervals.
 
-The instrument compiles a disposable shader with a 256-step dependent loop. The costly shader must exceed the GPU ceiling at both scales. A CPU scheduling delay or a slow presentation alone does not satisfy that control. `scripts/test-measure-shader.py` covers attribution, missing samples, software refusal, separate readings and each ceiling. Its disposable sample-guard and ceiling-guard mutations turn their tests red.
+The instrument compiles a disposable shader with a 256-step dependent loop. It uses `qsb_tool()` and `OPTIONS` from the shipped pack's compiler owner, `scripts/check-voiceorb-shader.py`. The costly shader must exceed the GPU ceiling at both scales. A CPU scheduling delay or a slow presentation alone does not satisfy that control. `scripts/test-measure-shader.py` exercises calibration and committed-baseline check mode through the reader and its CLI. It covers normal regressions, an accepted costly control, and calibration identity. Disposable mutations remove the sample guard, ceiling guard, baseline rejection and identity check and turn their tests red.
+
+The runner creates its scratch directory before it exports `TMPDIR` or starts the harness. A confirmed held-output reset uses the shared `smoke_verdict` and exits 77 when it is the only failure. Unreadable output state and earlier real failures remain failures. The isolated runner tests exercise these paths without rendering. They also remove scratch creation and compiler-option forwarding in disposable copies.
 
 ## Calibration
 

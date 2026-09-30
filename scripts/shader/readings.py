@@ -108,6 +108,14 @@ def report(root, baseline=None):
             scenes[scale][mode] = scene(
                 stem.with_suffix(".log").read_text(),
                 json.loads(stem.with_suffix(".json").read_text()), scale)
+            measured = scenes[scale][mode]
+            if baseline is not None and (
+                measured["device"] != baseline["device"] or measured["backend"] != baseline["backend"]
+            ):
+                raise Unmeasured(
+                    f"calibration=identity-mismatch scale={scale} scene={mode} "
+                    f"want=[{baseline['backend']}:{baseline['device']}] "
+                    f"got=[{measured['backend']}:{measured['device']}]")
     readings = {str(scale): highest(rows["on"], rows["off"]) for scale, rows in scenes.items()}
     if baseline is None:
         ceilings = {name: 2 * max(row[name] for row in readings.values()) for name in READINGS}
