@@ -1,4 +1,4 @@
-# D058: Jarvis is one service with a leased child and one wire judge
+# D064: Jarvis is one service with a leased child and one wire judge
 
 [← Decision Index](INDEX.md)
 

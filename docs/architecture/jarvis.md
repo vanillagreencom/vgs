@@ -2,7 +2,7 @@
 
 Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
 
-The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health. This skeleton captures no audio, opens no account or socket, and runs no tool. [D058](../decisions/D058-jarvis-child-lease.md) records the process choice.
+The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health. This skeleton captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice.
 
 ## Session observation
 
