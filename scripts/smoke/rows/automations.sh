@@ -100,7 +100,7 @@ expect "the linger IPC opens its TUI" ok ipc vgs.automations invoke linger ""
 expect_poll "the terminal is handed the linger TUI" "$(words vgs.automations/linger tui/linger.sh)" recorded_tail
 expect_run_end "the linger IPC's run ends" vgs.automations/linger
 
-# Enable while logged out, D058: while lingering reads off, the Settings
+# Enable while logged out, D059: while lingering reads off, the Settings
 # page offers the manifest's action, and its button opens the linger TUI.
 # The run's end lists again, whoever opened it, and a loginctl that now
 # answers yes withdraws the action. The control: the manager refuses the

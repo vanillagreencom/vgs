@@ -54,7 +54,7 @@ What each component of `qs.Ui` guarantees is in [components.md](components.md).
 
 ## Setup steps
 
-A step a user must take to set something up is automatic, or one click: a button on a Settings row, a notice or a dialog. A step that asks a question or needs a privilege opens in a floating TUI or the requirement notice from that button. A secret is typed into a `TextField` with `password` set and VGS stores it. A command a user could run by hand shows only in a `CommandDisclosure` beside that button, never as the instruction itself. The Settings page draws a manifest's status actions and secrets this way ([status.md § Shown](status.md#shown)), and `scripts/check-user-commands.py` fails text that tells the user to run a command: [D058](../decisions/D058-no-manual-commands.md).
+A step a user must take to set something up is automatic, or one click: a button on a Settings row, a notice or a dialog. A step that asks a question or needs a privilege opens in a floating TUI or the requirement notice from that button. A secret is typed into a `TextField` with `password` set and VGS stores it. A command a user could run by hand shows only in a `CommandDisclosure` beside that button, never as the instruction itself. The Settings page draws a manifest's status actions and secrets this way ([status.md § Shown](status.md#shown)), and `scripts/check-user-commands.py` fails text that tells the user to run a command: [D059](../decisions/D059-no-manual-commands.md).
 
 ## Text stack
 
@@ -98,7 +98,7 @@ The grid, type scale, control sizes, container classes and states every surface 
 - Two bundled variable fonts, so the default theme draws the same on every machine: [D016](../decisions/D016-bundled-variable-font.md).
 - Controls extend `QtQuick.Templates` and icons are path data drawn with `QtQuick.Shapes`: [D017](../decisions/D017-templates-and-path-icons.md).
 - Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).
-- A setup step is automatic or one click, and a command only a "Show command" disclosure: [D058](../decisions/D058-no-manual-commands.md).
+- A setup step is automatic or one click, and a command only a "Show command" disclosure: [D059](../decisions/D059-no-manual-commands.md).
 - A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D023](../decisions/D023-plugin-owned-appearance.md).
 - Containers use one inset box, an inner scroll gutter and fitted popup height: [D050](../decisions/D050-container-layout-contract.md).
 - Every layout dimension sits on a 4 px grid, and row heights are their own tokens: [D063](../decisions/D063-design-scale-on-the-4-px-grid.md).

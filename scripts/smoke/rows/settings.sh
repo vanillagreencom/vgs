@@ -100,7 +100,7 @@ expect_poll "the Token row draws its command" "$(python3 -c 'import json,sys; pr
 settings_press "Hide command" || fail "the click on Hide command failed"
 expect_poll "the Token row hides its command" '["Token", "Present", "Needed for the fixture'"'"'s sync", "Show command"]' token_drawn
 
-# Status actions, D058: an entry's action is offered while its published
+# Status actions, D059: an entry's action is offered while its published
 # value calls for it, a presence while absent and a state while it says so,
 # and its button runs the step through the manager: the fixture's own TUI
 # in a floating terminal, or the requirement notice for its own command.

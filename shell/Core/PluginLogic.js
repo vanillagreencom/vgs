@@ -101,7 +101,7 @@ var STATUS_PRESENCE_TONES = { present: "success", absent: "warning", locked: "in
 // A `state` value's `tone`, and the badge tone Settings draws it with.
 var STATUS_STATE_TONES = { ok: "success", info: "info", warning: "warning", danger: "danger" };
 // The keys a `state` value carries: `action`, true when the entry's declared
-// action applies to this value, is its writer's to decide (D058).
+// action applies to this value, is its writer's to decide (D059).
 var STATUS_STATE_KEYS = ["tone", "text", "action"];
 // A `presenceList` value is a list of at most STATUS_LIST_MAX items, each
 // carrying these keys: a printable `label` and a `presence` value, with an
@@ -114,7 +114,7 @@ var STATUS_LIST_ITEM_KEYS = ["label", "value", "hint", "command", "secret"];
 // reserved for a setting that follows the first offered value.
 var STATUS_CHOICE_KEYS = ["label", "value"];
 
-// A status entry's `action` (D058): the one-click setup step the Settings
+// A status entry's `action` (D059): the one-click setup step the Settings
 // page draws as a button beside the entry. It carries a printable `label`
 // and exactly one of `tui`, a name of the manifest's own `tui` key the core
 // opens in a floating terminal, or `install`, a list of the manifest's own
@@ -126,7 +126,7 @@ var STATUS_ACTION_TYPES = ["presence", "state"];
 // The refusal reasons of the `manager` capability's `act`.
 var STATUS_ACTION_REASONS = ["undeclared", "disabled", "not-offered"];
 
-// A manifest's `secrets` (D058): the libsecret items the core stores and
+// A manifest's `secrets` (D059): the libsecret items the core stores and
 // clears for the plugin from a masked field on its Settings page, never
 // through a command the user types. `service` is the items' `service`
 // attribute; `label` leads each item's libsecret label.
@@ -409,7 +409,7 @@ function statusError(status, capabilities, tui, requirements) {
                 return badAction;
         }
         if (entry.command !== undefined && entry.action === undefined && entry.type !== "data")
-            return at + ".command needs an action: a command is only the Show command disclosure beside a one-click action (D058)";
+            return at + ".command needs an action: a command is only the Show command disclosure beside a one-click action (D059)";
         if (entry.type === "data") {
             var drawn = ["group", "hint", "command", "hidden", "action"];
             for (var d = 0; d < drawn.length; d++) {
@@ -562,7 +562,7 @@ function statusValueFits(type, value) {
 // present a printable `hint` of at most STATUS_HINT_MAX, a `secret` of
 // SECRET_ACCOUNT_PATTERN and a printable `command` of at most
 // STATUS_COMMAND_MAX, as a declaration's are; a `command` needs the
-// `secret`, whose Connect it is the disclosure of (D058).
+// `secret`, whose Connect it is the disclosure of (D059).
 function statusListItemFits(item) {
     if (!isPlainObject(item) || !isPlainJson(item)) return false;
     var keys = Object.keys(item);
@@ -704,7 +704,7 @@ function statusRowValue(type, value) {
 
 // Whether status entry ENTRY's declared action applies to its published
 // VALUE: a `presence` while nothing is there, `absent`; a `state` while its
-// writer says so, `action: true` (D058).
+// writer says so, `action: true` (D059).
 function statusActionOffered(entry, value) {
     switch (entry.type) {
     case "presence": return value === "absent";

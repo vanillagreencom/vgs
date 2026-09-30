@@ -323,7 +323,7 @@ if [[ "$(lent tui.launcher)" == '"missing"' ]]; then
 fi
 expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
 
-# Install browser theming, D058: the service publishes what `vgsh theme
+# Install browser theming, D059: the service publishes what `vgsh theme
 # setup` says of the Chromium-family writer. The sandbox tree ships no
 # target, so the row reads not shipped until the row copies the chromium
 # target in and the service starts again. On a host whose PATH holds a

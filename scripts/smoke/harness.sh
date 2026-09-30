@@ -575,7 +575,7 @@ automations_stand_ins_restore() { # STUB
 # does, the item and an unlocked secret on stdout and the attributes and a
 # lock on stderr, for the token probe. Every token starts xoxp-smoke-.
 # `store` and `clear`, as the core's SecretWriter runs them for the
-# Settings page's Connect and Disconnect (D058), set the account's state to
+# Settings page's Connect and Disconnect (D059), set the account's state to
 # `present` and `absent`, append their argv to $shim/secret-tool.calls, and
 # a store keeps its stdin, the secret, byte for byte in
 # $shim/secret-tool.stdin.<account>.

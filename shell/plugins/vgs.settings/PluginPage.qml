@@ -10,7 +10,7 @@ import qs.Ui
 // every error, the enabled switch, the listing metadata, the Update and
 // Remove buttons of an installed plugin, one status section per status
 // group (entries without a group first, under `Status`), whose values are
-// read-only and whose setup steps run through the manager (D058), the
+// read-only and whose setup steps run through the manager (D059), the
 // Requirements section with an Install button while one is missing, one
 // settings section per schema group (entries without a group first, under
 // `Settings`) and the Keys section. A disabled plugin's fields are
@@ -188,7 +188,7 @@ FocusScope {
 
                 // Once Settings is off no window is left to hold a button that
                 // turns it on, so its own page keeps the command that does,
-                // behind Show command (D058).
+                // behind Show command (D059).
                 CommandDisclosure {
                     x: enabledField.valueX
                     width: parent.width - x - enabledField.rightPadding

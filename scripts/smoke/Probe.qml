@@ -332,7 +332,7 @@ Scope {
     function invoke(hostKey, id, name, arg) {
         const item = instance(hostKey, id);
         if (item === null) return "absent";
-        // A Settings step as its button hands it to the window (D058):
+        // A Settings step as its button hands it to the window (D059):
         // `act` {id, key}, `storeSecret` {id, key, account, secret} and
         // `clearSecret` {id, key, account}; each answers the manager.
         if (name === "act") {

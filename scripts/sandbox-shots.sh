@@ -488,7 +488,7 @@ settings_close() {
 }
 # The single-workspace token's store command: the last line of the Slack
 # section, on the page of this checkout and of a revision before per-workspace
-# tokens alike. A tree that keeps the command behind Show command (D058)
+# tokens alike. A tree that keeps the command behind Show command (D059)
 # ends the section with that line's Show command button instead.
 slack_legacy_command="secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
 # settings_section HEADING [SCOPE_TYPE SCOPE_TEXT] TYPE TEXT: the page's
@@ -537,14 +537,14 @@ jarvis_started() { ipc smoke jarvisProcess | py_reply 'import json,sys; d=json.l
 # Whether the Jarvis page's Status rows draw its Daemon row as ready.
 jarvis_page_ready() { ipc smoke itemTexts "$settings_kind" vgs.settings StatusRow | py_reply 'import json,sys; print(any("Daemon" in r and "Ready; no capture" in r for r in json.load(sys.stdin)))'; }
 # slack_section: the Slack section through its last line: on a tree with
-# the setup steps of D058, the single-workspace token's Show command, else
+# the setup steps of D059, the single-workspace token's Show command, else
 # the command that line draws.
 slack_section() {
   if "$has_setup_steps"; then settings_section Slack StatusLine "Single-workspace token" Button "Show command"
   else settings_section Slack CodeLine "$slack_legacy_command"
   fi
 }
-# The setup steps of D058 on the open Settings window: Globex's Connect with
+# The setup steps of D059 on the open Settings window: Globex's Connect with
 # its masked field typed into, Acme's command behind Show command, the
 # status fixture's Set up token and Install the tool, Automations' Enable
 # while logged out, Themes' Install browser theming once the chromium
@@ -1451,7 +1451,7 @@ PY
       # lookup finds no token, so the photo helper calls nothing.
       mkdir -p -- "$home/.config/Slack"
       cp -R -- "$checkout/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
-      # A tree with the setup steps of D058 holds globex's token absent, so
+      # A tree with the setup steps of D059 holds globex's token absent, so
       # its line offers Connect.
       if "$has_setup_steps"; then globex_state=absent; else globex_state=locked; fi
       printf '%s\n' "slack:T0ACME present" "slack:T0GLOBEX $globex_state" "slack present" >"$shim/secret-tool.states"

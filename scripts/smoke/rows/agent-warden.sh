@@ -147,7 +147,7 @@ expect_poll "no warden directory reads as not set up" '["not-set-up", null, 0, [
 expect "no status leaves the heartbeat alone" absent warden_heartbeat
 expect "an absent status logs nothing" 0 log_lines 'agent-warden: status='
 vsys_first="$(vsys_on_path)"
-# A warden row that offers Set up while vsys is present, D058: VALUE with
+# A warden row that offers Set up while vsys is present, D059: VALUE with
 # `action: true` added then.
 warden_setup_row() { python3 -c 'import json,sys; v=json.loads(sys.argv[1]); v.update({"action": True} if sys.argv[2] == "\"present\"" else {}); print(json.dumps(v))' "$1" "$vsys_first"; }
 expect "the warden row says it is not set up" "$(warden_setup_row '{"tone": "info", "text": "Not set up"}')" warden_value warden
@@ -218,7 +218,7 @@ expect "enabling the Settings plugin for the warden's rows is allowed" ok ipc sh
 expect_poll "the Settings service is built" True record_exists vgs.settings
 expect "the Settings window is summoned" ok ipc shell summon window vgs.settings '{}'
 expect_poll "the Settings rows show the warden, the agents, the last check and vsys" "$(python3 -c 'import json,sys; print(json.dumps([["Warden", "reported", {"tone": "ok", "text": "Checking"}, "success", "vsys warden install"], ["Agents running", "reported", 1, "", ""], ["Last check", "reported", int(sys.argv[1]) * 1000, "", ""], ["vsys", "reported", json.loads(sys.argv[2]), {"present": "success", "absent": "warning"}[json.loads(sys.argv[2])], "curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash"]]))' "$calm_time" "$vsys_first")" warden_rows
-# The control of Set up and Install vsys, D058: a warden that checks
+# The control of Set up and Install vsys, D059: a warden that checks
 # offers no Set up, a vsys the scan finds offers no Install vsys, and the
 # manager refuses each act then.
 expect_poll "a checking warden offers no Set up" "$(python3 -c 'import json,sys; print(json.dumps([["warden", "Set up", False], ["vsys", "Install vsys", sys.argv[1] == "\"absent\""]]))' "$vsys_first")" offered_actions vgs.agent-warden
@@ -376,7 +376,7 @@ expect_poll "Set up hands the terminal the setup TUI" "$(words vgs.agent-warden/
 expect_poll "the Set up hand-off closes the panel" hidden warden_panel_shown
 expect_run_end "the setup run ends" vgs.agent-warden/setup
 
-# Set up from the Settings page, D058: a warden not set up, with vsys
+# Set up from the Settings page, D059: a warden not set up, with vsys
 # present, offers Set up, and its button opens the same setup TUI.
 settings_page_open vgs.agent-warden
 expect_poll "a warden not set up offers Set up, and a present vsys no install" '[["warden", "Set up", true], ["vsys", "Install vsys", false]]' offered_actions vgs.agent-warden
@@ -632,7 +632,7 @@ rm -f -- "$shim/vsys" "$warden_dir/status.json"
 expect "a rescan after the stand-in vsys goes starts" ok ipc shell rescanPlugins
 expect_poll "vsys reads as the host PATH gives it" "$vsys_first" warden_value vsys
 if [[ $vsys_first == '"absent"' ]]; then
-  # Install vsys from the Settings page, D058: vsys absent offers it, and
+  # Install vsys from the Settings page, D059: vsys absent offers it, and
   # its button raises the core's notice for vsys, closed here unanswered.
   settings_page_open vgs.agent-warden
   expect_poll "an absent vsys offers Install vsys" '[["warden", "Set up", false], ["vsys", "Install vsys", true]]' offered_actions vgs.agent-warden
