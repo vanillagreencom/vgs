@@ -40,6 +40,9 @@ Recommends:     less
 Recommends:     libnotify
 Recommends:     cronie
 Recommends:     xdg-utils
+Recommends:     curl
+Recommends:     libsecret
+Recommends:     ImageMagick
 Conflicts:      vgs-shell
 # end runtime dependencies
 
