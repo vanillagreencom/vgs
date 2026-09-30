@@ -6,6 +6,8 @@ The shared test world implements the isolation boundary in [the Jarvis plan § T
 
 The independent local-model consumer and its actual-model row are in [Jarvis local inputs](jarvis-local.md). They reuse this world for CPU behavior checks. CUDA measurement uses a network-only namespace to retain the host process identity needed by its memory sampler.
 
+The [kernel sandbox suite](jarvis-sandbox.md#evidence) runs real bubblewrap inside this world. Its absolute system bootstrap is allow-listed for that suite only. It never binds live HOME. Runtime and mask controls expose only scratch sentinels. Its network control reaches a private loopback listener.
+
 ## Ownership
 
 - `scripts/lib/jarvis-env.sh::jarvis_env_run` owns one scratch world per invocation. Its header defines the caller contract. A suite starts its fixture servers, daemon and children inside that invocation, so they share the same loopback network.

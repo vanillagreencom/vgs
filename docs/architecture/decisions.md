@@ -64,3 +64,4 @@ One line per decision record that shapes the architecture; the full log with dat
 - [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md): local speech uses pinned exports, bounded Moonshine inputs and CPU streaming captions, measured with actual local artifacts and synthetic audio.
 - [D070](../decisions/D070-jarvis-action-policy.md): Jarvis actions use one typed policy gate and protected real paths; routing, approval and kernel confinement keep separate owners.
 - [D072](../decisions/D072-coding-task-records-and-four-fact-state.md): coding-task records preserve process, turn, wait and outcome facts; the copied event producer and disk replay stay separate from process control. Refines D033 and D052.
+- [D074](../decisions/D074-jarvis-kernel-sandbox.md): Jarvis commands require a real kernel sandbox probe, protected masks and private endpoints.

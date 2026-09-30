@@ -78,4 +78,23 @@ function fsFault(method, replacement, check) {
     try { check(); } finally { fs[method] = original; }
 }
 
-module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault };
+// Bind an asynchronous instrument to its source. Each invocation owns a
+// disposable module and asserts an actual assertion failure, not a parse error.
+function asyncControl(file) {
+    return async (name, needle, replacement, check) => {
+        const source = fs.readFileSync(file, "utf8");
+        assert.equal(source.split(needle).length - 1, 1, name + " mutation match");
+        const changed = source.replace(needle, replacement);
+        assert.notEqual(changed, source);
+        const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "sb-mutant-"));
+        for (const sibling of ["Denied.js", "Tools.js"])
+            fs.copyFileSync(path.join(path.dirname(file), sibling), path.join(folder, sibling));
+        fs.writeFileSync(path.join(folder, path.basename(file)), changed);
+        try {
+            await assert.rejects(() => check(require(path.join(folder, path.basename(file)))), assert.AssertionError, name + " must turn red");
+            console.log("control=" + name + " detected");
+        } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+    };
+}
+
+module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, asyncControl };

@@ -19,6 +19,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and a desktop Secret Service. Add key needs gum to draw its terminal header. Key presence needs busctl. The core's requirement notice offers installation of missing commands.
 
+The optional command sandbox needs bubblewrap and available user namespaces. This skeleton offers no shell tools.
+
 ## How it works
 
 The service sends its current configuration and lock observation to the child. The child answers with its health and session state. Settings shows its health. Add key asks for a provider, an account label and the provider's origin, then hides key input. The desktop keyring stores the key. VGS stores only the item's reference. Disable destroys the service and its child.

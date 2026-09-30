@@ -15,7 +15,8 @@
     { "command": "secret-tool", "packages": { "pacman": "libsecret", "apt": "libsecret-tools", "dnf": "libsecret" }, "optional": true, "purpose": "Stores and reads provider keys in the desktop keyring" },
     { "command": "busctl", "packages": { "pacman": "systemd", "apt": "systemd", "dnf": "systemd" }, "optional": true, "purpose": "Checks key presence without reading secrets or unlocking the keyring" },
     { "command": "gum", "packages": { "pacman": "gum", "apt": "gum", "dnf": "gum" }, "optional": true, "purpose": "Draws the Add key terminal header; Add key needs it to start" },
-    { "command": "flock", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux" }, "optional": false, "purpose": "Serializes coding-task record writers" }
+    { "command": "flock", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux" }, "optional": false, "purpose": "Serializes coding-task record writers" },
+    { "command": "bwrap", "packages": { "pacman": "bubblewrap", "apt": "bubblewrap", "dnf": "bubblewrap" }, "optional": true, "purpose": "Confines shell commands; shell tools require a successful kernel sandbox probe" }
   ],
   "status": {
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },

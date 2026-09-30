@@ -213,6 +213,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Policy.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Redact.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Sandbox.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Secrets.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Speakable.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/SpeechLanguage.js

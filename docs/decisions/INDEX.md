@@ -75,6 +75,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D071 | VGS-615 | Hold shortcuts complete through a release companion | Modifier changes can lose Lua global releases; unrelated releases must not complete idle holds | Hyprland guarantees release delivery or supplies input identity | Active | [Full](D071-hold-shortcuts-use-a-release-companion.md) |
 | 2026-09-30 | D072 | VGS-665 | Coding-task records preserve four independent facts | Turn end and process exit do not report task success | Vendor task records, retention needs or control ownership change | Active | [Full](D072-coding-task-records-and-four-fact-state.md) |
 | 2026-09-30 | D073 | VGS-635 | Jarvis releases labelled content to the whole recipient set through one origin-bound network door | Brain answers reach speech; summaries and keys must not lose their consent boundary | A provider needs redirects, a new credential placement or another transport | Active | [Full](D073-jarvis-release-and-origin-bound-keys.md) |
+| 2026-09-30 | D074 | VGS-636 | Jarvis commands require kernel confinement and the same protected masks | Programs evade token scans; absent roots and aliases need kernel mounts | A command needs another host mount, endpoint or privilege | Active | [Full](D074-jarvis-kernel-sandbox.md) |
 
 ---
 

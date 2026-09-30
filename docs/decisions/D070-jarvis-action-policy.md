@@ -6,6 +6,7 @@
 **Status**: Active
 **Research**: [Jarvis plan](../plans/v2-jarvis-plan.md), [research comparison](../plans/v2-jarvis-plan-research.md#25-omarchy-voice-v030-mit)
 **Refines**: [D010](D010-facade-scope-not-sandbox.md)
+**Refined by**: [D074](D074-jarvis-kernel-sandbox.md): kernel confinement consumes the same protected paths.
 
 **Context**: A model can select a desktop action from untrusted file, page, screen or agent content. A prose description does not establish the action's authority.
 

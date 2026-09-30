@@ -11,7 +11,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 - J11 owns turn lifetime. J19 calls `Policy.observe` after content reaches that turn, not when a read starts or fails. A new turn starts clean. Existing taint never becomes clean.
 - [The audit writer](jarvis-audit.md) owns redaction and persistence before execution. The planned router consumes its fail-closed boundary. A policy answer alone does not satisfy that requirement.
 - `Policy.release` owns outbound consent separately from the action decision. [Jarvis release](jarvis-release.md) defines its immutable recipient set and the network door. An `external` action still needs both decisions.
-- J23 owns kernel confinement. A shell line is a program, not a string the policy can prove safe. Shell argv wrappers remain `exec`. Direct elevation argv is refused, but that check cannot confine a program that starts another program.
+- [Kernel confinement](jarvis-sandbox.md) consumes the protected snapshot. A shell line is a program, not a string the policy can prove safe. Shell argv wrappers remain `exec`. Direct elevation argv is refused, but that check cannot confine a program that starts another program.
 - J27 supplies all discovered and hand-added account roots. The filesystem judge protects those roots in addition to its built-in credential roots. It opens no credential, marker or profile content.
 
 ## Call contract
