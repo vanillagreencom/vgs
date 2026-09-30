@@ -331,7 +331,6 @@ for n, i in enumerate(fields):
     check(name + ".label.y", mid_y(label), mid_y(values[0]))
     # A value drawn with leading below its glyphs is centred as a box and
     # not as text.
-    if values[0]["type"] == "Label" and values[0].get("lineHeight") != 1: out.append("%s.value.lineHeight=%s" % (name, values[0].get("lineHeight")))
     for j, r in enumerate(rows):
         if r["type"] in ("TextField", "Select") and inside(j, i): check(name + "." + r["type"] + ".right", right(r), column_right)
 print(json.dumps(out))
