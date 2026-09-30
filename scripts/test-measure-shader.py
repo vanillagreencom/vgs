@@ -11,6 +11,7 @@ and their controls plant one defect per rule in a copy.
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,13 @@ BASELINE = {"backend": "Vulkan", "device": "Test GPU", "ceilings": {
 
 def log(gpu=0.2):
     return HEADER + (CPU + GPU % gpu) * 720
+
+
+def stream_log(sync, render, gpu):
+    """A log whose CPU and GPU records carry one value per frame."""
+    return HEADER + "".join(
+        CPU.replace("sync=1, render=1", f"sync={s}, render={r}") + GPU % g
+        for s, r, g in zip(sync, render, gpu, strict=True))
 
 
 def fixture(root):
@@ -162,14 +170,41 @@ class ShaderReadings(unittest.TestCase):
         # the samples at or below it.
         self.assertEqual(reader.percentile(list(range(600, 0, -1))), 540)
         self.assertEqual(reader.percentile(list(range(1, 11))), 9)
+        # Rows: the stream one kept sample spikes in, the spike, and the
+        # reading without it. A stream read as its highest sample reads
+        # the spike.
+        rows = (
+            ("cpu_sync_ms", 9, 1),
+            ("cpu_render_ms", 9, 1),
+            ("gpu_cost_ms", 5.0, 0.1),
+            ("presentation_ms", 500, 16),
+        )
+        for name, spike, want in rows:
+            with self.subTest(stream=name), tempfile.TemporaryDirectory() as scratch:
+                root = Path(scratch)
+                fixture(root)
+                streams = {"cpu_sync_ms": [1] * 720, "cpu_render_ms": [1] * 720,
+                           "gpu_cost_ms": [0.2] * 720, "presentation_ms": [16] * 720}
+                streams[name][reader.WARMUP + 300] = spike
+                (root / "scale-1-on.log").write_text(stream_log(
+                    streams["cpu_sync_ms"], streams["cpu_render_ms"], streams["gpu_cost_ms"]))
+                (root / "scale-1-on.json").write_text(json.dumps(dict(STATE, presentation=streams["presentation_ms"])))
+                self.assertAlmostEqual(reader.calibrate([root])["readings"]["1"][name], want)
+                self.assertEqual(reader.check(root, BASELINE)["ceilings"], BASELINE["ceilings"])
+
+    def test_gpu_cost_not_resolved(self):
+        # Fewer than a tenth of the on scene's frames cost more than the
+        # off scene's: the highest delta is positive, the 90th percentile
+        # is zero.
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             fixture(root)
-            values = [0.2] * 720
-            values[reader.WARMUP + 300] = 5.0
-            (root / "scale-1-on.log").write_text(HEADER + "".join(CPU + GPU % value for value in values))
-            self.assertAlmostEqual(reader.calibrate([root])["readings"]["1"]["gpu_cost_ms"], 0.1)
-            self.assertEqual(reader.check(root, BASELINE)["ceilings"], BASELINE["ceilings"])
+            gpu = [0.1] * 720
+            for index in range(reader.WARMUP, reader.WARMUP + 50):
+                gpu[index] = 0.5
+            (root / "scale-1-on.log").write_text(stream_log([1] * 720, [1] * 720, gpu))
+            with self.assertRaisesRegex(ValueError, "gpu-cost=not-resolved reading_ms=0"):
+                reader.calibrate([root])
 
     def test_calibration_over_passes(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -188,6 +223,16 @@ class ShaderReadings(unittest.TestCase):
             self.assertAlmostEqual(result["calibration_runs"][0]["readings"]["2"]["gpu_cost_ms"], 0.1)
             with self.assertRaisesRegex(ValueError, f"costly-control=accepted scale=1 .* run={Path(scratch).name}/run-3$"):
                 reader.calibrate([first, second, weak])
+            # A later pass is matched to the first pass's device.
+            other = Path(scratch) / "run-4"
+            other.mkdir()
+            fixture(other)
+            path = other / "scale-2-off.log"
+            path.write_text(path.read_text().replace("'Test GPU'", "'Other GPU'"))
+            with self.assertRaisesRegex(
+                    reader.Unmeasured,
+                    r"calibration=identity-mismatch scale=2 scene=off want=\[Vulkan:Test GPU\] got=\[Vulkan:Other GPU\]"):
+                reader.calibrate([first, other])
 
     def test_check_takes_one_directory(self):
         with tempfile.TemporaryDirectory() as scratch:
@@ -216,6 +261,17 @@ class ShaderReadings(unittest.TestCase):
             ("calibration identity", "if identity is not None and (", "if identity is not None and False and (",
              "test_check_mode_calibration_identity"),
             ("percentile reading", "return ordered[rank - 1]", "return ordered[-1]", "test_percentile_ignores_a_spike"),
+            ("CPU sync read as its highest", '"cpu_sync_ms": percentile(on["cpu_sync_ms"])',
+             '"cpu_sync_ms": max(on["cpu_sync_ms"])', "test_percentile_ignores_a_spike cpu_sync_ms"),
+            ("CPU render read as its highest", '"cpu_render_ms": percentile(on["cpu_render_ms"])',
+             '"cpu_render_ms": max(on["cpu_render_ms"])', "test_percentile_ignores_a_spike cpu_render_ms"),
+            ("GPU cost read as its highest", "cost = percentile(delta)", "cost = max(delta)",
+             "test_percentile_ignores_a_spike gpu_cost_ms"),
+            ("presentation read as its highest", '"presentation_ms": percentile(on["presentation_ms"])',
+             '"presentation_ms": max(on["presentation_ms"])', "test_percentile_ignores_a_spike presentation_ms"),
+            ("unresolved GPU cost accepted", "if cost <= 0:", "if cost < -1:", "test_gpu_cost_not_resolved"),
+            ("passes not matched to the first", "measure(root, runs[0] if runs else None)", "measure(root, None)",
+             "test_calibration_over_passes"),
             ("calibration over passes", "for root in roots:", "for root in roots[:1]:", "test_calibration_over_passes"),
             ("costly control of every pass", "    for run in runs:\n        prove_control(",
              "    for run in runs[:1]:\n        prove_control(", "test_calibration_over_passes"),
@@ -235,12 +291,19 @@ class ShaderReadings(unittest.TestCase):
                     (root / "shader/readings.py").write_text(changed)
                     copy = root / "test-measure-shader.py"
                     copy.write_text(suite)
+                    test, _, stream = test.partition(" ")
+                    # -B: same-length plants written in one second would
+                    # otherwise load the previous plant's cached bytecode.
                     result = subprocess.run(
-                        [sys.executable, str(copy), f"ShaderReadings.{test}"],
+                        [sys.executable, "-B", str(copy), f"ShaderReadings.{test}"],
                         env={"PATH": "/usr/bin:/bin", "HOME": scratch, "LC_ALL": "C"},
                         text=True, capture_output=True, check=False)
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn("FAILED (", result.stderr)
+                    if stream:
+                        # A stream plant turns its own row red, no other.
+                        failed = re.findall(r"^(?:FAIL|ERROR): .*\(stream='(\w+)'\)$", result.stderr, re.M)
+                        self.assertEqual(failed, [stream], result.stderr)
 
 
 SCENE = ROOT / "shader/measure-scene.sh"
@@ -333,7 +396,7 @@ measure_held_scene 2 on "$HOME/scale-2-on"
                 with self.assertRaises(AssertionError):
                     self.assert_held_case(changed, case)
 
-    def runner_copy(self, root, harness, text, args=()):
+    def runner_copy(self, root, harness, text, args=(), scene=None, readings=None):
         scripts = root / "scripts"
         (scripts / "smoke").mkdir(parents=True)
         (scripts / "shader").mkdir()
@@ -348,7 +411,12 @@ measure_held_scene 2 on "$HOME/scale-2-on"
         self.assertNotEqual(changed, owner)
         (scripts / "check-voiceorb-shader.py").write_text(changed)
         shutil.copyfile(ROOT / "shader/Scene.qml", scripts / "shader/Scene.qml")
-        shutil.copyfile(SCENE, scripts / "shader/measure-scene.sh")
+        if scene is None:
+            shutil.copyfile(SCENE, scripts / "shader/measure-scene.sh")
+        else:
+            (scripts / "shader/measure-scene.sh").write_text(scene)
+        if readings is not None:
+            (scripts / "shader/readings.py").write_text(readings)
         shutil.copyfile(ROOT.parent / "shell/Ui/feedback/shaders/voiceorb.frag", root / "shell/Ui/feedback/shaders/voiceorb.frag")
         (scripts / "smoke/harness.sh").write_text(harness)
         compiler = root / "qsb stand-in"
@@ -403,6 +471,57 @@ exit 0
             result = self.runner_copy(Path(scratch) / "mutant", harness, changed, cases[0][0])
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("shader-test: harness-reached", result.stdout)
+
+    def test_pass_loop(self):
+        # The harness, the scene owner and the reader are stand-ins that
+        # record what the runner hands them; the runner's own loop runs.
+        harness = """
+home="$HOME"; sandbox="$HOME/sandbox"
+shell_env=(env -i PATH=/usr/bin:/bin HOME="$HOME")
+mkdir -p -- "$sandbox"
+failures=0; mode_hold=()
+first_name() { echo WAYLAND-1; }
+unscaled_mode_of() { echo 1755x933; }
+hidpi_mode_of() { echo 3510x1866; }
+hold_mode() { mode_hold=("$2" "$3 scale=$4"); }
+release_mode() { mode_hold=(); }
+"""
+        scene = """
+measure_held_scene() { printf 'held %s %s %s\\n' "$1" "$2" "${3#"$logs"/}" >>"$home/scenes"; }
+measure_scene() { printf 'bare %s %s %s\\n' "$1" "$2" "${3#"$logs"/}" >>"$home/scenes"; }
+"""
+        readings = """import json, pathlib, sys
+pathlib.Path(__file__).with_name("readings-args.json").write_text(json.dumps(sys.argv[1:]))
+"""
+        passes = 2
+        want = [f"held {scale} {mode} run-{run}/scale-{scale}-{mode}"
+                for run in range(1, passes + 1) for scale in (1, 2) for mode in ("off", "on", "costly")]
+        text = RUNNER.read_text()
+        plants = (
+            ('measure_held_scene "$scale" "$scene"', 'measure_scene "$scale" "$scene"'),
+            ("run <= runs;", "run <= 1;"),
+            ('"${passes[@]}"', '"${passes[0]}"'),
+        )
+        sources = [text]
+        for old, new in plants:
+            self.assertEqual(text.count(old), 1, old)
+            sources.append(text.replace(old, new))
+            self.assertNotEqual(sources[-1], text)
+        with tempfile.TemporaryDirectory() as scratch:
+            for index, source in enumerate(sources):
+                with self.subTest(mutant=index):
+                    root = Path(scratch) / str(index)
+                    result = self.runner_copy(root, harness, source, ["--calibrate", "out.json", "--runs", str(passes)],
+                                              scene, readings)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    logs = [line.split("=", 1)[1] for line in result.stdout.splitlines()
+                            if line.startswith("shader-cost: logs=")]
+                    self.assertEqual(len(logs), 1, result.stdout)
+                    scenes = (root / "home/scenes").read_text().splitlines()
+                    args = json.loads((root / "scripts/shader/readings-args.json").read_text())
+                    held = (scenes == want
+                            and args == [f"{logs[0]}/run-{run}" for run in range(1, passes + 1)] + ["--calibrate", "out.json"])
+                    self.assertEqual(held, index == 0, f"scenes={scenes} readings={args}")
 
     def test_compiler_consumes_owner_options(self):
         # Stop before any compositor or QML process. The compiler only

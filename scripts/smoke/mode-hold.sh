@@ -111,8 +111,14 @@ hold_restore() {
 # leaves fractional logical pixels to the nearest one that does not: a
 # 1755x933 window under a 3510x1866 hold at scale 2 reads 1755x933 at
 # scale 1.5. A hold at the window's own size survives a configure of the
-# same size and no resize. Nothing puts the held mode back but applying
-# its rule again (hold_restore), or a configuration reload, which the
+# same size and no resize. Each applied rule, the host's size included,
+# becomes the active rule (CMonitor::applyMonitorRuleSoft, same file), so
+# after a resize away a configure back to the window's own size differs
+# from the active rule and gives the output that size again: a scale-1
+# hold at the window's own size comes back without its rule, and a
+# reading after both configures reads `held`. No host configure equals a
+# doubled mode, so a scale-2 hold comes back only through its rule
+# applied again (hold_restore), or a configuration reload, which the
 # shell runs when its Hyprland layer changes: a reload drops every rule
 # `hyprctl eval` added (src/config/lua/ConfigManager.cpp,
 # CConfigManager::reload, v0.56.2) and applies the rule mode_hold_file

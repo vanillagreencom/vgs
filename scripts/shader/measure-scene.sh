@@ -55,9 +55,16 @@ measure_scene() {
 }
 
 # measure_held_scene SCALE SCENE STEM: measure_scene under the held mode.
-# Only the hold's rule puts the held mode back, and the scene applies
-# none, so a scene after which the output still reads the held mode ran
-# under it from start to end. A scene after which it reads a reset is
+# At scale 2 the held mode is double the host window's size, which no
+# host configure equals, so only the hold's rule puts it back; the scene
+# applies none, and a scene after which the output still reads the held
+# mode ran under it from start to end. The scale-1 hold is the window's
+# own size, which a host resize away and back restores without the rule
+# (held_mode_state in scripts/smoke/mode-hold.sh), and the reading after
+# the scene cannot see that. The scale stays 1 and the layer's size is
+# fixed, so only the frames around the two changes are affected, and the
+# 90th-percentile reading absorbs a few such frames. A scene after which
+# the output reads a reset is
 # discarded: the runner prints `shader-cost: mode-reset scene=<scene>
 # scale=<n> got=[<reading>] attempt=<k>`, hold_restore takes the hold
 # again and the scene runs again, up to scene_attempts times. Past the
