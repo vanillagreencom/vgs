@@ -148,6 +148,64 @@ expect "the browser includes the shipped vgs card" True has_card vgs
 expect "the browser includes the catalog nord card" True has_card nord
 expect "the applied theme is selected" '"vgs"' view_value selectedName
 expect_poll "the applied theme is badged Displayed" '["Displayed"]' badges
+# The browser's layout, one finding per broken rule, `[]` the pass: its
+# chrome (the tabs, the scope control, the key caps, badges and texts
+# under the rail) lies inside the output less inset.overlay each side
+# (`inset`); the header ends above the rail, the rail holds the selected
+# card, and the rail ends above the caption (`order`); the rail is centred,
+# the same distance in from both output sides (`centre`); and the key
+# line's texts share one top (`hints`). Each holds within one pixel and
+# reads containment, so a theme with a larger font still passes. PLANT
+# moves one box in a copy of the same reading, and each rule's control
+# requires its own finding.
+browser_geometry() { # [PLANT]
+  local rows inset
+  rows="$(ipc smoke descendantGeometry overlay vgs.themes)" && inset="$(ipc smoke themeValue inset.overlay)" || return
+  python3 - "$rows" "$inset" "$mon_w" "$mon_h" "${1:-}" <<'PY'
+import json, sys
+rows, inset, width, height, plant = json.loads(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4]), sys.argv[5]
+out = []
+def shown(r): return r["box"][2] > 0 and r["box"][3] > 0
+def inside(j, i):
+    while j != -1:
+        if j == i: return True
+        j = rows[j]["parent"]
+    return False
+def of(kind): return [i for i, r in enumerate(rows) if r["type"] == kind and shown(r)]
+rail = of("CardCarousel")
+hints = of("KeyHints")
+if len(rail) != 1 or len(hints) != 1:
+    print(json.dumps(["rails=%d keylines=%d" % (len(rail), len(hints))])); sys.exit()
+rail, hints = rows[rail[0]]["box"][:], hints[0]
+caps = of("Kbd")
+header = [rows[i]["box"][:] for i in of("Tabs") + of("SegmentedControl") + [i for i in caps if not inside(i, hints)]]
+caption = [rows[i]["box"][:] for i in of("Badge") + [i for i in caps if inside(i, hints)]] + [r["box"][:] for r in rows if r["type"] == "Label" and r.get("role") == "display" and shown(r)]
+texts = [rows[j]["box"][:] for j in range(len(rows)) if rows[j]["type"] == "Label" and rows[j].get("role") == "hint" and shown(rows[j]) and inside(j, hints)]
+cards = [r["box"] for r in rows if r["type"] == "AngledCard" and shown(r)]
+if plant == "inset": caption[0][0] += width
+if plant == "order": rail[3] += 40
+if plant == "centre": rail[0] += 8
+if plant == "hints": texts[-1][1] += 4
+for b in header + caption:
+    if b[0] < inset - 1 or b[1] < inset - 1 or b[0] + b[2] > width - inset + 1 or b[1] + b[3] > height - inset + 1:
+        out.append("inset box=%s" % [round(v, 2) for v in b])
+if not header or not caption or not cards: out.append("order header=%d caption=%d cards=%d" % (len(header), len(caption), len(cards)))
+else:
+    card = max(cards, key=lambda b: b[2] * b[3])
+    if max(b[1] + b[3] for b in header) > rail[1] + 1: out.append("order header.bottom=%.2f rail.top=%.2f" % (max(b[1] + b[3] for b in header), rail[1]))
+    if rail[1] + rail[3] > min(b[1] for b in caption) + 1: out.append("order rail.bottom=%.2f caption.top=%.2f" % (rail[1] + rail[3], min(b[1] for b in caption)))
+    if card[1] < rail[1] - 1 or card[1] + card[3] > rail[1] + rail[3] + 1: out.append("order card=%s rail=%s" % (card, rail))
+if abs(rail[0] - (width - rail[0] - rail[2])) > 1: out.append("centre left=%.2f right=%.2f" % (rail[0], width - rail[0] - rail[2]))
+if len(texts) < 3: out.append("hints texts=%d" % len(texts))
+elif max(b[1] for b in texts) - min(b[1] for b in texts) > 1: out.append("hints tops=%s" % [round(b[1], 2) for b in texts])
+print(json.dumps(out))
+PY
+}
+browser_planted() { browser_geometry "$1" | py_reply 'import json,sys; print(any(e.startswith(sys.argv[1] + " ") for e in json.load(sys.stdin)))' "$1"; }
+geometry expect_poll "the browser's chrome, rail and key line keep their places" '[]' browser_geometry
+for rule in inset order centre hints; do
+  expect "control: the browser's $rule rule refuses its planted box" True browser_planted "$rule"
+done
 expect_poll "every built theme card exposes palette colours" True all_theme_cards_have_palette
 type_keys -k Home || fail "sending Home before focus bind failed"
 focus_first="$(card_at 0)"
@@ -550,7 +608,7 @@ type_keys -k Right || fail "sending Right in the theme view failed"
 expect "Right after the click leaves the theme view's scope" 0 view_value scopeIndex
 type_keys -k Escape || fail "sending Escape to the theme view failed"
 expect_poll "Escape closes the theme view after the segment click" 0 layer_count vgs:overlay
-plugin_control WallpaperView.qml "wallpaper focus" $'currentIndex: root.sourceIndex\n                    onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)' 'currentIndex: root.sourceIndex'
+plugin_control WallpaperView.qml "wallpaper focus" $'currentIndex: root.sourceIndex\n                            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)' 'currentIndex: root.sourceIndex'
 press_wallpapers || fail "typing SUPER+W for the wallpaper focus control failed"
 expect_poll "SUPER+W opens the wallpaper focus control's browser" 1 layer_count vgs:overlay
 expect_poll "the wallpaper focus control's view read its lists" true wall_value loaded
@@ -560,7 +618,7 @@ expect_poll "the wallpaper focus control's Right switches the source" '"all"' wa
 press_wallpapers || fail "typing SUPER+W to close the wallpaper focus control failed"
 expect_poll "SUPER+W closes the wallpaper focus control's browser, whose keys the control holds" 0 layer_count vgs:overlay
 plugin_restore WallpaperView.qml "wallpaper focus"
-plugin_control ThemeView.qml "theme focus" $'\n                onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)' ''
+plugin_control ThemeView.qml "theme focus" $'\n                        onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)' ''
 press_themes || fail "typing SUPER+T for the theme focus control failed"
 expect_poll "SUPER+T opens the theme focus control's browser" 1 layer_count vgs:overlay
 expect_poll "the theme focus control read its cards" true view_value loaded

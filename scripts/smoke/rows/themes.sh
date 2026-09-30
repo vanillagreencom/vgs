@@ -483,6 +483,60 @@ click_row smoke || fail "the click on the smoke row failed"
 expect_poll "a click on a row applies its package" '"smoke"' lent theme.last.result.theme
 expect_poll "the shell displays the package the row applied" smoke ipc smoke themeName
 expect_poll "the applied row is displayed and shows its failed target" '[["smoke", "installed", "Displayed", "smoke-fails failed: placeholder"]]' theme_row smoke
+# The panel's layout, one finding per broken rule, `[]` the pass: the
+# title, each section heading and each row's box start on one content
+# edge, as far in from the panel's left side as a row's box ends from its
+# right (`edge`); the smoke row's failure line starts at the row's text
+# column, where its name is drawn (`column`); and Add from URL lies inside
+# the panel, below the scrolling body (`footer`). Each holds within one
+# pixel and reads containment, so a theme with a larger font still
+# passes. PLANT moves one box in a copy of the same reading, and each
+# rule's control requires its own finding.
+panel_geometry() { # [PLANT]
+  local rows ring
+  rows="$(ipc smoke descendantGeometry panel vgs.themes)" && ring="$(ipc smoke themeValue focusRing.width)" && ring=$((ring + $(ipc smoke themeValue focusRing.offset))) || return
+  python3 - "$rows" "$ring" "${1:-}" <<'PY'
+import json, sys
+rows, ring, plant = json.loads(sys.argv[1]), float(sys.argv[2]), sys.argv[3]
+out = []
+def shown(r): return r["box"][2] > 0 and r["box"][3] > 0
+def inside(j, i):
+    while j != -1:
+        if j == i: return True
+        j = rows[j]["parent"]
+    return False
+panel = rows[0]["box"]
+title = [r["box"][:] for r in rows if r["type"] == "Label" and r.get("role") == "h3" and r.get("text") == "Themes" and shown(r)]
+heads = [r["box"][:] for r in rows if r["type"] == "SectionHeader" and shown(r)]
+items = [i for i, r in enumerate(rows) if r["type"] == "ListItem" and shown(r)]
+smoke = [i for i in items if rows[i].get("text") == "smoke"]
+scroll = [r["box"] for r in rows if r["type"] == "ScrollArea" and shown(r)]
+add = [r["box"][:] for r in rows if r["type"] == "Button" and r.get("text") == "Add from URL" and shown(r)]
+if len(title) != 1 or len(heads) != 3 or len(smoke) != 1 or len(scroll) != 1 or len(add) != 1:
+    print(json.dumps(["rows title=%d heads=%d smoke=%d scroll=%d add=%d" % (len(title), len(heads), len(smoke), len(scroll), len(add))])); sys.exit()
+title, row = title[0], rows[smoke[0]]["box"][:]
+name = [rows[j]["box"][:] for j in range(len(rows)) if rows[j]["type"] == "Label" and rows[j].get("text") == "smoke" and inside(j, smoke[0])]
+line = [r["box"][:] for r in rows if r["type"] == "Label" and r.get("text") == "smoke-fails failed: placeholder" and shown(r)]
+if plant == "edge": row[2] -= 8
+if plant == "column" and line: line[0][0] += 8
+if plant == "footer": add[0][1] -= 40
+edge = title[0]
+for b in heads + [row]:
+    if abs(b[0] - edge) > 1: out.append("edge x=%.2f title=%.2f" % (b[0], edge))
+if abs((edge - panel[0]) - (panel[0] + panel[2] - row[0] - row[2])) > 1: out.append("edge left=%.2f right=%.2f" % (edge - panel[0], panel[0] + panel[2] - row[0] - row[2]))
+if len(name) != 1 or len(line) != 1: out.append("column name=%d line=%d" % (len(name), len(line)))
+elif abs(line[0][0] - name[0][0]) > 1: out.append("column line=%.2f name=%.2f" % (line[0][0], name[0][0]))
+b, s = add[0], scroll[0]
+if b[0] < panel[0] - 1 or b[0] + b[2] > panel[0] + panel[2] + 1 or b[1] + b[3] > panel[1] + panel[3] + 1: out.append("footer box=%s panel=%s" % (b, panel))
+if b[1] < s[1] + s[3] - ring - 1: out.append("footer top=%.2f body.bottom=%.2f" % (b[1], s[1] + s[3] - ring))
+print(json.dumps(out))
+PY
+}
+panel_planted() { panel_geometry "$1" | py_reply 'import json,sys; print(any(e.startswith(sys.argv[1] + " ") for e in json.load(sys.stdin)))' "$1"; }
+geometry expect_poll "the themes panel keeps one content edge, the text column and its footer" '[]' panel_geometry
+for rule in edge column footer; do
+  expect "control: the themes panel's $rule rule refuses its planted box" True panel_planted "$rule"
+done
 expect "the previously displayed row loses its badge" '[["vgs", "shipped"]]' theme_row vgs
 rm -r -- "$fixture_targets/smoke-fails"
 click_row smoke || fail "the second click on the smoke row failed"
