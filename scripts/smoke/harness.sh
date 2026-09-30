@@ -687,11 +687,11 @@ SH
 # hours, since each probe of a check runs a host package manager or a git
 # fetch, which only rows/updates.sh's copy confines; vgs.agent-warden
 # notifies only once the warden's status file exists, which no start
-# finds; vgs.notifications reads its token only through
-# secret_tool_stand_in, which lists no account for a start over the default set.
+# finds; vgs.notifications reads its token only through the secret-tool
+# sentinel, which answers every search with nothing stored and every
+# lookup with no secret.
 default_set_prepare() { # PLUGINS_JSON [DISABLED_JSON]
   devtools_stand_ins
-  secret_tool_stand_in ""
   mkdir -p "$home/.local/state/vgs/updates"
   python3 - "$home/.local/state/vgs/updates/status.json" "$home/.config/vgs/shell.json" "$1" "${2:-[]}" <<'PY'
 import json, os, sys, time

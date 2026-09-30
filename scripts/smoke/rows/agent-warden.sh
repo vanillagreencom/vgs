@@ -637,14 +637,22 @@ expect "a rescan after the stand-in vsys goes starts" ok ipc shell rescanPlugins
 expect_poll "vsys reads as the host PATH gives it" "$vsys_first" warden_value vsys
 if [[ $vsys_first == '"absent"' ]]; then
   # Install vsys from the Settings page, D061: vsys absent offers it, and
-  # its button raises the core's notice for vsys, closed here unanswered.
+  # its button raises the core's notice for vsys. A scan that finds vsys
+  # closes the notice and rests nothing, where Not now would rest the
+  # plugin's own offers and hold back the panel's Get vsys below.
   settings_page_open vgs.agent-warden
   expect_poll "an absent vsys offers Install vsys" '[["warden", "Set up", false], ["vsys", "Install vsys", true]]' offered_actions vgs.agent-warden
   settings_press "Install vsys" || fail "the click on Install vsys failed"
   expect_poll "Install vsys raises the notice for vsys" '["vgs.agent-warden", ["vsys"]]' warden_notice
   expect_poll "the Install vsys notice holds the keyboard" true ipc smoke noticeFocused
-  type_keys -k Escape || fail "sending Escape to the Install vsys notice failed"
-  expect_poll "Escape closes the Install vsys notice" null warden_notice
+  warden_vsys_stub
+  expect "a rescan after the stand-in vsys arrives for the notice starts" ok ipc shell rescanPlugins
+  expect_poll "the scan that finds vsys closes the Install vsys notice" null warden_notice
+  notice_rests() { ipc shell lent | py_reply 'import json,sys; print(str(sys.argv[1] in json.load(sys.stdin)["notices"]["resting"]).lower())' "$1"; }
+  expect "the closed Install vsys notice rests none of the plugin's offers" false notice_rests vgs.agent-warden
+  rm -f -- "$shim/vsys"
+  expect "a rescan after the stand-in vsys goes again starts" ok ipc shell rescanPlugins
+  expect_poll "vsys reads absent again" '"absent"' warden_value vsys
   settings_page_close vgs.agent-warden
   warden_open "without vsys"
   expect_poll "the panel without vsys offers Get vsys once" "$(words Agents "Agent Warden comes with vsys, which isn't installed." "Get vsys")" warden_panel
