@@ -13,8 +13,48 @@ const URL_START = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.|mailto:)/u;
 // until punctuation/whitespace disproves it, rather than maintain a scheme list.
 const SCHEME_PART = /^[A-Za-z][A-Za-z0-9+.-]*(?::\/{0,2})?$/u;
 const ABBREVIATIONS = /(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Sra|Srta|Ud|Uds)|\b[A-Z])\.$/u;
-const HTML_TAG = /^<\/?[A-Za-z][A-Za-z0-9:-]*(?:\s+[A-Za-z_:][A-Za-z0-9_:.-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>/u;
-const HTML_OTHER = /^(?:<!--[\s\S]*?-->|<!DOCTYPE\s+[^<>]+>|<\?[A-Za-z][\s\S]*?\?>)/iu;
+
+// Judge both complete HTML and prefixes of its token grammar. An impossible
+// prefix is prose immediately; only an unfinished valid token stays pending.
+function htmlCandidate(text) {
+    if ("<!--".startsWith(text)) return { kind: "pending" };
+    if (text.startsWith("<!--")) {
+        const end = text.indexOf("-->", 4);
+        return end < 0 ? { kind: "pending" } : { kind: "tag", length: end + 3 };
+    }
+    const head = /^<\/?[A-Za-z][A-Za-z0-9:-]*/u.exec(text);
+    if (head === null) return { kind: text === "<" || text === "</" ? "pending" : "prose" };
+    let at = head[0].length;
+    while (at < text.length) {
+        const end = /^\/?>/u.exec(text.slice(at));
+        if (end !== null) return { kind: "tag", length: at + end[0].length };
+        if (text.slice(at) === "/") return { kind: "pending" };
+        const space = /^\s+/u.exec(text.slice(at));
+        if (space === null) return { kind: "prose" };
+        at += space[0].length;
+        if (at === text.length) break;
+        if (text[at] === ">" || text[at] === "/") continue;
+        if (text.startsWith("</")) return { kind: "prose" };
+        const name = /^[A-Za-z_:][A-Za-z0-9_:-]*/u.exec(text.slice(at));
+        if (name === null) return { kind: "prose" };
+        at += name[0].length;
+        const assign = /^\s*=\s*/u.exec(text.slice(at));
+        if (assign === null) continue;
+        at += assign[0].length;
+        if (at === text.length) break;
+        const quote = text[at];
+        if (quote === '"' || quote === "'") {
+            const close = text.indexOf(quote, at + 1);
+            if (close < 0) return { kind: "pending" };
+            at = close + 1;
+        } else {
+            const value = /^[^\s"'=<>`]+/u.exec(text.slice(at));
+            if (value === null) return { kind: "prose" };
+            at += value[0].length;
+        }
+    }
+    return { kind: "pending" };
+}
 
 function siteName(raw) {
     try {
@@ -103,13 +143,11 @@ function create(language) {
                 if (!final && pending === "<") return;
                 if (URL_START.test(pending.slice(1))) { pending = pending.slice(1); continue; }
                 if (!final && SCHEME_PART.test(pending.slice(1))) return;
-                const tag = HTML_TAG.exec(pending) || HTML_OTHER.exec(pending);
-                if (tag !== null) {
-                    note("markdown"); pending = pending.slice(tag[0].length); continue;
+                const tag = htmlCandidate(pending);
+                if (tag.kind === "tag") {
+                    note("markdown"); pending = pending.slice(tag.length); plain(" ", output); continue;
                 }
-                // A possible tag stays bounded and pending until it closes.
-                // At EOF it is prose, not permission to discard the turn.
-                if (!final && /^<[A-Za-z/!?]/u.test(pending)) return;
+                if (!final && tag.kind === "pending") return;
                 plain("<", output); pending = pending.slice(1); continue;
             }
             const url = URL_START.test(pending);
@@ -143,7 +181,7 @@ function create(language) {
                 note("markdown"); pending = pending.slice(start); continue;
             }
             if (!final && pending === "!") return;
-            const pathBoundary = sentence === "" || /[\s([{'"]$/u.test(sentence);
+            const pathBoundary = sentence === "" || !/[\p{L}\p{N}]$/u.test(sentence);
             const path = pathBoundary && /^(?:\/[\p{L}\p{N}_.]|~\/|[A-Za-z]:\\)/u.test(pending);
             if (path) {
                 const end = pending.search(/\s/u);

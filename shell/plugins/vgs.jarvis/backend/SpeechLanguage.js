@@ -160,13 +160,15 @@ function expand(text, language, note) {
         return integer(code === "en" && hour === 0 ? 12 : hour, code) + (minute === 0 ? (code === "en" ? " o'clock" : " en punto")
             : (code === "en" ? (minute < 10 ? " oh " : " ") : " y ") + integer(minute, code));
     });
-    const numeric = code === "en" ? "(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?"
-        : "(?:\\d{1,3}(?:\\.\\d{3})+|\\d+)(?:,\\d+)?";
-    const ordinalPattern = code === "en"
-        ? /(?<![\p{L}\p{N}])(\d{1,12})(st|nd|rd|th)(?![\p{L}\p{N}])/gu
-        : /(?<![\p{L}\p{N}])(\d{1,12})\.?(º|ª)(?![\p{L}\p{N}])/gu;
+    const group = code === "en" ? "," : ".";
+    const groupedInteger = code === "en" ? "(?:\\d{1,3}(?:,\\d{3})+|\\d+)" : "(?:\\d{1,3}(?:\\.\\d{3})+|\\d+)";
+    const numeric = groupedInteger + (code === "en" ? "(?:\\.\\d+)?" : "(?:,\\d+)?");
+    const ordinalPattern = new RegExp("(?<![\\p{L}\\p{N}.,])(" + groupedInteger + ")"
+        + (code === "en" ? "(st|nd|rd|th)" : "\\.?(º|ª)") + "(?![\\p{L}\\p{N}])", "gu");
     text = text.replace(ordinalPattern, (raw, digits, suffix) => {
-        const n = Number(digits);
+        const whole = digits.split(group).join("");
+        if (whole.length > 12) return raw;
+        const n = Number(whole);
         if (code === "en") {
             const ending = n % 100 >= 11 && n % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th");
             if (suffix !== ending) return raw;
@@ -178,15 +180,29 @@ function expand(text, language, note) {
     const units = Object.keys(UNITS).sort((a, b) => b.length - a.length)
         .map(unit => unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
     const pattern = new RegExp("(?<![\\p{L}\\p{N}])(?:([$€])\\s*)?([-+]?" + numeric + ")(?:\\s*(" + units
-        + ")(?![\\p{L}\\p{N}])(?:\\s*/\\s*(" + units + ")(?![\\p{L}\\p{N}]))?)?(?![\\p{L}\\p{N}])"
-        + "|([\\p{L}\\p{N}]+(?:[.-][\\p{L}\\p{N}]+)*)", "gu");
+        + ")(?![\\p{L}\\p{N}])(?:\\s*/\\s*(" + units + ")(?![\\p{L}\\p{N}]))?)?(?![\\p{L}\\p{N}]|[.,]\\d)"
+        + "|([-+]?[\\p{L}\\p{N}]+(?:[.,-][\\p{L}\\p{N}]+)*)", "gu");
     return text.replace(pattern, (raw, currency, amount, unit, rate, identifier) => {
         if (identifier !== undefined) {
             if (!/\p{L}/u.test(identifier) || !/\d/u.test(identifier)) return identifier;
-            return identifier.replace(/\d+/gu, digits => {
-                note("number");
-                return " " + [...digits].map(digit => SMALL[code][Number(digit)]).join(" ") + " ";
-            }).trim();
+            const quantity = /^[+-]?\d/u.test(identifier);
+            const spans = quantity ? new RegExp("[-+]?" + numeric + "|(?<=\\d)[.,](?=\\d)", "gu")
+                : /\d+|(?<=\d)[.,](?=\d)/gu;
+            const parts = [];
+            let at = 0;
+            for (const match of identifier.matchAll(spans)) {
+                if (match.index > at) parts.push(identifier.slice(at, match.index));
+                const digits = match[0];
+                if (digits === "." || digits === ",")
+                    parts.push(digits === "." ? (code === "en" ? "point" : "punto") : (code === "en" ? "comma" : "coma"));
+                else {
+                    note("number");
+                    parts.push(quantity ? number(digits, code) : [...digits].map(digit => SMALL[code][Number(digit)]).join(" "));
+                }
+                at = match.index + digits.length;
+            }
+            if (at < identifier.length) parts.push(identifier.slice(at));
+            return parts.join(" ");
         }
         note("number");
         const chosen = currency || unit;

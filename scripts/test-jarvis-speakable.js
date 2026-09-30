@@ -7,14 +7,20 @@ const Speakable = require(path.join(backend, "Speakable.js"));
 const fixtures = require("./fixtures/jarvis-voice/speakable.json");
 function spoken(logic, row, chunks = [row.text]) {
     const stream = logic.create(row.language);
-    const output = chunks.flatMap(chunk => stream.push(chunk)).concat(stream.finish());
+    const early = chunks.flatMap(chunk => stream.push(chunk));
+    if (row.incremental) assert.deepEqual(early, row.sentences, row.name + " before finish");
+    const output = early.concat(stream.finish());
     assert.deepEqual(output, row.sentences, row.name);
     if (row.counts !== undefined)
         for (const [kind, expected] of Object.entries(row.counts)) assert.equal(stream.counts()[kind], expected, row.name + " " + kind);
     if (row.violations === 0) assert.equal(Object.values(stream.counts()).reduce((a, b) => a + b, 0), 0, row.name + " measurement");
 }
-assert.equal(fixtures.length, 46, "sanitation coverage floor");
-for (const row of fixtures) {
+assert.equal(fixtures.length, 55, "sanitation coverage floor");
+const long = { name: "bounded-sentences-after-comparison", language: "en", incremental: true,
+    text: "If a<b then stop. " + "Next sentence. ".repeat(300),
+    sentences: ["If a b then stop.", ...Array(300).fill("Next sentence.")] };
+assert.ok(long.text.length > Speakable.limits.token, "aggregate reaches the old held-candidate overflow");
+for (const row of [...fixtures, long]) {
     spoken(Speakable, row);
     spoken(Speakable, row, row.text.split(""));
     for (let cut = 0; cut <= row.text.length; cut++)
@@ -61,13 +67,21 @@ world("js", root => {
         ["comparison-prose", 'plain("<", output); pending = pending.slice(1); continue;',
             'plain("<", output); mode = "code"; fence = ">"; pending = pending.slice(1); continue;',
             logic => spoken(logic, fixtures.find(row => row.name === "comparison-spaced"))],
-        ["unterminated-prose", 'if (!final && /^<[A-Za-z/!?]/u.test(pending)) return;',
-            'if (/^<[A-Za-z/!?]/u.test(pending)) { if (final) pending = ""; return; }',
-            logic => spoken(logic, fixtures.find(row => row.name === "unterminated-tag-candidate"))],
-        ["html-removal", 'HTML_TAG.exec(pending) || HTML_OTHER.exec(pending)', 'null',
+        ["unterminated-prose", 'if (!final && tag.kind === "pending") return;',
+            'if (tag.kind === "pending") { if (final) pending = ""; return; }',
+            logic => spoken(logic, fixtures.find(row => row.name === "unterminated-short-candidate"))],
+        ["html-prefix-viability", 'if (space === null) return { kind: "prose" };',
+            'if (space === null) return { kind: "pending" };',
+            logic => spoken(logic, fixtures.find(row => row.name === "comparison-incremental"))],
+        ["html-removal", 'if (tag.kind === "tag")', 'if (false)',
             logic => spoken(logic, fixtures.find(row => row.name === "html-attributes"))],
         ["path-boundary", 'pathBoundary && /', 'true && /',
             logic => spoken(logic, fixtures.find(row => row.name === "rates-en"))],
+        ["path-punctuation", '!/[\\p{L}\\p{N}]$/u.test(sentence)', '/\\s$/u.test(sentence)',
+            logic => spoken(logic, fixtures.find(row => row.name === "path-punctuation"))],
+        ["html-path-separator", 'pending = pending.slice(tag.length); plain(" ", output);',
+            'pending = pending.slice(tag.length);',
+            logic => spoken(logic, fixtures.find(row => row.name === "path-html-separator"))],
         ["spanish-punctuation", "!?¿¡;", "!?;",
             logic => spoken(logic, fixtures.find(row => row.name === "punctuation-es"))],
         ["streaming-cut", 'emit(sentence.slice(0, end), output);', 'emit("", output);',

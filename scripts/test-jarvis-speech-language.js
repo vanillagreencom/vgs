@@ -19,10 +19,14 @@ const cases = [
     ["es", "21.000 21.000.000 31.000 31.000.000", "veintiún mil veintiún millones treinta y un mil treinta y un millones"],
     ["en", "3rd 21st 11th 12th 13th 22nd 100th 101st 1000th", "third twenty first eleventh twelfth thirteenth twenty second one hundredth one hundred first one thousandth"],
     ["es", "1º 2ª 21º 31ª 100º 1001º", "primero segunda vigésimo primero trigésima primera centésimo milésimo primero"],
-    ["en", "v128 IPv6 MP3 4K v1.2", "v one two eight IPv six MP three four K v one . two"],
+    ["en", "v128 IPv6 MP3 4K v1.2", "v one two eight IPv six MP three four K v one point two"],
     ["es", "v128 IPv6 MP3 4K", "v uno dos ocho IPv seis MP tres cuatro K"],
     ["en", "20 MB/s 50 km/h", "twenty megabytes per second fifty kilometres per hour"],
-    ["es", "20 MB/s 50 km/h", "veinte megabytes por segundo cincuenta kilómetros por hora"]
+    ["es", "20 MB/s 50 km/h", "veinte megabytes por segundo cincuenta kilómetros por hora"],
+    ["en", "1,000th 21,000th", "one thousandth twenty one thousandth"],
+    ["es", "1.000º 1.000ª", "milésimo milésima"],
+    ["en", "2.4GHz 1.5x -1.5x v1.2.3", "two point four GHz one point five x minus one point five x v one point two point three"],
+    ["es", "2,4GHz 1,5x v1.2.3", "dos coma cuatro GHz uno coma cinco x v uno punto dos punto tres"]
 ];
 function expanded(logic, row) { assert.equal(logic.expand(row[1], row[0], () => {}), row[2]); }
 for (const row of cases) expanded(Language, row);
@@ -52,8 +56,13 @@ world("jl", root => {
         ["ordinal", 'const spoken = ordinal(n, code);', 'const spoken = digits;', 13],
         ["ordinal-gender", 'suffix === "ª" ? spoken.replace(/o\\b/gu, "a") : spoken',
             'false ? spoken.replace(/o\\b/gu, "a") : spoken', 14],
-        ["identifier-digits", 'return " " + [...digits].map(digit => SMALL[code][Number(digit)]).join(" ") + " ";',
-            'return digits;', 15],
+        ["identifier-digits", 'quantity ? number(digits, code) : [...digits].map(digit => SMALL[code][Number(digit)]).join(" ")',
+            'quantity ? number(digits, code) : digits', 15],
+        ["ordinal-grouping", 'const whole = digits.split(group).join("");',
+            'const whole = digits.split(group).at(-1);', 19],
+        ["decimal-token-boundary", '(?![\\\\p{L}\\\\p{N}]|[.,]\\\\d)', '(?![\\\\p{L}\\\\p{N}])', 21],
+        ["quantity-label", 'quantity ? number(digits, code) : [...digits].map(digit => SMALL[code][Number(digit)]).join(" ")',
+            '[...digits].map(digit => SMALL[code][Number(digit)]).join(" ")', 21],
         ["unit-rate", 'spoken += (code === "en" ? " per " : " por ") + UNITS[rate][code === "en" ? 0 : 1][0];',
             'spoken += "";', 17]
     ]) {

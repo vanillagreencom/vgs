@@ -20,10 +20,10 @@ The selector offers English (`en`) and Spanish (`es`). Empty language selects En
 
 `Speakable.js::create(language)` owns one text stream per generated turn or commentary append. `push(chunk)` returns completed sentences. `finish()` closes the stream and returns its last fragment. Callers send only these returned strings to text-to-speech. They discard the stream on cancellation. They do not reuse it for another turn.
 
-- The lexer keeps fragmented delimiters and addresses pending. It discards fenced and inline code without retaining the body. It removes markdown markers, images, complete HTML tags and absolute paths. A comparison sign does not start a tag. An unterminated tag candidate returns to prose at the end of the stream.
+- The lexer keeps valid fragmented tags and addresses pending. Impossible tag prefixes return to prose immediately. It removes markdown markers, images, complete HTML tags, comments and absolute paths. It discards code without retaining the body. An unfinished valid tag returns to prose at EOF.
 - A markdown link keeps its visible label, not its target. A scheme URL, `www.` address or `mailto:` address becomes a spoken hostname label without `www.` or the final DNS label. This is not a domain-ownership check. A malformed address disappears.
-- The language owner expands grouped integers, decimals, ordinals, known units and rates, currency, valid ISO dates and clock times. It reads digits inside alphanumeric identifiers separately without deleting or joining them to letters. Spanish number agreement has one owner for units and scales. It does not guess ambiguous dates or an unsupported unit.
-- Only a token boundary can start an absolute path. Slashes inside rates, availability notation and words do not discard the token's remainder. Normal Spanish question and exclamation marks remain punctuation, not measured violations.
+- Numbers and ordinals share locale grouping. The language owner expands decimals, units, rates, currency, dates and times. Quantities with labels keep their fractions. Identifiers keep digit runs and spoken decimal separators. Spanish agreement has one owner for units and scales. Ambiguous dates and unknown units are not guessed.
+- A non-alphanumeric boundary starts a path, including punctuation, quotes and removed HTML separators. Slashes inside rates, availability notation and words do not discard the remainder. Spanish question and exclamation marks remain punctuation, not measured violations.
 - Sentence cuts wait for punctuation followed by whitespace, or the end of the stream. Decimal points and supported abbreviations do not cause an early cut. This delivers completed text before brain EOF without a timer.
 - Machine sanitation does not prove that a statement is true, an action completed, or a model followed the turn rules. Guidance is not a deterministic model-behavior guarantee.
 
@@ -48,7 +48,7 @@ Violation counters refuse a safe-integer overflow. There is no session cache, tr
 ## Evidence
 
 - `scripts/test-jarvis-guidance.js` uses class fixtures for voice, delegated frontier, delegated local, chained frontier and chained local consumers. It checks the selected files and the repeated rule against the runtime assets. This checks composition, not an AI model's obedience.
-- `scripts/test-jarvis-speakable.js` tests every fixture as a whole chunk, individual UTF-16 units and every pair of fragments. It proves early sentence delivery, final fragments, bounds, code discard and violation counting.
+- `scripts/test-jarvis-speakable.js` tests whole chunks, individual UTF-16 units and every pair of fragments. Early-delivery cases assert push results before finish, including bounded sentences whose total exceeds the token limit. It also checks final fragments, bounds, code discard and counts.
 - `scripts/test-jarvis-speech-language.js` tests the language judge and number, unit, date and time expansions.
 - The suites plant defects in disposable production copies. The kept-URL control still reaches the lexer but sends the address into the spoken text. Its expected sentence turns red.
 - `scripts/test-install-tree.sh` and the nested read-only prefix row run `scripts/fixtures/jarvis-voice/installed.js` against installed modules and assets with an empty environment. Each resolves the real Node executable before clearing that environment. The installer control drops the runtime markdown and fails both the manifest and consumer assertions.
