@@ -80,14 +80,25 @@
 #   vgsh lock                      ask the running shell's lock plugin to lock the session
 #
 # `run` takes no arguments: the shell always runs as this process's child,
-# and this process stays in the foreground until the shell exits, then
-# exits with the shell's status. HUP, INT or TERM to it stops the shell.
-# Before anything else it checks Quickshell, a running Hyprland, node,
-# python3 and git against the floor its preflight table holds, and refuses
+# and this process stays in the foreground and supervises it. A shell that
+# exits with a non-zero status while Hyprland answers starts again after
+# the next delay of the supervision table below, and each relaunch prints
+# `vgsh: shell=exited status=<n> relaunch=<k> delay=<s> session=<locked|unlocked|unknown>`
+# on stderr. A run as long as the table's healthy run starts the count
+# again. The exit after the last delay gives up with
+# `vgsh: shell=gave-up exits=<n> status=<n>` and a Hyprland notice, unless
+# the session is not read as unlocked: then every later exit relaunches
+# after the last delay. A shell that exits 0, a Hyprland that no longer
+# answers (`vgsh: shell=exited status=<n> hyprland=gone`) and HUP, INT or
+# TERM to this process, which stops the shell, end this process with the
+# shell's status. Before anything else it checks Quickshell, a running
+# Hyprland, node, python3 and git against the floor its preflight table
+# holds, and refuses
 # with `vgsh: refused: preflight=<tool> have=<version|none|unknown> need=<version|present>`
 # and exit 78 on the first tool below it. This process holds the instance
 # lock, $XDG_RUNTIME_DIR/vgsh.lock, until it exits; the file holds the
-# shell's pid, which is the identity the shell's guard checks. No process
+# shell's pid, which is the identity the shell's guard checks, and is empty
+# while this process waits to start the shell again. No process
 # the shell starts holds the lock. Every command that contacts the shell
 # addresses that instance alone, so a shell started any other way is never
 # reached. `plugin validate`, `plugin add`,
@@ -96,9 +107,11 @@
 #
 # `restart` checks the same floor first, so below it restart refuses as run
 # does and leaves the running shell alone. It refuses while the session is
-# locked, because the shell owns the lock client. Otherwise it stops the pid
-# in the instance lock, waits for that lock to free, which it does when the
-# runner exits after the shell, and asks Hyprland to run
+# locked, because the shell owns the lock client. Otherwise it sends TERM to
+# the runner, the parent of the pid in the instance lock when that parent
+# holds the lock, which stops the shell and exits with no relaunch, or to
+# the pid itself when its parent holds no lock; waits for that lock to free,
+# which it does when the runner exits after the shell, and asks Hyprland to run
 # `vgsh run`, so the new shell inherits the session environment. It prints
 # the new pid once that shell answers as the guarded instance.
 #
@@ -489,6 +502,28 @@ python3    present ^Python[[:space:]]([0-9]+(\.[0-9]+)*)                      py
 git        present ^git[[:space:]]version[[:space:]]([0-9]+(\.[0-9]+)*)        git --version
 '
 
+# The supervision table `run` relaunches the shell by:
+# docs/decisions/D069-runner-supervises-the-shell.md.
+# - supervise_delays: the seconds `run` waits before each relaunch of a
+#   streak of exits, one relaunch per entry. The exit after the last entry
+#   gives up, unless the session is not read as unlocked; then every later
+#   relaunch waits the last entry.
+# - supervise_healthy_ms: a shell that ran at least this long starts a new
+#   streak with its exit.
+# - supervise_compositor_tries and supervise_compositor_gap: how many times,
+#   and how many seconds apart, `run` asks Hyprland for its monitors before
+#   it reads Hyprland as gone. Omarchy's compositor_alive asks so: a
+#   compositor busy reconfiguring outputs, which is when a shell dies, can
+#   miss one query without being gone.
+# - supervise_notice_ms and supervise_notice: how long the give-up notice
+#   shows and its text, the count of exits in its %d.
+supervise_delays=(0.5 1 2 4 8)
+supervise_healthy_ms=60000
+supervise_compositor_tries=3
+supervise_compositor_gap=0.5
+supervise_notice_ms=600000
+supervise_notice='VGS shell stopped: it crashed %d times in a row. Log out and back in to start it again.'
+
 # True when HAVE >= NEED, compared as numbers component by component; a
 # missing component is 0, so 0.56 equals 0.56.0 and 0.10 exceeds 0.3.1.
 version_at_least() { # HAVE NEED: dotted decimal integers
@@ -610,8 +645,24 @@ rescan_if_running() { # [CALL...]
   esac
 }
 
+# The process `restart` sends TERM to for the shell PID: its parent when
+# that parent holds the instance lock on descriptor 9, the runner, which
+# passes TERM to the shell and exits with no relaunch; PID itself when its
+# parent holds no lock, as under a runner from before D053 that execed qs
+# in place and so holds the lock in the shell's own process, which a
+# `vgsh self update` restart meets while such a runner still runs.
+shell_stop_target() { # PID
+  local parent held lock_path target="$1"
+  if parent="$(awk '$1 == "PPid:" { print $2 }' "/proc/$1/status" 2>/dev/null)" && [[ $parent =~ ^[0-9]+$ ]] \
+    && held="$(readlink -- "/proc/$parent/fd/9" 2>/dev/null)" && lock_path="$(readlink -f -- "$lock")" \
+    && [[ $held == "$lock_path" ]]; then
+    target="$parent"
+  fi
+  printf '%s\n' "$target"
+}
+
 shell_restart() {
-  local pid hypr_status status using_lua locked_out reply cmd request dispatch_reply new_pid guarded_out lua_cmd
+  local pid hypr_status status using_lua locked_out reply cmd request dispatch_reply new_pid guarded_out lua_cmd stop_target
   pid="$(shell_pid)" || exit $?
   set +e
   hypr_status="$(hyprctl -j status 2>&1)"
@@ -640,7 +691,8 @@ shell_restart() {
     *) refuse 1 "locked=${reply//$'\n'/\\n}" ;;
   esac
 
-  kill -TERM "$pid" || refuse 1 "stop=failed pid=$pid"
+  stop_target="$(shell_stop_target "$pid")"
+  kill -TERM "$stop_target" || refuse 1 "stop=failed pid=$pid"
   flock -w 10 "$lock" true ||
     refuse 1 "stop=timeout pid=$pid" "the shell is still running"
 
@@ -1532,6 +1584,139 @@ self_update() {
   esac
 }
 
+# Hyprland's monitors, as `hyprctl -j monitors` prints them, asked up to
+# supervise_compositor_tries times supervise_compositor_gap seconds apart.
+# Returns 1 when no try answered with a JSON list. Every command `run`
+# starts while it holds the instance lock closes descriptor 9 first, so no
+# process but the runner holds the lock.
+compositor_monitors() {
+  local try out
+  for ((try = 1; try <= supervise_compositor_tries; try++)); do
+    if out="$(hyprctl -j monitors 2>/dev/null 9>&-)" && [[ $out == \[* ]]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    if ((try < supervise_compositor_tries)); then sleep "$supervise_compositor_gap" 9>&-; fi
+  done
+  return 1
+}
+
+# Whether Hyprland's monitors TEXT shows a session lock: `locked`,
+# `unlocked` or `unknown`, as vgs.lock's LockModel.sessionLockState judges
+# it for the stranded-lock reading the lock plugin takes at start
+# (docs/architecture/lock-polkit.md). `unknown` too when node cannot run
+# the judge, whose own error passes through on stderr.
+session_lock_state() { # TEXT
+  node -e 'let text = "";
+process.stdin.setEncoding("utf8").on("data", d => { text += d; }).on("end", () => {
+  process.stdout.write(require(process.argv[1]).load(process.argv[2]).sessionLockState(text) + "\n");
+});' "$root/bin/lib/qml-library.js" "$shell_dir/plugins/vgs.lock/LockModel.js" <<<"$1" 9>&- || echo unknown
+}
+
+# One start of the shell under the held instance lock. The lock file is
+# emptied first, since the child appends its pid through descriptor 9.
+shell_launch() {
+  local stale
+  # The shell watches files in both directories and the floating TUIs'
+  # exit records in the third from its start. A watch on a file whose
+  # directory is absent never fires once the directory appears, and a
+  # folder listing of an absent directory lists the working directory:
+  # docs/architecture/runtime-qml.md.
+  mkdir -p -- "$config_home/vgs" "$state_home/vgs" "$rt_dir/vgs/tui"
+  truncate -s 0 -- "$lock"
+  # The lock proves no runner-started shell is alive, so every source
+  # snapshot root under the runtime dir belongs to a dead shell.
+  for stale in "$rt_dir"/vgsh-sources-*; do
+    [[ -e $stale || -L $stale ]] || continue
+    rm -rf -- "${stale:?}"
+  done
+  # The shell runs as this process's child and never in its place: this
+  # process keeps descriptor 9, and the child closes its copy before it
+  # execs, so no process the shell starts holds the lock, and the lock
+  # frees when this process exits after the shell:
+  # docs/decisions/D053-runner-holds-the-instance-lock.md. The child
+  # writes its own pid as the lock file's only line and exports it as
+  # VGSH_RUNNER_PID before it execs, so the file names the shell before
+  # the shell starts, and the shell proves it is the lock holder's child
+  # by comparing that value with its own pid. setpriv execs qs in the
+  # same process with TERM as its parent-death signal, so a runner killed
+  # with SIGKILL takes the shell with it and never leaves a guarded shell
+  # with the lock free.
+  # A Quickshell reload while the session lock is live can unlock it.
+  (
+    printf '%s\n' "$BASHPID" >&9
+    exec 9>&-
+    VGSH_RUNNER_PID=$BASHPID QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec setpriv --pdeathsig TERM -- qs -p "$shell_dir"
+  ) &
+  shell_child=$!
+}
+
+# `run` after it took the lock: start the shell, wait on it, and start it
+# again after an exit as the supervision table decides; exits with the last
+# shell's status (docs/decisions/D069-runner-supervises-the-shell.md).
+# Quickshell 0.3.1 execs itself again in the same pid after a crash signal
+# once it has run 10 s, so only the exits it leaves reach this wait: a
+# crash sooner, SIGKILL, and Qt's _exit when the Wayland connection fails.
+#
+# bash starts a background job with INT and QUIT ignored, so every stop
+# signal reaches the shell as TERM. A trapped signal ends `wait` early with
+# no status of the shell's; bash keeps that status for the next `wait`, and
+# a `wait` on a pid that is not its child answers 127. stop records the
+# stop signal for good, and it ends a backoff wait too, so a stop during
+# the delay ends this process at once and starts no shell.
+shell_supervise() {
+  local streak=0 started_us ran_ms monitors session delay backoff notice reply
+  stop=""
+  shell_child=""
+  trap 'stop=1; forwarded=1; [[ -z $shell_child ]] || kill -TERM "$shell_child" 2>/dev/null || :' HUP INT TERM
+  while :; do
+    started_us="${EPOCHREALTIME//[!0-9]/}"
+    shell_launch
+    [[ -z $stop ]] || kill -TERM "$shell_child" 2>/dev/null || :
+    while :; do
+      forwarded=""
+      shell_status=0
+      wait "$shell_child" || shell_status=$?
+      [[ -n $forwarded ]] || break
+    done
+    shell_child=""
+    ran_ms=$(( (${EPOCHREALTIME//[!0-9]/} - started_us) / 1000 ))
+    # A stop, and a clean exit, which only a deliberate stop gives.
+    [[ -z $stop && $shell_status != 0 ]] || break
+    if ! monitors="$(compositor_monitors)"; then
+      printf 'vgsh: shell=exited status=%s hyprland=gone\n' "$shell_status" >&2
+      break
+    fi
+    [[ -z $stop ]] || break
+    ((ran_ms < supervise_healthy_ms)) || streak=0
+    streak=$((streak + 1))
+    session="$(session_lock_state "$monitors")"
+    # Only a session read as unlocked may be left with no shell: a dead
+    # shell's lock stays behind Hyprland's own screen, which only a new
+    # lock client or a TTY clears.
+    if ((streak > ${#supervise_delays[@]})) && [[ $session == unlocked ]]; then
+      printf 'vgsh: shell=gave-up exits=%s status=%s\n' "$streak" "$shell_status" >&2
+      printf -v notice "$supervise_notice" "$streak"
+      reply="$(hyprctl notify 3 "$supervise_notice_ms" 0 "$notice" 2>&1 9>&-)" || :
+      [[ $reply == ok ]] || printf 'vgsh: notice=failed reply=%s\n' "${reply//$'\n'/\\n}" >&2
+      break
+    fi
+    if ((streak <= ${#supervise_delays[@]})); then delay="${supervise_delays[streak - 1]}"; else delay="${supervise_delays[-1]}"; fi
+    # The dead shell's pid, which the kernel may give another process, is
+    # named nowhere while no shell runs.
+    truncate -s 0 -- "$lock"
+    printf 'vgsh: shell=exited status=%s relaunch=%s delay=%s session=%s\n' "$shell_status" "$streak" "$delay" "$session" >&2
+    sleep "$delay" 9>&- &
+    backoff=$!
+    wait "$backoff" || :
+    if [[ -n $stop ]]; then
+      kill "$backoff" 2>/dev/null || :
+      break
+    fi
+  done
+  exit "$shell_status"
+}
+
 cmd="${1:-}"
 [[ $# -gt 0 ]] && shift
 case "$cmd" in
@@ -1543,12 +1728,6 @@ case "$cmd" in
     # First, so a refused run takes no lock, creates no directory and
     # removes no snapshot root.
     preflight
-    # The shell watches files in both directories and the floating TUIs'
-    # exit records in the third from its start. A watch on a file whose
-    # directory is absent never fires once the directory appears, and a
-    # folder listing of an absent directory lists the working directory:
-    # docs/architecture/runtime-qml.md.
-    mkdir -p -- "$config_home/vgs" "$state_home/vgs" "$rt_dir/vgs/tui"
     # Opened for append so a runner that loses the race never truncates the
     # holder's pid; only the holder rewrites the file.
     exec 9>>"$lock"
@@ -1556,45 +1735,7 @@ case "$cmd" in
       printf 'vgsh: refused: lock=%s\nanother vgsh run holds the instance lock; one shell per session\n' "$lock" >&2
       exit 75
     fi
-    truncate -s 0 -- "$lock"
-    # The lock proves no runner-started shell is alive, so every source
-    # snapshot root under the runtime dir belongs to a dead shell.
-    for stale in "$rt_dir"/vgsh-sources-*; do
-      [[ -e $stale || -L $stale ]] || continue
-      rm -rf -- "${stale:?}"
-    done
-    # The shell runs as this process's child and never in its place: this
-    # process keeps descriptor 9, and the child closes its copy before it
-    # execs, so no process the shell starts holds the lock, and the lock
-    # frees when this process exits after the shell:
-    # docs/decisions/D053-runner-holds-the-instance-lock.md. The child
-    # writes its own pid as the lock file's only line and exports it as
-    # VGSH_RUNNER_PID before it execs, so the file names the shell before
-    # the shell starts, and the shell proves it is the lock holder's child
-    # by comparing that value with its own pid. setpriv execs qs in the
-    # same process with TERM as its parent-death signal, so a runner killed
-    # with SIGKILL takes the shell with it and never leaves a guarded shell
-    # with the lock free.
-    # A Quickshell reload while the session lock is live can unlock it.
-    (
-      printf '%s\n' "$BASHPID" >&9
-      exec 9>&-
-      VGSH_RUNNER_PID=$BASHPID QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec setpriv --pdeathsig TERM -- qs -p "$shell_dir"
-    ) &
-    shell_child=$!
-    # bash starts a background job with INT and QUIT ignored, so every stop
-    # signal reaches the shell as TERM. A trapped signal ends `wait` early
-    # with no status of the shell's; bash keeps that status for the next
-    # `wait`, and a `wait` on a pid that is not its child answers 127.
-    forwarded=""
-    trap 'forwarded=1; kill -TERM "$shell_child" 2>/dev/null || :' HUP INT TERM
-    while :; do
-      forwarded=""
-      shell_status=0
-      wait "$shell_child" || shell_status=$?
-      [[ -n $forwarded ]] || break
-    done
-    exit "$shell_status"
+    shell_supervise
     ;;
   restart)
     if [[ $# -gt 0 ]]; then

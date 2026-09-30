@@ -470,8 +470,8 @@ pre_control "unread version" full "STUB_QS_VERSION=Quickshell git" 78 "vgsh: ref
 pre_control "absent tool" no-git "" 78 "vgsh: refused: preflight=git have=none need=present" \
   '[[ -n ${pids[i]} ]] ||' '[[ -n ${pids[i]} ]] || true ||'
 pre_control "preflight first" full STUB_HYPR_VERSION=0.55.9 78 "vgsh: refused: preflight=hyprland have=0.55.9 need=0.56" \
-  $'    preflight\n    # The shell watches' '    # The shell watches' \
-  $'    (\n      printf' $'    preflight\n    (\n      printf'
+  $'    preflight\n    # Opened for append' '    # Opened for append' \
+  $'  (\n    printf' $'  preflight\n  (\n    printf'
 pre_control "table order" no-node "STUB_QS_VERSION=Quickshell 0.3.0" 78 "vgsh: refused: preflight=quickshell have=0.3.0 need=0.3.1" \
   $'  for i in "${!tools[@]}"; do\n    tool=' $'  for ((i = ${#tools[@]} - 1; i >= 0; i--)); do\n    tool='
 pre_control "scratch refused" full "TMPDIR=$pre_no_tmp" 1 "vgsh: refused: scratch=$pre_no_tmp" \
