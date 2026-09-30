@@ -55,6 +55,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-29 | D050 | VGS-578 | Containers use one inset box, an inner scroll gutter and fitted popup height | One owner removes per-surface padding arithmetic and keeps bars inside the inset | A child needs to bleed outside the inset box, or Quickshell adds a matching primitive | Active | [Full](D050-container-layout-contract.md) |
 | 2026-09-29 | D051 | VGS-603 | Every notification action delivers, then one core `reveal` shows the sender's window; expired toasts stay deliverable | No activation token reaches senders; one helper, no double switch | Quickshell emits ActivationToken, or Hyprland focus stops revealing | Active | [Full](D051-notification-actions-reveal-the-sender.md) |
 | 2026-09-29 | D052 | VGS-600 | Automations run as systemd user timers, compiled and guarded by one judge, and notify through VGS hints | A run outlives the shell; the preview, units and guard share one answer | VGS gains a core notification capability, or a rule the four frequencies cannot express | Active | [Full](D052-automations-engine.md) |
+| 2026-09-29 | D053 | VGS-609 | The runner holds the instance lock and waits on the shell as its child | No process the shell starts holds the lock, so a restart or a run after a crash never waits on a download | Quickshell gives QML a file lock, or the runner gains crash supervision | Active | [Full](D053-runner-holds-the-instance-lock.md) |
 
 ---
 
