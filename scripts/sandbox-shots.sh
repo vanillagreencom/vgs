@@ -1474,14 +1474,14 @@ SH
       done
       if "$has_setup_steps"; then
         # The setup steps' pages: the status fixture, Automations over
-        # stand-ins that answer lingering off and reach no systemd, and
-        # Themes with the chromium target shipped, so a host with a
-        # Chromium-family browser and no writer offers its install.
+        # the harness's loginctl sentinel, which answers lingering off, and
+        # a systemctl stand-in that reaches no systemd, and Themes with the
+        # chromium target shipped, so a host with a Chromium-family browser
+        # and no writer offers its install.
         mkdir -p "$home/.config/vgs/plugins/acme.status"
         cp -R -- "$fixtures/acme.status/." "$home/.config/vgs/plugins/acme.status/"
-        printf '#!/usr/bin/env bash\necho no\n' >"$shim/loginctl"
         printf '#!/usr/bin/env bash\nexit 0\n' >"$shim/systemctl"
-        chmod 755 "$shim/loginctl" "$shim/systemctl"
+        chmod 755 "$shim/systemctl"
         cp -R -- "$checkout/themes/targets/chromium" "$repo/themes/targets/chromium"
         expect "the status fixture is scanned" ok ipc shell rescanPlugins
         expect_poll "the status fixture is listed" True plugin_known acme.status

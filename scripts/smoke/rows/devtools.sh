@@ -166,6 +166,7 @@ forget_record
 expect "the agent's row scrolls into view" revealed reveal_row "$agent_name"
 click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow "$agent_name" Button Install || fail "the click on the agent's Install failed"
 expect_poll "the click hands the install TUI the row's id" "$(words vgs.devtools/install tui/install.sh "$agent_id")" recorded_tail
+expect "the stand-in terminal refused the bundled install script" "$(words refused "$agent_id")" tui_decision vgs.devtools tui/install.sh
 expect_poll "the install run's presenter exits" moved ended_record_moved vgs.devtools/install "$install_before"
 expect_run_end "the install run ends" vgs.devtools/install
 expect_poll "the list read after the run shows the agent installed" "$(texts "$agent_name" 1.0.0 mise Update Remove)" row_texts "$agent_name"
