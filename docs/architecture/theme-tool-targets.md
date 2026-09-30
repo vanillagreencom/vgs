@@ -6,7 +6,7 @@ The shipped targets for chat clients and terminal tools. The target format, both
 
 ## Targets
 
-Every target here uses the `hex6` encoder, and its templates write the `#`.
+Every target in the table uses the `hex6` encoder, and its templates write the `#`.
 
 | Target | Detect | Wiring | Reload |
 |---|---|---|---|
@@ -27,6 +27,10 @@ Every path is relative to `${XDG_CONFIG_HOME:-~/.config}`. A linked theme is sel
 - **tmux.** tmux loads `~/.tmux.conf` and then `$XDG_CONFIG_HOME/tmux/tmux.conf`, each when it exists. Created, the second file would hold the theme over a `~/.tmux.conf` user's own settings, and plugin managers such as TPM read their plugin list from it first, so an absent one skips the target with `wiring-file-absent`. The file's own settings after the line override the theme at start. The hook reaches the server of tmux's default socket, or the one `$TMUX` names, and sources the theme over the running options. With no server there is nothing to reload, and the hook succeeds. The style options take `#{...}` formats, tmux 3.2's, which the render leaves whole.
 - **Oh My Posh.** The linked file is a whole prompt configuration whose segments draw from its `palette`, and a configuration of the user's may `extends` it. Oh My Posh caches its configuration, so a running shell takes a new theme once `oh-my-posh enable reload` is on or when a new shell starts.
 - **Obsidian.** A theme is a directory of `theme.css` and `manifest.json` under a vault's `.obsidian/themes/`; Obsidian has no theme directory outside the vaults. The `vaults` key keeps the links in every vault the registry lists: [theme-wiring.md § Entry wiring](theme-wiring.md#entry-wiring). Obsidian reads the theme when a vault opens or the theme is selected.
+
+## Lock screen
+
+The `hyprlock` target writes `hyprlock.conf`, the lock screen `vgsh lock` runs hyprlock on: encoder `rgba`, detect `hyprlock`, `runsCode`, no wiring and no reload. Its layout, its background variable and its checks are [lock-polkit.md § Lock](lock-polkit.md#lock).
 
 ## Floating TUI colours
 

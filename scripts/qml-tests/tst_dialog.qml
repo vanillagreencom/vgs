@@ -12,7 +12,9 @@ import qs.Unit
 // the dialog; a press answering with the action's role; the default
 // variant per role and an unknown role read as cancel; `busy` and a
 // disabled action answering nothing and fading; content under the message;
-// and a theme change reaching the card and the roles.
+// an initial focus field taking the focus and the typing, its Enter and
+// Escape answering and Tab cycling through it; and a theme change reaching
+// the card and the roles.
 Item {
     id: root
     width: 500
@@ -55,7 +57,18 @@ Item {
         actions: [{ label: "Cancel", role: "cancel" }, { label: "Apply", role: "accept" }]
         Label { role: "body"; text: "Hidden"; visible: false }
     }
+    Dialog {
+        id: prompt
+        x: 260
+        y: 40
+        title: "Authenticate"
+        initialFocus: secret
+        actions: [{ label: "Cancel", role: "cancel" }, { label: "Authenticate", role: "accept" }]
+        TextField { id: secret; width: parent.width; echoMode: TextInput.Password }
+    }
     SignalSpy { id: accepts; target: dialog; signalName: "accepted" }
+    SignalSpy { id: promptAccepts; target: prompt; signalName: "accepted" }
+    SignalSpy { id: promptRejects; target: prompt; signalName: "rejected" }
     SignalSpy { id: rejects; target: dialog; signalName: "rejected" }
     SignalSpy { id: threeAccepts; target: three; signalName: "accepted" }
     SignalSpy { id: threeRejects; target: three; signalName: "rejected" }
@@ -68,7 +81,9 @@ Item {
         function init() {
             UnitTheme.reset();
             dialog.busy = false;
-            for (const spy of [accepts, rejects, threeAccepts, threeRejects, blockedAccepts]) spy.clear();
+            for (const spy of [accepts, rejects, threeAccepts, threeRejects, blockedAccepts, promptAccepts, promptRejects]) spy.clear();
+            secret.text = "";
+            secret.enabled = true;
             outside.forceActiveFocus();
         }
 
@@ -151,6 +166,52 @@ Item {
                 keyClick(Qt.Key_Tab);
                 compare(outside.activeFocus, false, "Tab " + i + " left the dialog");
             }
+        }
+
+        function test_an_initial_focus_field_takes_the_focus_and_answers() {
+            const [cancel, authenticate] = prompt.buttons();
+            prompt.forceActiveFocus();
+            compare(secret.activeFocus, true);
+            keyClick(Qt.Key_S);
+            keyClick(Qt.Key_E);
+            compare(secret.text, "se");
+            compare(authenticate.activeFocus, false);
+            keyClick(Qt.Key_Return);
+            compare(promptAccepts.count, 1);
+            compare(secret.activeFocus, true);
+            keyClick(Qt.Key_Escape);
+            compare(promptRejects.count, 1);
+            // A click moves the focus to an action; the next showing gives it
+            // back to the field.
+            mouseClick(cancel);
+            compare(cancel.activeFocus, true);
+            outside.forceActiveFocus();
+            prompt.forceActiveFocus();
+            compare(secret.activeFocus, true);
+        }
+
+        function test_tab_cycles_through_the_initial_focus_field() {
+            const [cancel, authenticate] = prompt.buttons();
+            prompt.forceActiveFocus();
+            keyClick(Qt.Key_Tab);
+            compare(cancel.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(authenticate.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(secret.activeFocus, true);
+            keyClick(Qt.Key_Backtab);
+            compare(authenticate.activeFocus, true);
+        }
+
+        function test_a_disabled_initial_focus_field_leaves_the_focus_to_the_accept_action() {
+            secret.enabled = false;
+            const [cancel, authenticate] = prompt.buttons();
+            prompt.forceActiveFocus();
+            compare(authenticate.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(cancel.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(authenticate.activeFocus, true);
         }
 
         function test_tab_skips_a_disabled_action() {

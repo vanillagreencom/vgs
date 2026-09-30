@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# vgsh-lock: lock the session with hyprlock, in the applied theme's look.
+#
+#   vgsh lock
+#       exec hyprlock on the theme's lock screen, or on the user's own
+#       hyprlock configuration while no theme lock screen is rendered
+#
+# It needs no running shell, so hypridle's lock_cmd, a lid-switch bind or a
+# user script can call it as the shell's shortcut does. The state directory
+# is ${XDG_STATE_HOME:-~/.local/state}/vgs. While its theme/hyprlock.conf,
+# which the hyprlock target renders on every theme apply, is a regular file,
+# it runs `hyprlock --config <that file>` with VGS_LOCK_BACKGROUND set to
+# the state directory's `background`, the link to the theme's current
+# image; otherwise plain `hyprlock`, which reads the user's own
+# configuration. It execs hyprlock, so hyprlock's exit status is its own.
+#
+# hyprlock is a separate process that holds the session lock through
+# ext-session-lock-v1, so a shell that dies leaves the lock in place and
+# unlockable: docs/architecture/lock-polkit.md.
+#
+# One lock at a time: before hyprlock starts, the command takes flock on
+# ${XDG_RUNTIME_DIR:-/run/user/<uid>}/vgsh-screen-lock.lock through a
+# descriptor hyprlock inherits, so the lock file stays held until hyprlock
+# exits. A `vgsh lock` while it is held prints `ok lock=held` and starts
+# nothing: a second hyprlock is refused the session lock by Hyprland, stays
+# running, and ends its waiting PAM conversation as a failed login, which
+# pam_faillock counts against the account. A lock file that cannot be
+# opened or locked prints `vgsh: lock-guard=unavailable path=<file>` on
+# stderr and locks all the same, since a duplicate lock is safer than none.
+#
+# Refusals, each one keyed first line on stderr:
+#   vgsh: refused: argument=<arg>       exit 2; lock takes no argument
+#   vgsh: refused: lock=hyprlock-missing  exit 1; no hyprlock on PATH
+set -euo pipefail
+
+refuse() { # STATUS KEY [DETAIL]
+  printf 'vgsh: refused: %s\n' "$2" >&2
+  [[ -z ${3:-} ]] || printf '%s\n' "$3" >&2
+  exit "$1"
+}
+
+[[ $# -eq 0 ]] || refuse 2 "argument=$1" "vgsh lock takes no argument"
+
+hyprlock="$(type -P hyprlock)" ||
+  refuse 1 "lock=hyprlock-missing" "install hyprlock: vgsh plugin requirements vgs.lock names its package"
+
+guard="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/vgsh-screen-lock.lock"
+held=0
+{ exec 9>>"$guard"; } 2>/dev/null && { flock -n -E 75 9 || held=$?; } || held=unavailable
+case "$held" in
+  0) ;;
+  75) echo "ok lock=held"; exit 0 ;;
+  *)
+    exec 9>&-
+    printf 'vgsh: lock-guard=unavailable path=%s\nthe session locks without the guard against a second lock\n' "$guard" >&2
+    ;;
+esac
+
+state="${XDG_STATE_HOME:-$HOME/.local/state}/vgs"
+config="$state/theme/hyprlock.conf"
+if [[ -f $config ]]; then
+  VGS_LOCK_BACKGROUND="$state/background" exec "$hyprlock" --config "$config"
+fi
+exec "$hyprlock"

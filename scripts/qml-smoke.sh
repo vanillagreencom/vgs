@@ -200,9 +200,11 @@ smoke_row launcher
 smoke_row list-motion
 smoke_row notifications
 smoke_row automations
+smoke_row polkit
 smoke_row hyprland
 smoke_row instance-guard
 smoke_row diagnostics
+smoke_row lock
 smoke_row read-only-prefix
 smoke_row notices-control
 smoke_row hidpi

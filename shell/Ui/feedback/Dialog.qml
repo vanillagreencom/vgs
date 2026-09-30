@@ -16,12 +16,15 @@ import qs.Ui
 // `enabled` is true unless stated false. The first accept action is the
 // accept action.
 //
-// The accept action takes the focus each time the dialog does. Tab and
-// Backtab move it through the enabled actions and wrap, so the keys stay in
-// the dialog; the content is shown and never takes the focus. Enter and
-// Return press the focused action, or the accept action when none holds the
-// focus, and Escape rejects. While `busy` holds, every action is disabled, a
-// Spinner turns beside them, and no key and no press answers.
+// The accept action takes the focus each time the dialog does, or
+// `initialFocus` when set: an enabled item of the content that takes typing,
+// such as a password field. Tab and Backtab move the focus through that item
+// and the enabled actions and wrap, so the keys stay in the dialog; any other
+// content is shown and never takes the focus. Enter and Return press the
+// focused action, or the accept action when none holds the focus, the
+// initial focus item included when it leaves the key unaccepted, and Escape
+// rejects. While `busy` holds, every action is disabled, a Spinner turns
+// beside them, and no key and no press answers.
 FocusScope {
     id: root
 
@@ -29,6 +32,7 @@ FocusScope {
     property string message: ""
     property var actions: []
     property bool busy: false
+    property Item initialFocus: null
     // Hosts may set this. When they do not, the dialog reads its window's
     // screen height, so the cap remains relative to the surface it draws on.
     property real availableHeight: 0
@@ -84,15 +88,22 @@ FocusScope {
         if (button !== undefined) button.forceActiveFocus();
     }
 
+    // Hand the focus to the initial focus item, else the accept action.
+    function takeFocus() {
+        if (initialFocus !== null && initialFocus.enabled) initialFocus.forceActiveFocus();
+        else focusAccept();
+    }
+
     function pressFocused() {
         const focused = buttons().findIndex(button => button.activeFocus);
         trigger(focused !== -1 ? focused : acceptIndex);
     }
 
-    // Move the focus by `step` over the enabled actions, wrapping; from none,
-    // Tab takes the first and Backtab the last.
+    // Move the focus by `step` over the initial focus item and the enabled
+    // actions, wrapping; from none, Tab takes the first and Backtab the last.
     function cycle(step) {
-        const reach = buttons().filter(button => button.enabled);
+        const lead = initialFocus !== null && initialFocus.enabled ? [initialFocus] : [];
+        const reach = lead.concat(buttons().filter(button => button.enabled));
         if (reach.length === 0) return;
         const at = reach.findIndex(button => button.activeFocus);
         const next = at === -1 ? reach[step > 0 ? 0 : reach.length - 1] : reach[(at + step + reach.length) % reach.length];
@@ -106,11 +117,16 @@ FocusScope {
     Accessible.description: message
 
     // A scope gives the focus back to the child that last held it; the
-    // accept action takes it instead, so an action clicked in an earlier
-    // showing never answers Enter in the next.
-    onActiveFocusChanged: if (activeFocus) focusAccept()
+    // initial focus item or the accept action takes it instead, so an action
+    // clicked in an earlier showing never answers Enter in the next.
+    onActiveFocusChanged: if (activeFocus) takeFocus()
     Keys.onTabPressed: cycle(1)
     Keys.onBacktabPressed: cycle(-1)
+
+    // An item that takes Tab focus moves the focus along Qt's own chain
+    // before the key reaches the dialog, out of it on Backtab; the dialog's
+    // cycle moves it instead.
+    Binding { target: root.initialFocus; property: "activeFocusOnTab"; value: false; when: root.initialFocus !== null }
     Keys.onReturnPressed: pressFocused()
     Keys.onEnterPressed: pressFocused()
     Keys.onEscapePressed: if (!busy) rejected()

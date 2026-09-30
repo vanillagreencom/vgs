@@ -1,0 +1,33 @@
+# Lock and polkit
+
+Covers: bin/vgsh-lock, shell/plugins/vgs.lock/**, shell/plugins/vgs.polkit/**, themes/targets/hyprlock/**, scripts/test-vgsh-lock.sh, scripts/test-theme-hyprlock.js, scripts/test-polkit-model.js, scripts/smoke/rows/lock.sh, scripts/smoke/rows/polkit.sh
+
+How a VGS session locks and how it answers polkit. hyprlock holds the lock and a native plugin is the polkit agent: [D056](../decisions/D056-hyprlock-lock-and-native-polkit-agent.md). The core's own `lock` and `polkit` capabilities are [capabilities.md](capabilities.md).
+
+## Lock
+
+- **Command.** `vgsh lock` is `bin/vgsh-lock`; its header states the output and every refusal. It execs hyprlock on `theme/hyprlock.conf` in the state directory, with `VGS_LOCK_BACKGROUND` naming the state directory's `background` link ([theme-backgrounds.md](theme-backgrounds.md)), or plain hyprlock, which reads the user's own configuration, while no theme lock screen is rendered. It needs no running shell: hypridle's `lock_cmd = vgsh lock` and a lid-switch bind call it as the shortcut does.
+- **One lock.** hyprlock inherits the descriptor on which `vgsh lock` took `flock` on `vgsh-screen-lock.lock` in the runtime directory, so the file stays locked until hyprlock exits, and a `vgsh lock` meanwhile prints `ok lock=held` and starts nothing. A second hyprlock would be refused the session lock by Hyprland, stay running and end its waiting PAM conversation as a failed login. A lock file that cannot be taken still locks.
+- **Theme target.** `themes/targets/hyprlock` renders one whole hyprlock layout from the tokens on every apply: the background colour under the image, `color.scrim` over it, hyprlock's own `$TIME` clock and the password field. It uses the `rgba` encoder, is `runsCode` because hyprlock runs commands from its configuration, and has no wiring and no reload: `vgsh lock` names the file, and the user's `hypr/hyprlock.conf` is never edited. The image line is `path = $VGS_LOCK_BACKGROUND`: hyprlang reads environment variables in values (`src/config.cpp` `recheckEnv` in hyprlang), and an image that does not load leaves the colour. The design system has no blur token, so the scrim dims the image instead. hyprlock draws text through fontconfig, which does not see the shell's bundled fonts ([D016](../decisions/D016-bundled-variable-font.md)); a family fontconfig lacks falls back to fontconfig's default.
+- **Plugin.** `vgs.lock` is a service with capabilities `shortcut`, `ipc` and `run`. Its shortcut `lock`, `SUPER+L` in its manifest's `hyprland.binds`, and its IPC function `vgsh ipc call vgs.lock invoke lock ''` run `vgsh lock` through `shell.run.detached`, so hyprlock is no child of the shell. It requires `hyprlock`.
+- **Launcher.** The launcher's Lock row runs `vgsh lock` and requires `vgsh` and `hyprlock`.
+- **Shell crash.** hyprlock holds ext-session-lock-v1 in its own process. A shell that stops or crashes leaves the session locked and hyprlock unlockable; `scripts/smoke/rows/lock.sh` kills the sandbox shell by its pid while locked and reads both back. `vgsh restart` refuses while the core's own session lock holds, not while hyprlock does ([runtime.md](runtime.md)).
+
+## Polkit
+
+- **Agent.** `vgs.polkit` names capability `polkit`, so the core builds its one `PolkitAgent` while the plugin is enabled. polkitd accepts one agent per session: another agent registered first, or no polkitd, leaves `registered` false, and the service publishes the status `agent`, a `state` the Settings page shows.
+- **Prompt.** The service summons the plugin's `overlay` when the agent's `isActive` turns true and hides it when it turns false; a request no prompt can answer is cancelled. The prompt is a `Scrim` and a `Dialog` whose `initialFocus` is a password `TextField` ([components.md](components.md)). `PolkitModel.js` maps the flow to what the prompt draws: the title, the message, the identity, the PAM prompt, the echo per `responseVisible`, PAM's message or the failed note, and whether the field and Authenticate answer, only while PAM asks. Cancel, Escape and the prompt closing by any other path cancel a live request. The password lives only in the field, cleared on submit and on close, and is never logged, published or exposed over IPC.
+- **No flow, no prompt.** `open()` throws while no request is live, so the host refuses a summon and maps no surface.
+
+## Validation
+
+- A live polkit flow cannot run in the sandbox: it needs polkitd and the setuid `polkit-agent-helper-1`, which would run PAM against the real account. `scripts/test-polkit-model.js` covers the prompt's decisions, and `scripts/smoke/rows/polkit.sh` the agent, its status and the refused flowless summon.
+- hyprlock starts `pam_authenticate` as it locks, and an unlock by `SIGUSR1` ends that conversation as a failed login, which `pam_faillock` counts against the account. On host cachy on 2026-09-29, two runs of the lock row with PAM on locked the owner's account for ten minutes. So `scripts/smoke/rows/lock.sh` runs hyprlock through a stand-in that appends `auth { pam { enabled = 0 } fingerprint { enabled = 1 } }` to a copy of the rendered file, refuses any other argv, and asserts that no hyprlock logged a PAM line. No row types a password.
+
+## Invariants
+
+1. `vgsh lock` runs hyprlock on the theme's lock screen with its background variable while the file exists, and plain hyprlock otherwise, under `XDG_STATE_HOME`; hyprlock holds the guard, a held guard starts nothing and an unavailable one still locks; no hyprlock is refused. Enforced by `scripts/test-vgsh-lock.sh`, one control per rule on a copy of `bin/vgsh-lock`.
+2. The hyprlock target is `runsCode`, unwired and unreloaded, writes `rgba` colours, draws the image from `$VGS_LOCK_BACKGROUND` and the clock from `$TIME`, under the shipped `vgs` and `light` packages. Enforced by `scripts/test-theme-hyprlock.js`, one control per rule.
+3. The IPC function and `SUPER+L` lock the nested session; a second `vgsh lock` starts no hyprlock; a killed shell leaves the session locked and hyprlock alive; disabling the plugin drops its shortcut, IPC target and bind. Enforced by `scripts/smoke/rows/lock.sh`, whose control is a stand-in that never locks.
+4. `vgs.polkit` holds `polkit` and the agent exists while it is enabled, the agent is reported unregistered on a bus without polkitd, no prompt surface exists without a flow, and disabling it destroys the agent and its status record. Enforced by `scripts/smoke/rows/polkit.sh`, whose control is a plugin copy whose prompt opens with no flow.
+5. The prompt draws each flow state as `PolkitModel.js` maps it and cancels only a live flow. Enforced by `scripts/test-polkit-model.js`, one control per rule.

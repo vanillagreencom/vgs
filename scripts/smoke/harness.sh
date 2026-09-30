@@ -6,8 +6,9 @@ source "$repo/scripts/smoke/shot.sh"
 source "$repo/scripts/smoke/app-window.sh"
 missing=()
 # fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs;
-# grim reads the pixels app-window.sh checks.
-for tool in Hyprland qs hyprctl python3 node flock setpriv setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim; do
+# grim reads the pixels app-window.sh checks; rows/lock.sh locks the nested
+# session with hyprlock.
+for tool in Hyprland qs hyprctl python3 node flock setpriv setsid git dbus-daemon gdbus cc wayland-scanner pkg-config wtype fd fzf file grim hyprlock; do
   command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 done
 # ImageMagick, `magick` or `convert`, converts the Slack custom emoji the
@@ -330,7 +331,11 @@ fi
 # lending records, and its queries would run the host's mise;
 # rows/devtools.sh enables it over stub commands. vgs.automations starts
 # disabled for the same reason, and rows/automations.sh enables it over
-# stand-in systemctl, systemd-run, notify-send and loginctl.
+# stand-in systemctl, systemd-run, notify-send and loginctl. vgs.polkit
+# starts disabled, since polkit is exclusive and the capability rows'
+# fixture holds it; rows/polkit.sh enables it and disables it again.
+# vgs.lock starts disabled for the launcher's reason; rows/lock.sh enables
+# it and disables it again.
 # vgs.themes stays enabled, its background built on every
 # screen: it maps no surface while the sandbox holds no backgrounds.json,
 # so the host rows see only their fixture's background surface.
@@ -446,7 +451,7 @@ case "$plugin_set" in
     mkdir -p "$tick"
     cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
     cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools", "vgs.automations"] }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools", "vgs.automations", "vgs.polkit", "vgs.lock"] }
 JSON
     ;;
   default) default_set_prepare '[]' ;;

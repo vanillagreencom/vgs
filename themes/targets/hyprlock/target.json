@@ -1,0 +1,9 @@
+{
+  "app": "hyprlock",
+  "runsCode": true,
+  "encoder": "rgba",
+  "files": [{ "template": "hyprlock.conf", "destination": "hyprlock.conf" }],
+  "detect": ["hyprlock"],
+  "wiring": null,
+  "reload": null
+}

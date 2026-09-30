@@ -641,6 +641,8 @@ Scope {
         }
         function configSettled(): bool { return !Config.smokeUserView.busy && !Config.reloadRequested; }
         function readInstance(hostKey: string, id: string, property: string): string { return root.read(hostKey, id, property); }
+        // A plugin's published status values, as each of its instances reads them.
+        function statusValues(id: string): string { return JSON.stringify(PluginStatus.valuesOf(id)); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
         // Every item under an instance, the instance first, breadth first:
         // its type name as typeName writes it, its box in screen

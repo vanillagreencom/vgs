@@ -32,7 +32,7 @@ optdepends=(
   'wl-clipboard: launcher Screenshot and Copy path'
   'libnotify: notify-send, to post notifications to the VGS notification server'
   'xdg-utils: launcher Files'
-  'hyprlock: launcher Lock'
+  'hyprlock: vgsh lock, the themed lock screen of SUPER+L and the launcher Lock row'
   'pacman-contrib: checkupdates, for the package update check'
   'snapper: a snapshot before the update pipeline changes packages'
   'timeshift: a snapshot before the update pipeline changes packages, without snapper'

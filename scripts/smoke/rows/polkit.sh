@@ -1,0 +1,70 @@
+# The polkit agent, vgs.polkit: a first-party service and overlay. The
+# harness starts it disabled, since polkit is exclusive and the capability
+# rows' fixture holds it until rows/theme-browse.sh disables it. This row
+# enables it once no plugin holds polkit, reads the agent the core lends it
+# and the agent status its service publishes back, asserts that no prompt
+# surface exists without an authentication flow and that a summon with none
+# is refused, and disables it again, which destroys the agent.
+#
+# A live flow cannot run here: it needs polkitd and the setuid
+# polkit-agent-helper-1, which would run PAM against the real account and
+# could trip pam_faillock. The sandbox's system bus has no polkitd, so the
+# agent stays unregistered. What the prompt draws from a flow is
+# scripts/test-polkit-model.js's.
+#
+# The control installs a copy of the plugin in the user directory, whose id
+# wins, with the prompt's refusal of a flowless summon removed: the same
+# summon reading maps a prompt then, so the reading is not vacuous.
+set -euo pipefail
+polkit_lent() { ipc shell lent | python3 -c 'import json,sys; v=json.load(sys.stdin)
+for k in sys.argv[1].split("."): v=v.get(k) if isinstance(v, dict) else None
+print(json.dumps(v))' "$1"; }
+polkit_status() { ipc smoke statusValues vgs.polkit | py_reply 'import json,sys; v=json.load(sys.stdin).get("agent"); print(json.dumps(v if v is None else [v["tone"], v["text"]]))'; }
+# The summon a request would make, with no request live: the host's answer
+# and the prompt surfaces mapped after it.
+flowless_summon() { local reply; reply="$(ipc shell summon overlay vgs.polkit '{}')" || return; printf '%s %s\n' "$reply" "$(layer_count vgs:overlay)"; }
+unregistered='["warning", "Not registered with polkitd: another polkit agent holds this session, or polkitd is not running"]'
+
+expect "the polkit plugin starts disabled in the sandbox" False plugin_enabled vgs.polkit
+expect "no plugin holds polkit before the row" null polkit_lent holders.polkit
+expect "the core builds no agent while nothing holds polkit" false polkit_lent polkitAgent
+expect "enabling the polkit plugin is allowed" ok ipc shell setPluginEnabled vgs.polkit true
+expect_poll "the polkit service is built" True record_exists vgs.polkit
+expect_poll "vgs.polkit holds polkit" '["vgs.polkit"]' polkit_lent holders.polkit
+expect_poll "the core built the agent for it" true polkit_lent polkitAgent
+expect "the agent is not registered on a bus without polkitd" false polkit_lent polkitRegistered
+expect_poll "the service publishes that polkitd did not accept the agent" "$unregistered" polkit_status
+expect "no prompt surface exists without a flow" 0 layer_count vgs:overlay
+expected_errors+=('summon host: vgs\.polkit open\(\) failed: polkit: refused: flow=none')
+expect "a summon with no flow is refused and maps nothing" "refused: open-failed=vgs.polkit 0" flowless_summon
+
+# Control: the same reading over a prompt that opens with no flow.
+control_dir="$home/.config/vgs/plugins/vgs.polkit"
+mkdir -p -- "$control_dir"
+cp -R -- "$repo/shell/plugins/vgs.polkit/." "$control_dir/"
+python3 - "$control_dir/Prompt.qml" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+needle = '        if (flow === null) throw new Error("polkit: refused: flow=none");\n'
+assert text.count(needle) == 1, "polkit control: the refusal must match once"
+open(path, "w").write(text.replace(needle, ""))
+PY
+expected_errors+=('plugins: .*vgs\.polkit')
+expect "rescan over the control copy answers ok" ok ipc shell rescanPlugins
+control_dir_of() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.polkit"][0])'; }
+expect_poll "the control copy is the plugin the shell runs" "$control_dir" control_dir_of
+expect_poll "the control copy's agent is lent" true polkit_lent polkitAgent
+got="$(flowless_summon)" || got="unreadable"
+if [[ $got == "ok 1" ]]; then ok "control: a prompt that opens with no flow is summoned and maps"; else fail "control: the flowless summon reading got [$got] over a prompt that opens with no flow"; fi
+expect "the control copy's prompt hides" ok ipc shell hide overlay vgs.polkit
+rm -r -- "$control_dir"
+expect "rescan after removing the control copy answers ok" ok ipc shell rescanPlugins
+expect_poll "the shipped plugin runs again" "$repo/shell/plugins/vgs.polkit" control_dir_of
+expect_poll "no prompt surface is left" 0 layer_count vgs:overlay
+
+expect "disabling the polkit plugin is allowed" ok ipc shell setPluginEnabled vgs.polkit false
+expect_poll "disable destroyed the agent" false polkit_lent polkitAgent
+expect "disable released polkit" null polkit_lent holders.polkit
+polkit_record() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["status"].get("vgs.polkit")))'; }
+expect "disable dropped the plugin's status record" null polkit_record

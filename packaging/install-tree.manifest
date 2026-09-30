@@ -17,6 +17,7 @@ f share/vgs/bin/lib/tui.sh
 f share/vgs/bin/vgsh
 f share/vgs/bin/vgsh-browser-policy
 f share/vgs/bin/vgsh-hypr-judge
+f share/vgs/bin/vgsh-lock
 f share/vgs/bin/vgsh-pkg
 f share/vgs/bin/vgsh-plugin-judge
 f share/vgs/bin/vgsh-scan
@@ -201,6 +202,8 @@ f share/vgs/shell/plugins/vgs.launcher/manifest.json
 f share/vgs/shell/plugins/vgs.launcher/menu.json
 f share/vgs/shell/plugins/vgs.launcher/shaders/edgelight.frag
 f share/vgs/shell/plugins/vgs.launcher/shaders/edgelight.frag.qsb
+f share/vgs/shell/plugins/vgs.lock/Service.qml
+f share/vgs/shell/plugins/vgs.lock/manifest.json
 f share/vgs/shell/plugins/vgs.notifications/Anim.qml
 f share/vgs/shell/plugins/vgs.notifications/Appearance.js
 f share/vgs/shell/plugins/vgs.notifications/CardSlot.qml
@@ -227,6 +230,10 @@ f share/vgs/shell/plugins/vgs.notifications/slack-emoji.js
 f share/vgs/shell/plugins/vgs.notifications/slack-photos.js
 f share/vgs/shell/plugins/vgs.notifications/token-status.sh
 f share/vgs/shell/plugins/vgs.notifications/tui/open.sh
+f share/vgs/shell/plugins/vgs.polkit/PolkitModel.js
+f share/vgs/shell/plugins/vgs.polkit/Prompt.qml
+f share/vgs/shell/plugins/vgs.polkit/Service.qml
+f share/vgs/shell/plugins/vgs.polkit/manifest.json
 f share/vgs/shell/plugins/vgs.settings/KeyField.qml
 f share/vgs/shell/plugins/vgs.settings/ListPage.qml
 f share/vgs/shell/plugins/vgs.settings/PageHeader.qml
@@ -551,6 +558,8 @@ f share/vgs/themes/targets/helix/helix.toml
 f share/vgs/themes/targets/helix/target.json
 f share/vgs/themes/targets/hermes/hermes.yaml
 f share/vgs/themes/targets/hermes/target.json
+f share/vgs/themes/targets/hyprlock/hyprlock.conf
+f share/vgs/themes/targets/hyprlock/target.json
 f share/vgs/themes/targets/icons/icons.theme
 f share/vgs/themes/targets/icons/target.json
 f share/vgs/themes/targets/kcolorscheme/kcolorscheme.colors

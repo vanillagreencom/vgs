@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.polkit",
+  "name": "Polkit",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "The session's polkit agent: asks for your password in a themed dialog when an application needs administrator rights.",
+  "license": "MIT",
+  "icon": "shield-check",
+  "kinds": [
+    "service",
+    "overlay"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "overlay": "Prompt.qml"
+  },
+  "capabilities": [
+    "polkit",
+    "status",
+    "surfaces"
+  ],
+  "settings": {},
+  "status": {
+    "agent": {
+      "type": "state",
+      "label": "Agent",
+      "hint": "polkitd accepts one agent per session; stop any other polkit agent, such as hyprpolkitagent, for the prompts to show here"
+    }
+  }
+}

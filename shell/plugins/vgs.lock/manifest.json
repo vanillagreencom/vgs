@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.lock",
+  "name": "Lock",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Locks the session with hyprlock on the applied theme's lock screen. Lock with SUPER+L or IPC; the lock stays if the shell stops.",
+  "license": "MIT",
+  "icon": "lock",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  },
+  "capabilities": [
+    "ipc",
+    "run",
+    "shortcut"
+  ],
+  "settings": {},
+  "requirements": [
+    {
+      "command": "hyprlock",
+      "packages": { "pacman": "hyprlock", "apt": "hyprlock", "nix": "hyprlock" },
+      "purpose": "Holds the session lock and asks for the password"
+    }
+  ],
+  "hyprland": {
+    "binds": [
+      { "shortcut": "lock", "key": "SUPER+L" }
+    ]
+  }
+}
