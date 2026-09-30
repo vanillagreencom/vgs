@@ -65,6 +65,8 @@ Scope {
                 actions: win.shown.install !== null ? [{ label: "Install", role: "accept" }, { label: "Not now", role: "cancel" }] : [{ label: "Close", role: "cancel" }]
                 onAccepted: Notices.accept()
                 onRejected: Notices.dismiss()
+                // Tab reaches Show command and, while it is open, its Copy.
+                tabItems: [disclosure.toggle, disclosure.copyButton]
 
                 // The missing requirements, one list `stack.row` apart, a
                 // block of the dialog's body `dialog.gap` under the message:
@@ -96,6 +98,7 @@ Scope {
                 }
                 // The command Install runs, for a reader who runs it by hand.
                 CommandDisclosure {
+                    id: disclosure
                     width: parent.width
                     command: win.shown.commandLine
                 }

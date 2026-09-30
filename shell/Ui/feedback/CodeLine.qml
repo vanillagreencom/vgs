@@ -19,6 +19,8 @@ Rectangle {
 
     property string text: ""
     property string copyLabel: "Copy"
+    // The Copy button, for a Dialog that lists it among its `tabItems`.
+    readonly property alias copyButton: button
     // True while the button shows its check mark after a copy.
     readonly property bool confirming: confirm.running
 

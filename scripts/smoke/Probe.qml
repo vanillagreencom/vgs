@@ -585,6 +585,11 @@ Scope {
                 message: dialog.message,
                 rows: labels.map(label => label.text).filter(text => text !== dialog.title && text !== dialog.message && !dialog.entries.some(entry => entry.label === text)),
                 command: shownDisclosure === undefined ? null : { toggle: shownDisclosure.toggle.text, expanded: shownDisclosure.expanded, text: shownDisclosure.command },
+                // The button that holds the keyboard, by its text or label.
+                focused: (() => {
+                    const held = root.descendants(dialog).find(child => child.activeFocus === true && ["Button", "IconButton"].includes(root.typeName(child)));
+                    return held === undefined ? null : (held.text || held.label);
+                })(),
                 actions: dialog.entries.map(entry => entry.label),
                 busy: dialog.busy
             });

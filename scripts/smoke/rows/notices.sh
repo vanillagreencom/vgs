@@ -166,6 +166,19 @@ expect "each missing requirement is drawn as its purpose, then its command and t
 expect "the command Install runs is behind Show command, closed" "{\"toggle\": \"Show command\", \"expanded\": false, \"text\": \"$needs_command_line\"}" drawn command
 expect "no row of the notice's body draws a command line" false rows_hold "pkg run install"
 expect "control: the same reading finds a purpose the body draws" true rows_hold "The command the fixture runs"
+# The keyboard reaches Show command: Tab from Install passes Not now to the
+# toggle, Return there opens it without installing, and Tab then reaches
+# its Copy before it wraps back to Install.
+expect_poll "the notice's Install holds the keyboard first" '"Install"' drawn focused
+type_keys -k Tab -k Tab || fail "sending Tab to the notice failed"
+expect_poll "Tab reaches Show command" '"Show command"' drawn focused
+type_keys -k Return || fail "sending Return to Show command failed"
+expect_poll "Return on Show command opens it" "{\"toggle\": \"Hide command\", \"expanded\": true, \"text\": \"$needs_command_line\"}" drawn command
+expect "Return on Show command installs nothing" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
+type_keys -k Tab || fail "sending Tab to the open disclosure failed"
+expect_poll "Tab reaches the open command's Copy" '"Copy the command"' drawn focused
+type_keys -k Tab || fail "sending Tab past Copy failed"
+expect_poll "Tab wraps back to Install" '"Install"' drawn focused
 expect "an installable notice offers Install and Not now" '["Install", "Not now"]' drawn actions
 expect "the plugin landed disabled" False plugin_enabled acme.needs
 

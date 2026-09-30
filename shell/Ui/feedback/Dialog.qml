@@ -24,7 +24,8 @@ import qs.Ui
 // initial focus item when the list does not hold it, and the enabled
 // actions, and wrap, so the keys stay in the dialog; any other content is
 // shown and never takes the focus. Enter and Return press the
-// focused action, or the accept action when none holds the focus, the
+// focused action, or a focused `tabItems` button, one with a `clicked`
+// signal, such as a disclosure's toggle, or else the accept action, the
 // initial focus item included when it leaves the key unaccepted, and Escape
 // rejects. While `busy` holds, every action is disabled, a Spinner turns
 // beside them, and no key and no press answers.
@@ -99,6 +100,11 @@ FocusScope {
     }
 
     function pressFocused() {
+        const stop = contentStops().find(item => item.activeFocus && typeof item.clicked === "function");
+        if (stop !== undefined) {
+            stop.clicked();
+            return;
+        }
         const focused = buttons().findIndex(button => button.activeFocus);
         trigger(focused !== -1 ? focused : acceptIndex);
     }

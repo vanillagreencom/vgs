@@ -17,6 +17,9 @@ Column {
     property string copyLabel: "Copy the command"
     readonly property alias toggle: toggleButton
     readonly property alias line: codeLine
+    // The line's Copy button: with `toggle`, what a Dialog lists in its
+    // `tabItems` so Tab reaches the disclosure.
+    readonly property Item copyButton: codeLine.copyButton
 
     visible: command !== ""
     spacing: Theme.field.gap

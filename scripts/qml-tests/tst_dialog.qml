@@ -78,6 +78,16 @@ Item {
         Select { id: who; width: parent.width; model: ["alice", "root"] }
         TextField { id: chooserSecret; width: parent.width; echoMode: TextInput.Password }
     }
+    Dialog {
+        id: disclosed
+        x: 260
+        y: 320
+        title: "Needs one command"
+        tabItems: [shown.toggle, shown.copyButton]
+        actions: [{ label: "Install", role: "accept" }, { label: "Not now", role: "cancel" }]
+        CommandDisclosure { id: shown; width: parent.width; command: "vgsh pkg run install acme" }
+    }
+    SignalSpy { id: disclosedAccepts; target: disclosed; signalName: "accepted" }
     SignalSpy { id: accepts; target: dialog; signalName: "accepted" }
     SignalSpy { id: promptAccepts; target: prompt; signalName: "accepted" }
     SignalSpy { id: promptRejects; target: prompt; signalName: "rejected" }
@@ -201,6 +211,31 @@ Item {
             outside.forceActiveFocus();
             prompt.forceActiveFocus();
             compare(secret.activeFocus, true);
+        }
+
+        function test_tab_reaches_a_listed_disclosure_and_return_opens_it() {
+            disclosedAccepts.clear();
+            shown.expanded = false;
+            const [install, notNow] = disclosed.buttons();
+            disclosed.forceActiveFocus();
+            compare(install.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(notNow.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(shown.toggle.activeFocus, true, "Tab wraps to Show command");
+            keyClick(Qt.Key_Tab);
+            compare(install.activeFocus, true, "a closed disclosure's hidden Copy takes no Tab");
+            keyClick(Qt.Key_Backtab);
+            compare(shown.toggle.activeFocus, true);
+            keyClick(Qt.Key_Return);
+            compare(shown.expanded, true, "Return presses the focused toggle");
+            compare(disclosedAccepts.count, 0, "Return on the toggle does not accept");
+            keyClick(Qt.Key_Tab);
+            compare(shown.copyButton.activeFocus, true, "the open disclosure's Copy takes Tab");
+            keyClick(Qt.Key_Tab);
+            compare(install.activeFocus, true);
+            keyClick(Qt.Key_Return);
+            compare(disclosedAccepts.count, 1, "Return on the accept action still accepts");
         }
 
         function test_tab_cycles_through_the_initial_focus_field() {
