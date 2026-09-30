@@ -361,10 +361,8 @@ expect_poll "the service reads the shipped target's setup" settled settled_text
 first_setup="$(browser_theming)" || first_setup=unreadable
 case $first_setup in
   '["reported", "warning", true]')
-    cp -p -- "$repo/bin/vgsh-browser-policy" "$sandbox/vgsh-browser-policy.sentinel"
     printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\nprintf "#!/bin/sh\\nexit 0\\n" >%q\nchmod 755 %q\n' \
-      "$sandbox/browser-policy.calls" "$shim/vgs-browser-policy" "$shim/vgs-browser-policy" >"$repo/bin/vgsh-browser-policy"
-    chmod 755 "$repo/bin/vgsh-browser-policy"
+      "$sandbox/browser-policy.calls" "$shim/vgs-browser-policy" "$shim/vgs-browser-policy" | sentinel_stand_over "$repo/bin/vgsh-browser-policy"
     tree_writer_is() { if grep -q -F -- "$1" "$repo/bin/vgsh-browser-policy"; then echo yes; else echo no; fi; }
     expect "the sandbox tree's writer is the row's stand-in for the press" yes tree_writer_is "$sandbox/browser-policy.calls"
     forget_record
@@ -372,7 +370,7 @@ case $first_setup in
     expect_poll "Install browser theming hands the terminal the browser-policy TUI" "$(words vgs.themes/browser-policy tui/browser-policy.sh)" recorded_tail
     expect_run_end "the browser-policy run ends" vgs.themes/browser-policy
     expect "the TUI ran the tree's writer install once, the stand-in" install cat "$sandbox/browser-policy.calls"
-    cp -p -- "$sandbox/vgsh-browser-policy.sentinel" "$repo/bin/vgsh-browser-policy"
+    sentinel_restore "$repo/bin/vgsh-browser-policy"
     expect "the sandbox tree's writer is the sentinel again" yes tree_writer_is "$auth_log"
     expect_poll "the run's end asks again: the writer reads installed, offering nothing" '["reported", "success", false]' browser_theming
     forget_record

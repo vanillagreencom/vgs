@@ -113,9 +113,8 @@ forget_record
 # The linger TUI runs for real under the stand-in terminal, so loginctl
 # must be the row's stand-in on the shell's PATH; it logs every call and
 # answers lingering on, so the TUI asks nothing and enables nothing. It
-# stands over the harness's sentinel, saved and put back after.
-cp -p -- "$shim/loginctl" "$sandbox/loginctl.sentinel"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\necho yes\n' "$auto_stub/loginctl.calls" >"$shim/loginctl"
+# stands over the harness's sentinel, and the sentinel comes back after.
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\necho yes\n' "$auto_stub/loginctl.calls" | sentinel_stand_over "$shim/loginctl"
 expect "loginctl resolves to the row's stand-in on the shell's PATH" "$shim/loginctl" shell_resolves loginctl
 settings_press "Enable while logged out" || fail "the click on Enable while logged out failed"
 expect_poll "Enable while logged out hands the terminal the linger TUI" "$(words vgs.automations/linger tui/linger.sh)" recorded_tail
@@ -128,7 +127,7 @@ forget_record
 expect "the manager refuses the act while lingering is on" "refused: action=linger reason=not-offered" settings_act vgs.automations linger
 expect "the refused act started no terminal" absent recorded
 settings_page_close vgs.automations
-cp -p -- "$sandbox/loginctl.sentinel" "$shim/loginctl"
+sentinel_restore "$shim/loginctl"
 
 # The control: a copy whose service lists neither after a run file lands
 # nor after the store changes, the one timer both watchers restart. It

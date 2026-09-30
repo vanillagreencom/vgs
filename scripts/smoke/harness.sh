@@ -239,7 +239,8 @@ chmod 755 "$shim/crontab"
 # polkit may ask about; secret-tool answers `search` with nothing stored
 # and `lookup` with no secret, the reads a background probe makes without
 # unlocking, and logs any other verb, a store, a clear or an unlock. A row
-# that needs one of them stands its own stub over the sentinel;
+# that needs one of them stands its own stub over the sentinel with
+# sentinel_stand_over and puts the sentinel back with sentinel_restore;
 # rows/auth-sentinel.sh reads the log empty at the end of the run.
 for sentinel in sudo doas run0 pkexec su; do
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "%s $*" >>%q\nexit 1\n' "$sentinel" "$auth_log" >"$shim/$sentinel"
@@ -262,6 +263,34 @@ exit 1
 EOF
 chmod 755 "$shim/loginctl" "$shim/secret-tool"
 auth_sentinels=(sudo doas run0 pkexec su loginctl secret-tool)
+# A row that needs one of the sentinels, or the tree's writer, to answer
+# its own way stands over it with sentinel_stand_over FILE, the script on
+# stdin, and puts it back with sentinel_restore FILE. The first stand-over
+# keeps the sentinel; a second one keeps that. $sentinels_stood lists each
+# file stood over and not yet put back, one path per line, and
+# rows/auth-sentinel.sh requires it empty and every sentinel in place.
+sentinels_saved="$sandbox/sentinels"
+sentinels_stood="$sandbox/sentinels.stood"
+mkdir -p -- "$sentinels_saved"
+: >"$sentinels_stood"
+sentinel_saved() { printf '%s/%s' "$sentinels_saved" "$(printf '%s' "$1" | tr / %)"; }
+sentinel_stand_over() { # FILE
+  local saved
+  saved="$(sentinel_saved "$1")"
+  if [[ ! -e $saved ]]; then
+    cp -p -- "$1" "$saved" || { fail "sentinel_stand_over: $1 could not be kept"; return 1; }
+    printf '%s\n' "$1" >>"$sentinels_stood"
+  fi
+  cat >"$1.next" && chmod 755 "$1.next" && mv -f -- "$1.next" "$1"
+}
+sentinel_restore() { # FILE
+  local saved
+  saved="$(sentinel_saved "$1")"
+  [[ -e $saved ]] || { fail "sentinel_restore: $1 was not stood over"; return 1; }
+  mv -f -- "$saved" "$1"
+  { grep -v -x -F -- "$1" "$sentinels_stood" || true; } >"$sentinels_stood.next"
+  mv -f -- "$sentinels_stood.next" "$sentinels_stood"
+}
 # shell_resolves NAME: the file NAME resolves to on the PATH every sandbox
 # shell starts with, and so every process it starts, a TUI included.
 shell_resolves() { PATH="$shell_start_path" command -v -- "$1" || echo none; }
@@ -615,7 +644,7 @@ automations_stand_ins_restore() { # STUB
 slack_states() { tr ';' '\n' <<<"$1" >"$shim/secret-tool.states"; }
 secret_tool_stand_in() { # STATES
   slack_states "$1"
-  cat >"$shim/secret-tool" <<SH
+  sentinel_stand_over "$shim/secret-tool" <<SH
 #!/usr/bin/env bash
 states="$shim/secret-tool.states"
 set_state() { { grep -v -F -x -e "\$1 present" -e "\$1 absent" -e "\$1 locked" "\$states" || true; printf '%s %s\\n' "\$1" "\$2"; } >"\$states.next" && mv -f -- "\$states.next" "\$states"; }
@@ -644,7 +673,6 @@ case "\${1:-}:\$state" in
   *) exit 1 ;;
 esac
 SH
-  chmod 755 "$shim/secret-tool"
 }
 
 # default_set_prepare PLUGINS_JSON [DISABLED_JSON]: what a start over the

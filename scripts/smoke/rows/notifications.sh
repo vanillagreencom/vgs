@@ -1644,3 +1644,6 @@ owned = {os.path.basename(e[r][7:]) for e in d["live"] + d["history"] for r in (
 print(sorted(set(os.listdir(sys.argv[2])) - owned))' "$note_state" "$note_images"
 }
 expect "the images directory holds only what the stored entries own" '[]' orphans
+# The rows above are done with the secret-tool stand-in: the harness's
+# sentinel comes back for every later row.
+sentinel_restore "$shim/secret-tool"
