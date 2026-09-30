@@ -1,6 +1,7 @@
 .pragma library
+.import "Session.js" as Session
 
-// The implemented v1 wire is hello -> status. Later owners add their types
+// The implemented v1 wire is hello -> status + state. Later owners add their types
 // here when both endpoints consume them. A line excludes its LF delimiter.
 var MAX_LINE_BYTES = 256 * 1024;
 
@@ -74,6 +75,14 @@ function accept(line, direction) {
         if (direction !== "daemon") fail("direction-status");
         keys(message, ["v", "type", "gen", "revision", "daemon"], "status");
         if (message.daemon !== "ready" && message.daemon !== "locked") fail("daemon");
+        break;
+    case "state":
+        if (direction !== "daemon") fail("direction-state");
+        keys(message, ["v", "type", "gen", "revision", "seq", "state", "phase"], "state");
+        if (!Number.isSafeInteger(message.seq) || message.seq < 1) fail("sequence");
+        if (!Session.validate(message.state)) fail("state");
+        if (message.state.gen !== message.gen) fail("state-generation");
+        if (message.phase !== Session.phaseOf(message.state)) fail("phase");
         break;
     default:
         fail("type");

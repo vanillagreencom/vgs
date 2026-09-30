@@ -42,9 +42,26 @@ async function inside() {
         } finally { clearTimeout(timeout); if (child.exitCode === null) child.kill("SIGKILL"); }
     }
     const reply = locked => ({ v: 1, type: "status", gen: 0, revision: hello.revision, daemon: locked ? "locked" : "ready" });
-    await run(daemon, [JSON.stringify(hello) + "\n"], 0, null, [reply(false)]);
+    function states(locks) {
+        let seq = 0;
+        const lines = [];
+        for (const locked of locks) {
+            lines.push(reply(locked));
+            lines.push({ v: 1, type: "state", gen: 0, revision: hello.revision,
+                seq: ++seq, state: {
+                    gen: 0, nextOp: 1, stale: 0, settings: {},
+                    gate: { kind: "down", reason: locked ? "locked" : "unconfigured" },
+                    mute: { kind: "off" }, capture: { kind: "closed" }, turn: { kind: "none" },
+                    playback: { kind: "idle" }, action: { kind: "none" }, approval: { kind: "none" }, fault: { kind: "none" },
+                    conversation: { kind: "ended" }, input: { kind: "released" }, indicator: { kind: "gone" },
+                    duplex: { kind: "half" }, toggleAt: null
+                }, phase: "down" });
+        }
+        return lines;
+    }
+    await run(daemon, [JSON.stringify(hello) + "\n"], 0, null, states([false]));
     await run(daemon, [JSON.stringify(hello).slice(0, 20), JSON.stringify(hello).slice(20) + "\n",
-        JSON.stringify({ ...hello, locked: true }) + "\n"], 0, null, [reply(false), reply(true)]);
+        JSON.stringify({ ...hello, locked: true }) + "\n"], 0, null, states([false, true]));
     await run(daemon, [], 0);
     await run(daemon, ["{}\n"], 65, "jarvis: protocol=version");
     await run(daemon, [JSON.stringify(hello)], 65, "jarvis: protocol=unterminated-line");
@@ -68,6 +85,8 @@ async function inside() {
         const copyDir = path.join(root, name);
         fs.mkdirSync(path.join(copyDir, "backend"), { recursive: true });
         fs.writeFileSync(path.join(copyDir, "JarvisProtocol.js"), protocol);
+        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"), path.join(copyDir, "Session.js"));
+        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/session-runner.js"), path.join(copyDir, "backend/session-runner.js"));
         const copy = path.join(copyDir, "backend/jarvisd.js");
         fs.writeFileSync(copy, source.replace(needle, replacement));
         await assert.rejects(() => check(copy), assert.AssertionError, name + " must turn red");
@@ -78,7 +97,11 @@ async function inside() {
         file => run(file, [], 0));
     await control("hello", 'if (!process.stdout.write(wire + "\\n")) process.stdin.pause();',
         'if (false && !process.stdout.write(wire + "\\n")) process.stdin.pause();',
-        file => run(file, [JSON.stringify(hello) + "\n"], 0, null, [reply(false)]));
+        file => run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false])));
+    await control("session-forward", "locked: context.locked,", "locked: false,",
+        file => run(file, [JSON.stringify({ ...hello, locked: true }) + "\n"], 0, null, states([true])));
+    await control("state-publish", 'if (!ending && context !== null) write(', 'if (false && !ending && context !== null) write(',
+        file => run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false])));
     await control("node-floor", floorNeedle, 'Object.defineProperty(process.versions, "node", { value: "21.0.0" });\nif (false)',
         file => run(file, [], 78, "jarvis: node=21.0.0 need=22"));
     console.log("test-jarvis-daemon: ok cases=" + cases + " controls=" + controls);

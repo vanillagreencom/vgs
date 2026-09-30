@@ -318,6 +318,10 @@ cases=(
   "jarvis-policy-input|shell/plugins/vgs.jarvis/backend/Policy.js|logic|node scripts/test-jarvis-policy.js"
   "jarvis-denied-input|shell/plugins/vgs.jarvis/backend/Denied.js|logic|node scripts/test-jarvis-policy.js"
   "jarvis-denied-cli-input|shell/plugins/vgs.jarvis/backend/Denied.js|cli|node scripts/test-jarvis-denied.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
+  "jarvis-session-suite|scripts/test-jarvis-session.js|offline|node scripts/test-jarvis-session.js"$'\n'"$repo_plan"
+  "jarvis-owner-suite|scripts/test-jarvis-session-runner.js|offline|node scripts/test-jarvis-session-runner.js"$'\n'"$repo_plan"
+  "jarvis-session|shell/plugins/vgs.jarvis/Session.js|logic|node scripts/test-jarvis-session.js"$'\nnode scripts/test-jarvis-session-runner.js\nnode scripts/test-jarvis-protocol.js'
+  "jarvis-owner|shell/plugins/vgs.jarvis/backend/session-runner.js|logic|node scripts/test-jarvis-session-runner.js"
   "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"
   "session|shell/Core/SessionLock.qml|all|$session_plan"
   "fixture|scripts/smoke/fixtures/plugins/acme.contention/Background.qml|all|$fixture_plan"

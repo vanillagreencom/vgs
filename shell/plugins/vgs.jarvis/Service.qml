@@ -12,7 +12,8 @@ Item {
     property string outputTail: ""
     property string errorTail: ""
     property string cause: ""
-    readonly property bool locked: shell === null || shell.session.locked
+    property var sessionState: null
+    readonly property bool locked: lockObservation()
     readonly property string daemon: String(Qt.resolvedUrl("backend/jarvisd.js")).replace(/^file:\/\//, "")
 
     onShellChanged: {
@@ -21,6 +22,10 @@ Item {
         else hello();
     }
     onLockedChanged: hello()
+
+    function lockObservation() {
+        return shell === null || shell.session === undefined || shell.session.locked !== false;
+    }
 
     function publish(tone, text) {
         const reply = shell.status.set("daemon", { tone: tone, text: text });
@@ -32,6 +37,9 @@ Item {
         outputTail = "";
         errorTail = "";
         cause = "";
+        sessionState = null;
+        const result = shell.status.set("detail", null);
+        if (result !== "ok") throw new Error("jarvis: " + result);
         child.completion = null;
         child.stdinEnabled = true;
         publish("info", "Starting");
@@ -43,7 +51,7 @@ Item {
                 || (lifetime.kind !== "starting" && lifetime.kind !== "ready")) return;
         const home = Quickshell.env("HOME");
         const message = {
-            v: 1, type: "hello", gen: 0,
+            v: 1, type: "hello", gen: sessionState === null ? 0 : sessionState.gen,
             settings: shell.settings,
             directories: {
                 state: Paths.stateDir + "/jarvis",
@@ -51,7 +59,7 @@ Item {
                 runtime: Quickshell.env("XDG_RUNTIME_DIR") + "/vgs/jarvis"
             },
             revision: shell.manifest.__revision,
-            locked: shell.session.locked,
+            locked: lockObservation(),
             keys: {}
         };
         const wire = JSON.stringify(message);
@@ -75,11 +83,20 @@ Item {
             outputTail = framed.tail;
             for (const line of framed.lines) {
                 const message = Protocol.accept(line, "daemon");
-                if (message.gen !== 0 || message.revision !== shell.manifest.__revision)
+                if (message.revision !== shell.manifest.__revision)
                     throw new Error("jarvis: protocol=identity");
+                if (message.type === "state") {
+                    // An ordered old lock snapshot can precede the latest
+                    // hello's answer. Do not publish it as current state.
+                    if ((message.state.gate.reason === "locked") !== lockObservation()) continue;
+                    sessionState = message.state;
+                    const result = shell.status.set("detail", { phase: message.phase, seq: message.seq, state: message.state });
+                    if (result !== "ok") throw new Error("jarvis: " + result);
+                    continue;
+                }
                 // An earlier snapshot can answer after the observed lock
                 // changed. Wait for the current snapshot's ordered reply.
-                if (message.daemon !== (shell.session.locked ? "locked" : "ready")) continue;
+                if (message.daemon !== (lockObservation() ? "locked" : "ready")) continue;
                 lifetime = { kind: "ready" };
                 helloDeadline.stop();
                 publish("info", message.daemon === "locked" ? "Locked; no capture" : "Ready; no capture");

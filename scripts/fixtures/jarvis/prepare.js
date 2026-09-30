@@ -14,6 +14,7 @@ function freshSuite(tree, suite, root) {
         fs.mkdirSync(path.join(clone, folder), { recursive: true });
     for (const file of [relative, "scripts/fixtures/jarvis/prepare.js", "scripts/lib/jarvis-env.sh",
         "bin/lib/qml-library.js", "shell/plugins/vgs.jarvis/JarvisProtocol.js",
+        "shell/plugins/vgs.jarvis/Session.js", "shell/plugins/vgs.jarvis/backend/session-runner.js",
         "shell/plugins/vgs.jarvis/backend/jarvisd.js"])
         fs.copyFileSync(path.join(tree, file), path.join(clone, file));
     const file = path.join(clone, relative);

@@ -172,6 +172,26 @@ else:
 '
 }
 
+jarvis_session() { # EXPECTED_GATE_REASON
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+d=json.load(sys.stdin)["status"].get("detail")
+if d is None:
+    print("pending")
+else:
+    s=d["state"]
+    ok=(d["phase"] == "down" and d["seq"] >= 1 and s["gate"] == {"kind":"down","reason":sys.argv[1]}
+        and s["capture"] == {"kind":"closed"} and s["action"] == {"kind":"none"} and s["gen"] == 0)
+    print("session" if ok else "wrong-session")
+' "$1"
+}
+
+jarvis_session_assertion() {
+  (failures=0 behaviour_failures=0
+   expect_poll "the service consumes the real Session state" session jarvis_session unconfigured >"$sandbox/jarvis-session-control-assertions.log"
+   echo "$failures")
+}
+
 jarvis_seen_hello() {
   [[ -s $jarvis_seen ]] && echo seen || echo pending
 }
@@ -198,20 +218,45 @@ jarvis_lock_case() { # EXPECTED
   expect_poll "the compositor confirms the fixture lock" true read_service lockSecure
   : >"$jarvis_gate"
   expect_poll "startup keeps the current lock snapshot without restarting" "$1" jarvis_lock_answer
+  if [[ $1 == "Locked; no capture" ]]; then
+    expect_poll "the reducer observes lock without capture" session jarvis_session locked
+  fi
   expect "the fixture unlocks without authentication" ok probe unlock
   if [[ $1 == "Locked; no capture" ]]; then
+    expect_poll "the reducer observes unlock without capture" session jarvis_session unconfigured
     expect_poll "the running daemon observes unlock" "Ready; no capture" jarvis_lock_answer
   fi
   expect "the gated service disables" ok ipc shell setPluginEnabled vgs.jarvis false
 }
 
 jarvis_enable
+expect_poll "the healthy skeleton keeps the Session gate unconfigured" session jarvis_session unconfigured
 jarvis_disable
 
 jarvis_service="$repo/shell/plugins/vgs.jarvis/Service.qml"
 jarvis_backend="$repo/shell/plugins/vgs.jarvis/backend/jarvisd.js"
 cp -- "$jarvis_service" "$sandbox/jarvis-service-original"
 cp -- "$jarvis_backend" "$sandbox/jarvis-backend-original"
+# The control keeps the receive branch but removes its publication. The
+# ordinary state read, not a text pin, must fail on this disposable copy.
+python3 - "$jarvis_service" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+needle='const result = shell.status.set("detail", { phase: message.phase, seq: message.seq, state: message.state });'
+assert s.count(needle)==1
+changed=s.replace(needle, needle.replace("= shell.status", "= false ? shell.status").replace(" });", ' }) : "ok";'))
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+jarvis_enable
+expect "removing Session publication breaks its real consumer assertion" 1 jarvis_session_assertion
+jarvis_disable
+cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+jarvis_rescan
+
 jarvis_drop="$sandbox/jarvis-dropped-first-reply"
 "$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --drop-initial-replies "$jarvis_backend" "$jarvis_drop"
 jarvis_rescan

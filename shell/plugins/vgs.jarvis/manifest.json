@@ -14,6 +14,7 @@
     { "command": "node", "packages": { "pacman": "nodejs", "apt": "nodejs", "dnf": "nodejs" }, "optional": false, "purpose": "Runs the Jarvis daemon, which requires Node 22 or later" }
   ],
   "status": {
-    "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." }
+    "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },
+    "detail": { "type": "data", "label": "Session" }
   }
 }
