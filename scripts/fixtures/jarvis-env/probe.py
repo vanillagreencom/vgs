@@ -119,7 +119,7 @@ elif mode == "path":
     # Expected command set, independent of the helper's declaration.
     assert {p.name for p in (root / "tools").iterdir()} == {
         "bash", "sh", "env", "node", "python3", "cat", "mkdir", "rm", "cp", "mv",
-        "ln", "chmod", "sleep", "readlink", "dirname", "basename", "stat", "grep",
+        "ln", "chmod", "sleep", "flock", "readlink", "dirname", "basename", "stat", "grep",
         "sed", "awk", "sort", "cut", "wc", "true", "false", "timeout", "gdbus", "tmux",
     }
     for name in ("pw-record", "pw-cat", "pipewire", "wpctl", "hyprctl", "qs",

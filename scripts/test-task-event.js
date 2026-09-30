@@ -76,6 +76,8 @@ async function inside() {
     const goal = { goal: "Synthetic goal", cwd: path.join(root, "home"), agent: "fixture", account: "" };
     assert.deepEqual(JSON.parse(run(engine, "one", "create", JSON.stringify(goal)).stdout), { accepted: true, id: "one" });
     assert.equal(store.read("one").engine, engine);
+    run(engine, "multiline", "create", JSON.stringify({ ...goal, goal: "Fixture goal\nSecond line\t語" }));
+    assert.equal(new Tasks.Store(state).read("multiline").goal, "Fixture goal\nSecond line\t語");
     assert.deepEqual(JSON.parse(run(engine, "one", "started", '{"pid":123,"pgid":123,"startTime":"456"}').stdout),
         { accepted: true, id: "one", seq: 1 });
     run(engine, "one", "wait", '{"kind":"question"}');

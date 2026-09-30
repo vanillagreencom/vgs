@@ -32,7 +32,7 @@ node DATA_ENGINE/task-event --state ABSOLUTE_JARVIS_STATE --prune
 
 Each invocation reads one JSON object from stdin. Empty input means an empty object. `Tasks.js::eventData` is the sole kind and payload judge. `Tasks.js::metadata` fixes the task record. The command header fixes stdout and exit status. Its internal `--locked` mode belongs only to its lock-held child, not to producers.
 
-Creation takes the goal, absolute working directory, agent name and account reference. An empty account means no selected account. It stores no credential. The goal's release and handoff approval belong to J53's policy path before creation. Writing a record does not grant either approval.
+Creation takes the goal, absolute working directory, agent name and account reference. The non-empty goal string can contain line breaks and tabs. The record preserves them as JSON text, not shell code. An empty account means no selected account. It stores no credential. The goal's release and handoff approval belong to J53's policy path before creation. Writing a record does not grant either approval.
 
 Profiles report a question or permission as a wait event. Stop reports only a turn end. Resuming reports wait none and a working turn separately. Failure reports its cause kind. The agent reports an outcome explicitly. The record command does not interpret vendor hook input, supply a hook answer or hold a permission request.
 

@@ -63,6 +63,10 @@ function inside() {
     append("question-stop", "alive");
     assert.deepEqual(store.read("question-stop").identity, started);
     assert.deepEqual(store.read("exit-without-outcome").identity, started);
+    const multilineGoal = "Fixture goal\nSecond line\t語";
+    store.create("multiline", { ...data, goal: multilineGoal }, engine);
+    assert.equal(new Tasks.Store(state).read("multiline").goal, multilineGoal);
+    assert.throws(() => store.create("empty-goal", { ...data, goal: "" }, engine), /tasks=task-record/);
 
     function control(name, needle, replacement, check) {
         const source = fs.readFileSync(file, "utf8");
@@ -166,6 +170,9 @@ function inside() {
         const dataRoot = path.join(root, "data/engine-control");
         const published = logic.publish(dataRoot, path.dirname(file));
         assert.equal(path.relative(dataRoot, published).startsWith(".."), false);
+    });
+    control("goal-input", 'typeof record.goal !== "string" || record.goal.length === 0', '!text(record.goal)', logic => {
+        assert.doesNotThrow(() => new logic.Store(state).create("goal-control", { ...data, goal: multilineGoal }, engine));
     });
     const diskGates = [
         ["event-version", '|| record.v !== 1\n        || record.seq !== seq', '|| false\n        || record.seq !== seq',

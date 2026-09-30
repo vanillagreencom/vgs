@@ -121,7 +121,7 @@ function eventRecord(record, seq) {
 
 function metadata(record, id) {
     if (!shape(record, ["v", "id", "goal", "cwd", "agent", "account", "createdAt", "engine"]) || record.v !== 1
-        || record.id !== id || !text(record.goal) || !text(record.agent)
+        || record.id !== id || typeof record.goal !== "string" || record.goal.length === 0 || !text(record.agent)
         || typeof record.account !== "string" || /[\x00-\x1f\x7f]/.test(record.account)
         || !Number.isSafeInteger(record.createdAt) || record.createdAt < 0) fail("task-record");
     absolute(record.cwd);

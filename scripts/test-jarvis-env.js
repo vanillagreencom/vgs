@@ -394,6 +394,8 @@ async function main() {
         mutation("path-fallback", 'PATH="$root/standins:$root/tools"', 'PATH="$root/standins:$root/tools:$PATH"', missingStandin);
         mutation("auth-path-fallback", 'PATH="$root/standins:$root/tools"', 'PATH="$root/standins:$root/tools:$PATH"', missingAuth);
         mutation("allow-list", "timeout gdbus)", "timeout gdbus uname)", file => good(file, "path"));
+        mutation("flock-lookup", 'case "$tool" in\n      unshare|ip|dbus-daemon|tmux)',
+            'case "$tool" in\n      flock) : ;;\n      unshare|ip|dbus-daemon|tmux)', file => good(file, "path"));
         mutation("network", "-rn --pid", "-r --pid", outbound, 2);
         mutation("child-namespace", "--pid --fork --mount-proc --kill-child --", "--",
             file => good(file, "namespace", ...parentNamespaces), 2);
