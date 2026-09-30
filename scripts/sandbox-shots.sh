@@ -15,8 +15,8 @@
 #
 # SCENE is gallery, settings, manager, launcher, notifications, bar,
 # panels, devtools, dialog, lock, polkit, narrow, theme-browser or
-# wallpaper-browser. settings takes the automations' page among the
-# plugin pages, when the tree ships vgs.automations. bar
+# wallpaper-browser. settings takes the automations' and the Jarvis
+# pages among the plugin pages, each when the tree ships its plugin. bar
 # is the bar with every first-party widget and each widget's tooltip or
 # hover; panels is the Agent Warden panel and the updates
 # flyout, each opened from its widget over planted status; devtools is the
@@ -78,7 +78,10 @@
 # went live and no authentication helper ran. The Settings scene enables
 # vgs.automations over the harness's automations_stand_ins for its page's
 # shot, so no call reaches the host's systemd user manager, and disables it
-# again.
+# again. It enables vgs.jarvis for its page's shot, once the daemon
+# answers, over the J09 world the harness prepares for every sandbox
+# (scripts/smoke/harness.sh), so the child reaches no audio, account,
+# network or desktop, and disables it again.
 # --hidden refuses every shot not taken with the nested window hidden on
 # the host (SHOT_WINDOW_REQUIRE in scripts/smoke/shot.sh), so a run that
 # exits 0 proves each shot's frame arrived while the window was hidden.
@@ -261,8 +264,10 @@ settings_surface="$(summoned_surface "$settings_kind" Settings)"
 has_agent_warden=false
 has_bar_plugin=false
 has_automations=false
+has_jarvis=false
 [[ -f $tree/shell/plugins/vgs.agent-warden/manifest.json ]] && has_agent_warden=true
 [[ -f $tree/shell/plugins/vgs.automations/manifest.json ]] && has_automations=true
+[[ -f $tree/shell/plugins/vgs.jarvis/manifest.json ]] && has_jarvis=true
 [[ -f $tree/shell/plugins/vgs.bar/manifest.json ]] && has_bar_plugin=true
 settings_count() { surface_count "$settings_surface"; }
 
@@ -508,10 +513,17 @@ print(0 if most <= 0 or travel <= 0 else round((max(0, min(want, most)) - a["con
 page_reported() { # ID
   ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]]; print(len(r) == 1 and len(r[0]["status"]) > 0 and all(s["report"] == "reported" for s in r[0]["status"]))' "$1"
 }
+# `ready` once the Jarvis service's first child has answered hello, as the
+# probe reads it (jarvisProcess in scripts/smoke/Probe.qml); a restart
+# never counts.
+jarvis_started() { ipc smoke jarvisProcess | py_reply 'import json,sys; d=json.load(sys.stdin); print("ready" if d["retries"] == 0 and d["lifetime"]["kind"] == "ready" else "retries=%d kind=%s" % (d["retries"], d["lifetime"]["kind"]))'; }
+# Whether the Jarvis page's Status rows draw its Daemon row as ready.
+jarvis_page_ready() { ipc smoke itemTexts "$settings_kind" vgs.settings StatusRow | py_reply 'import json,sys; print(any("Daemon" in r and "Ready; no capture" in r for r in json.load(sys.stdin)))'; }
 # The Settings window: the list opened from the gear, the pointer on the
 # gear; a search nothing matches; a plugin page with many grouped settings at its top, dragged down
 # its scroll bar, and with its Mode select open; a plugin with keys; the
-# automations' page at its Status section; the
+# automations' page at its Status section; the Jarvis page with its
+# daemon ready; the
 # title's menu open with its scroll bar under the pointer; the notifications' page scrolled to its
 # Slack token rows, over two shots when they are taller than the page; and
 # the list and a page on a monitor narrower than the window's width token.
@@ -618,6 +630,23 @@ scene_settings() { # MODE
     expect "disabling vgs.automations is allowed" ok ipc shell setPluginEnabled vgs.automations false
     expect_poll "vgs.automations is gone" False record_exists vgs.automations
     automations_stand_ins_restore "$sandbox/shots-automations-$1"
+  fi
+  # The Jarvis page at its top, the daemon's status reported: the plugin
+  # enabled over the J09 world the harness prepares for every sandbox, as
+  # rows/jarvis.sh enables it, so the child reaches no audio, account,
+  # network or desktop; disabled again after the shot.
+  if "$has_jarvis"; then
+    expect "enabling vgs.jarvis is allowed" ok ipc shell setPluginEnabled vgs.jarvis true
+    expect_poll "the Jarvis daemon answers hello without a restart" ready jarvis_started
+    expect "the window opens the Jarvis page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.jarvis
+    expect_poll "the Jarvis page is shown" '"vgs.jarvis"' settings_page
+    expect_poll "the Jarvis page shows its daemon ready" True jarvis_page_ready
+    settings_scroll_to 0 >/dev/null || fail "the Jarvis page did not scroll to the top"
+    expect_poll "the Jarvis page is at its top" True settings_at_top
+    park_pointer
+    take "settings-$1-jarvis"
+    expect "disabling vgs.jarvis is allowed" ok ipc shell setPluginEnabled vgs.jarvis false
+    expect_poll "vgs.jarvis is gone" absent ipc smoke jarvisProcess
   fi
   expect "the window opens the launcher's page again" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
   expect_poll "the launcher's page is shown again" '"vgs.launcher"' settings_page
