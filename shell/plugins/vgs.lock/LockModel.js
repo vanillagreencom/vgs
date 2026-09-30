@@ -1,34 +1,9 @@
 .pragma library
 
-// Pure decisions for vgs.lock: whether Hyprland holds a session lock no
-// client of this shell took, the line under the password field, the sleep
+// Pure decisions for vgs.lock: the line under the password field, the sleep
 // watcher's protocol and the status the service publishes. QML owns the
 // lock, PAM, the processes and the password; the password never passes
 // through here.
-
-// `hyprctl -j monitors` TEXT read for a session lock: "locked" when a
-// monitor names LOCK among the reasons it cannot go solitary, which
-// Hyprland keeps while an ext-session-lock holds, its client dead or not;
-// "unlocked" when a monitor that has a workspace names none, since Hyprland
-// stops at the first reason and a monitor still coming up reports
-// WORKSPACE before it would reach LOCK; "unknown" otherwise, unreadable
-// text included. Omarchy's bin/omarchy-hyprland-session-locked reads it so.
-function sessionLockState(text) {
-    var monitors;
-    try {
-        monitors = JSON.parse(String(text));
-    } catch (e) {
-        return "unknown";
-    }
-    if (!Array.isArray(monitors)) return "unknown";
-    var readable = false;
-    for (var i = 0; i < monitors.length; i++) {
-        var blockers = monitors[i] !== null && typeof monitors[i] === "object" && Array.isArray(monitors[i].solitaryBlockedBy) ? monitors[i].solitaryBlockedBy : [];
-        if (blockers.indexOf("LOCK") !== -1) return "locked";
-        if (blockers.indexOf("WORKSPACE") === -1) readable = true;
-    }
-    return readable ? "unlocked" : "unknown";
-}
 
 // The pause pam_faillock takes in PAM TEXT, the plugin's pam/vgs-lock
 // stack: { deny, unlockSeconds } from the `authfail` line's `deny=` and

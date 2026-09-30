@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import qs.Commons
 
 // Owns the requested lock and its content. The content belongs to one plugin
 // instance; the lock itself survives that instance until explicitly unlocked.
@@ -79,23 +80,11 @@ Scope {
     // VGS layer sets, lets another client's lock replace this one and sends
     // this one nothing; that client's unlock then unlocks the session
     // (`CSessionLockManager::onNewSessionLock`, `CSessionLock`'s
-    // unlock_and_destroy). A monitor names LOCK among the reasons it cannot
-    // go solitary while any session lock holds; one with no workspace
-    // names only WORKSPACE and says nothing. Two readings in a row in which
-    // a monitor with a workspace is readable and none names LOCK end the
-    // lock as the compositor's; any other reading starts the count again.
+    // unlock_and_destroy). Two readings in a row that SessionLockState
+    // reads as unlocked end the lock as the compositor's; any other
+    // reading starts the count again.
     function compositorReading(text) {
-        let monitors = null;
-        try {
-            monitors = JSON.parse(String(text));
-        } catch (e) {
-            monitors = null;
-        }
-        const reasons = (Array.isArray(monitors) ? monitors : [])
-            .map(m => m !== null && typeof m === "object" && Array.isArray(m.solitaryBlockedBy) ? m.solitaryBlockedBy : []);
-        const unlocked = lockSecure
-            && reasons.some(r => r.indexOf("WORKSPACE") === -1)
-            && !reasons.some(r => r.indexOf("LOCK") !== -1);
+        const unlocked = lockSecure && SessionLockState.read(text) === "unlocked";
         unlockedReadings = unlocked ? unlockedReadings + 1 : 0;
         if (unlockedReadings >= 2) compositorEnded("unlocked-elsewhere");
     }

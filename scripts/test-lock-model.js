@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Table-driven checks for vgs.lock's pure decisions, LockModel.js: the
-// stranded-lock reading of `hyprctl -j monitors`, the pam_faillock pause
+// pam_faillock pause
 // read from the shipped stack, the line under the password field, the sleep
 // hook's protocol lines, the sleep, lastSleep and lock statuses.
 // Expected values are written by hand. Controls edit a copy of the module,
@@ -15,27 +15,8 @@ const { load } = require("../bin/lib/qml-library.js");
 const file = path.join(__dirname, "..", "shell", "plugins", "vgs.lock", "LockModel.js");
 const stack = fs.readFileSync(path.join(__dirname, "..", "shell", "plugins", "vgs.lock", "pam", "vgs-lock"), "utf8");
 const same = (got, want, message) => assert.deepEqual(JSON.parse(JSON.stringify(got)), JSON.parse(JSON.stringify(want)), message || "");
-const monitors = (...blockers) => JSON.stringify(blockers.map((b, i) => ({ name: "DP-" + i, solitaryBlockedBy: b })));
 
 function verify(model) {
-    // Hyprland v0.56.2 names LOCK while an ext-session-lock holds; a monitor
-    // still coming up names WORKSPACE first and says nothing of the lock.
-    const LOCKS = [
-        ["a monitor naming LOCK", monitors(["WINDOWED", "LOCK"]), "locked"],
-        ["LOCK on the second monitor", monitors(["WINDOWED", "CANDIDATE"], ["LOCK"]), "locked"],
-        ["monitors naming other reasons", monitors(["WINDOWED", "CANDIDATE"], ["WINDOWED"]), "unlocked"],
-        ["a monitor with no reason", monitors([]), "unlocked"],
-        ["only monitors with no workspace", monitors(["WORKSPACE"]), "unknown"],
-        ["one monitor with no workspace beside a readable one", monitors(["WORKSPACE"], ["WINDOWED"]), "unlocked"],
-        ["a monitor with no reason list", JSON.stringify([{ name: "DP-1" }]), "unlocked"],
-        ["no monitor", "[]", "unknown"],
-        ["not a list", "{}", "unknown"],
-        ["a JSON string, which has a length", JSON.stringify("DP-1"), "unknown"],
-        ["unparseable text", "hyprctl: no instance", "unknown"],
-        ["a null monitor", "[null]", "unlocked"]
-    ];
-    for (const [label, text, want] of LOCKS) assert.equal(model.sessionLockState(text), want, label);
-
     // The shipped stack is Omarchy's: ten failures, then two minutes.
     same(model.faillockPolicy(stack), { deny: 10, unlockSeconds: 120 }, "the shipped stack's pause");
     const POLICIES = [
@@ -109,10 +90,6 @@ function verify(model) {
 verify(load(file));
 
 const CONTROLS = [
-    ["LOCK reads locked", 'if (blockers.indexOf("LOCK") !== -1) return "locked";', ""],
-    ["a monitor with no workspace answers nothing", 'if (blockers.indexOf("WORKSPACE") === -1) readable = true;', "readable = true;"],
-    ["unparseable text is unknown", '        return "unknown";\n    }\n    if (!Array.isArray', '        return "unlocked";\n    }\n    if (!Array.isArray'],
-    ["a list of monitors is required", "if (!Array.isArray(monitors)) return \"unknown\";", ""],
     ["PAM's message wins", 'if (text !== "") return text;', ""],
     ["the pause starts at deny", "failures >= policy.deny", "failures > policy.deny"],
     ["the pause is read from the authfail line", "!/\\bauthfail\\b/.test(line)", "false"],

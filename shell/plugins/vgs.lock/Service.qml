@@ -235,7 +235,7 @@ Item {
         command: ["hyprctl", "-j", "monitors"]
         stdout: StdioCollector { id: strandedOut; waitForEnd: true }
         onExited: code => {
-            const state = code === 0 ? LockModel.sessionLockState(strandedOut.text) : "unknown";
+            const state = code === 0 ? SessionLockState.read(strandedOut.text) : "unknown";
             if (state === "unknown" && root.strandedTries > 0) {
                 root.strandedTries -= 1;
                 strandedRetry.restart();
