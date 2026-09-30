@@ -1,0 +1,63 @@
+#!/usr/bin/env node
+// Producer contract: node DATA_ENGINE/task-event --state ABS ID KIND.
+// Startup recovery: node DATA_ENGINE/task-event --state ABS --prune.
+// KIND=create takes {goal,cwd,agent,account}; other kinds take Tasks.js data.
+// Stdin is one JSON object, at most 8192 bytes; empty stdin means {}.
+// Stdout: {accepted,id,seq?} or {accepted:false,id,noisy:true,reason}.
+// Exit 0: committed. 75: overflow dropped or writer busy. 65: argv/stdin JSON.
+// Exit 74: record shape, store/parse/I/O failure. No hook response or control.
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const cp = require("node:child_process");
+const Tasks = require("./Tasks.js");
+
+async function main() {
+    const args = process.argv.slice(2);
+    const worker = args[0] === "--locked";
+    if (worker) args.shift();
+    const pruning = args.length === 3 && args[2] === "--prune";
+    if ((!pruning && args.length !== 4) || args[0] !== "--state" || !path.isAbsolute(args[1])) {
+        process.stderr.write("jarvis: task-event=arguments\n");
+        return 65;
+    }
+    const [ , state, id, kind ] = args;
+    const store = new Tasks.Store(state);
+    // The launcher and its worker both bound input before retaining it.
+    let input = Buffer.alloc(0), oversized = false;
+    for await (const chunk of process.stdin) {
+        if (input.length + chunk.length > 8192) { oversized = true; input = Buffer.alloc(0); break; }
+        input = Buffer.concat([input, chunk]);
+    }
+    if (!worker) {
+        const result = cp.spawnSync("flock", ["-w", "5", "-E", "75", "--", store.lock,
+            process.execPath, __filename, "--locked", ...args], {
+            input: oversized ? Buffer.alloc(8193, 32) : input,
+            env: { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" },
+            encoding: "utf8", maxBuffer: 8192
+        });
+        if (result.error) throw result.error;
+        if (result.signal !== null) throw new Error("jarvis: task-event=writer-signal value=" + result.signal);
+        process.stdout.write(result.stdout);
+        process.stderr.write(result.stderr);
+        if (result.status === 75 && result.stderr === "") process.stderr.write("jarvis: task-event=writer-busy\n");
+        return result.status;
+    }
+    let data = {};
+    if (!oversized && input.length > 0) {
+        try { data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(input)); }
+        catch (error) { process.stderr.write("jarvis: task-event=input-json\n"); return 65; }
+    }
+    if (oversized && kind === "create") { process.stderr.write("jarvis: task-event=create-bytes\n"); return 65; }
+    const result = pruning ? { accepted: true, pruned: store.prune() }
+        : kind === "create" ? store.create(id, data, __filename) : store.append(id, kind, data, oversized);
+    process.stdout.write(JSON.stringify(result) + "\n");
+    if (!result.accepted) process.stderr.write("jarvis: task-event=overflow id=" + id + " reason=" + result.reason + "\n");
+    return result.accepted ? 0 : 75;
+}
+
+main().then(code => { process.exitCode = code; }).catch(error => {
+    process.stderr.write(error.message.startsWith("jarvis:") ? error.message + "\n"
+        : "jarvis: task-event=io cause=" + (error.code || error.message) + "\n");
+    process.exitCode = 74;
+});

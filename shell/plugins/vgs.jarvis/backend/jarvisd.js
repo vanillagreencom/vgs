@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // jarvisd --tree ABSOLUTE_VGS_TREE
 // Stdin is the service's lease. EOF exits 0; a partial line or a refused
-// message exits 65. Node below 22 exits 78. Stdout carries v1 status/state
+// message exits 65. Task-store failure exits 74. Node below 22 exits 78.
+// Stdout carries v1 status/state
 // messages judged by JarvisProtocol; stderr carries keyed jarvis: failures.
-// This skeleton opens no file store, socket, account or audio device.
+// Startup validates coding-task records and publishes their durable producer.
+// It opens no socket, account or audio device and starts no coding task.
 "use strict";
 const path = require("node:path");
 const { StringDecoder } = require("node:string_decoder");
+const Tasks = require("./Tasks.js");
+const cp = require("node:child_process");
 
 function refuse(code, reason) {
     process.stderr.write(reason + "\n");
@@ -48,6 +52,19 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             tail = framed.tail;
             for (const line of framed.lines) {
                 const message = Protocol.accept(line, "shell");
+                if (context === null) {
+                    const engine = Tasks.publish(message.directories.data, __dirname);
+                    // A crash between an exit record and prune can leave an
+                    // extra ended task. Recovery uses the same locked writer.
+                    const recovered = cp.spawnSync(process.execPath,
+                        [engine, "--state", message.directories.state, "--prune"], {
+                            env: { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" },
+                            encoding: "utf8", maxBuffer: 8192
+                        });
+                    if (recovered.error) throw new Error("jarvis: tasks=recovery:" + recovered.error.code);
+                    if (recovered.status !== 0) throw new Error("jarvis: tasks=recovery status="
+                        + recovered.status + " signal=" + recovered.signal + " cause=" + recovered.stderr.trim());
+                }
                 context = message;
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,
                     daemon: context.locked ? "locked" : "ready" });
@@ -59,7 +76,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         } catch (error) {
             ending = true;
             runner.close();
-            refuse(65, error.message);
+            refuse(error.message.startsWith("jarvis: tasks=") ? 74 : 65, error.message);
         }
     }
     process.stdout.on("drain", () => { if (!ending) process.stdin.resume(); });

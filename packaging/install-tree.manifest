@@ -194,6 +194,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Policy.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Secrets.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Speakable.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/SpeechLanguage.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Tasks.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/jarvisd.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/keys.js
@@ -207,6 +208,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/lang/en.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/lang/es.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/speech.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/turns.md
+f share/vgs/shell/plugins/vgs.jarvis/backend/task-event
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/PROVENANCE
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/probe.txt
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/probe.wav

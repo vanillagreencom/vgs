@@ -1,0 +1,286 @@
+#!/usr/bin/env node
+// Synthetic records from Tasks.js v1 and the Jarvis plan, 2026-09-30.
+// No vendor recording, agent, network, live process probe or desktop API.
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const cp = require("node:child_process");
+const { freshSuite } = require("./fixtures/jarvis/prepare.js");
+const tree = path.resolve(__dirname, "..");
+const file = path.join(tree, "shell/plugins/vgs.jarvis/backend/Tasks.js");
+const Tasks = require(file);
+
+function inside() {
+    const root = process.env.JARVIS_TEST_ROOT;
+    let now = 100, controls = 0;
+    const data = { goal: "Fixture task", cwd: path.join(root, "home"), agent: "fixture", account: "" };
+    const engine = Tasks.publish(path.join(root, "data/jarvis"), path.dirname(file));
+    const state = path.join(root, "state/jarvis");
+    const store = new Tasks.Store(state, () => now++);
+    const create = id => store.create(id, data, engine);
+    const append = (id, kind, payload = {}) => store.append(id, kind, payload);
+    const started = { pid: 123, pgid: 123, startTime: "456" };
+    const cases = [
+        ["question-stop", [["started", started], ["wait", { kind: "question" }], ["turn-ended", {}]],
+            "alive", "turn-ended", "question", "none", "waiting"],
+        ["permission-stop", [["started", started], ["wait", { kind: "permission" }], ["turn-ended", {}]],
+            "alive", "turn-ended", "permission", "none", "waiting"],
+        ["failed-hook", [["started", started], ["turn-failed", { kind: "hook" }], ["turn-ended", {}]],
+            "alive", "turn-failed", "none", "none", "failed"],
+        ["failure", [["started", started], ["turn-failed", { kind: "api" }]],
+            "alive", "turn-failed", "none", "none", "failed"],
+        ["failure-report", [["started", started], ["turn-failed", { kind: "hook" }], ["outcome", { kind: "reported-ok" }]],
+            "alive", "turn-failed", "none", "reported-ok", "failed"],
+        ["exit-without-outcome", [["started", started], ["exited", { code: 0 }]],
+            "exited", "working", "none", "none", "exited"],
+        ["report-ok", [["started", started], ["outcome", { kind: "reported-ok" }], ["exited", { code: 0 }]],
+            "exited", "working", "none", "reported-ok", "reported-ok"],
+        ["report-failed", [["started", started], ["outcome", { kind: "reported-failed" }]],
+            "alive", "working", "none", "reported-failed", "reported-failed"],
+        ["bad-exit", [["started", started], ["outcome", { kind: "reported-ok" }], ["exited", { code: 1 }]],
+            "exited", "working", "none", "reported-ok", "failed"],
+        ["lost", [["started", started], ["lost", {}]],
+            "lost", "working", "none", "none", "lost"],
+        ["idle", [["started", started], ["wait", { kind: "idle" }]],
+            "alive", "working", "idle", "none", "waiting"],
+        ["resumed", [["started", started], ["wait", { kind: "question" }], ["wait", { kind: "none" }], ["working", {}]],
+            "alive", "working", "none", "none", "working"],
+        ["starting", [], "starting", "working", "none", "none", "starting"]
+    ];
+    for (const [id, events, processKind, turn, wait, outcome, stateKind] of cases) {
+        create(id);
+        for (const [kind, payload] of events) append(id, kind, payload);
+        const actual = new Tasks.Store(state).read(id); // New owner, disk only.
+        assert.deepEqual([actual.process.kind, actual.turn.kind, actual.wait.kind, actual.outcome.kind, actual.state],
+            [processKind, turn, wait, outcome, stateKind], id);
+        const disk = fs.readFileSync(path.join(store.root, id, "task.json"), "utf8");
+        assert.equal(Object.hasOwn(JSON.parse(disk), "state"), false);
+    }
+    assert.equal(store.read("exit-without-outcome").process.code, 0);
+    assert.equal(store.read("failure").turn.failure, "api");
+    assert.equal(store.read("question-stop").events[0].data.startTime, "456");
+    append("question-stop", "alive");
+    assert.deepEqual(store.read("question-stop").identity, started);
+    assert.deepEqual(store.read("exit-without-outcome").identity, started);
+
+    function control(name, needle, replacement, check) {
+        const source = fs.readFileSync(file, "utf8");
+        assert.equal(source.split(needle).length - 1, 1, name + " match");
+        const changed = source.replace(needle, replacement);
+        assert.notEqual(changed, source);
+        const copy = path.join(root, name + ".js");
+        fs.writeFileSync(copy, changed);
+        assert.throws(() => check(require(copy)), assert.AssertionError, name + " must turn red");
+        controls++;
+    }
+    const factChecks = [
+        ["question", 'if (facts.turn.kind !== "turn-failed") facts.turn = { kind: "turn-ended" };',
+            'if (facts.turn.kind !== "turn-failed") facts.turn = { kind: "turn-ended" }; facts.wait = { kind: "none" };',
+            logic => assert.equal(new logic.Store(state).read("question-stop").wait.kind, "question")],
+        ["no-outcome", 'return facts.outcome.kind === "reported-ok" ? "reported-ok" : "exited";',
+            'return "reported-ok";',
+            logic => assert.equal(new logic.Store(state).read("exit-without-outcome").state, "exited")],
+        ["hook-failure", 'if (facts.turn.kind === "turn-failed") return "failed";',
+            'if (false) return "failed";',
+            logic => assert.equal(new logic.Store(state).read("failure").state, "failed")],
+        ["nonzero-exit", 'if (facts.process.code !== 0) return "failed";',
+            'if (false) return "failed";',
+            logic => assert.equal(new logic.Store(state).read("bad-exit").state, "failed")]
+    ];
+    for (const row of factChecks) control(...row);
+
+    // Reach the retained event ceiling without running a process per record.
+    create("full");
+    const eventDir = path.join(store.root, "full/events");
+    for (let seq = 1; seq <= 2000; seq++)
+        fs.writeFileSync(path.join(eventDir, String(seq).padStart(4, "0") + ".json"),
+            JSON.stringify({ v: 1, seq, at: seq, kind: "working", data: {} }) + "\n", { mode: 0o600 });
+    assert.deepEqual(append("full", "turn-ended"), { accepted: false, id: "full", noisy: true, reason: "event-count" });
+    assert.equal(store.read("full").events.length, 2000);
+    assert.equal(store.read("full").noisy, true);
+    assert.equal(store.read("full").dropped, 1);
+    assert.equal(store.read("full").state, "noisy");
+    control("noisy-state", 'if (noisy) return "noisy";', 'if (false) return "noisy";',
+        logic => assert.equal(new logic.Store(state).read("full").state, "noisy"));
+    control("event-ceiling", "const MAX_EVENTS = 2000;", "const MAX_EVENTS = 2001;",
+        logic => assert.equal(new logic.Store(state).append("full", "turn-ended", {}).accepted, false));
+    fs.rmSync(path.join(eventDir, "2001.json"), { force: true });
+
+    create("large");
+    assert.equal(append("large", "turn-failed", { kind: "é".repeat(4096) }).accepted, false);
+    assert.equal(store.read("large").events.length, 0);
+    assert.equal(store.read("large").dropped, 1);
+    control("record-ceiling", "const MAX_BYTES = 8192;", "const MAX_BYTES = 16384;",
+        logic => assert.equal(new logic.Store(state).append("large", "turn-failed", { kind: "x".repeat(8192) }).accepted, false));
+    fs.rmSync(path.join(store.root, "large/events/0001.json"), { force: true });
+
+    // Boundary includes the full envelope and LF, not just the payload.
+    const envelope = { v: 1, seq: 1, at: 99, kind: "turn-failed", data: { kind: "" } };
+    const room = 8192 - Buffer.byteLength(JSON.stringify(envelope) + "\n");
+    const boundStore = new Tasks.Store(state, () => 99);
+    assert.equal(boundStore.append("large", "turn-failed", { kind: "x".repeat(room) }).accepted, true);
+    assert.equal(fs.statSync(path.join(store.root, "large/events/0001.json")).size, 8192);
+
+    const badRows = [
+        ["bad-kind", "surprise", {}, "event-kind"],
+        ["bad-wait", "wait", { kind: "maybe" }, "wait"],
+        ["bad-outcome", "outcome", { kind: "success" }, "outcome"],
+        ["bad-pid", "started", { ...started, pid: 0 }, "started"],
+        ["bad-exit", "exited", { code: null }, "exit-code"],
+        ["bad-failure", "turn-failed", { kind: "" }, "failure-kind"],
+        ["extra-empty", "turn-ended", { kind: "question" }, "empty-event"]
+    ];
+    for (const [name, kind, payload, reason] of badRows)
+        assert.throws(() => append("starting", kind, payload), { message: "jarvis: tasks=" + reason }, name);
+    const gates = [
+        ["started", 'fail("started");', "started", { ...started, pid: 0 }, "started"],
+        ["exit", 'fail("exit-code");', "exited", { code: null }, "exit-code"],
+        ["failure-kind", 'fail("failure-kind");', "turn-failed", { kind: "" }, "failure-kind"],
+        ["wait-kind", 'fail("wait");', "wait", { kind: "maybe" }, "wait"],
+        ["outcome-kind", 'fail("outcome");', "outcome", { kind: "success" }, "outcome"],
+        ["empty", 'fail("empty-event");', "turn-ended", { extra: true }, "empty-event"]
+    ];
+    for (const [name, needle, kind, payload, reason] of gates) {
+        control(name, needle, ";", logic => assert.throws(
+            () => new logic.Store(state).append("starting", kind, payload), { message: "jarvis: tasks=" + reason }));
+        // The mutated writer committed its bad record. Restore the neutral task.
+        for (const entry of fs.readdirSync(path.join(store.root, "starting/events")))
+            fs.rmSync(path.join(store.root, "starting/events", entry));
+    }
+    assert.throws(() => store.read("../home"), { message: "jarvis: tasks=id" });
+    assert.throws(() => new Tasks.Store("relative"), { message: "jarvis: tasks=absolute-path" });
+    assert.throws(() => store.create("starting", data, engine), /tasks=task-exists/);
+    assert.throws(() => store.create("bad", { ...data, extra: true }, engine), /tasks=create-shape/);
+    assert.throws(() => store.create("bad", { ...data, cwd: "relative" }, engine), /tasks=absolute-path/);
+    assert.throws(() => store.create("bad", { ...data, goal: "x".repeat(8192) }, engine), /tasks=record-bytes/);
+    control("task-identity", "record.id !== id", "false", logic => {
+        const taskPath = path.join(store.root, "starting/task.json");
+        const old = fs.readFileSync(taskPath);
+        const record = JSON.parse(old);
+        fs.writeFileSync(taskPath, JSON.stringify({ ...record, id: "other" }));
+        try { assert.throws(() => new logic.Store(state).read("starting"), /tasks=task-record/); }
+        finally { fs.writeFileSync(taskPath, old); }
+    });
+    control("data-engine", 'return path.join(target, "task-event");', 'return path.join(source, "task-event");', logic => {
+        const dataRoot = path.join(root, "data/engine-control");
+        const published = logic.publish(dataRoot, path.dirname(file));
+        assert.equal(path.relative(dataRoot, published).startsWith(".."), false);
+    });
+    const diskGates = [
+        ["event-version", '|| record.v !== 1\n        || record.seq !== seq', '|| false\n        || record.seq !== seq',
+            { v: 2, seq: 1, at: 1, kind: "working", data: {} }],
+        ["event-seq", "record.seq !== seq", "false",
+            { v: 1, seq: 2, at: 1, kind: "working", data: {} }],
+        ["event-time", "!Number.isSafeInteger(record.at) || record.at < 0", "false",
+            { v: 1, seq: 1, at: -1, kind: "working", data: {} }],
+        ["event-shape", '!shape(record, ["v", "seq", "at", "kind", "data"])', "false",
+            { v: 1, seq: 1, at: 1, kind: "working", data: {}, extra: true }]
+    ];
+    for (const [name, needle, replacement, record] of diskGates) {
+        const recordPath = path.join(store.root, "starting/events/0001.json");
+        fs.writeFileSync(recordPath, JSON.stringify(record), { mode: 0o600 });
+        assert.throws(() => store.read("starting"), /tasks=event-record/);
+        control(name, needle, replacement, logic => assert.throws(() => new logic.Store(state).read("starting"), /tasks=event-record/));
+        fs.rmSync(recordPath);
+    }
+    control("unknown-event", 'default:\n        fail("event-kind");', 'default:\n        break;', logic => {
+        const original = fs.renameSync;
+        let renames = 0;
+        fs.renameSync = (...args) => { renames++; return original(...args); };
+        try {
+            assert.throws(() => new logic.Store(state).append("starting", "surprise", {}), /tasks=event-kind/);
+            assert.equal(renames, 0, "an unknown event must fail before publication");
+        } finally { fs.renameSync = original; }
+    });
+    fs.rmSync(path.join(store.root, "starting/events/0001.json"), { force: true });
+
+    // Fifty ended records, then one more. Active tasks are never pruned.
+    const retention = new Tasks.Store(path.join(root, "state/retention"), () => now++);
+    for (let n = 0; n <= 50; n++) {
+        retention.create("end-" + n, data, engine);
+        retention.append("end-" + n, n === 0 ? "lost" : "exited", n === 0 ? {} : { code: 0 });
+    }
+    retention.create("active", data, engine);
+    assert.equal(retention.list().filter(record => record.endedAt !== null).length, 50);
+    assert.equal(fs.existsSync(path.join(retention.root, "end-0")), false);
+    assert.equal(retention.read("active").state, "starting");
+    control("retention", "ended.length - MAX_ENDED", "0", logic => {
+        const owner = new logic.Store(path.join(root, "state/retention"), () => now++);
+        owner.append("active", "lost", {});
+        assert.equal(owner.list().filter(record => record.endedAt !== null).length, 50);
+    });
+
+    // Private files and directories even under a permissive caller umask.
+    for (const record of store.list()) {
+        assert.equal(fs.statSync(path.join(store.root, record.id)).mode & 0o777, 0o700);
+        assert.equal(fs.statSync(path.join(store.root, record.id, "task.json")).mode & 0o777, 0o600);
+        for (const name of fs.readdirSync(path.join(store.root, record.id, "events")))
+            assert.equal(fs.statSync(path.join(store.root, record.id, "events", name)).mode & 0o777, 0o600);
+    }
+    control("private", 'fs.writeFileSync(temporary, wire, { flag: "wx", mode: 0o600 })',
+        'fs.writeFileSync(temporary, wire, { flag: "wx", mode: 0o700 })', logic => {
+        const owner = new logic.Store(path.join(root, "state/private"));
+        owner.create("mode", data, engine);
+        assert.equal(fs.statSync(path.join(owner.root, "mode/task.json")).mode & 0o777, 0o600);
+    });
+    control("rename", "fs.renameSync(temporary, file)", "fs.copyFileSync(temporary, file)", logic => {
+        const old = fs.renameSync;
+        let renames = 0;
+        fs.renameSync = (...args) => { renames++; return old(...args); };
+        try { new logic.Store(state).append("starting", "working", {}); assert.equal(renames, 1); }
+        finally { fs.renameSync = old; }
+    });
+
+    const corrupt = path.join(store.root, "starting/events/0001.json");
+    fs.writeFileSync(corrupt, "{");
+    assert.throws(() => new Tasks.Store(state).list(), /tasks=parse:.*path=.*0001.json/);
+    fs.writeFileSync(corrupt, "x".repeat(8193));
+    assert.throws(() => store.read("starting"), /tasks=record-bytes/);
+    fs.rmSync(corrupt);
+    fs.writeFileSync(path.join(store.root, "starting/noisy.json"), '{"v":1,"dropped":0}');
+    assert.throws(() => store.read("starting"), /tasks=noisy-record/);
+    control("noisy-record", "value.dropped < 1", "false",
+        logic => assert.throws(() => new logic.Store(state).read("starting"), /tasks=noisy-record/));
+    fs.rmSync(path.join(store.root, "starting/noisy.json"));
+    fs.symlinkSync(path.join(root, "absent-marker"), path.join(store.root, "starting/noisy.json"));
+    assert.throws(() => store.read("starting"), /tasks=open:ELOOP/);
+    fs.rmSync(path.join(store.root, "starting/noisy.json"));
+    fs.writeFileSync(path.join(store.root, "starting/events/0002.json"),
+        JSON.stringify({ v: 1, seq: 2, at: 1, kind: "working", data: {} }));
+    assert.throws(() => store.read("starting"), /tasks=event-record/);
+    fs.rmSync(path.join(store.root, "starting/events/0002.json"));
+    fs.symlinkSync(path.join(store.root, "large/events/0001.json"), corrupt);
+    assert.throws(() => store.read("starting"), /tasks=event-file/);
+    fs.rmSync(corrupt);
+    fs.writeFileSync(path.join(store.root, "starting/events/.1234.tmp"), "{");
+    assert.equal(store.read("starting").events.length, 0, "incomplete rename is not committed");
+    const oldRename = fs.renameSync;
+    fs.renameSync = () => { const error = new Error("fixture disk failure"); error.code = "EIO"; throw error; };
+    try { assert.throws(() => append("starting", "working"), /tasks=rename:EIO/); }
+    finally { fs.renameSync = oldRename; }
+    assert.equal(store.read("starting").events.length, 0);
+    console.log("test-jarvis-tasks: ok cases=" + cases.length + " controls=" + controls);
+}
+
+function main() {
+    if (process.argv[2] === "--inside") return inside();
+    const parent = path.join(tree, "tmp");
+    fs.mkdirSync(parent, { recursive: true });
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(parent, "jt-")));
+    try {
+        if (process.argv[2] !== "--fresh") freshSuite(tree, "tasks", root);
+        fs.mkdirSync(path.join(root, "standins"));
+        const result = cp.spawnSync("/bin/bash", [path.join(tree, "scripts/lib/jarvis-env.sh"),
+            path.join(root, "standins"), "--", "node", __filename, "--inside"], {
+            env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
+            encoding: "utf8", timeout: 120000
+        });
+        process.stdout.write(result.stdout || "");
+        process.stderr.write(result.stderr || "");
+        if (result.error) throw result.error;
+        assert.equal(result.signal, null);
+        process.exitCode = result.status;
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+try { main(); } catch (error) { console.error(error); process.exitCode = 1; }

@@ -12,6 +12,10 @@ The [voice text contract](jarvis-voice.md) defines the shipped guidance and spee
 
 [jarvis-local.md](jarvis-local.md) defines the independent artifact declaration, bounded model inputs, measurement instrument and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the selected exports and caption path. These inputs register no plugin and do not implement the sidecar, setup or admission.
 
+## Coding-task records
+
+[jarvis-tasks.md](jarvis-tasks.md) defines the disk record owner, copied event producer and four-fact replay. [D072](../decisions/D072-coding-task-records-and-four-fact-state.md) records the choice. The daemon validates those records before ready. Process control, vendor profiles and voice remain later work.
+
 ## Session observation
 
 A privacy-sensitive service declares capability `session` and binds to `shell.session.locked`. The [capability contract](capabilities.md) defines that state and its tests. It grants no lock authority and introduces no dependency on a lock plugin: [D056](../decisions/D056-read-only-session-state.md).
@@ -63,7 +67,7 @@ The core supports the [passive layer input contract](layers.md), refined by [D05
 
 `JarvisProtocol.js::accept` owns the implemented v1 shapes and directions. Its header defines the current type set. Unknown types, extra or missing fields and oversized lines fail with a keyed protocol error. Future wire types enter that judge only when both endpoints consume them.
 
-The service takes settings from `shell.settings`, the revision from the registry-owned `shell.manifest.__revision`, state storage from `Paths.stateDir`, and data/runtime roots from the shell's XDG environment. This skeleton has no settings or binds, so those hello records are empty. The daemon validates the complete snapshot and creates none of those directories. A lock change sends a new snapshot while the child is starting or ready. A failure or teardown permits no further send.
+The service takes settings from `shell.settings`, the revision from the registry-owned `shell.manifest.__revision`, state storage from `Paths.stateDir`, and data/runtime roots from the shell's XDG environment. This skeleton has no settings or binds, so those hello records are empty. The daemon validates the complete snapshot and creates private task state and data-engine directories. A lock change sends a new snapshot while the child is starting or ready. A failure or teardown permits no further send.
 
 The daemon owns generation identity. Hello carries the service's last observation, initially zero; it cannot assign a daemon generation. Status and state carry the current generation and snapshot revision. State also carries the ordered sequence, regions and phase. `JarvisProtocol.accept` uses `Session.validate` for the record and `Session.phaseOf` for the phase. One daemon writer and the stdin/stdout pipes preserve order. The service filters replies to earlier lock observations and clears detail before child restart. Other intent and adapter messages remain outside the wire.
 

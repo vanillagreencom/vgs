@@ -72,6 +72,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D066 | VGS-651 | Pin local speech exports, bound Moonshine inputs and use CPU streaming captions | Actual model execution and per-tier measurements close the candidate choices without building the sidecar | Export, runtime, licence, voice, input contract or measured hardware changes | Active | [Full](D066-pinned-local-speech-and-bounded-inputs.md) |
 | 2026-09-30 | D070 | VGS-631 | Jarvis actions use one typed policy gate and protected real paths | Prose cannot establish program authority; taint must not weaken physical approval | An executor cannot supply trusted facts or kernel confinement | Active | [Full](D070-jarvis-action-policy.md) |
 | 2026-09-30 | D071 | VGS-615 | Hold shortcuts complete through a release companion | Modifier changes can lose Lua global releases; unrelated releases must not complete idle holds | Hyprland guarantees release delivery or supplies input identity | Active | [Full](D071-hold-shortcuts-use-a-release-companion.md) |
+| 2026-09-30 | D072 | VGS-665 | Coding-task records preserve four independent facts | Turn end and process exit do not report task success | Vendor task records, retention needs or control ownership change | Active | [Full](D072-coding-task-records-and-four-fact-state.md) |
 
 ---
 

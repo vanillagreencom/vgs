@@ -21,7 +21,7 @@ _jarvis_env_error() {
 
 # The allow-list is deliberately disjoint from desktop, audio, account,
 # browser and installer commands. PATH resolves those only as stand-ins.
-_jarvis_env_tools=(bash sh env node python3 cat mkdir rm cp mv ln chmod sleep
+_jarvis_env_tools=(bash sh env node python3 cat mkdir rm cp mv ln chmod sleep flock
   readlink dirname basename stat grep sed awk sort cut wc true false timeout gdbus)
 
 # jarvis_env_run STANDINS -- COMMAND [ARG...]: preserve the sourced caller's

@@ -16,6 +16,8 @@ const hello = { v: 1, type: "hello", gen: 0, settings: {}, directories: {
 }, revision: "a".repeat(64), locked: false, keys: {} };
 
 async function inside() {
+    for (const name of Object.keys(hello.directories))
+        hello.directories[name] = path.join(process.env.JARVIS_TEST_ROOT, name, "jarvis");
     let controls = 0;
     let cases = 0;
     async function run(file, chunks, code, reason = null, expected = []) {
@@ -35,7 +37,8 @@ async function inside() {
             const [actual, signal] = await closed;
             assert.equal(signal, null, "stdin EOF must end the daemon");
             assert.equal(actual, code, err);
-            if (reason !== null) assert.equal(err.trim(), reason);
+            if (reason instanceof RegExp) assert.match(err.trim(), reason);
+            else if (reason !== null) assert.equal(err.trim(), reason);
             else assert.equal(err, "");
             assert.deepEqual(out.trim() === "" ? [] : out.trim().split("\n").map(line => JSON.parse(line)), expected);
             cases++;
@@ -74,6 +77,8 @@ async function inside() {
     const floorDir = path.join(root, "floor");
     fs.mkdirSync(path.join(floorDir, "backend"), { recursive: true });
     fs.writeFileSync(path.join(floorDir, "JarvisProtocol.js"), protocol);
+    for (const name of ["Tasks.js", "task-event"])
+        fs.copyFileSync(path.join(path.dirname(daemon), name), path.join(floorDir, "backend", name));
     const floorFile = path.join(floorDir, "backend/jarvisd.js");
     const floorNeedle = 'if (Number(process.versions.node.split(".")[0]) < 22)';
     assert.equal(source.split(floorNeedle).length - 1, 1);
@@ -87,6 +92,8 @@ async function inside() {
         fs.writeFileSync(path.join(copyDir, "JarvisProtocol.js"), protocol);
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"), path.join(copyDir, "Session.js"));
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/session-runner.js"), path.join(copyDir, "backend/session-runner.js"));
+        for (const filename of ["Tasks.js", "task-event"])
+            fs.copyFileSync(path.join(path.dirname(daemon), filename), path.join(copyDir, "backend", filename));
         const copy = path.join(copyDir, "backend/jarvisd.js");
         fs.writeFileSync(copy, source.replace(needle, replacement));
         await assert.rejects(() => check(copy), assert.AssertionError, name + " must turn red");
@@ -104,6 +111,35 @@ async function inside() {
         file => run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false])));
     await control("node-floor", floorNeedle, 'Object.defineProperty(process.versions, "node", { value: "21.0.0" });\nif (false)',
         file => run(file, [], 78, "jarvis: node=21.0.0 need=22"));
+    const Tasks = require(path.join(path.dirname(daemon), "Tasks.js"));
+    const taskStore = new Tasks.Store(hello.directories.state);
+    const engine = Tasks.publish(hello.directories.data, path.dirname(daemon));
+    const taskGoal = { goal: "Restart fixture", cwd: process.env.HOME, agent: "fixture", account: "" };
+    for (let n = 0; n <= 50; n++) taskStore.create("retention-" + n, taskGoal, engine);
+    for (let n = 0; n <= 50; n++)
+        fs.writeFileSync(path.join(taskStore.root, "retention-" + n, "events/0001.json"),
+            JSON.stringify({ v: 1, seq: 1, at: n, kind: "exited", data: { code: 0 } }), { mode: 0o600 });
+    await run(daemon, [JSON.stringify(hello) + "\n"], 0, null, states([false]));
+    assert.equal(taskStore.list().length, 50);
+    assert.equal(fs.existsSync(path.join(taskStore.root, "retention-0")), false);
+    taskStore.create("retention-extra", taskGoal, engine);
+    fs.writeFileSync(path.join(taskStore.root, "retention-extra/events/0001.json"),
+        '{"v":1,"seq":1,"at":0,"kind":"lost","data":{}}', { mode: 0o600 });
+    await control("startup-retention", "if (context === null) {", "if (false) {", async file => {
+        await run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false]));
+        assert.equal(taskStore.list().length, 50);
+    });
+    fs.rmSync(path.join(taskStore.root, "retention-extra"), { recursive: true });
+    const taskFolder = path.join(hello.directories.state, "tasks", "broken");
+    fs.mkdirSync(path.join(taskFolder, "events"), { recursive: true });
+    fs.writeFileSync(path.join(taskFolder, "task.json"), "{");
+    const badRecord = async file => run(file, [JSON.stringify(hello) + "\n"], 74,
+        /jarvis: tasks=parse:.*path=.*broken\/task.json/, []);
+    // A parse failure withholds ready and names the record, not the wire.
+    await badRecord(daemon);
+    await control("task-read", "if (context === null) {", "if (false) {",
+        badRecord);
+    fs.rmSync(taskFolder, { recursive: true });
     console.log("test-jarvis-daemon: ok cases=" + cases + " controls=" + controls);
 }
 

@@ -93,6 +93,7 @@ if stop_shell && start_shell "$readonly_dest/usr" "$sandbox/read-only-qs.log" ba
 fi
 expect "Jarvis enables from the non-writable installed prefix" ok ipc shell setPluginEnabled vgs.jarvis true
 expect "Jarvis answers hello without retries from the non-writable installed prefix" ready jarvis_wait_ready 0
+expect "task events use a private data engine from the read-only prefix" "task-prefix=ok" "$node_bin" "$source_repo/scripts/test-task-event.js" --prefix "$readonly_dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend"
 
 installed_apply_vgs() {
   local err status=0
