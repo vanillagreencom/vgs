@@ -47,11 +47,20 @@ jarvis_enable() {
 }
 
 jarvis_toasts() {
-  ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin)["toasts"]; print(sum(e["plugin"] == "vgs.jarvis" for e in d["visible"] + d["waiting"]))'
+  ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin)["toasts"]; print(sum(e["plugin"] == "vgs.jarvis" for e in d["visible"] + d["waiting"]))'
 }
 
 jarvis_revision() {
-  ipc shell listPlugins | python3 -c 'import json,sys; print(next(p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.jarvis"))'
+  ipc shell listPlugins | py_reply 'import json,sys; print(next(p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.jarvis"))'
+}
+
+jarvis_launcher_pid() {
+  local launcher
+  if ! launcher="$(py_reply 'import json,sys; print(json.load(sys.stdin)["pid"])')" || [[ ! $launcher =~ ^[1-9][0-9]*$ ]]; then
+    fail "Jarvis launcher PID is unavailable: value=$launcher"
+    return 1
+  fi
+  printf '%s\n' "$launcher"
 }
 
 jarvis_rescan() {
@@ -78,7 +87,7 @@ jarvis_no_pid() { # PID
 jarvis_disable() {
   local answer launcher daemon_pid
   answer="$(ipc smoke jarvisProcess)"
-  launcher="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["pid"])' "$answer")"
+  launcher="$(jarvis_launcher_pid <<<"$answer")" || return 1
   daemon_pid="$(jarvis_descendants "$launcher")"
   expect "Jarvis disables" ok ipc shell setPluginEnabled vgs.jarvis false
   expect "disable releases the real daemon" absent jarvis_no_pid "$daemon_pid"
@@ -90,17 +99,20 @@ jarvis_exhaust() {
   local answer launcher daemon_pid retries kind
   for ((crash = 0; crash <= 5; crash++)); do
     answer="$(ipc smoke jarvisProcess)"
-    launcher="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["pid"])' "$answer")"
+    launcher="$(jarvis_launcher_pid <<<"$answer")" || return 1
     daemon_pid="$(jarvis_descendants "$launcher")"
     kill -KILL "$daemon_pid"
     # Wait for the service to observe this child exit, not just /proc loss.
     for ((attempt = 0; attempt < 300; attempt++)); do
       answer="$(ipc smoke jarvisProcess)"
-      if ! kind="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["lifetime"]["kind"])' "$answer")"; then
+      if ! kind="$(py_reply 'import json,sys; print(json.load(sys.stdin)["lifetime"]["kind"])' <<<"$answer")"; then
         fail "Jarvis lifetime is unreadable"
         return 1
       fi
-      retries="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["retries"])' "$answer")"
+      if ! retries="$(py_reply 'import json,sys; print(json.load(sys.stdin)["retries"])' <<<"$answer")" || [[ ! $retries =~ ^[0-9]+$ ]]; then
+        fail "Jarvis retry count is unavailable: value=$retries"
+        return 1
+      fi
       if [[ $kind == problem || $retries -gt $crash ]]; then break; fi
       sleep 0.01
     done
@@ -109,13 +121,13 @@ jarvis_exhaust() {
     fi
   done
   answer="$(ipc smoke jarvisProcess)"
-  python3 - "$answer" <<'PY'
+  py_reply '
 import json, sys
-d = json.loads(sys.argv[1])
+d = json.load(sys.stdin)
 ok = d["lifetime"]["kind"] == "problem" and d["retries"] == 5 and d["pid"] is None
 ok = ok and d["status"]["daemon"]["tone"] == "danger"
 print("problem" if ok else "not-problem")
-PY
+' <<<"$answer"
 }
 
 jarvis_enable
