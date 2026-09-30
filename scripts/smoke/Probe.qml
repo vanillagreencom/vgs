@@ -486,11 +486,12 @@ Scope {
         function buildCount(): int { return root.builds; }
         function frames(): int { return root.frames; }
         function startOrder(): string { return JSON.stringify(root.startOrder); }
-        // A detached `sleep SECONDS`: a process the shell starts that
-        // outlives it. It inherits the shell's descriptors, the instance
-        // lock's among them, for rows/start-order.sh's stop controls.
-        function startOutliving(seconds: int): string {
-            Quickshell.execDetached(["sleep", String(seconds)]);
+        // A detached process the shell starts that runs until GATE exists,
+        // for SECONDS at most, so it can outlive the shell and never the
+        // row. It inherits the shell's descriptors, the instance lock's
+        // among them, for rows/start-order.sh's stop controls.
+        function holdUntil(gate: string, seconds: int): string {
+            Quickshell.execDetached(["timeout", String(seconds), "sh", "-c", 'until [ -e "$1" ]; do sleep 0.05; done', "sh", gate]);
             return "ok";
         }
         function configChanges(): int { return root.changes; }

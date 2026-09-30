@@ -24,7 +24,8 @@
 # rescan. Before the restart with no bar, the row reads harness.sh's
 # stop_shell: with a planted process that outlives the shell and holds
 # the instance lock, the stop returns with the lock free; its controls
-# are a stop with no lock wait, which returns with the lock held, and a
+# are a stop with no lock wait, which returns with the lock held while
+# the holder waits for a gate the row makes after the reading, and a
 # stop that times out on the lock, which fails and names its holders.
 # The row runs last and leaves the last copy running for the harness's
 # teardown.
@@ -180,10 +181,12 @@ fi
 
 # The stop's wait on the instance lock (harness.sh's stop_shell). A
 # process the shell starts inherits the lock's descriptor, so it holds
-# the lock past the shell's exit; the probe plants one, a detached sleep
-# of stop_holder_s, which outlasts the shell's exit on TERM. lock_state
-# answers `free` or `held`, from a lock taken and dropped at once.
-stop_holder_s=3
+# the lock past the shell's exit; the probe's holdUntil plants one, which
+# runs until a gate file exists, for stop_holder_bound_s at most, so a
+# holder whose gate the row never makes still ends within the row. No
+# reading depends on how fast the shell exits on TERM. lock_state answers
+# `free` or `held`, from a lock taken and dropped at once.
+stop_holder_bound_s=30
 lock_state() {
   local status=0
   flock -n -E 75 "$rt_dir/vgsh.lock" true || status=$?
@@ -209,16 +212,21 @@ stop_timeout_control() {
 expect "control: a stop whose TERM misses the shell fails once on the held lock" 1 stop_timeout_control
 expect "control: the timed-out stop names the shell as a lock holder" 1 grep -c -F -- "holder pid=$shell_pid comm=" "$stop_timeout_log"
 # The real stop with a planted holder returns with the lock free, and the
-# next start answers ping.
-expect "the probe plants a process that outlives the shell" ok ipc smoke startOutliving "$stop_holder_s"
+# next start answers ping. This holder's gate is never made, so it ends
+# on its own bound of a few seconds; the stop waits for it whenever that is.
+expect "the probe plants a process that holds the lock on its own" ok ipc smoke holdUntil "$sandbox/stop-holder-never.gate" 3
 if stop_shell; then
   expect "stop_shell returns once the planted holder freed the instance lock" free lock_state
 fi
 restart_over "$repo" "$sandbox/start-order-lock-qs.log" || :
 # Control: a copy of stop_shell with no lock wait, which still waits for
 # the pid, returns while the planted holder keeps the lock, the state in
-# which the next `vgsh run` refuses. The no-bar restart below then stops
-# through the real stop_shell, which waits for the holder to exit.
+# which the next `vgsh run` refuses. The holder waits for its gate, which
+# the row makes only after the reading, so the reading holds however long
+# the shell takes to exit. The no-bar restart below then stops through the
+# real stop_shell, which waits for the holder to see the gate.
+stop_holder_gate="$sandbox/stop-holder-control.gate"
+rm -f -- "$stop_holder_gate"
 unwaited_needle='flock -w "$stop_lock_wait_s" "$lock" true'
 if stop_shell_def="$(declare -f stop_shell)" \
   && stop_shell_rest="${stop_shell_def//"$unwaited_needle"/}" \
@@ -226,12 +234,13 @@ if stop_shell_def="$(declare -f stop_shell)" \
   && unwaited_def="${stop_shell_def/"$unwaited_needle"/true}" \
   && [[ $unwaited_def != "$stop_shell_def" ]] \
   && eval "unwaited_$unwaited_def"; then
-  expect "the probe plants a process that outlives the shell for the control" ok ipc smoke startOutliving "$stop_holder_s"
+  expect "the probe plants a process that holds the lock until its gate" ok ipc smoke holdUntil "$stop_holder_gate" "$stop_holder_bound_s"
   unwaited_stop_shell || :
   expect "control: a stop that waits only for the pid returns with the instance lock held" held lock_state
 else
   fail "the stop_shell copy with no lock wait could not be written"
 fi
+: >"$stop_holder_gate"
 
 # No bar: the default set with the bar disabled builds none, and the gate
 # releases at once. Its control is a gate that waits for a bar however
