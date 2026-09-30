@@ -144,7 +144,7 @@ mutations=(
   "Tab skips the dialog's listed content items|feedback/Dialog.qml|const items = Array.from(tabItems).filter(item => item.enabled && item.visible);|const items = [];|tst_dialog.qml"
   "Tab reaches a hidden listed content item|feedback/Dialog.qml|filter(item => item.enabled && item.visible)|filter(item => item.enabled)|tst_dialog.qml"
   "a listed content item leaves the dialog on Backtab|feedback/Dialog.qml|            value: false|            value: true|tst_dialog.qml"
-  "Tab skips the dialog's initial focus item|feedback/Dialog.qml|const lead = initialFocus !== null && initialFocus.enabled ? [initialFocus] : [];|const lead = [];|tst_dialog.qml"
+  "Tab skips the dialog's initial focus item|feedback/Dialog.qml|const lead = initialFocus !== null && initialFocus.enabled && !items.includes(initialFocus) ? [initialFocus] : [];|const lead = [];|tst_dialog.qml"
   "the dialog's first action takes the focus|feedback/Dialog.qml|const button = buttons()[acceptIndex];|const button = buttons()[0];|tst_dialog.qml"
   "Enter presses the accept action whatever holds the focus|feedback/Dialog.qml|trigger(focused !== -1 ? focused : acceptIndex);|trigger(acceptIndex);|tst_dialog.qml"
   "Tab stops at the dialog's last action|feedback/Dialog.qml|reach[(at + step + reach.length) % reach.length]|reach[Math.max(0, Math.min(at + step, reach.length - 1))]|tst_dialog.qml"

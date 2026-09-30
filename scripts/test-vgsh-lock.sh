@@ -55,7 +55,7 @@ lock_row "a lock function not registered yet is no answer" 1 "" "vgsh: refused: 
 lock_row "a failed qs call is no answer" 1 "" "vgsh: refused: lock=no-answer pid=$$" STUB_STATUS=1
 lock_row "a lock the compositor refused is refused" 1 "" "vgsh: refused: lock=refused-by-compositor" STUB_AFTER='{"secure":false,"refusals":1}'
 lock_row "a lock never confirmed is refused" 1 "" "vgsh: refused: lock=unconfirmed" STUB_AFTER='{"secure":false,"refusals":0}'
-lock_row "a lock already confirmed is ok" 0 ok "" STUB_BEFORE='{"secure":true,"refusals":2}' STUB_AFTER='{"secure":true,"refusals":2}' 
+lock_row "a lock already confirmed is ok" 0 ok "" STUB_BEFORE='{"secure":true,"refusals":2}' STUB_AFTER='{"secure":true,"refusals":2}'
 RT="$tmp/rt-none" lock_row "no shell is exit 69" 69 "" "vgsh: refused: shell=not-running lock=$tmp/rt-none/vgsh.lock"
 inst "an argument is a bad invocation" "$cfg" "$rt" 2 "" "vgsh: refused: argument=--now" lock --now
 

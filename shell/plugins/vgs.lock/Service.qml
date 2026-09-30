@@ -134,6 +134,13 @@ Item {
         return shell.lock.lock(lockView);
     }
 
+    Process {
+        id: backgroundProc
+        command: ["readlink", "-e", "--", Paths.stateDir + "/background"]
+        stdout: StdioCollector { id: backgroundOut; waitForEnd: true }
+        onExited: code => root.backgroundPath = code === 0 ? backgroundOut.text.trim() : ""
+    }
+
     function reset() {
         if (pam.active) pam.abort();
         password = "";
@@ -298,26 +305,30 @@ Item {
         property var recorded: null
         // A command that fails to start emits only runningChanged, so the
         // end is read there: no exit recorded is a failed start
-        // (runtime-qml.md). A hook that held and exited 0 ran a sleep and
-        // is taken again at once; any other end is a failure, retried a
-        // minute later or at once by retrySleep.
+        // (runtime-qml.md). Each end reads its own exit and clears it, since
+        // a failed start need not report `running` true first. A hook that
+        // held and exited 0 ran a sleep and is taken again at once; any
+        // other end is a failure, retried a minute later or at once by
+        // retrySleep. The status records the failure, so the log line is
+        // info: a session without logind fails once a minute.
         onRunningChanged: {
             if (running) {
-                recorded = null;
                 root.sleepState = "starting";
                 root.publishSleep();
                 return;
             }
+            const code = recorded;
+            recorded = null;
             root.sleepPending = false;
             if (root.shell === null || !root.lockBeforeSleep || root.sleepMissing.length > 0) {
                 root.sleepState = "off";
                 root.publishSleep();
                 return;
             }
-            const cycled = root.sleepState === "held" && recorded === 0;
+            const cycled = root.sleepState === "held" && code === 0;
             root.sleepState = cycled ? "starting" : "failed";
-            root.sleepDetail = recorded === null ? "not-started" : recorded;
-            if (!cycled) console.warn("lock: sleep-watch ended before holding; exit=" + root.sleepDetail);
+            root.sleepDetail = code === null ? "not-started" : code;
+            if (!cycled) console.info("lock: sleep-watch ended; exit=" + root.sleepDetail + ", retried in 60 s");
             root.publishSleep();
             sleepRetry.interval = cycled ? 2000 : 60000;
             sleepRetry.restart();

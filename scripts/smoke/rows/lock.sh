@@ -196,7 +196,6 @@ set_setting lockBeforeSleep false
 expect_poll "turning the setting off publishes the hook off" info sleep_status
 printf '#!/nonexistent/interpreter\n' >"$shim/systemd-inhibit"
 chmod 755 "$shim/systemd-inhibit"
-expected_errors+=('lock: sleep-watch ended before holding; exit=not-started')
 set_setting lockBeforeSleep null
 expect_poll "a hook that cannot start is published as such" '["warning", "Unavailable: the sleep hook could not start; the session is not locked before sleep"]' status_value sleep
 mv -- "$sandbox/systemd-inhibit.good" "$shim/systemd-inhibit"
