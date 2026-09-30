@@ -12,7 +12,6 @@ no image; and an HTML <img>, which is one. The walk's floor is the case
 with no manifest; both seeded plugins are required members, since the
 passing world fails when either README goes unread, and a directory with
 no manifest is the forbidden one."""
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -47,14 +46,10 @@ README_TWO = (
 )
 
 
-def budget():
-    spec = importlib.util.spec_from_file_location("check_readme_images", CHECK)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.BUDGET_BYTES
-
-
-BUDGET = budget()
+# The per-image budget docs/architecture/readme-images.md § Budget states,
+# written here rather than read from the check, so the cases pin the figure
+# and not only the comparison.
+BUDGET = 100 * 1024
 
 
 def write(root, path, data):
