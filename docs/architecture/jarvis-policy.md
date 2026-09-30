@@ -40,11 +40,11 @@ The exact read-only argv table belongs to `Tools.js`. Extra options, an absolute
 
 The model produces only the call. It cannot supply this context. Key parsing remains with the core key judge. J47 must then resolve both keysyms and keycodes to the same physical identity. An unresolved key or effective binding refuses. The current skeleton has no keys, and this change adds no parser or input executor.
 
-A grant scope is `application:<id>`, `terminal:<id>` or `site:<id>`. Standard input without a matching grant returns that scope for J19's user prompt. Another application or site does not inherit it. Cautious input confirms each call. Tainted input requires confirmation even with a grant.
+A grant scope is `application:<id>` or `site:<id>`. Standard input without a matching grant returns that scope for J19's user prompt. Another application or site does not inherit it. Cautious input confirms each call. Tainted input requires confirmation even with a grant. A terminal has no grant scope.
 
 VGS, lock and polkit targets refuse in every profile before the profile table applies. Browser input also requires a known non-password target. A key equal to any effective Jarvis chord refuses, independent of modifier order or key spelling.
 
-Terminal text refuses in cautious and standard. Trusted terminal text becomes a physical, destructive hold. J19 must show the exact typed text. Taint cannot turn that hold into voice approval.
+Terminal keys, clicks and scrolling refuse as `terminal-input` in every profile, including with taint or a supplied grant. They can enter or paste a command without showing its text. Terminal text refuses in cautious and standard. Trusted terminal text becomes a physical, destructive hold. J19 must show the exact typed text. Taint cannot turn that hold into voice approval.
 
 ## Real paths
 
@@ -73,7 +73,7 @@ Taint raises persistent, exec, input and external actions to confirmation. It le
 
 ## Evidence
 
-- `scripts/test-jarvis-tools.js` exercises every declared call and browser subcommand. It checks schema refusals, exact argv refinement and networking. Mutations break tool effects and independent schema rules.
+- `scripts/test-jarvis-tools.js` exercises every declared call and browser subcommand. It pins independent input-routing contracts and checks schema refusals, exact argv refinement and networking. Mutations break tool effects, input routing and independent schema rules.
 - `scripts/test-jarvis-denied.js` uses real scratch paths, links, absent targets and account aliases. It removes each protected-root and execution-root entry separately. It also breaks resolution, component containment and ancestor protection.
-- `scripts/test-jarvis-policy.js` checks the complete profile matrix, matching and nonmatching grants, protected targets, own chords, terminal text and taint. Each profile cell and independent guard has a planted behavior defect.
+- `scripts/test-jarvis-policy.js` checks the complete profile matrix, matching and nonmatching grants, protected targets, own chords, terminal input and taint. Browser click, fill and submit cases refuse protected and password targets in every profile. Routing-removal mutants retain each call's schema and effect but skip those refusals. Each profile cell and independent guard has a planted behavior defect.
 - The suites run inside the [J09 world](validation-jarvis.md). No real credential, authentication, desktop, audio device or network enters them. `scripts/validate` owns their input selection.

@@ -24,6 +24,19 @@ world(() => {
         external: call("browser", { command: "submit", args: { ref: "@e1" } }),
         destructive: call("files.delete", { path: existing })
     };
+    // Independent J47/J51 call contracts. Key facts name an unbound key so
+    // target refusals cannot pass by hitting the own-chord guard instead.
+    const inputRoutes = [
+        [effects.input, "text"],
+        [call("input.key", { chord: "SUPER+A" }), "key", {
+            request: "SUPER+A", chord: { modifiers: ["SUPER"], keycode: 38 }, effective: []
+        }],
+        [call("input.click", { x: 0, y: 0, button: "left" }), "pointer"],
+        [call("input.scroll", { x: 0, y: 0, direction: "down", steps: 1 }), "pointer"],
+        [call("browser", { command: "click", args: { ref: "@e1" } }), "browser"],
+        [call("browser", { command: "fill", args: { ref: "@e1", text: "literal" } }), "browser"],
+        [effects.external, "browser"]
+    ];
     // Expected decisions are independent of the production profile table.
     const profiles = [
         ["cautious", ["allow", "allow", "confirm", "confirm", "confirm", "confirm", "physical"]],
@@ -46,7 +59,7 @@ world(() => {
     const refuse = (logic, action, current, reason) => {
         let result;
         assert.doesNotThrow(() => { result = logic.decide(action, current); }, "typed refusals must not throw");
-        assert.equal(result.reason, reason, reason);
+        assert.deepEqual([result.kind, result.reason], ["refuse", reason], reason);
     };
     for (const [profile] of profiles) {
         for (const locked of [true, undefined, null, "false"])
@@ -61,12 +74,13 @@ world(() => {
             assert.deepEqual(Policy.decide(effects[effect], { ...context, profile, taint: { kind: "tainted" } }),
                 expected(effect, effect === "destructive" ? "physical" : "allow"));
         for (const target of ["vgs", "lock", "polkit"])
-            for (const action of [
-                effects.input, call("input.key", { chord: "SUPER+A" }),
-                call("input.click", { x: 0, y: 0, button: "left" }),
-                call("input.scroll", { x: 0, y: 0, direction: "down", steps: 1 }),
-                effects.external
-            ]) refuse(Policy, action, { ...context, profile, input: { target: { kind: target, id: "protected" } } }, "protected-target");
+            for (const [action, , key] of inputRoutes)
+                refuse(Policy, action, { ...context, profile, input: { target: { kind: target, id: "protected" }, key } }, "protected-target");
+        for (const [action] of inputRoutes.filter(row => row[1] === "browser")) {
+            for (const password of [true, undefined])
+                refuse(Policy, action, { ...context, profile, input: { target: { ...site.target, password } } }, "password-target");
+            refuse(Policy, action, { ...context, profile, input }, "browser-target");
+        }
         for (const file of [
             path.join(home, ".ssh", "absent"), path.join(roots.config, "vgs", "shell.json"),
             path.join(roots.state, "vgs", "jarvis", "audit.jsonl")
@@ -80,8 +94,9 @@ world(() => {
                 call("files.move", { from: existing, to: file })
             ]) refuse(Policy, action, { ...context, profile }, "protected-path");
         }
-        refuse(Policy, call("shell.argv", { argv: ["sudo", "true"], cwd: project, network: false }),
-            { ...context, profile }, "privilege-elevation");
+        for (const argv of [["sudo", "true"], ["su", "-c", "synthetic"], ["/usr/bin/sudoedit", existing]])
+            refuse(Policy, call("shell.argv", { argv, cwd: project, network: false }),
+                { ...context, profile }, "privilege-elevation");
     }
     for (const source of ["file", "web", "screen", "agent"]) {
         assert.deepEqual(Policy.observe({ kind: "clean" }, source), { kind: "tainted" });
@@ -113,10 +128,16 @@ world(() => {
         { kind: "allow", effect: "input" });
     const terminal = { target: { kind: "terminal", id: "org.example.Terminal" } };
     for (const profile of ["cautious", "standard"])
-        refuse(Policy, effects.input, { ...context, profile, input: terminal }, "terminal-text");
+        for (const kind of ["clean", "tainted"])
+            refuse(Policy, effects.input, { ...context, profile, input: terminal, taint: { kind } }, "terminal-text");
     for (const kind of ["clean", "tainted"])
         assert.deepEqual(Policy.decide(effects.input, { ...context, profile: "trusted", input: terminal, taint: { kind } }),
             { kind: "confirm", effect: "destructive", physical: true });
+    for (const [profile] of profiles)
+        for (const kind of ["clean", "tainted"])
+            for (const [action, , key] of inputRoutes.filter(row => ["key", "pointer"].includes(row[1])))
+                refuse(Policy, action, { ...context, profile, taint: { kind },
+                    input: { ...terminal, key }, grants: ["terminal:org.example.Terminal"] }, "terminal-input");
     const pressed = call("input.key", { chord: "ALT+SUPER+Y" });
     const keyContext = { ...context, input: { ...input, key: {
         request: pressed.args.chord, chord: { modifiers: ["ALT", "SUPER"], keycode: 29 },
@@ -251,6 +272,13 @@ world(() => {
     control("terminal-refusal", 'if (context.profile !== "trusted")',
         'if (false && context.profile !== "trusted")',
         logic => refuse(logic, effects.input, { ...context, input: terminal }, "terminal-text"));
+    control("terminal-nontext", 'if (input.target.kind === "terminal" && refined.input !== "text")',
+        'if (false && input.target.kind === "terminal" && refined.input !== "text")',
+        logic => {
+            for (const [action, , key] of inputRoutes.filter(row => ["key", "pointer"].includes(row[1])))
+                refuse(logic, action, { ...context, profile: "trusted",
+                    input: { ...terminal, key }, grants: ["terminal:org.example.Terminal"] }, "terminal-input");
+        });
     control("terminal-physical", 'effect = "destructive";\n        }', 'effect = "input";\n        }',
         logic => assert.deepEqual(logic.decide(effects.input, { ...context, profile: "trusted", input: terminal }), expected("destructive", "physical")));
     control("grant-context", 'return { kind: "refuse", reason: "input-grants" };',
@@ -291,6 +319,25 @@ world(() => {
     control("taint-invalid", 'throw new Error("jarvis: taint=invalid");', 'return { kind: "clean" };',
         logic => assert.throws(() => logic.observe({ kind: "clean" }, "unknown"), { message: "jarvis: taint=invalid" }));
     const toolsFile = path.join(tree, "shell/plugins/vgs.jarvis/backend/Tools.js");
+    const toolsSource = fs.readFileSync(toolsFile, "utf8");
+    // Remove only routing. The schema and effect remain valid, so the same
+    // policy assertions must reject the resulting allowed action, not a parse.
+    for (const [action, route, key] of inputRoutes) {
+        const line = toolsSource.split("\n").find(line => action.id === "browser"
+            ? line.trim().startsWith(action.args.command + ": {") : line.trim().startsWith(`"${action.id}": {`));
+        mutant(toolsFile, "input-route-" + action.id + "-" + (action.args.command || ""),
+            line, line.replace(`input: "${route}"`, "input: null"), logic => {
+                for (const [profile] of profiles) {
+                    for (const target of ["vgs", "lock", "polkit"])
+                        refuse(logic, action, { ...context, profile,
+                            input: { target: { kind: target, id: "protected" }, key } }, "protected-target");
+                    if (route === "browser")
+                        for (const password of [true, undefined])
+                            refuse(logic, action, { ...context, profile, input: { target: { ...site.target, password } } }, "password-target");
+                }
+            }, "Policy.js");
+        controls++;
+    }
     for (const [id, args, field, role] of [
         ["files.read", { path: path.join(home, ".ssh", "absent") }, "path", "read"],
         ["apps.open", { path: path.join(home, ".ssh", "absent") }, "path", "read"],
@@ -304,7 +351,6 @@ world(() => {
         ["shell.line", { line: "pwd", cwd: path.join(home, ".ssh"), network: false }, "cwd", "workspace"],
         ["task.start", { goal: "synthetic", cwd: path.join(home, ".ssh") }, "cwd", "workspace"]
     ]) {
-        const toolsSource = fs.readFileSync(toolsFile, "utf8");
         const line = toolsSource.split("\n").find(line => line.trim().startsWith(`"${id}": {`));
         const needle = `["${field}", "${role}"]`;
         const replacement = id === "files.move" ? line.replace(needle, "").replace("[,", "[").replace(", ]", "]") : line.replace(needle, "");

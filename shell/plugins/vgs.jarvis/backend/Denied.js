@@ -58,7 +58,7 @@ function create({ home, config, data, state, runtime, install, accountRoots }) {
         [home, ".ssh"], [home, ".gnupg"], [home, ".claude"], [home, ".codex"],
         [home, ".gemini"], [home, ".copilot"], [home, ".agent-browser"],
         [home, ".mozilla"], [home, ".pki"], [home, ".netrc"], [home, ".git-credentials"],
-        [config, "gh"], [config, "claude"], [config, "codex"], [config, "gemini"],
+        [config, "gh"], [config, "git/credentials"], [config, "claude"], [config, "codex"], [config, "gemini"],
         [config, "copilot"], [config, "opencode"], [data, "opencode"],
         [data, "keyrings"], [data, "kwalletd"], [config, "kwalletd"],
         [config, "chromium"], [config, "google-chrome"], [config, "BraveSoftware"],

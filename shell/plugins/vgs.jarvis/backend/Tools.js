@@ -78,7 +78,7 @@ const BROWSER = {
     fill: { effect: "input", schema: { ref: reference, text: text }, input: "browser" },
     submit: { effect: "external", schema: { ref: reference }, input: "browser" }
 };
-const ELEVATION = new Set(["sudo", "pkexec", "doas", "run0"]);
+const ELEVATION = new Set(["sudo", "pkexec", "doas", "run0", "su", "sudoedit"]);
 // Exact argv only. A wrapper, an extra option or a shell line stays exec.
 // Kernel confinement remains mandatory even for these read-only commands.
 const READ_ONLY_ARGV = [["pwd"], ["uname", "-s"], ["uname", "-m"]];

@@ -23,10 +23,10 @@ world(() => {
         ["apps.list", {}, "read"], ["apps.launch", { desktop: "org.example.App.desktop" }, "reversible"],
         ["apps.open", { path: target }, "reversible"],
         ["apps.url", { url: "https://example.test/" }, "reversible"],
-        ["input.text", { text: "-literal" }, "input"],
-        ["input.key", { chord: "SUPER+Y" }, "input"],
-        ["input.click", { x: -10, y: 0, button: "left" }, "input"],
-        ["input.scroll", { x: 0, y: 0, direction: "down", steps: 1 }, "input"],
+        ["input.text", { text: "-literal" }, "input", null, "text"],
+        ["input.key", { chord: "SUPER+Y" }, "input", null, "key"],
+        ["input.click", { x: -10, y: 0, button: "left" }, "input", null, "pointer"],
+        ["input.scroll", { x: 0, y: 0, direction: "down", steps: 1 }, "input", null, "pointer"],
         ["clipboard.read", {}, "read", "clipboard"], ["clipboard.write", { text: "literal" }, "reversible"],
         ["media.play", {}, "reversible"], ["media.pause", {}, "reversible"], ["media.next", {}, "reversible"],
         ["media.volume", { value: 0 }, "reversible"], ["media.mute", { muted: false }, "reversible"],
@@ -47,15 +47,14 @@ world(() => {
         ["task.start", { goal: "synthetic task", cwd: project }, "exec", "agent"],
         ["browser", { command: "open", args: { url: "https://example.test/" } }, "read", "web"],
         ["browser", { command: "read", args: {} }, "read", "web"],
-        ["browser", { command: "click", args: { ref: "@e1" } }, "input"],
-        ["browser", { command: "fill", args: { ref: "@e1", text: "literal" } }, "input"],
-        ["browser", { command: "submit", args: { ref: "@e1" } }, "external"]
+        ["browser", { command: "click", args: { ref: "@e1" } }, "input", null, "browser"],
+        ["browser", { command: "fill", args: { ref: "@e1", text: "literal" } }, "input", null, "browser"],
+        ["browser", { command: "submit", args: { ref: "@e1" } }, "external", null, "browser"]
     ];
-    const check = (logic, [id, args, effect, source = null]) => {
+    const check = (logic, [id, args, effect, source = null, input = null]) => {
         const result = logic.refine({ id, args });
-        assert.equal(result.kind, "call", id);
-        assert.equal(result.effect, effect, id);
-        assert.equal(result.source, source, id);
+        assert.deepEqual([result.kind, result.effect, result.source, result.input],
+            ["call", effect, source, input], id);
     };
     for (const row of cases) check(Tools, row);
     check(Tools, ["task.start", { goal: "task", cwd: project, agent: "claude", account: "work" }, "exec", "agent"]);
@@ -97,7 +96,7 @@ world(() => {
         bad(Tools, { id: "browser", args: { command: "open", args } }, "browser-arguments");
     for (const ref of ["--cdp", "--profile", "state load", "@e0", "@e1\n"])
         bad(Tools, { id: "browser", args: { command: "click", args: { ref } } }, "browser-arguments");
-    for (const command of ["sudo", "/usr/bin/pkexec", "doas", "/bin/run0"])
+    for (const command of ["sudo", "/usr/bin/pkexec", "doas", "/bin/run0", "su", "/usr/bin/su", "sudoedit", "/usr/bin/sudoedit"])
         bad(Tools, { id: "shell.argv", args: { argv: [command, "true"], cwd: project, network: false } }, "privilege-elevation");
     for (const argv of [["pwd"], ["uname", "-s"], ["uname", "-m"]])
         check(Tools, ["shell.argv", { argv, cwd: project, network: false }, "read", "command"]);
@@ -127,11 +126,17 @@ world(() => {
             const wrong = row[2] === "read" ? "exec" : "read";
             control("effect-" + row[0], needle, `"${row[0]}": { effect: "${wrong}"`, logic => check(logic, row));
         }
-        if (row[3] !== undefined) {
+        if (row[3] != null) {
             const line = toolsSource.split("\n").find(line => row[0] === "browser"
                 ? line.trim().startsWith(row[1].command + ": {") : line.trim().startsWith(`"${row[0]}": {`));
             control("source-" + row[0] + "-" + (row[1].command || ""),
                 line, line.replace(`source: "${row[3]}"`, 'source: "speech"'), logic => check(logic, row));
+        }
+        if (row[4] !== undefined) {
+            const line = toolsSource.split("\n").find(line => row[0] === "browser"
+                ? line.trim().startsWith(row[1].command + ": {") : line.trim().startsWith(`"${row[0]}": {`));
+            control("input-route-" + row[0] + "-" + (row[1].command || ""),
+                line, line.replace(`input: "${row[4]}"`, "input: null"), logic => check(logic, row));
         }
     }
     const validators = [
@@ -191,6 +196,11 @@ world(() => {
         logic => bad(logic, { id: "browser", args: { command: "read", args: { flags: [] } } }, "browser-arguments"));
     control("elevation", 'if (ELEVATION.has(path.basename(call.args.argv[0])))', 'if (false && ELEVATION.has(path.basename(call.args.argv[0])))',
         logic => bad(logic, { id: "shell.argv", args: { argv: ["sudo", "true"], cwd: project, network: false } }, "privilege-elevation"));
+    for (const command of ["su", "sudoedit"]) {
+        const line = toolsSource.split("\n").find(line => line.startsWith("const ELEVATION ="));
+        control("elevation-" + command, line, line.replace(`"${command}"`, '"removed"'),
+            logic => bad(logic, { id: "shell.argv", args: { argv: ["/usr/bin/" + command, "synthetic"], cwd: project, network: false } }, "privilege-elevation"));
+    }
     control("readonly-exact", 'JSON.stringify(argv) === JSON.stringify(call.args.argv)', 'argv[0] === call.args.argv[0]',
         logic => check(logic, ["shell.argv", { argv: ["pwd", "extra"], cwd: project, network: false }, "exec", "command"]));
     control("network", 'if (call.args.network) effect = "external";', 'if (false && call.args.network) effect = "external";',

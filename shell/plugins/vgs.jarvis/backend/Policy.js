@@ -81,6 +81,10 @@ function decide(call, context) {
             if (input.target.kind !== "site") return { kind: "refuse", reason: "browser-target" };
             if (input.target.password !== false) return { kind: "refuse", reason: "password-target" };
         } else if (input.target.kind === "site") return { kind: "refuse", reason: "desktop-target" };
+        // J47 keys and pointer calls can enter or paste commands without
+        // showing their text. Only the explicit text tool can hold that text.
+        if (input.target.kind === "terminal" && refined.input !== "text")
+            return { kind: "refuse", reason: "terminal-input" };
         if (refined.input === "key") {
             const key = input.key;
             if (!key || key.request !== call.args.chord || !chord(key.chord)
@@ -93,7 +97,7 @@ function decide(call, context) {
             if (context.profile !== "trusted") return { kind: "refuse", reason: "terminal-text" };
             effect = "destructive";
         }
-        scope = input.target.kind + ":" + input.target.id;
+        if (input.target.kind !== "terminal") scope = input.target.kind + ":" + input.target.id;
     }
     const rule = PROFILES[context.profile][effect];
     if (rule === "physical") return { kind: "confirm", effect, physical: true };

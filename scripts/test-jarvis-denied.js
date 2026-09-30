@@ -16,7 +16,7 @@ world(() => {
         assert.deepEqual(judge.inspect(file, role), { kind: "path", path: canonical, exists, execution });
     const protectedPaths = [
         ...[".ssh", ".gnupg", ".claude", ".codex", ".gemini", ".copilot", ".agent-browser", ".mozilla", ".pki", ".netrc", ".git-credentials"].map(name => path.join(home, name)),
-        ...["gh", "claude", "codex", "gemini", "copilot", "opencode", "kwalletd", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge", "vivaldi", "mozilla", "vgs"].map(name => path.join(roots.config, name)),
+        ...["gh", "git/credentials", "claude", "codex", "gemini", "copilot", "opencode", "kwalletd", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge", "vivaldi", "mozilla", "vgs"].map(name => path.join(roots.config, name)),
         ...["opencode", "keyrings", "kwalletd", "vgs"].map(name => path.join(roots.data, name)),
         path.join(roots.state, "vgs"), path.join(roots.runtime, "vgs"), roots.install, account
     ];
@@ -88,7 +88,16 @@ world(() => {
     const xdg = { ...options, config: path.join(home, ".config"), data: path.join(home, ".local/share") };
     fs.mkdirSync(xdg.config, { recursive: true });
     fs.mkdirSync(xdg.data, { recursive: true });
+    const gitCredentials = path.join(xdg.config, "git/credentials");
+    fs.mkdirSync(path.dirname(gitCredentials));
+    fs.writeFileSync(gitCredentials, "synthetic git credentials: never opened\n");
+    const gitAlias = path.join(project, "git-credentials");
+    fs.symlinkSync(gitCredentials, gitAlias);
     const xdgJudge = Denied.create(xdg);
+    for (const target of [gitCredentials, gitAlias])
+        for (const role of ["read", "write"])
+            refused(xdgJudge, target, role, "protected-path");
+    assert.equal(xdgJudge.masks.includes(gitCredentials), true);
     const localExecution = [
         ...executionPaths.filter(target => target.startsWith(home + "/")),
         ...["fish", "autostart", "systemd/user", "hypr"].map(name => path.join(xdg.config, name)),
@@ -167,7 +176,7 @@ world(() => {
         [home, ".ssh"], [home, ".gnupg"], [home, ".claude"], [home, ".codex"],
         [home, ".gemini"], [home, ".copilot"], [home, ".agent-browser"], [home, ".mozilla"],
         [home, ".pki"], [home, ".netrc"], [home, ".git-credentials"],
-        ...["gh", "claude", "codex", "gemini", "copilot", "opencode", "kwalletd", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge", "vivaldi", "mozilla"].map(name => [roots.config, name]),
+        ...["gh", "git/credentials", "claude", "codex", "gemini", "copilot", "opencode", "kwalletd", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge", "vivaldi", "mozilla"].map(name => [roots.config, name]),
         ...["opencode", "keyrings", "kwalletd"].map(name => [roots.data, name])
     ];
     // Place XDG roots under HOME so a lost mask cannot fail at outside-home.
@@ -178,7 +187,12 @@ world(() => {
         const needle = `[${identifier}, "${name}"]`;
         const value = identifier === "home" ? home : localOptions[identifier];
         control("credential-" + identifier + "-" + name, needle, `[${identifier}, "${name}-unprotected"]`,
-            logic => refused(logic.create(localOptions), path.join(value, name), "read", "protected-path"));
+            logic => {
+                const judge = logic.create(localOptions);
+                for (const role of ["read", "write"])
+                    refused(judge, path.join(value, name), role, "protected-path");
+                assert.equal(judge.masks.includes(path.join(value, name)), true);
+            });
     }
     for (const base of ["config", "data", "state", "runtime"]) {
         const needle = `path.join(${base}, "vgs")`;
