@@ -74,6 +74,7 @@ ROWS = [
     ("a judge naming its command line", {"Logic.js": '.pragma library\nvar VIEW = { commandLine: "vgsh pkg run install a" };\n'}, None, None),
     ("a drawn string that only says commandLine", {"Service.qml": qml('    Label { text: "commandLine" }')}, None, None),
     ("a command named by its path", {"README.md": "Run `bin/vgsh plugin enable acme.setup` once.\n"}, "instruction", "README.md:1"),
+    ("a command as the subject of a verb that says what it does", {"README.md": "After a crash, `vgsh run` starts the shell again.\n"}, None, None),
     ("a command as the clause's subject", {"README.md": "Turn it off in Settings; `bin/vgsh plugin enable acme.setup` brings it back.\n"}, "instruction", "README.md:1"),
     ("a step that says use", {"README.md": "Use `vgsh doctor` to see what is missing.\n"}, "instruction", "README.md:1"),
     ("a step that says install with", {"README.md": "Install with `paru -S acme-tool` first.\n"}, "instruction", "README.md:1"),

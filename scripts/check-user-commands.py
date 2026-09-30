@@ -74,8 +74,10 @@ REPO = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 VERBS = ("run", "type", "paste", "execute", "enter", "use", "call", r"install\s+with")
 # What inline code does as the subject of a clause that tells the reader
-# to run it.
-SUBJECT_VERBS = ("brings", "fixes", "installs", "enables", "restores", "repairs", "sets", "turns", "adds", "starts", "connects", "stores")
+# to run it, as in "`x` brings it back". A verb that as often says what a
+# command does on its own, such as "starts" in "`vgsh run` starts the shell
+# again", is not one.
+SUBJECT_VERBS = ("brings", "fixes", "installs", "enables", "restores", "repairs", "sets", "turns", "adds", "connects", "stores")
 SHELL_FENCES = ("", "bash", "sh", "shell", "console", "zsh", "fish")
 HEADS_FLOOR = 20
 # Members the head extractors must yield: the core's own command and an
