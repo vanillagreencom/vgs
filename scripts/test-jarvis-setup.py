@@ -299,29 +299,49 @@ class Setup(unittest.TestCase):
     def test_installed_probe_keeps_selected_roots(self):
         self.config["entry_probe"] = str(REPO / "scripts/fixtures/jarvis-setup/installed-probe.py")
         self.write_config()
-        expected = {"models": str(self.data / "models"), "data": str(self.data),
-                    "state": str(self.state), "provider": "cpu",
-                    "artifacts": self.spec["tiers"]["small"]["artifacts"]}
-        (self.data / "probe-expected.json").write_text(json.dumps(expected))
-        # The child must retain the physical roots, even when the parent's
-        # configured roots use private aliases.
         data_alias, state_alias = self.root / "data-alias", self.root / "state-alias"
         (self.root / "state").mkdir(exist_ok=True)
         data_alias.symlink_to(self.root / "data", target_is_directory=True)
         state_alias.symlink_to(self.root / "state", target_is_directory=True)
-        self.env.update(XDG_DATA_HOME=str(data_alias), XDG_STATE_HOME=str(state_alias))
         # These sentinel values are never credentials or live endpoints.
         self.env.update(API_KEY="must-not-forward", DBUS_SESSION_BUS_ADDRESS="must-not-forward",
                         PULSE_SERVER="must-not-forward")
-        self.install()
-        self.ready()
-        observed = json.loads((self.data / "probe-observed.json").read_text())
-        self.assertEqual(observed, {key: expected[key] for key in ("models", "data", "state")})
-        self.mutant("return env", 'env.pop("XDG_DATA_HOME", None)\n    return env')
-        result = self.install(77)
-        self.assertIn(str(self.home / ".local/share/vgs/jarvis/local/models"), result.stderr)
-        self.assertFalse((self.state / "local-ready.json").exists())
-        self.not_ready()
+        original = (PLUGIN / "setup-local").read_text()
+        layouts = [
+            ("root-alias", data_alias, state_alias),
+            ("inner-vgs", self.root / "data", self.root / "state"),
+        ]
+        for name, data_root, state_root in layouts:
+            with self.subTest(layout=name):
+                if name == "inner-vgs":
+                    # Move the large plugin data without changing its XDG root.
+                    for kind in ("data", "state"):
+                        path = self.root / kind / "vgs"
+                        target = self.root / ("stored-" + kind)
+                        path.rename(target)
+                        path.symlink_to(target, target_is_directory=True)
+                (self.plugin / "setup-local").write_text(original)
+                self.env.update(XDG_DATA_HOME=str(data_root), XDG_STATE_HOME=str(state_root))
+                expected = {"models": str(self.data / "models"), "data": str(self.data),
+                            "state": str(self.state), "provider": "cpu",
+                            "artifacts": self.spec["tiers"]["small"]["artifacts"]}
+                (self.data / "probe-expected.json").write_text(json.dumps(expected))
+                self.install()
+                self.ready()
+                observed = json.loads((self.data / "probe-observed.json").read_text())
+                self.assertEqual(observed, {key: expected[key] for key in ("models", "data", "state")})
+                self.mutant("return env", 'env.pop("XDG_DATA_HOME", None)\n    return env')
+                result = self.install(77)
+                self.assertIn(str(self.home / ".local/share/vgs/jarvis/local/models"), result.stderr)
+                self.assertFalse((self.state / "local-ready.json").exists())
+                self.assertEqual(self.report(), {"tone": "warning", "text": "Not set up", "action": True})
+                if name == "inner-vgs":
+                    (self.plugin / "setup-local").write_text(original)
+                    self.mutant("return env",
+                        'env["XDG_DATA_HOME"] = str(data.resolve().parents[2])\n    return env')
+                    self.install(77)
+                    self.assertFalse((self.state / "local-ready.json").exists())
+                    self.assertEqual(self.report(), {"tone": "warning", "text": "Not set up", "action": True})
 
     def test_lock_install_flags_control(self):
         self.install()

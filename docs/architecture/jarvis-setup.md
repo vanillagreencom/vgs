@@ -24,7 +24,7 @@ The Debian package index has no uv package. The declaration offers the existing 
 
 The success marker lives in the state root. Runtime and model files live in the data root defined by [the Jarvis service](jarvis.md#wire). Every attempt removes an earlier marker before installation effects. Download, install, verification and probe failures preserve their nonzero status. Exit `77` is unavailable, never ready. Cancellation cannot continue to marker publication.
 
-The scrubbed probe environment retains the resolved XDG state and data roots. The installed interpreter executes the same `setup-local::roots` entry as the parent, not a default HOME model directory or a path inferred from uv's cache.
+The scrubbed probe environment retains the original XDG state and data roots. It removes the appended VGS path before resolving a root alias. A symlink inside that root changes model storage, not the XDG root identity. The installed interpreter executes the same `setup-local::roots` entry as the parent, not a default HOME model directory or a path inferred from uv's cache.
 
 `setup-local::identity` binds the tier, physical data root, artifact declaration, package locks, setup and measurement sources, fixture bytes, venv configuration, resolved interpreter and installed runtime bytes. Derived Python bytecode does not enter that identity. Setup checks identity before and after inference. It atomically publishes the pre-probe identity only when those inputs still agree.
 
@@ -35,7 +35,7 @@ The scrubbed probe environment retains the resolved XDG state and data roots. Th
 ## Evidence
 
 - `scripts/test-jarvis-setup.py` executes the shipped installer and TUI inside [J09's private world](validation-jarvis.md). Local curl, uv, namespace-command and selected-interpreter doubles record actual argv. Every tier uses the producer's membership. These tests prove installation sequencing, not real model feasibility.
-- The installed-probe fixture executes the shipped `main`, `roots` and `probe` entry with synthetic inference. It keeps the shared input verification active and observes the configured XDG roots. Its disposable control drops data-root forwarding. The missing-gum case uses the real TUI library and rejects a copy that draws the header before checking commands.
+- The installed-probe fixture executes the shipped `main`, `roots` and `probe` entry with synthetic inference. Its root table covers aliases of the XDG roots and an inner `vgs` storage symlink. Shared input verification stays active. Controls drop forwarding or recover the root from resolved model storage; each leaves no marker and exactly Not set up. The missing-gum case uses the real TUI library and rejects a copy that draws the header before checking commands.
 - Disposable behavior-preserving-text mutants cover download hashes, child failures, marker invalidation, identity, changed-during-probe inputs, serialization, archive containment, probe delegation, hash-required installation and TUI execution. The existing artifact suite owns its verifier and inference-oracle controls.
 - `scripts/smoke/rows/jarvis-setup.sh` uses J09's status-process double and an allow-listed TUI fixture. It reads the Settings action and launcher entry, copied-snapshot argv, completion refresh and failure replacement. Its consumer assertions reject copies without refresh or failure replacement.
 - The install-tree check packages every runtime file. The nested read-only-prefix row loads the new service-owned reader from the installed tree and checks that startup changes no prefix file.
