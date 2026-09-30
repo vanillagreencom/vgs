@@ -55,8 +55,18 @@ function mutant(file, name, needle, replacement, check, consumer = path.basename
         fs.copyFileSync(path.join(backend, sibling), path.join(folder, sibling));
     const copy = path.join(folder, path.basename(file));
     fs.writeFileSync(copy, changed);
-    try { assert.throws(() => check(require(path.join(folder, consumer))), assert.AssertionError, name + " must turn red"); }
-    finally { fs.rmSync(folder, { recursive: true, force: true }); }
+    const cleanup = () => fs.rmSync(folder, { recursive: true, force: true });
+    let result;
+    try { result = check(require(path.join(folder, consumer)), folder); }
+    catch (error) {
+        cleanup();
+        assert.ok(error instanceof assert.AssertionError, name + " must fail an assertion, not module loading or execution: " + error);
+        return;
+    }
+    if (result instanceof Promise)
+        return assert.rejects(result, assert.AssertionError, name + " must turn red").finally(cleanup);
+    cleanup();
+    assert.fail(name + " must turn red");
 }
 
 // Filesystem fault stand-ins affect only the synchronous case, never a child

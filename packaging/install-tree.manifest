@@ -220,6 +220,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Tasks.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/jarvisd.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/keys.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/net.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/session-runner.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/actions.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/duplex.md

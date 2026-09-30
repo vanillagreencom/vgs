@@ -10,6 +10,8 @@ The [voice text contract](jarvis-voice.md) defines the shipped guidance and spee
 
 [Jarvis audit](jarvis-audit.md) defines the installed redaction and pre-action persistence interface. The current daemon has no producer for that interface and opens no audit store.
 
+The installed [release policy and transport](jarvis-release.md) define the outbound interface for adapters. The daemon does not create that transport yet.
+
 ## Local speech inputs
 
 [jarvis-local.md](jarvis-local.md) defines the independent artifact declaration, bounded model inputs, measurement instrument and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the selected exports and caption path. These inputs register no plugin and do not implement the sidecar, setup or admission.

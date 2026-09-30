@@ -251,7 +251,7 @@ jarvis_local_rows=$'python3 scripts/test-jarvis-local.py\nscripts/check-jarvis-l
 jarvis_local_tools_plan=$'python3 scripts/check-readme-images.py\n'"${jarvis_local_rows%$'\n'}"
 jarvis_env_plan=$'node scripts/test-jarvis-env.js\n'"$repo_plan"
 jarvis_helper_plan=$'node scripts/test-jarvis-env.js\n'"$jarvis_local_rows$repo_plan"
-jarvis_policy_rows=$'node scripts/test-jarvis-tools.js\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js\nnode scripts/test-jarvis-denied.js\nnode scripts/test-jarvis-audit.js\n'
+jarvis_policy_rows=$'node scripts/test-jarvis-tools.js\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js\nnode scripts/test-jarvis-release.js\nnode scripts/test-jarvis-net.js\nnode scripts/test-jarvis-denied.js\nnode scripts/test-jarvis-audit.js\n'
 jarvis_secrets_plan=$'node scripts/test-jarvis-secrets.js\n'"$repo_plan"
 jarvis_owner_plan="$jarvis_policy_rows"$'node scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-task-event.js\nnode scripts/test-jarvis-secrets.js\n'"$jarvis_helper_plan"
 jarvis_daemon_plan=$'node scripts/test-jarvis-daemon.js\n'"$repo_plan"
@@ -328,6 +328,8 @@ cases=(
   "jarvis-clip|shell/plugins/vgs.jarvis/fixtures/probe.wav|tools|$jarvis_local_tools_plan"
   "jarvis-tools-suite|scripts/test-jarvis-tools.js|offline|node scripts/test-jarvis-tools.js"$'\n'"$repo_plan"
   "jarvis-policy-suite|scripts/test-jarvis-policy.js|offline|node scripts/test-jarvis-policy.js"$'\n'"$repo_plan"
+  "jarvis-release-suite|scripts/test-jarvis-release.js|offline|node scripts/test-jarvis-release.js"$'\n'"$repo_plan"
+  "jarvis-net-suite|scripts/test-jarvis-net.js|offline|node scripts/test-jarvis-net.js"$'\n'"$repo_plan"
   "jarvis-denied-suite|scripts/test-jarvis-denied.js|offline|node scripts/test-jarvis-denied.js"$'\n'"$repo_plan"
   "jarvis-redact-suite|scripts/test-jarvis-redact.js|offline|node scripts/test-jarvis-redact.js"$'\n'"$repo_plan"
   "jarvis-audit-suite|scripts/test-jarvis-audit.js|offline|node scripts/test-jarvis-audit.js"$'\n'"$repo_plan"
@@ -335,7 +337,10 @@ cases=(
   "jarvis-tools-input|shell/plugins/vgs.jarvis/backend/Tools.js|logic|node scripts/test-jarvis-tools.js"$'\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js'
   "jarvis-audit-input|shell/plugins/vgs.jarvis/backend/Audit.js|cli|node scripts/test-jarvis-audit.js"$'\n'"${jarvis_daemon_plan%$repo_plan}"$'scripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
   "jarvis-redact-input|shell/plugins/vgs.jarvis/backend/Redact.js|logic|node scripts/test-jarvis-redact.js"
-  "jarvis-policy-input|shell/plugins/vgs.jarvis/backend/Policy.js|logic|node scripts/test-jarvis-policy.js"
+  "jarvis-policy-input|shell/plugins/vgs.jarvis/backend/Policy.js|logic|node scripts/test-jarvis-policy.js"$'\nnode scripts/test-jarvis-release.js'
+  "jarvis-policy-net-input|shell/plugins/vgs.jarvis/backend/Policy.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
+  "jarvis-net-input|shell/plugins/vgs.jarvis/backend/net.js|logic|node scripts/test-jarvis-release.js"
+  "jarvis-net-cli-input|shell/plugins/vgs.jarvis/backend/net.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
   "jarvis-denied-input|shell/plugins/vgs.jarvis/backend/Denied.js|logic|node scripts/test-jarvis-policy.js"
   "jarvis-denied-cli-input|shell/plugins/vgs.jarvis/backend/Denied.js|cli|node scripts/test-jarvis-denied.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
   "jarvis-session-suite|scripts/test-jarvis-session.js|offline|node scripts/test-jarvis-session.js"$'\n'"$repo_plan"
