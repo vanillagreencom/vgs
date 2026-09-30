@@ -359,7 +359,7 @@ main(() => {
         if (!logic.hasOwn(manifest.settings, key)) refuse("setting=" + key + " undeclared");
         if (logic.hasOwn(manifest.schema, key)) {
             const refusal = logic.settingRefusal(manifest, key, value);
-            if (refusal !== "") refuse(refusal.slice("refused: ".length));
+            if (refusal !== "") refuse(refusal.replace(/^refused: /, ""));
         } else if (value === null || typeof value !== typeof manifest.settings[key]) {
             refuse("setting=" + key + " want=" + typeof manifest.settings[key]);
         }
