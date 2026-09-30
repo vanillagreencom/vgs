@@ -54,13 +54,19 @@ Item {
         id: setupReport
         command: [Quickshell.shellDir + "/../bin/vgsh", "theme", "setup", "--json"]
         stdout: StdioCollector { id: setupOut }
+        stderr: StdioCollector { id: setupErr }
+        // The exit code, or null while the process has not exited, as one
+        // that never started has not.
         property var exitCode: null
         onExited: code => { exitCode = code; }
         onRunningChanged: {
             if (running) return;
-            const value = SetupLogic.browserTheming(setupOut.text, exitCode === null ? -1 : exitCode);
+            const value = SetupLogic.browserTheming(setupOut.text, exitCode);
             exitCode = null;
-            if (value.tone === "danger") console.warn("themes: setup=unknown " + value.text);
+            if (value.tone === "danger") {
+                const why = setupErr.text.split("\n")[0];
+                console.warn("themes: setup=unknown " + value.text + (why === "" ? "" : " stderr=" + JSON.stringify(why)));
+            }
             if (root.shell !== null) {
                 const reply = root.shell.status.set("browserTheming", value);
                 if (reply !== "ok") console.error("themes: " + reply);

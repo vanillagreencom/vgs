@@ -12,7 +12,8 @@ var TARGET = "chromium";
 var STATES = ["not-detected", "absent", "done"];
 
 // The `browserTheming` status value, a `state`, for TEXT, the setup
-// report's stdout, and CODE, its exit code: Installed once the writer is on
+// report's stdout, and CODE, its exit code, null for a report that did not
+// start: Installed once the writer is on
 // PATH; Not installed with the manifest's Install browser theming action
 // offered while a Chromium-family browser is and the writer is not; No
 // browser found while none is; not shipped for a tree whose targets hold
@@ -21,6 +22,7 @@ var STATES = ["not-detected", "absent", "done"];
 // offers nothing.
 function browserTheming(text, code) {
     var unknown = function (why) { return { tone: "danger", text: "Unknown: vgsh theme setup " + why }; };
+    if (code === null) return unknown("did not start");
     if (code !== 0) return unknown("exited " + code);
     var report;
     try {

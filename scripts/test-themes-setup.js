@@ -27,7 +27,8 @@ const ROWS = [
     ["a browser without the writer", report("absent"), 0, { tone: "warning", text: "Not installed: Chromium-family browsers keep their own colours", action: true }],
     ["no browser", report("not-detected"), 0, { tone: "info", text: "No Chromium-family browser found" }],
     ["a failed report", "", 1, { tone: "danger", text: "Unknown: vgsh theme setup exited 1" }],
-    ["a report that did not start", "", -1, { tone: "danger", text: "Unknown: vgsh theme setup exited -1" }],
+    ["a report that did not start", "", null, { tone: "danger", text: "Unknown: vgsh theme setup did not start" }],
+    ["a report killed by a signal, whose code is no exit code", "", -1, { tone: "danger", text: "Unknown: vgsh theme setup exited -1" }],
     ["no JSON", "setup=chromium\n", 0, { tone: "danger", text: "Unknown: vgsh theme setup printed no report" }],
     ["no setups list", "{}\n", 0, { tone: "danger", text: "Unknown: vgsh theme setup printed no report" }],
     ["no chromium row", JSON.stringify({ setups: [{ name: "other", app: "Other", setup: "other-writer", state: "done" }] }), 0, { tone: "info", text: "Not shipped: this VGS themes no Chromium-family browser" }],
@@ -58,6 +59,7 @@ for (const [label, text, code, want] of ROWS) {
 const CONTROLS = [
     ["every state offers the install", 'text: "Not installed: Chromium-family browsers keep their own colours", action: true }', 'text: "Not installed: Chromium-family browsers keep their own colours" }'],
     ["a failed report is read", "if (code !== 0) return unknown(\"exited \" + code);", ""],
+    ["a report that did not start is read", "if (code === null) return unknown(\"did not start\");", ""],
     ["any target's row is read", "rows[i].name === TARGET", "true"],
     ["an unknown state is installed", 'case "done": return', 'default: return']
 ];
