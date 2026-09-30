@@ -270,8 +270,9 @@ stat_fields() {
 }
 
 # Resolve the live shell: the runner reads its own lock file (`bin/vgsh pid`
-# is the one reader of it; bin/vgsh run writes its pid there and execs qs, so
-# that pid is the shell's) and its refusal is passed on under its own key. The
+# is the one reader of it; the child `bin/vgsh run` starts writes its own pid
+# there and execs qs in the same process, so that pid is the shell's) and
+# its refusal is passed on under its own key. The
 # pid must then appear in the Quickshell instance list for this checkout's
 # shell: a stale lock whose pid the kernel reused, or a shell started from
 # another checkout, would otherwise yield a plausible log that describes

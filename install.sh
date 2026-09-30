@@ -19,10 +19,11 @@
 # installed system package (/usr/bin/vgsh, or vgs or vgs-git in the pacman,
 # rpm or dpkg database) and a ~/.local/bin/vgsh it did not make; --force
 # skips the last two. It checks the floor: Quickshell 0.3.1, Hyprland 0.56,
-# node 18, python3, git and flock, plus curl, tar, gzip and sha256sum for a
-# release. Each version probe runs under a private runtime directory, so a
-# shell with no login session reads the true floor. On a miss it names each
-# tool and the command that installs it on this distribution, and exits 78.
+# node 18, python3, git, flock and setpriv, plus curl, tar, gzip and
+# sha256sum for a release. Each version probe runs under a private runtime
+# directory, so a shell with no login session reads the true floor. On a
+# miss it names each tool and the command that installs it on this
+# distribution, and exits 78.
 # A tool it finds but whose version it cannot read is named with the
 # probe's exit status and last error lines instead of an install command.
 # It never runs sudo.
@@ -81,8 +82,8 @@ main() {
   # needs (`present`: any version the pattern reads), the extended regex
   # whose first group reads the version from the probe's stdout, and the
   # probe. The rows repeat bin/vgsh's preflight_floor, whose figures
-  # docs/architecture/runtime.md § Process states, and add flock, a required
-  # row of config/requirements.json. Hyprland is probed through its binary,
+  # docs/architecture/runtime.md § Process states, and add flock and
+  # setpriv, the other required rows of config/requirements.json. Hyprland is probed through its binary,
   # which answers with no compositor running; bin/vgsh asks the running
   # compositor through hyprctl. floor_check runs every probe under a private
   # XDG_RUNTIME_DIR, which the binary needs even for --version, so a shell
@@ -95,12 +96,13 @@ node       18      ^v([0-9]+(\.[0-9]+)*)                                        
 python3    present ^Python[[:space:]]([0-9]+(\.[0-9]+)*)                                       python3 --version
 git        present ^git[[:space:]]version[[:space:]]([0-9]+(\.[0-9]+)*)                         git --version
 flock      present ^flock[[:space:]]from[[:space:]]util-linux[[:space:]]([0-9]+(\.[0-9]+)*)     flock --version
+setpriv    present ^setpriv[[:space:]]from[[:space:]]util-linux[[:space:]]([0-9]+(\.[0-9]+)*)   setpriv --version
 '
   # The tools a release install runs besides the floor: presence alone.
   release_tools=(curl tar gzip sha256sum)
 
   # The package that provides each floor tool, per primary manager. The rows
-  # for node, python3, git and flock are config/requirements.json's. A
+  # for node, python3, git, flock and setpriv are config/requirements.json's. A
   # manager with no entry for quickshell or hyprland has no package in its
   # own repositories that meets the floor (docs/architecture/distribution-curl.md).
   packages='
@@ -110,6 +112,7 @@ node       pacman=nodejs apt=nodejs dnf=nodejs xbps=nodejs emerge=net-libs/nodej
 python3    pacman=python apt=python3 dnf=python3 xbps=python3 emerge=dev-lang/python nix=python3
 git        pacman=git apt=git dnf=git xbps=git emerge=dev-vcs/git nix=git
 flock      pacman=util-linux apt=util-linux dnf=util-linux-core xbps=util-linux emerge=sys-apps/util-linux nix=util-linux
+setpriv    pacman=util-linux apt=util-linux dnf=util-linux xbps=util-linux emerge=sys-apps/util-linux nix=util-linux
 '
   # The primary package managers, as the primary rows of
   # shell/Core/PackageManagers.js state them: id, the os-release identifiers

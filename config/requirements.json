@@ -24,6 +24,12 @@
     "purpose": "Holds the one-shell lock and the theme lock"
   },
   {
+    "command": "setpriv",
+    "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux", "xbps": "util-linux", "emerge": "sys-apps/util-linux", "nix": "util-linux" },
+    "optional": false,
+    "purpose": "Stops the shell when its runner dies, so no shell outlives the one-shell lock"
+  },
+  {
     "command": "xdg-terminal-exec",
     "packages": { "pacman": "xdg-terminal-exec", "apt": "xdg-terminal-exec", "dnf": "xdg-terminal-exec", "nix": "xdg-terminal-exec" },
     "optional": true,

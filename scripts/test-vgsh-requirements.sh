@@ -249,7 +249,7 @@ inst "plugin requirements refuses a second argument" "$tmp/cfg-usage" "$rt_empty
 inst "doctor refuses an argument" "$tmp/cfg-usage" "$rt_empty" 2 "" "vgsh: refused: argument=more" doctor more
 inst "plugin rescan with no shell says so" "$tmp/cfg-usage" "$rt_empty" 0 "shell=not-running" "" plugin rescan
 inst "plugin rescan asks a running shell" "$tmp/cfg-usage" "$rt_live" 0 "shell=rescan-started" "" plugin rescan
-check "the rescan names the runner's pid" test "$(cat "$tmp/args")" == "ipc --pid $$ call shell rescanPlugins"
+check "the rescan names the shell's pid from the lock file" test "$(cat "$tmp/args")" == "ipc --pid $$ call shell rescanPlugins"
 mkdir -p "$tmp/cfg-bad/vgs"; printf '{ "version": 1, "plugins": [ "junk" ] }\n' >"$tmp/cfg-bad/vgs/shell.json"
 inst "doctor refuses a user file the config judge refuses" "$tmp/cfg-bad" "$rt_empty" 1 "" "vgsh: refused: user-config=malformed path=$tmp/cfg-bad/vgs/shell.json error=plugins.0 must be an object with a string id" doctor
 

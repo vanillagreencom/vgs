@@ -148,6 +148,7 @@ rows=(
   "manifests|smoke fixture manifests|node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins|scripts/smoke/fixtures/* bin/vgsh-scan shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js|bin/lib/check-manifests.js bin/vgsh-scan shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "cli|runner CLI controls|scripts/test-vgsh.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json shell/plugins/*"
+  "cli|runner lifetime controls|scripts/test-vgsh-run.sh|scripts/vgsh-rows.sh bin/vgsh"
   "cli|version controls|scripts/test-vgsh-version.sh|scripts/vgsh-rows.sh bin/vgsh VERSION"
   "cli|install tree controls|scripts/test-install-tree.sh|packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
   "cli|fedora source RPM controls|scripts/test-fedora-srpm.sh|packaging/fedora/* .copr/Makefile scripts/fedora-container.sh scripts/lib/release-tarball.sh scripts/vgsh-rows.sh bin/vgsh VERSION"

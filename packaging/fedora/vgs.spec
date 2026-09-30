@@ -24,6 +24,7 @@ Requires:       nodejs >= 1:18
 Requires:       python3
 Requires:       git
 Requires:       util-linux-core
+Requires:       util-linux
 Recommends:     xdg-terminal-exec
 Recommends:     gum
 Recommends:     fzf

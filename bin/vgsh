@@ -78,22 +78,26 @@
 #   vgsh tui list                  every floating TUI the running shell lists: the core's and every enabled plugin's
 #   vgsh tui open <key>            open one listed floating TUI, `core/<name>` or `<plugin id>/<name>`, with no arguments
 #
-# `run` takes no arguments: the shell always runs in the foreground under
-# this process, which is the identity the shell's guard checks. Before
-# anything else it checks Quickshell, a running Hyprland, node, python3 and
-# git against the floor its preflight table holds, and refuses with
-# `vgsh: refused: preflight=<tool> have=<version|none|unknown> need=<version|present>`
-# and exit 78 on the first tool below it. The lock file
-# $XDG_RUNTIME_DIR/vgsh.lock holds the runner's pid while it runs. Every
-# command that contacts the shell addresses that instance alone, so a shell
-# started any other way is never reached. `plugin validate`, `plugin add`,
+# `run` takes no arguments: the shell always runs as this process's child,
+# and this process stays in the foreground until the shell exits, then
+# exits with the shell's status. HUP, INT or TERM to it stops the shell.
+# Before anything else it checks Quickshell, a running Hyprland, node,
+# python3 and git against the floor its preflight table holds, and refuses
+# with `vgsh: refused: preflight=<tool> have=<version|none|unknown> need=<version|present>`
+# and exit 78 on the first tool below it. This process holds the instance
+# lock, $XDG_RUNTIME_DIR/vgsh.lock, until it exits; the file holds the
+# shell's pid, which is the identity the shell's guard checks. No process
+# the shell starts holds the lock. Every command that contacts the shell
+# addresses that instance alone, so a shell started any other way is never
+# reached. `plugin validate`, `plugin add`,
 # `plugin update`, `plugin remove`, `plugin outdated`, `plugin requirements`,
 # `plugin settings` and `doctor` work with no shell running.
 #
 # `restart` checks the same floor first, so below it restart refuses as run
 # does and leaves the running shell alone. It refuses while the session is
 # locked, because the shell owns the lock client. Otherwise it stops the pid
-# in the instance lock, waits for that lock to free and asks Hyprland to run
+# in the instance lock, waits for that lock to free, which it does when the
+# runner exits after the shell, and asks Hyprland to run
 # `vgsh run`, so the new shell inherits the session environment. It prints
 # the new pid once that shell answers as the guarded instance.
 #
@@ -359,10 +363,11 @@ config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$self" >&2; }
 
 # Prints the pid the lock file records, or returns 69 after the refusal.
-# A pid is only written by the runner after it took the lock, so an empty
-# or absent file means no shell started through the runner. A recorded pid
-# whose process is gone is the same refusal: the runner exec'd into the
-# shell, so its pid is the shell's. Callers exit with the returned status
+# A pid is only written by the runner's child after the runner took the
+# lock, so an empty or absent file means no shell started through the
+# runner. A recorded pid whose process is gone is the same refusal: the
+# child writes its own pid and then execs the shell in the same process,
+# so the pid is the shell's. Callers exit with the returned status
 # themselves; errexit does not reach a failed command substitution here.
 shell_pid() {
   local pid
@@ -1510,17 +1515,44 @@ case "$cmd" in
       exit 75
     fi
     truncate -s 0 -- "$lock"
-    printf '%s\n' "$$" >&9
     # The lock proves no runner-started shell is alive, so every source
     # snapshot root under the runtime dir belongs to a dead shell.
     for stale in "$rt_dir"/vgsh-sources-*; do
       [[ -e $stale || -L $stale ]] || continue
       rm -rf -- "${stale:?}"
     done
-    # exec keeps this pid and the lock descriptor, so the shell can prove it
-    # is the lock holder by comparing VGSH_RUNNER_PID with its own pid.
+    # The shell runs as this process's child and never in its place: this
+    # process keeps descriptor 9, and the child closes its copy before it
+    # execs, so no process the shell starts holds the lock, and the lock
+    # frees when this process exits after the shell:
+    # docs/decisions/D053-runner-holds-the-instance-lock.md. The child
+    # writes its own pid as the lock file's only line and exports it as
+    # VGSH_RUNNER_PID before it execs, so the file names the shell before
+    # the shell starts, and the shell proves it is the lock holder's child
+    # by comparing that value with its own pid. setpriv execs qs in the
+    # same process with TERM as its parent-death signal, so a runner killed
+    # with SIGKILL takes the shell with it and never leaves a guarded shell
+    # with the lock free.
     # A Quickshell reload while the session lock is live can unlock it.
-    VGSH_RUNNER_PID=$$ QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec qs -p "$shell_dir"
+    (
+      printf '%s\n' "$BASHPID" >&9
+      exec 9>&-
+      VGSH_RUNNER_PID=$BASHPID QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec setpriv --pdeathsig TERM -- qs -p "$shell_dir"
+    ) &
+    shell_child=$!
+    # bash starts a background job with INT and QUIT ignored, so every stop
+    # signal reaches the shell as TERM. A trapped signal ends `wait` early
+    # with no status of the shell's; bash keeps that status for the next
+    # `wait`, and a `wait` on a pid that is not its child answers 127.
+    forwarded=""
+    trap 'forwarded=1; kill -TERM "$shell_child" 2>/dev/null || :' HUP INT TERM
+    while :; do
+      forwarded=""
+      shell_status=0
+      wait "$shell_child" || shell_status=$?
+      [[ -n $forwarded ]] || break
+    done
+    exit "$shell_status"
     ;;
   restart)
     if [[ $# -gt 0 ]]; then

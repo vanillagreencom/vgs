@@ -7,9 +7,10 @@ import qs.Core
 import qs.Hosts
 
 // The v2 shell root. Draws only when started by the runner that holds the
-// instance lock: the runner exports its own process id and execs qs, so a
-// second qs started by hand carries a stale value and refuses. Everything
-// visible lives in a host, and every host draws a plugin. An unguarded
+// instance lock: the runner's child exports its own process id and execs
+// qs in the same process, so a second qs started by hand carries a stale
+// value and refuses. Everything visible lives in a host, and every host
+// draws a plugin. An unguarded
 // instance answers read-only calls, so its refusal can be diagnosed, and
 // refuses every call that would change state.
 ShellRoot {

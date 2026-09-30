@@ -40,7 +40,7 @@ installer="$repo/install.sh"
 # the distribution rows leave missing.
 stubs="$tmp/stubs"; tools="$tmp/tools"; tools_nogit="$tmp/tools-nogit"
 mkdir -p "$stubs" "$tools" "$tools_nogit"
-for tool in bash sh env readlink dirname mkdir rmdir mktemp mv rm ln cp cat head sed uname flock git python3 curl tar gzip sha256sum gpg unshare mount; do
+for tool in bash sh env readlink dirname mkdir rmdir mktemp mv rm ln cp cat head sed uname flock setpriv git python3 curl tar gzip sha256sum gpg unshare mount; do
   tool_bin="$(command -v "$tool")" || not_measured "$tool"
   ln -s -- "$tool_bin" "$tools/$tool"
   [[ $tool == git ]] || ln -s -- "$tool_bin" "$tools_nogit/$tool"

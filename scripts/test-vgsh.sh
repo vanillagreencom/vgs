@@ -31,7 +31,7 @@ trap 'cleanup_started_pids; rm -rf -- "${tmp:?}"' EXIT
 # STUB_QS_VERSION_EXIT. Invoked as the shell (no
 # `ipc` argument) it records its pid, VGSH_RUNNER_PID, the file-watcher
 # environment and its arguments in STUB_RECORD. STUB_SHELL_HOLD keeps that
-# process and the inherited instance lock alive for restart rows.
+# process, the shell the runner waits on, alive for restart rows.
 cat >"$tmp/qs" <<'EOF2'
 #!/usr/bin/env bash
 if [[ ${1:-} == --version ]]; then
@@ -146,17 +146,22 @@ wait_lock_pid() { # RUNTIME_DIR [OLD_PID]
   return 1
 }
 
+# Starts a runner in the background and sets fake_runner, its pid, and
+# fake_pid, the shell's: the pid the lock file records, which must be the
+# runner's child.
 start_fake_shell() { # NAME RUNTIME_DIR RECORD
-  local name="$1" rt="$2" record="$3" pid lock_pid
+  local name="$1" rt="$2" record="$3" pid lock_pid parent=""
   mkdir -p -- "$rt"
   "${base_env[@]}" XDG_RUNTIME_DIR="$rt" STUB_RECORD="$record" STUB_SHELL_HOLD=60 "$repo/bin/vgsh" run &
   pid=$!
-  fake_pid="$pid"
+  fake_runner="$pid"
+  fake_pid=""
   started_pids+=("$pid")
-  if lock_pid="$(wait_lock_pid "$rt")" && [[ $lock_pid == "$pid" ]]; then
+  if lock_pid="$(wait_lock_pid "$rt")" && parent="$(awk '$1 == "PPid:" { print $2 }' "/proc/$lock_pid/status")" && [[ $parent == "$pid" ]]; then
+    fake_pid="$lock_pid"
     ok "$name"
   else
-    fail "$name: pid=$pid lock=${lock_pid:-unreadable}"
+    fail "$name: runner=$pid lock=${lock_pid:-unreadable} parent=${parent:-unreadable}"
   fi
 }
 
@@ -202,9 +207,9 @@ run_row "a lock file holding no pid exits 69" "$rt_junk" "STUB_REPLY=ok" "plugin
 
 # Every call addresses the recorded pid, never whichever instance qs picks.
 "${base_env[@]}" XDG_RUNTIME_DIR="$rt_live" STUB_ARGS="$tmp/args" STUB_REPLY=ok "$repo/bin/vgsh" plugin enable vgs.clock >/dev/null
-if [[ "$(cat "$tmp/args")" == "ipc --pid $$ call shell setPluginEnabled vgs.clock true" ]]; then ok "a manager call names the runner's pid"; else fail "manager call args: $(cat "$tmp/args")"; fi
+if [[ "$(cat "$tmp/args")" == "ipc --pid $$ call shell setPluginEnabled vgs.clock true" ]]; then ok "a manager call names the shell's pid from the lock file"; else fail "manager call args: $(cat "$tmp/args")"; fi
 "${base_env[@]}" XDG_RUNTIME_DIR="$rt_live" STUB_ARGS="$tmp/args" STUB_REPLY=ok "$repo/bin/vgsh" ipc call shell ping >/dev/null
-if [[ "$(cat "$tmp/args")" == "ipc --pid $$ call shell ping" ]]; then ok "a raw ipc call names the runner's pid"; else fail "ipc args: $(cat "$tmp/args")"; fi
+if [[ "$(cat "$tmp/args")" == "ipc --pid $$ call shell ping" ]]; then ok "a raw ipc call names the shell's pid from the lock file"; else fail "ipc args: $(cat "$tmp/args")"; fi
 
 # The hidden reply carries a space, which env cannot pass; call directly.
 set +e
@@ -213,9 +218,9 @@ status=$?
 set -e
 if [[ $status == 0 && $out == $'ok hidden=vgs.clock,vgs.workspaces\nthose bar widgets stay enabled and return when a bar is enabled' ]]; then ok "disable prints the hidden widgets and the note"; else fail "hidden reply: exit=$status out=[$out]"; fi
 
-# The instance lock. With no holder, run takes the lock, records its pid
-# and execs the shell with that pid as its identity; with a holder it exits
-# 75 before any shell starts.
+# The instance lock. With no holder, run takes the lock and starts the
+# shell as its child, which records its own pid and carries it as its
+# identity; with a holder it exits 75 before any shell starts.
 rt_run="$tmp/rt-run"; mkdir -p "$rt_run/vgsh-sources-1"; : >"$rt_run/vgsh-sources-1/x"
 run_state="$tmp/home/.local/state/vgs"
 if [[ ! -e $run_state ]]; then ok "no state directory stands before run"; else fail "a row before run created $run_state"; fi
@@ -228,7 +233,7 @@ if [[ $status == 0 && -f $tmp/record ]]; then
   pid="${record#pid=}"; pid="${pid%% *}"
   runner="${record#*runner=}"; runner="${runner%% *}"
   args="${record#*args=}"
-  if [[ $pid == "$runner" ]]; then ok "run execs the shell with its own pid as the runner identity"; else fail "run identity: $record"; fi
+  if [[ $pid == "$runner" ]]; then ok "run hands the shell its own pid as the runner identity"; else fail "run identity: $record"; fi
   if run_has_file_watcher_env "$record"; then ok "run disables Quickshell's file watcher and reload popup"; else fail "run watcher env: $record"; fi
   if [[ "$(cat "$rt_run/vgsh.lock")" == "$pid" ]]; then ok "run records the shell's pid in the lock file"; else fail "lock file holds [$(cat "$rt_run/vgsh.lock")] want $pid"; fi
   if [[ $args == "-p $repo/shell" ]]; then ok "run passes qs the shell path and nothing else"; else fail "run args: $args"; fi
@@ -247,8 +252,8 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-old = 'VGSH_RUNNER_PID=$$ QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec qs -p "$shell_dir"'
-new = 'VGSH_RUNNER_PID=$$ exec qs -p "$shell_dir"'
+old = 'VGSH_RUNNER_PID=$BASHPID QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec setpriv'
+new = 'VGSH_RUNNER_PID=$BASHPID exec setpriv'
 count = text.count(old)
 if count != 1:
     raise SystemExit(f"watcher-env-control: expected one match, found {count}")
@@ -419,7 +424,7 @@ pre_control "absent tool" no-git "" 78 "vgsh: refused: preflight=git have=none n
   '[[ -n ${pids[i]} ]] ||' '[[ -n ${pids[i]} ]] || true ||'
 pre_control "preflight first" full STUB_HYPR_VERSION=0.55.9 78 "vgsh: refused: preflight=hyprland have=0.55.9 need=0.56" \
   $'    preflight\n    # The shell watches' '    # The shell watches' \
-  '    VGSH_RUNNER_PID=$$ QS_DISABLE' $'    preflight\n    VGSH_RUNNER_PID=$$ QS_DISABLE'
+  $'    (\n      printf' $'    preflight\n    (\n      printf'
 pre_control "table order" no-node "STUB_QS_VERSION=Quickshell 0.3.0" 78 "vgsh: refused: preflight=quickshell have=0.3.0 need=0.3.1" \
   $'  for i in "${!tools[@]}"; do\n    tool=' $'  for ((i = ${#tools[@]} - 1; i >= 0; i--)); do\n    tool='
 pre_control "scratch refused" full "TMPDIR=$pre_no_tmp" 1 "vgsh: refused: scratch=$pre_no_tmp" \
@@ -453,7 +458,7 @@ rt_restart_lua="$tmp/rt-restart-lua"; dispatch="$tmp/dispatch-lua"
 start_fake_shell "restart lua fixture starts a shell" "$rt_restart_lua" "$tmp/record-lua-old"
 old_pid="$fake_pid"
 run_restart_capture "$rt_restart_lua" "$tmp/record-lua-new" "$dispatch" false STUB_ARGS="$tmp/args-lua"
-wait "$old_pid" 2>/dev/null || true
+wait "$fake_runner" 2>/dev/null || true
 if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then
   new_pid="${BASH_REMATCH[1]}"; started_pids+=("$new_pid"); ok "restart prints the relaunched pid"
 else
@@ -471,7 +476,7 @@ rt_restart_guarded_retry="$tmp/rt-restart-guarded-retry"; dispatch="$tmp/dispatc
 start_fake_shell "restart guarded-retry fixture starts a shell" "$rt_restart_guarded_retry" "$tmp/record-guarded-retry-old"
 old_pid="$fake_pid"
 run_restart_capture "$rt_restart_guarded_retry" "$tmp/record-guarded-retry-new" "$dispatch" false STUB_GUARDED_FALSE_CALLS=2 STUB_GUARDED_COUNT="$guarded_count"
-wait "$old_pid" 2>/dev/null || true
+wait "$fake_runner" 2>/dev/null || true
 if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then guarded_retry_pid="${BASH_REMATCH[1]}"; started_pids+=("$guarded_retry_pid"); ok "restart waits through guarded=false replies"; else guarded_retry_pid=""; fail "guarded retry restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
 guarded_calls=0; [[ -r $guarded_count ]] && IFS= read -r guarded_calls <"$guarded_count"
 if (( guarded_calls >= 3 )); then ok "restart retries until guarded answers true"; else fail "guarded retry count: $guarded_calls"; fi
@@ -480,7 +485,7 @@ rt_restart_classic="$tmp/rt-restart-classic"; dispatch="$tmp/dispatch-classic"
 start_fake_shell "restart classic fixture starts a shell" "$rt_restart_classic" "$tmp/record-classic-old"
 old_pid="$fake_pid"
 run_restart_capture "$rt_restart_classic" "$tmp/record-classic-new" "$dispatch" false 'STUB_HYPR_STATUS={"configProvider":"hyprlang"}' STUB_ARGS="$tmp/args-classic"
-wait "$old_pid" 2>/dev/null || true
+wait "$fake_runner" 2>/dev/null || true
 if [[ $restart_status == 0 && $restart_out =~ ^ok\ pid=([0-9]+)$ ]]; then classic_pid="${BASH_REMATCH[1]}"; started_pids+=("$classic_pid"); ok "restart succeeds with the classic Hyprland dialect"; else classic_pid=""; fail "classic restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
 if [[ "$(cat "$dispatch")" == "$classic_request" ]]; then ok "restart uses the classic Hyprland exec dialect"; else fail "classic dispatch: $(cat "$dispatch")"; fi
 if [[ -n $classic_pid && "$(cat "$tmp/args-classic")" == "ipc --pid $classic_pid call shell guarded" ]]; then ok "classic restart waits for the new guarded shell"; else fail "classic guarded check: $(cat "$tmp/args-classic" 2>/dev/null || echo absent)"; fi
@@ -530,7 +535,7 @@ rt_restart_bad_reply="$tmp/rt-restart-bad-reply"; dispatch="$tmp/dispatch-bad-re
 start_fake_shell "restart dispatch-failure fixture starts a shell" "$rt_restart_bad_reply" "$tmp/record-bad-reply-old"
 old_pid="$fake_pid"
 run_restart_capture "$rt_restart_bad_reply" "$tmp/record-bad-reply-new" "$dispatch" false STUB_HYPR_REPLY=nope
-wait "$old_pid" 2>/dev/null || true
+wait "$fake_runner" 2>/dev/null || true
 if [[ $restart_status == 1 && -z $restart_out && $restart_err == "vgsh: refused: start=failed reply=nope" ]]; then ok "restart refuses a failed Hyprland dispatch reply"; else fail "restart bad dispatch: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
 if [[ ! -d /proc/$old_pid ]]; then ok "a failed relaunch reports that the old shell stopped"; else fail "failed relaunch left old pid=$old_pid"; fi
 
@@ -538,7 +543,7 @@ rt_restart_exited="$tmp/rt-restart-exited"; dispatch="$tmp/dispatch-exited"
 start_fake_shell "restart exited fixture starts a shell" "$rt_restart_exited" "$tmp/record-exited-old"
 old_pid="$fake_pid"
 run_restart_capture "$rt_restart_exited" "$tmp/record-exited-new" "$dispatch" false STUB_SHELL_HOLD=
-wait "$old_pid" 2>/dev/null || true
+wait "$fake_runner" 2>/dev/null || true
 if [[ $restart_status == 1 && -z $restart_out && $restart_err =~ ^vgsh:\ refused:\ start=exited\ pid=([0-9]+)$ ]]; then exited_pid="${BASH_REMATCH[1]}"; ok "restart refuses a shell that exits before it is guarded"; else exited_pid=""; fail "exited restart: exit=$restart_status out=[$restart_out] stderr=[$restart_err]"; fi
 if [[ -n $exited_pid && ! -d /proc/$exited_pid ]]; then ok "the exited restart names a dead replacement pid"; else fail "exited restart pid live=$([[ -n $exited_pid && -d /proc/$exited_pid ]] && echo yes || echo no) pid=${exited_pid:-missing}"; fi
 
@@ -603,7 +608,7 @@ check "add lands a listed plugin disabled and keeps its settings row" json_is "$
 
 cfg="$tmp/cfg-live"
 inst "add rescans a running shell" "$cfg" "$rt_live" 0 "shell=rescan-started" "" plugin add "$tmp/src/probe.git"
-check "the rescan names the runner's pid and the plugin add installed" test "$(cat "$tmp/args")" == "ipc --pid $$ call shell pluginInstalled acme.probe"
+check "the rescan names the shell's pid from the lock file and the plugin add installed" test "$(cat "$tmp/args")" == "ipc --pid $$ call shell pluginInstalled acme.probe"
 # The plugin landed before the rescan was asked for; a reply the runner does
 # not know is a refusal that names it, after the landing line.
 cfg="$tmp/cfg-weird"
