@@ -8,6 +8,8 @@ The independent local-model consumer and its actual-model row are in [Jarvis loc
 
 The [kernel sandbox suite](jarvis-sandbox.md#evidence) runs real bubblewrap inside this world. Its absolute system bootstrap is allow-listed for that suite only. It never binds live HOME. Runtime and mask controls expose only scratch sentinels. Its network control reaches a private loopback listener.
 
+The [Jarvis control tests](jarvis-controls.md#evidence) use private scripted capture, brain and playback ports. They instrument only disposable daemon copies through `scripts/fixtures/jarvis/scripted.js`. File gates advance callbacks. These fixtures run no audio process or provider and introduce no installed fixture API.
+
 ## Ownership
 
 - `scripts/lib/jarvis-env.sh::jarvis_env_run` owns one scratch world per invocation. Its header defines the caller contract. A suite starts its fixture servers, daemon and children inside that invocation, so they share the same loopback network.

@@ -181,7 +181,7 @@ if d is None:
 else:
     s=d["state"]
     ok=(d["phase"] == "down" and d["seq"] >= 1 and s["gate"] == {"kind":"down","reason":sys.argv[1]}
-        and s["capture"] == {"kind":"closed"} and s["action"] == {"kind":"none"} and s["gen"] == 0)
+        and s["capture"] == {"kind":"closed"} and s["action"] == {"kind":"none"} and s["gen"] == 1)
     print("session" if ok else "wrong-session")
 ' "$1"
 }
@@ -450,3 +450,4 @@ cp -- "$sandbox/jarvis-add-key-original" "$repo/shell/plugins/vgs.jarvis/tui/add
 printf 'present\n' >"$sandbox/jarvis-world/key-mode"
 jarvis_rescan
 expect_poll "restored key status contains no secret" matched jarvis_key_value present
+jarvis_disable

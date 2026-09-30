@@ -1,8 +1,8 @@
 # Jarvis
 
-Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
+Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, scripts/smoke/rows/jarvis-keys.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
 
-The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon runs the region reducer, but this skeleton captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
+The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon runs the region reducer and persists privacy mute, but captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
 
 The service also owns a metadata-only key presence probe. Settings opens the masked Add key terminal. Storage, lookup and the reference contract for future adapters and the accounts picker are in [jarvis-secrets.md](jarvis-secrets.md). The daemon still opens no provider account.
 
@@ -26,9 +26,9 @@ A privacy-sensitive service declares capability `session` and binds to `shell.se
 
 The service treats a missing shell or lock value as locked. Each hello carries the observed lock state. The daemon answers `locked` or `ready` for health, and neither answer permits capture. Session stays down with reason `locked` or `unconfigured`. The core capability does not enforce capture or action policy.
 
-## Shortcut foundation
+## Controls
 
-J02 provides the [core hold-shortcut contract](hyprland-shortcuts.md#hold-shortcuts), recorded by [D071](../decisions/D071-hold-shortcuts-use-a-release-companion.md). This foundation does not connect Jarvis keys. J12 owns that connection and mode selection.
+[jarvis-controls.md](jarvis-controls.md) defines the implemented keys, modes, persistent mute and wire. The stock daemon remains unconfigured. Only disposable test copies acquire scripted capture or playback.
 
 ## Session
 
@@ -51,24 +51,16 @@ The core supports the [passive layer input contract](layers.md), refined by [D05
 - `Service.qml` owns the Process, its parsers, the hello deadline and the restart timer. Disable destroys that owner. It closes stdin before Quickshell destroys the Process. A crashed shell closes the pipe without running QML teardown.
 - The daemon exits when stdin closes. No systemd unit or detached process keeps it alive. It uses the shared library loader from the real VGS tree, passed as argv, because its published plugin snapshot contains no core files.
 - A successful hello does not replenish the restart allowance. Five restarts use exponential delays, then the service publishes a problem and raises one toast. The hello deadline bounds a child that starts but sends no answer. These are recovery rules, not measured latency budgets.
-- The daemon's normal exit 78 is permanent configuration failure. The service publishes its Node-needed cause without a restart. VGS's package floor remains Node 18; only Jarvis requires Node 22.
+- The daemon's normal exit 78 is permanent configuration failure. The service publishes its cause without a restart. Node below the plugin floor and privacy-record failures take this path. VGS's package floor remains Node 18; only Jarvis requires Node 22.
 - Node below the plugin floor refuses before reading hello. The manifest names the daemon and key flow's commands. D035 supplies the install notice; the plugin runs no installer.
 
 ## Wire
 
-`JarvisProtocol.js::accept` owns the implemented v1 shapes and directions. Its header defines the current type set. Unknown types, extra or missing fields and oversized lines fail with a keyed protocol error. Future wire types enter that judge only when both endpoints consume them.
-
-The service takes settings from `shell.settings`, the revision from the registry-owned `shell.manifest.__revision`, state storage from `Paths.stateDir`, and data/runtime roots from the shell's XDG environment. This skeleton has no settings or binds, so those hello records are empty. The daemon validates the complete snapshot and creates private task state and data-engine directories. A lock change sends a new snapshot while the child is starting or ready. A failure or teardown permits no further send.
-
-The daemon owns generation identity. Hello carries the service's last observation, initially zero; it cannot assign a daemon generation. Status and state carry the current generation and snapshot revision. State also carries the ordered sequence, regions and phase. `JarvisProtocol.accept` uses `Session.validate` for the record and `Session.phaseOf` for the phase. One daemon writer and the stdin/stdout pipes preserve order. The service filters replies to earlier lock observations and clears detail before child restart. Other intent and adapter messages remain outside the wire.
-
-Key presence uses a separate service-owned reader, not a new daemon wire type.
-
-Both endpoints frame chunks before retaining an unfinished line. QML uses `SplitParser` with an empty `splitMarker`, not its default unbounded line buffer. The daemon uses a UTF-8 decoder across reads. [The Quickshell 0.3.1 reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/SplitParser/) documents arbitrary chunk lengths for the empty marker. The [Process reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/Process/) documents stdin closure, explicit environments and restart from `runningChanged`.
+The wire contract is in [jarvis-controls.md § Wire](jarvis-controls.md#wire).
 
 ## Boundaries still owned by later rows
 
-J12 owns keys, mode selection and mute controls. J13 owns audio process lifetime, forced daemon death ending its children, and actual capture teardown during lock, mute or unknown lock state. J16 owns the mapped indicator handshake. J19 owns the policy-approved tool router and confirmation authority. The reducer's ports do not implement those owners. Engines, adapters, accounts and user interfaces stay with their assigned issues. [The action policy](jarvis-policy.md) names the separate routing, approval, audit, release and confinement owners.
+J13 owns audio process lifetime, forced daemon death ending its children, and actual capture teardown during lock, mute or unknown lock state. J16 owns the mapped indicator handshake. J19 owns the policy-approved tool router and confirmation authority. J42 owns local toggle turn detection; J43 owns always runtime; J57 owns the console. Their settings and actions enter only with their consumers. The reducer's ports do not implement those owners. Engines, adapters, accounts and user interfaces stay with their assigned issues. [The action policy](jarvis-policy.md) names the separate routing, approval, audit, release and confinement owners.
 
 ## Evidence
 

@@ -1,8 +1,8 @@
 .pragma library
 .import "Session.js" as Session
 
-// The implemented v1 wire is hello -> status + state. Later owners add their types
-// here when both endpoints consume them. A line excludes its LF delimiter.
+// Service produces hello snapshots and intent(talk-down, talk-up, mute, stop).
+// Daemon consumes those and produces status/state. A line excludes its LF.
 var MAX_LINE_BYTES = 256 * 1024;
 
 function fail(reason) {
@@ -64,12 +64,24 @@ function accept(line, direction) {
     case "hello":
         if (direction !== "shell") fail("direction-hello");
         keys(message, ["v", "type", "gen", "settings", "directories", "revision", "locked", "keys"], "hello");
-        keys(message.settings, [], "settings");
-        keys(message.keys, [], "keys");
+        keys(message.settings, ["mode"], "settings");
+        if (message.settings.mode !== "hold" && message.settings.mode !== "toggle") fail("mode");
+        keys(message.keys, ["talk", "mute", "stop"], "keys");
+        for (var shortcut of Object.keys(message.keys)) {
+            var key = message.keys[shortcut];
+            // The core shortcut provider owns normalization and conflicts.
+            if (key !== null && (typeof key !== "string" || key.length === 0))
+                fail("key-" + shortcut);
+        }
         keys(message.directories, ["state", "data", "runtime"], "directories");
         for (var name of Object.keys(message.directories))
             if (!directory(message.directories[name])) fail("directory-" + name);
         if (typeof message.locked !== "boolean") fail("lock");
+        break;
+    case "intent":
+        if (direction !== "shell") fail("direction-intent");
+        keys(message, ["v", "type", "gen", "revision", "intent"], "intent");
+        if (["talk-down", "talk-up", "mute", "stop"].indexOf(message.intent) === -1) fail("intent");
         break;
     case "status":
         if (direction !== "daemon") fail("direction-status");

@@ -9,7 +9,20 @@
   "icon": "mic",
   "kinds": ["service"],
   "entryPoints": { "service": "Service.qml" },
-  "capabilities": ["session", "status", "toasts", "tui"],
+  "capabilities": ["session", "status", "toasts", "tui", "shortcut"],
+  "settings": { "mode": "hold" },
+  "schema": {
+    "mode": { "type": "enum", "label": "Talk mode", "group": "Listening",
+      "options": ["hold", "toggle"],
+      "description": "Hold commits on release. Toggle keeps a conversation open. Audio engines are not configured yet." }
+  },
+  "hyprland": {
+    "binds": [
+      { "shortcut": "talk", "key": "SUPER+code:108", "hold": true },
+      { "shortcut": "mute", "key": "SUPER+SHIFT+code:108" },
+      { "shortcut": "stop", "key": "SUPER+ALT+PERIOD" }
+    ]
+  },
   "requirements": [
     { "command": "node", "packages": { "pacman": "nodejs", "apt": "nodejs", "dnf": "nodejs" }, "optional": false, "purpose": "Runs the Jarvis daemon, which requires Node 22 or later" },
     { "command": "secret-tool", "packages": { "pacman": "libsecret", "apt": "libsecret-tools", "dnf": "libsecret" }, "optional": true, "purpose": "Stores and reads provider keys in the desktop keyring" },

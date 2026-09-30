@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state. Jarvis stores provider keys in your desktop keyring. This skeleton has no voice control, capture, provider connection or desktop actions.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state. Jarvis stores provider keys in your desktop keyring. The installed service has no audio engine, provider connection or desktop actions.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -12,6 +12,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Bounded restart reports a problem and shows a toast when recovery ends.
 - The service reads the session lock without receiving lock authority.
 - The child tracks session state without opening a microphone or a provider.
+- Talk mode selects hold or toggle behavior for future engines.
+- Mute persists across restarts and blocks talk input.
 - Settings opens Add key in a floating terminal with hidden key input.
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
 
@@ -27,6 +29,8 @@ The service sends its current configuration and lock observation to the child. T
 
 ## Settings
 
-This skeleton has no editable settings.
+Talk mode defaults to Hold. Toggle keeps conversation demand open until the next press. No mode captures audio until an engine and its indicator are available.
+
+The Keys section changes Talk, Mute and Stop. Talk defaults to Super with Right Alt. Mute defaults to Super with Shift and Right Alt. Stop defaults to Super with Alt and Period. Mute is separate from Talk mode.
 
 Open Jarvis in Settings and select Add key. Use the provider's origin, such as `https://api.openai.com`, without a path. Add key can ask the desktop keyring to unlock because you started storage. The background presence check never unlocks it.

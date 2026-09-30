@@ -10,7 +10,7 @@ const { load } = require("../bin/lib/qml-library.js");
 const file = path.resolve(__dirname, "../shell/plugins/vgs.jarvis/Session.js");
 const Session = load(file);
 const copy = value => JSON.parse(JSON.stringify(value));
-const events = ["snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "stop",
+const events = ["snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle", "stop",
     "cancel", "interrupt", "capture-opened", "capture-closed", "partial", "final", "brain-done",
     "brain-failed", "cancelled", "play", "played", "flushed", "tool", "tool-done", "approval",
     "shown", "approval-cancel", "deadline", "lease-ended"];
@@ -47,6 +47,38 @@ function held(logic) {
 }
 const kinds = result => result.effects.map(e => e.kind);
 const table = [
+    ["key-mode", logic => {
+        let s = step(logic, ready(logic), snapshot({ settings: { mode: "toggle" } })).state;
+        s = step(logic, s, event("talk-down", 100)).state;
+        assert.equal(s.input.kind, "conversation");
+        assert.deepEqual(step(logic, s, event("talk-up", 101)), { state: s, effects: [] });
+        assert.deepEqual(step(logic, s, event("talk-down", 349)), { state: s, effects: [] });
+        const closed = step(logic, s, event("talk-down", 350));
+        assert.equal(closed.state.conversation.kind, "ended");
+        assert.equal(closed.state.capture.kind, "closing");
+    }],
+    ["mute-key", logic => {
+        const active = listening(logic);
+        const muted = step(logic, active, event("mute-toggle", 30));
+        assert.equal(muted.state.mute.kind, "muting");
+        assert.equal(muted.state.capture.kind, "closing");
+        assert.deepEqual(muted.effects.filter(e => e.kind === "mute-store").map(e => e.muted), [true]);
+        assert.deepEqual(step(logic, muted.state, event("mute-toggle", 31)), { state: muted.state, effects: [] });
+        let s = step(logic, muted.state, callback("capture-closed", muted.state.capture, 32)).state;
+        assert.equal(s.mute.kind, "on");
+        for (const type of ["talk-down", "talk-up", "toggle", "stop"]) {
+            const result = step(logic, s, event(type, 400));
+            assert.equal(result.state.mute.kind, "on");
+            assert.deepEqual(result.effects, []);
+            assert.equal(result.state.capture.kind, "closed");
+        }
+        const unmuted = step(logic, s, event("mute-toggle", 401));
+        assert.equal(unmuted.state.mute.kind, "off");
+        assert.equal(unmuted.state.input.kind, "released");
+        assert.deepEqual(unmuted.effects.map(e => [e.kind, e.muted]), [["mute-store", false]]);
+        s = step(logic, active, snapshot({ at: 30, settings: { mode: "toggle" } })).state;
+        assert.equal(s.conversation.kind, "ended", "mode change ends capture demand");
+    }],
     ["unknown-event", logic => assert.throws(() => logic.reduce(logic.initial(), event("unknown")),
         { message: "jarvis: session=event type=unknown" })],
     ["event-clock", logic => {
@@ -656,7 +688,7 @@ for (const seed of seeds) for (const a of pairEvents) for (const b of pairEvents
     }
     pairs++;
 }
-assert.equal(pairs, 14336, "matrix discovery floor and exact event set");
+assert.equal(pairs, 15246, "matrix discovery floor and exact event set");
 const createdPairs = createdPairMatrix(Session);
 
 const parent = path.resolve(__dirname, "../tmp");
@@ -667,6 +699,10 @@ let controls = 0;
 try {
     // Each independent lifetime rule has its own planted defect.
     const mutants = [
+        ["key-mode", 'if (s.settings.mode === "toggle") { toggle(s, effects, e.at); break; }',
+            'if (false) { toggle(s, effects, e.at); break; }', "key-mode"],
+        ["mute-key-store", 'effect(s, effects, "mute-store", { muted: true });',
+            'void effects;', "mute-key"],
         ["initial", "gen: 0, nextOp: 1, stale: 0, settings: {},",
             "gen: 1, nextOp: 1, stale: 0, settings: {},", "startup"],
         ["stale-op", "e.op === owner.op", "(true || e.op === owner.op)", "stale-op"],
@@ -687,7 +723,7 @@ try {
         ["retain-brain", 'if (s.brain.kind === "closed") s.brain = { kind: "acquired", gen: brain.gen, op: brain.op };',
             'if (true || s.brain.kind === "closed") s.brain = { kind: "acquired", gen: brain.gen, op: brain.op };', "reused-brain-owner"],
         ["release", 'if (s.input.kind !== "held") break;', 'if (false && s.input.kind !== "held") break;', "hold-edges"],
-        ["toggle", "e.at - s.toggleAt < 250", "e.at - s.toggleAt < 249", "toggle-debounce"],
+        ["toggle", "at - s.toggleAt < 250", "at - s.toggleAt < 249", "toggle-debounce"],
         ["start-gen", 's.gen++;\n        s.conversation = { kind: "active" };', 's.gen += 0;\n        s.conversation = { kind: "active" };', "start-generation"],
         ["end-gen", 's.gen++;\n        s.conversation = { kind: "ended" };', 's.gen += 0;\n        s.conversation = { kind: "ended" };', "end-generation"],
         ["settings", 'a[key] !== b[key]', '(false && a[key] !== b[key])', "settings-model"],

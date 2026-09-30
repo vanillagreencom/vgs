@@ -49,6 +49,7 @@ class SessionRunner {
         case "tool-outcome": this.ports.brain.outcome(e); break;
         case "approval-show": this.ports.approval.show(e, () => done("shown")); break;
         case "approval-ended": this.ports.approval.end(e); break;
+        case "mute-store": this.ports.mute.store(e.muted); break;
         default: throw new Error("jarvis: session=effect kind=" + e.kind);
         }
     }

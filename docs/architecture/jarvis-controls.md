@@ -1,0 +1,51 @@
+# Jarvis controls and wire
+
+Covers: shell/plugins/vgs.jarvis/manifest.json, shell/plugins/vgs.jarvis/Service.qml, shell/plugins/vgs.jarvis/JarvisProtocol.js, shell/plugins/vgs.jarvis/Session.js, shell/plugins/vgs.jarvis/backend/jarvisd.js, shell/plugins/vgs.jarvis/backend/session-runner.js, scripts/fixtures/jarvis/scripted.js, scripts/smoke/rows/jarvis-keys.sh, scripts/test-jarvis-daemon.js, scripts/test-jarvis-protocol.js
+
+The [Jarvis architecture](jarvis.md) owns the service, child lease and Session regions. The installed daemon remains unconfigured and uses unavailable ports. The controls cannot open a microphone, speaker or provider.
+
+## Keys and modes
+
+The manifest declares only controls with a consumer. Settings edits mode and the declared keys through the core's existing page. Always mode, confirmation and console binds remain absent until their assigned owners implement them.
+
+The service registers talk with the [core hold-shortcut contract](hyprland-shortcuts.md#hold-shortcuts), recorded by [D071](../decisions/D071-hold-shortcuts-use-a-release-companion.md). The core owns repeated-down suppression, release, rebind cancellation and disposal. Jarvis adds no second physical-hold owner.
+
+`Session.js` selects hold or toggle from its settings. In hold, down interrupts before collecting; up closes capture and the engine supplies its final transcript. In toggle, down opens or ends conversation demand; up does nothing. The existing Session debounce applies to toggle presses. A mode change ends the conversation. Local turn detection and always listening remain separate work.
+
+The service waits for a complete effective key map before sending a snapshot. Enablement and disposal can change the registry before they change the instance. An unbound or conflicting key still appears as null in a complete map. The daemon validates the map's wire shape; the core remains the key-syntax and conflict judge.
+
+## Privacy mute
+
+The mute shortcut sends one intent. Session converts it to `mute-toggle`. From off, it ends conversation demand, cancels thinking, flushes playback and emits `mute-store(true)`. Mute stays muting until capture acknowledges close. A second mute press during that close does nothing. From on, the same intent emits `mute-store(false)` without restoring demand. Talk and stop cannot clear mute.
+
+`session-runner.js` delivers the storage effect to the daemon. The daemon writes only `mute.json` in the hello's state directory. Its exact record is `{ "muted": boolean }`. The writer creates a private file and renames it whole; it never writes a plugin snapshot or shell configuration. Startup reads a bounded record before applying the first snapshot. An absent record means unmuted. A malformed or unreadable record refuses startup with exit 78.
+
+A failed storage effect also exits 78 after Session teardown. The service reports that cause without automatic retry. That failure is not a successful privacy save. Normal daemon, service and shell restarts read the same persistent state directory. The daemon never copies mute into the mode setting.
+
+## Wire
+
+`JarvisProtocol.js::accept` owns the implemented v1 shapes and directions. Its header defines the current type set. Unknown types, extra or missing fields and oversized lines fail with a keyed protocol error. Future wire types enter that judge only when both endpoints consume them.
+
+The service takes settings from `shell.settings`, the revision from the registry-owned `shell.manifest.__revision`, state storage from `Paths.stateDir`, and data/runtime roots from the shell's XDG environment. Hello carries the implemented mode and effective shortcut map. The daemon validates the complete snapshot. Its first hello prepares the [coding-task store and data engine](jarvis-tasks.md) before restoring privacy mute. Later snapshots and intents do not repeat task recovery. Lock, mode and effective-key changes send a new snapshot while the child is starting or ready. A failure or teardown permits no further send.
+
+Intent carries its name, revision and observed generation. Talk down, talk up, mute and stop have both endpoint consumers. Mute reaches Session even while locked or unconfigured. An intent before hello or for another revision fails. A later hello cannot move the daemon to another state directory or revision.
+
+The daemon owns generation identity. Hello and intent carry the service's last observation, initially zero; neither can assign a daemon generation. Key edges are ordered input, not adapter callbacks. The daemon accepts an up even when its observed generation predates the immediately preceding down. Status and state carry the current generation and snapshot revision. State also carries the ordered sequence, regions and phase. `JarvisProtocol.accept` uses `Session.validate` for the record and `Session.phaseOf` for the phase. One daemon writer and the stdin/stdout pipes preserve order. The service filters replies to earlier lock observations and clears detail before child restart. Other adapter messages remain outside the wire.
+
+Key presence uses a separate service-owned reader, not a new daemon wire type.
+
+Both endpoints frame chunks before retaining an unfinished line. QML uses `SplitParser` with an empty `splitMarker`, not its default unbounded line buffer. The daemon uses a UTF-8 decoder across reads. [The Quickshell 0.3.1 reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/SplitParser/) documents arbitrary chunk lengths for the empty marker. The [Process reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/Process/) documents stdin closure, explicit environments and restart from `runningChanged`.
+
+## Evidence
+
+- The Session suite tests mode selection, mute storage effects and muted key input. Its ordered event matrix includes mute-toggle. The runner suite tests both storage values and controls dropped delivery.
+- The protocol suite pins the manifest defaults, settings and effective-key shape, implemented intent set, directions and refusals. Its mutation controls remove each new wire rule.
+- The daemon suite runs stock and disposable scripted copies in the [private test world](validation-jarvis.md). It tests persisted mute, restart, corrupt and oversized records, storage failure, immediate down/up with an old observed generation, repeat, hold phases, toggle release and conversation close. Controls drop the intent consumer, save or restore, and remove record bounds and shape checks.
+- `scripts/fixtures/jarvis/scripted.js` supplies only test ports and explicit file gates. Tests copy it beside a disposable daemon and instrument that copy. The installed daemon has no fixture option, import or environment switch.
+- `scripts/smoke/rows/jarvis-keys.sh` uses the existing physical-key helper and hold-row fixture functions. It reads listening, thinking, speaking and idle from the real service. It also reads toggle demand, pending mute teardown, restart mute, muted key refusal and native shortcut cleanup. Its release control retains the registration and drops only callback delivery; the same commit assertion fails once. State reads poll once per IPC round trip. The modifier-independent ordering marker works while talk remains held. No latency budget is claimed.
+
+## Omarchy comparison
+
+The read-only Omarchy shell reference's `plugins/agents/Main.qml` keeps the worker outside the display. VGS keeps its leased daemon and service boundary.
+
+The read-only omarchy-voice reference's `share/bindings.lua.snippet` supplies a toggle key that calls its CLI. `src/omarchy_voice/session.py` forwards control over a Unix socket. VGS uses the existing shortcut capability and the child's ordered stdio wire instead. It needs no per-key process or second control socket. Hold remains the plan's default. Privacy mute is separate from conversation demand and persists before a later process can acquire capture.

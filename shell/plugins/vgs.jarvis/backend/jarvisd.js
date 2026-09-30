@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // jarvisd --tree ABSOLUTE_VGS_TREE
 // Stdin is the service's lease. EOF exits 0; a partial line or a refused
-// message exits 65. Task-store failure exits 74. Node below 22 exits 78.
-// Stdout carries v1 status/state
+// message exits 65. Task-store failure exits 74. Node below 22 or a
+// mute-store failure exits 78. Stdout carries v1 status/state
 // messages judged by JarvisProtocol; stderr carries keyed jarvis: failures.
 // Startup validates coding-task records and publishes their durable producer.
 // It opens no socket, account or audio device and starts no coding task.
 "use strict";
 const path = require("node:path");
+const fs = require("node:fs");
 const { StringDecoder } = require("node:string_decoder");
 const Tasks = require("./Tasks.js");
 const cp = require("node:child_process");
@@ -33,12 +34,65 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let ending = false;
     let seq = 0;
 
+    function readMute() {
+        let fd;
+        try {
+            fd = fs.openSync(path.join(context.directories.state, "mute.json"),
+                fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+            if (!fs.fstatSync(fd).isFile()) throw new Error("jarvis: mute=record-not-file");
+            const bytes = Buffer.alloc(65);
+            const size = fs.readSync(fd, bytes, 0, bytes.length, 0);
+            if (size > 64) throw new Error("jarvis: mute=record-size");
+            let value;
+            try { value = JSON.parse(bytes.subarray(0, size).toString("utf8")); }
+            catch { throw new Error("jarvis: mute=record-json"); }
+            if (value === null || typeof value !== "object" || Array.isArray(value)
+                    || Object.keys(value).join(",") !== "muted" || typeof value.muted !== "boolean")
+                throw new Error("jarvis: mute=record-shape");
+            return value.muted;
+        } catch (error) {
+            if (error.code === "ENOENT") return false;
+            if (error.message.startsWith("jarvis: mute=")) throw error;
+            throw new Error("jarvis: mute=read-failed");
+        } finally {
+            if (fd !== undefined) {
+                try { fs.closeSync(fd); } catch { throw new Error("jarvis: mute=read-close-failed"); }
+            }
+        }
+    }
+
+    function storeMute(muted) {
+        const directory = context.directories.state;
+        const file = path.join(directory, ".mute-" + process.pid);
+        let fd;
+        let owned = false;
+        try {
+            fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+            fd = fs.openSync(file, "wx", 0o600);
+            owned = true;
+            fs.writeFileSync(fd, JSON.stringify({ muted }) + "\n");
+            fs.closeSync(fd);
+            fd = undefined;
+            fs.renameSync(file, path.join(directory, "mute.json"));
+        } catch (error) {
+            throw new Error("jarvis: mute=write-failed");
+        } finally {
+            if (fd !== undefined) {
+                try { fs.closeSync(fd); } catch { throw new Error("jarvis: mute=write-close-failed"); }
+            }
+            if (owned) {
+                try { fs.unlinkSync(file); }
+                catch (error) { if (error.code !== "ENOENT") throw new Error("jarvis: mute=cleanup-failed"); }
+            }
+        }
+    }
+
     function write(message) {
         const wire = JSON.stringify(message);
         Protocol.accept(wire, "daemon");
         if (!process.stdout.write(wire + "\n")) process.stdin.pause();
     }
-    const runner = new SessionRunner(Session, unavailable(), {
+    const runner = new SessionRunner(Session, { ...unavailable(), mute: { store: storeMute } }, {
         now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer)
     }, (state, phase) => {
         if (!ending && context !== null) write({ v: 1, type: "state", gen: state.gen,
@@ -52,7 +106,19 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             tail = framed.tail;
             for (const line of framed.lines) {
                 const message = Protocol.accept(line, "shell");
-                if (context === null) {
+                if (message.type === "intent") {
+                    if (context === null || message.revision !== context.revision)
+                        throw new Error("jarvis: protocol=identity");
+                    // Key edges are ordered input, not asynchronous completions.
+                    // The observed gen can lag a down followed immediately by up.
+                    runner.dispatch({ type: message.intent === "mute" ? "mute-toggle" : message.intent });
+                    continue;
+                }
+                if (context !== null && (message.revision !== context.revision
+                        || JSON.stringify(message.directories) !== JSON.stringify(context.directories)))
+                    throw new Error("jarvis: protocol=identity");
+                const first = context === null;
+                if (first) {
                     const engine = Tasks.publish(message.directories.data, __dirname);
                     // A crash between an exit record and prune can leave an
                     // extra ended task. Recovery uses the same locked writer.
@@ -66,6 +132,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         + recovered.status + " signal=" + recovered.signal + " cause=" + recovered.stderr.trim());
                 }
                 context = message;
+                if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,
                     daemon: context.locked ? "locked" : "ready" });
                 // No adapter/configuration/indicator exists yet. A healthy
@@ -76,7 +143,8 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         } catch (error) {
             ending = true;
             runner.close();
-            refuse(error.message.startsWith("jarvis: tasks=") ? 74 : 65, error.message);
+            refuse(error.message.startsWith("jarvis: tasks=") ? 74
+                : error.message.startsWith("jarvis: mute=") ? 78 : 65, error.message);
         }
     }
     process.stdout.on("drain", () => { if (!ending) process.stdin.resume(); });

@@ -4,10 +4,10 @@
 // milliseconds). Adapter callbacks carry the gen/op returned in their effect.
 // Cleanup acknowledgments and a running tool's outcome retain their original
 // identity across stop; content callbacks do not.
-var SESSION_SETTINGS = ["voiceProvider", "voice", "language", "brain", "model", "customBaseUrl", "policy", "account"];
+var SESSION_SETTINGS = ["mode", "voiceProvider", "voice", "language", "brain", "model", "customBaseUrl", "policy", "account"];
 var RESPONSE_TIMEOUT_MS = 60000;
 var EVENTS = [
-    "snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute",
+    "snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle",
     "stop", "cancel", "interrupt", "capture-opened", "capture-closed", "partial",
     "final", "brain-done", "brain-failed", "cancelled", "play", "played",
     "flushed", "tool", "tool-done", "approval",     "shown", "approval-cancel", "deadline", "lease-ended"
@@ -167,6 +167,13 @@ function interrupt(s, effects, at) {
     dropApproval(s, effects, "interrupt");
 }
 
+function toggle(s, effects, at) {
+    if (!canEngage(s) || (s.toggleAt !== null && at - s.toggleAt < 250)) return;
+    s.toggleAt = at;
+    if (s.conversation.kind === "ended") start(s, effects, "conversation");
+    else end(s, effects, at, "toggle", false);
+}
+
 function expire(s, effects, at) {
     if (s.turn.kind === "thinking" && at >= s.turn.deadline) {
         cancelTurn(s, effects, at);
@@ -219,20 +226,29 @@ function reduce(state, e) {
         s.indicator = { kind: e.shown ? "shown" : "gone" };
         break;
     case "talk-down":
+        if (s.settings.mode === "toggle") { toggle(s, effects, e.at); break; }
         if (s.input.kind === "held") break;
         interrupt(s, effects, e.at);
         start(s, effects, "held");
         break;
     case "talk-up":
+        if (s.settings.mode === "toggle") break;
         if (s.input.kind !== "held") break;
         s.input = { kind: "released" };
         closeCapture(s, effects);
         break;
     case "toggle":
-        if (s.toggleAt !== null && e.at - s.toggleAt < 250) break;
-        s.toggleAt = e.at;
-        if (s.conversation.kind === "ended") start(s, effects, "conversation");
-        else end(s, effects, e.at, "toggle", false);
+        toggle(s, effects, e.at);
+        break;
+    case "mute-toggle":
+        if (s.mute.kind === "on") {
+            s.mute = { kind: "off" };
+            effect(s, effects, "mute-store", { muted: false });
+        } else if (s.mute.kind === "off") {
+            end(s, effects, e.at, "mute", false);
+            s.mute = { kind: "muting" };
+            effect(s, effects, "mute-store", { muted: true });
+        }
         break;
     case "mute":
         end(s, effects, e.at, "mute", false);

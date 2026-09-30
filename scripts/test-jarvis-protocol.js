@@ -8,12 +8,23 @@ const { load } = require("../bin/lib/qml-library.js");
 const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const file = path.join(__dirname, "../shell/plugins/vgs.jarvis/JarvisProtocol.js");
 const Protocol = load(file);
-const hello = { v: 1, type: "hello", gen: 0, settings: {}, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
-}, revision: "a".repeat(64), locked: false, keys: {} };
+}, revision: "a".repeat(64), locked: false,
+keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
+const intent = { v: 1, type: "intent", gen: 0, revision: hello.revision, intent: "talk-down" };
 const status = { v: 1, type: "status", gen: 0, revision: hello.revision, daemon: "ready" };
 const state = { v: 1, type: "state", gen: 0, revision: hello.revision, seq: 1,
     state: JSON.parse(JSON.stringify(Protocol.Session.initial())), phase: "down" };
+const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(file), "manifest.json"), "utf8"));
+assert.deepEqual(manifest.settings, { mode: "hold" });
+assert.deepEqual(manifest.schema.mode.options, ["hold", "toggle"]);
+assert.deepEqual(manifest.hyprland.binds, [
+    { shortcut: "talk", key: "SUPER+code:108", hold: true },
+    { shortcut: "mute", key: "SUPER+SHIFT+code:108" },
+    { shortcut: "stop", key: "SUPER+ALT+PERIOD" }
+]);
+assert.equal(manifest.capabilities.includes("shortcut"), true);
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const cases = [
     ["json", "{", "shell", "json"],
@@ -28,8 +39,14 @@ const cases = [
     ["type", changed(hello, { type: "unknown" }), "shell", "type"],
     ["hello-shape", changed(hello, { surprise: true }), "shell", "shape-hello"],
     ["status-shape", changed(status, { surprise: true }), "daemon", "shape-status"],
-    ["settings", changed(hello, { settings: { mode: "hold" } }), "shell", "shape-settings"],
+    ["settings", changed(hello, { settings: {} }), "shell", "shape-settings"],
+    ["mode", changed(hello, { settings: { mode: "always" } }), "shell", "mode"],
     ["keys", changed(hello, { keys: { talk: "SUPER+A" } }), "shell", "shape-keys"],
+    ["key-type", changed(hello, { keys: { ...hello.keys, talk: false } }), "shell", "key-talk"],
+    ["key-empty", changed(hello, { keys: { ...hello.keys, talk: "" } }), "shell", "key-talk"],
+    ["intent-direction", JSON.stringify(intent), "daemon", "direction-intent"],
+    ["intent-shape", changed(intent, { extra: true }), "shell", "shape-intent"],
+    ["intent-name", changed(intent, { intent: "confirm" }), "shell", "intent"],
     ["directories-shape", changed(hello, { directories: {} }), "shell", "shape-directories"],
     ["directory", changed(hello, { directories: { ...hello.directories, data: "relative" } }), "shell", "directory-data"],
     ["directory-control", changed(hello, { directories: { ...hello.directories, data: "/path\n" } }), "shell", "directory-data"],
@@ -55,6 +72,10 @@ for (const locked of [false, true]) {
 for (const daemon of ["ready", "locked"])
     assert.equal(Protocol.accept(changed(status, { daemon }), "daemon").daemon, daemon);
 assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(state), "daemon")), JSON.stringify(state));
+for (const name of ["talk-down", "talk-up", "mute", "stop"])
+    assert.equal(Protocol.accept(changed(intent, { intent: name }), "shell").intent, name);
+assert.equal(Protocol.accept(changed(hello, { settings: { mode: "toggle" },
+    keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
 for (const text of ["", "a", "é", "語", "😀", "\ud800"])
     assert.equal(Protocol.bytes(text), Buffer.byteLength(text), text);
 const wire = JSON.stringify(status);
@@ -84,6 +105,13 @@ try {
         controls++;
     }
     const guards = [
+        ["mode", 'if (message.settings.mode !== "hold" && message.settings.mode !== "toggle") fail("mode");',
+            'if (false) fail("mode");', "mode"],
+        ["key-type", 'fail("key-" + shortcut);', ';', "key-type"],
+        ["intent-direction", 'if (direction !== "shell") fail("direction-intent");',
+            'if (false) fail("direction-intent");', "intent-direction"],
+        ["intent-name", 'if (["talk-down", "talk-up", "mute", "stop"].indexOf(message.intent) === -1) fail("intent");',
+            'if (false) fail("intent");', "intent-name"],
         ["object", 'if (!object(message)) fail("object");', 'if (false) fail("object");', "object"],
         ["version", 'if (message.v !== 1) fail("version");', 'if (false) fail("version");', "version"],
         ["generation", 'fail("generation");', ';', "generation"],

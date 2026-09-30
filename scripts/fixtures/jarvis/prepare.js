@@ -23,7 +23,8 @@ function freshSuite(tree, suite, root) {
         "bin/lib/qml-library.js", "shell/plugins/vgs.jarvis/JarvisProtocol.js",
         "shell/plugins/vgs.jarvis/Session.js", "shell/plugins/vgs.jarvis/backend/session-runner.js",
         "shell/plugins/vgs.jarvis/backend/jarvisd.js", "shell/plugins/vgs.jarvis/backend/Tasks.js",
-        "shell/plugins/vgs.jarvis/backend/task-event"])
+        "shell/plugins/vgs.jarvis/backend/task-event", "shell/plugins/vgs.jarvis/manifest.json",
+        "scripts/fixtures/jarvis/scripted.js"])
         fs.copyFileSync(path.join(tree, file), path.join(clone, file));
     const file = path.join(clone, relative);
     const run = () => cp.spawnSync(process.execPath, [file, "--fresh"], {

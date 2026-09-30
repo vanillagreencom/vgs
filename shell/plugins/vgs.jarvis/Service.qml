@@ -15,14 +15,22 @@ Item {
     property string cause: ""
     property var sessionState: null
     readonly property bool locked: lockObservation()
+    readonly property var effectiveKeys: shell === null ? null : shell.shortcut.keys
     readonly property string daemon: String(Qt.resolvedUrl("backend/jarvisd.js")).replace(/^file:\/\//, "")
 
     onShellChanged: {
         if (shell === null) return;
-        if (lifetime.kind === "new") start();
+        if (lifetime.kind === "new") {
+            shell.shortcut.register("talk", "Talk to Jarvis",
+                () => intent("talk-down"), () => intent("talk-up"));
+            shell.shortcut.register("mute", "Mute Jarvis", () => intent("mute"));
+            shell.shortcut.register("stop", "Stop Jarvis", () => intent("stop"));
+            start();
+        }
         else hello();
     }
     onLockedChanged: hello()
+    onEffectiveKeysChanged: hello()
 
     function lockObservation() {
         return shell === null || shell.session === undefined || shell.session.locked !== false;
@@ -50,6 +58,10 @@ Item {
     function hello() {
         if (shell === null || !child.running || cause !== ""
                 || (lifetime.kind !== "starting" && lifetime.kind !== "ready")) return;
+        const keys = shell.shortcut.keys;
+        // Enablement and disposal can change the registry before the instance.
+        // A partial key observation is not a complete hello snapshot.
+        if (Object.keys(keys).length !== shell.manifest.hyprland.binds.length) return;
         const home = Quickshell.env("HOME");
         const message = {
             v: 1, type: "hello", gen: sessionState === null ? 0 : sessionState.gen,
@@ -61,10 +73,21 @@ Item {
             },
             revision: shell.manifest.__revision,
             locked: lockObservation(),
-            keys: {}
+            keys: keys
         };
         const wire = JSON.stringify(message);
         try {
+            Protocol.accept(wire, "shell");
+            child.write(wire + "\n");
+        } catch (error) { broken(error.message); }
+    }
+
+    function intent(name) {
+        if (shell === null || lifetime.kind !== "ready" || cause !== "" || !child.running) return;
+        try {
+            const wire = JSON.stringify({ v: 1, type: "intent",
+                gen: sessionState === null ? 0 : sessionState.gen,
+                revision: shell.manifest.__revision, intent: name });
             Protocol.accept(wire, "shell");
             child.write(wire + "\n");
         } catch (error) { broken(error.message); }

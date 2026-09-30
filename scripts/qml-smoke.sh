@@ -212,6 +212,7 @@ smoke_row polkit
 smoke_row jarvis
 smoke_row hyprland
 smoke_row hold-shortcuts
+smoke_row jarvis-keys
 smoke_row instance-guard
 smoke_row diagnostics
 smoke_row supervise

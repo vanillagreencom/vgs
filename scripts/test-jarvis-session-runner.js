@@ -21,6 +21,7 @@ function world(implementation = Owner, synchronous = false, session = Session) {
         if (synchronous && done && ["open", "close"].includes(name)) done();
     };
     const runner = new implementation.SessionRunner(session, {
+        mute: { store: value => calls.push({ name: "mute-store", value }) },
         capture: { open: port("open"), close: port("close"), collect: port("collect") },
         brain: {
             send: (e, done) => {
@@ -81,6 +82,19 @@ function thinking(w) {
     assert.equal(w.runner.state.turn.kind, "thinking");
 }
 const tests = [
+    ["mute-persistence", impl => {
+        const w = world(impl);
+        w.dispatch("talk-down");
+        w.pending.open();
+        w.dispatch("mute-toggle");
+        assert.equal(w.runner.state.mute.kind, "muting");
+        assert.deepEqual(w.calls.at(-1), { name: "mute-store", value: true });
+        w.pending.close();
+        assert.equal(w.runner.state.mute.kind, "on");
+        w.dispatch("mute-toggle");
+        assert.deepEqual(w.calls.at(-1), { name: "mute-store", value: false });
+        assert.equal(w.runner.state.capture.kind, "closed");
+    }],
     ["completed-connection", (impl, session = Session) => {
         for (const boundary of ["lease", "stop", "settings"]) {
             const w = world(impl, false, session);
@@ -235,6 +249,7 @@ const source = fs.readFileSync(file, "utf8");
 let controls = 0;
 try {
     const mutants = [
+        ["mute-persistence", 'this.ports.mute.store(e.muted);', 'void e.muted;', "mute-persistence"],
         ["queue", 'if (this.draining) return;', 'if (false && this.draining) return;', "synchronous-queue"],
         ["identity", 'gen: e.gen, op: e.op', 'gen: e.gen, op: e.op + 1', "identity"],
         ["deadline", 'owner.deadline - this.clock.now()', 'owner.deadline - this.clock.now() + 1', "deadlines"],
