@@ -64,7 +64,15 @@ const table = [
         assert.throws(() => logic.reduce(s, callback("tool-done", s.action, 50, { outcome: "finished" })),
             { message: "jarvis: session=tool-outcome" });
     }],
-    ["startup", logic => assert.equal(logic.phaseOf(logic.initial()), "down")],
+    ["startup", logic => {
+        const s = copy(logic.initial());
+        assert.equal(logic.phaseOf(s), "down");
+        assert.equal(s.gen, 0);
+        assert.equal(s.nextOp, 1);
+        assert.equal(s.stale, 0);
+        assert.deepEqual(s.capture, { kind: "closed" });
+        assert.deepEqual(s.indicator, { kind: "gone" });
+    }],
     ["hold-edges", logic => {
         let s = listening(logic);
         assert.equal(logic.phaseOf(s), "listening");
@@ -463,6 +471,8 @@ let controls = 0;
 try {
     // Each independent lifetime rule has its own planted defect.
     const mutants = [
+        ["initial", "gen: 0, nextOp: 1, stale: 0, settings: {},",
+            "gen: 1, nextOp: 1, stale: 0, settings: {},", "startup"],
         ["stale-op", "e.op === owner.op", "(true || e.op === owner.op)", "stale-op"],
         ["stale-gen", "e.gen === owner.gen", "(true || e.gen === owner.gen)", "stale-gen"],
         ["stale-kind", 'kinds.indexOf(owner.kind) !== -1', '(true || kinds.indexOf(owner.kind) !== -1)', "stale-kind"],
