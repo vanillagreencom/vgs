@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Exercise the real SessionLock owner through qml-unit. Each control changes
 # a disposable core copy, keeps the matched code, and must fail this suite.
+# The reading of one `hyprctl -j monitors` answer is
+# shell/Commons/SessionLockState.js's, whose rules
+# scripts/test-session-lock-state.js controls; here the controls cover how
+# the owner uses that reading.
 set -euo pipefail
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd -P)"
@@ -28,9 +32,8 @@ controls = [
     ("ended-unrequested", "        if (!lockRequested) return;\n        lockRequested = false;",
      "        lockRequested = false;"),
     ("reading-once", "if (unlockedReadings >= 2) compositorEnded", "if (unlockedReadings >= 1) compositorEnded"),
-    ("reading-lock", "&& !reasons.some(r => r.indexOf(\"LOCK\") !== -1);", ";"),
-    ("reading-workspace", "&& reasons.some(r => r.indexOf(\"WORKSPACE\") === -1)", "&& reasons.length > 0"),
-    ("reading-unconfirmed", "const unlocked = lockSecure\n", "const unlocked = true\n"),
+    ("reading-state", 'SessionLockState.read(text) === "unlocked"', 'SessionLockState.read(text) !== "locked"'),
+    ("reading-unconfirmed", "const unlocked = lockSecure && ", "const unlocked = true && "),
     ("reading-no-reset", "unlockedReadings = unlocked ? unlockedReadings + 1 : 0;", "unlockedReadings = unlocked ? unlockedReadings + 1 : unlockedReadings;")
 ]
 for name, needle, replacement in controls:
@@ -43,7 +46,7 @@ for name, needle, replacement in controls:
     assert not path.is_symlink(), (name, "control symlink")
     path.write_text(changed)
 PY
-for rule in request secure frozen unload ended ended-unrequested reading-once reading-lock reading-workspace reading-unconfirmed reading-no-reset; do
+for rule in request secure frozen unload ended ended-unrequested reading-once reading-state reading-unconfirmed reading-no-reset; do
   status=0
   out="$("$repo/scripts/qml-unit.sh" --core "$TMP_ROOT/$rule" "$repo/scripts/qml-tests/tst_session_lock.qml" 2>&1)" || status=$?
   if [[ $status == 1 && $out == *"::session-lock::"* && $out == *"FAIL!  :"* ]]; then
