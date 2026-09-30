@@ -32,6 +32,14 @@ What each component of `qs.Ui` guarantees. The tokens they draw from and the lay
 
 `Select.activated(index)` reports a user choice, including the current entry. Invalid indices emit nothing. A model replacement or a bound index change emits nothing. `scripts/qml-tests/tst_overlays.qml` pins the distinction, with controls in `scripts/test-qml-unit.sh`.
 
+## VoiceOrb
+
+`VoiceOrb` is a decorative ring with fine concentric arcs, not a control ([D059](../decisions/D059-passive-voice-orb.md)). Its `tone` names a colour in `voiceOrb.tone`; an unknown tone logs its name and draws accent. `level` and `secondaryLevel` are shares from 0 to 1, bounded before they reach the shader; a nonfinite input becomes 0. `active` defaults false. The caller owns voice state and maps it to a tone. The component opens no audio device, creates no window, and takes no pointer input or keyboard focus.
+
+The `voiceOrb` group owns its size, line geometry, amplitude, arc coverage, colours and timings. The fragment shader draws one ring from the primary level and concentric arcs from the secondary level. The active driver smooths both levels with attack and release timings. It runs only while the item and its ancestors are visible, its host window is visible and not minimized, `active` holds, `motion.scale` is above 0 and its period is above 0. A stopped driver holds its phase; levels and tone still update without a tick. A theme change rebuilds no component.
+
+`scripts/qml-tests/tst_voiceorb.qml` holds the input, token, pass-through and driver guarantees, with controls in `scripts/test-qml-unit.sh`. Those tests read properties and triggered signals, not rendered pixels. Shader API facts, compilation and the installed asset contract are in [runtime-qml-shaders.md](runtime-qml-shaders.md). The Gallery row reads compiled status; GPU cost and no-frame-swap measurements remain J08.
+
 ## Gallery
 
 `shell/plugins/vgs.gallery` is a first-party application window ([surfaces.md](surfaces.md)) that draws every component in every variant and state, and every role of `Theme.text` in its typography section, read from the group itself, so a theme author previews a whole theme at once. It is built only while summoned; `scripts/smoke/rows/gallery.sh` summons it, reads its section and component counts back, holds every example inside the window's right edge, shows a toast through its capability and hides it, then reads it as a Hyprland window. A new component is added to the gallery in the same change.

@@ -264,6 +264,45 @@ Item {
 
                 }
                 Section {
+                    title: "Voice levels"
+                    description: "Passive rings in every tone; synthetic levels, no audio input"
+                    headerInset: 0
+                    Flow {
+                        width: parent.width
+                        spacing: Theme.space.sm
+                        Repeater {
+                            model: ["accent", "info", "success", "warning", "danger", "muted"]
+                            Column {
+                                required property string modelData
+                                spacing: Theme.space.xs
+                                VoiceOrb { tone: parent.modelData; active: true; level: 0.6; secondaryLevel: 0.3 }
+                                Label { role: "label"; text: parent.modelData }
+                            }
+                        }
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: Theme.space.sm
+                        Column {
+                            spacing: Theme.space.xs
+                            VoiceOrb { active: false }
+                            Label { role: "label"; text: "Inactive" }
+                        }
+                        Column {
+                            spacing: Theme.space.xs
+                            VoiceOrb { active: true; level: 1; secondaryLevel: 1 }
+                            Label { role: "label"; text: "Full levels" }
+                        }
+                        Column {
+                            spacing: Theme.space.xs
+                            VoiceOrb { active: true; level: orbLevel.value; secondaryLevel: 1 - orbLevel.value }
+                            Label { role: "label"; text: "Adjust levels" }
+                        }
+                    }
+                    Slider { id: orbLevel; from: 0; to: 1; value: 0.4; width: parent.width }
+                    Label { role: "hint"; text: "Size, lines, amplitude, tones and timings follow voiceOrb tokens. Motion scale 0 keeps the tones and level updates without ticking."; width: parent.width; wrapMode: Text.Wrap }
+                }
+                Section {
                     title: "Dialogs"
                     description: "Waiting, destructive, busy, and with content and a disabled action"
                     headerInset: 0

@@ -160,6 +160,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `TextField` | `T.TextField` | `placeholderText`, `leadingIcon`, `trailingIcon`, `actions`, `error`, `validator` |
 | `Field` | `Column` | `label`, `hint`, `error`, `inline`; the control as its child |
 | `Spinner`, `ProgressBar` | `Item`, `T.ProgressBar` | `running`; `value`, `indeterminate` |
+| `VoiceOrb` | `Item` | decorative `tone` (`accent`, `info`, `success`, `warning`, `danger`, `muted`), `level`, `secondaryLevel` (bounded shares), `active`; [`docs/architecture/components.md` § VoiceOrb](../../../../docs/architecture/components.md#voiceorb) |
 | `Badge`, `Kbd` | `Rectangle` | `text`, `iconName`, `tone` (`neutral`, `accent`, `success`, `warning`, `danger`, `info`); `text` |
 | `CodeLine` | `Rectangle` | `text`, a command or path, wrapped whole; `copyLabel`, the Copy button's label; `copy()`, `copied()`, `confirming` while the button shows its check mark |
 | `ScrollArea` | `Flickable` | its children; `overflowing`, and `bar`, the embedded bar, which a gutter keeps clear of the content |

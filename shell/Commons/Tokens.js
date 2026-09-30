@@ -475,6 +475,29 @@ var TOKENS = {
         duration: duration(1200)
     },
 
+    voiceOrb: {
+        size: length(96),
+        radius: share(0.28),
+        gap: share(0.045),
+        stroke: number("{icon.stroke}", 0.5, 4),
+        arcStroke: number(0.75, 0.5, 4),
+        amplitude: share(0.018),
+        waveCount: number(3, 1, 4),
+        arcSpan: number(2.4, 0.1, 6.28),
+        arcOpacity: share(0.6),
+        attack: duration(70),
+        release: duration(250),
+        period: duration(6000),
+        tone: {
+            accent: color("{palette.accent}"),
+            info: color("{palette.info}"),
+            success: color("{palette.success}"),
+            warning: color("{palette.warning}"),
+            danger: color("{palette.danger}"),
+            muted: color("{color.textMuted}")
+        }
+    },
+
     badge: {
         radius: length("{radius.sm}"),
         size: {

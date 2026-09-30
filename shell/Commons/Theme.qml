@@ -56,6 +56,7 @@ Singleton {
     readonly property var field: published.field
     readonly property var spinner: published.spinner
     readonly property var progress: published.progress
+    readonly property var voiceOrb: published.voiceOrb
     readonly property var badge: published.badge
     readonly property var kbd: published.kbd
     readonly property var codeLine: published.codeLine

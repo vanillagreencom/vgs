@@ -95,6 +95,9 @@ f share/vgs/shell/Ui/feedback/Kbd.qml
 f share/vgs/shell/Ui/feedback/ProgressBar.qml
 f share/vgs/shell/Ui/feedback/Spinner.qml
 f share/vgs/shell/Ui/feedback/Toast.qml
+f share/vgs/shell/Ui/feedback/VoiceOrb.qml
+f share/vgs/shell/Ui/feedback/shaders/voiceorb.frag
+f share/vgs/shell/Ui/feedback/shaders/voiceorb.frag.qsb
 f share/vgs/shell/Ui/foundation/Divider.qml
 f share/vgs/shell/Ui/foundation/FocusRing.qml
 f share/vgs/shell/Ui/foundation/Icon.qml

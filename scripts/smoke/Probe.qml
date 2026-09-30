@@ -491,6 +491,22 @@ Scope {
             const drawn = root.descendants(item.examples).filter(child => /^SectionHeader_QMLTYPE_/.test(String(child)) && child.width > 0 && child.height > 0);
             return String(drawn.length);
         }
+        // VoiceOrb examples and their actual shader status. A disposable
+        // popup copy supplies the uncompiled control without a shipped hook.
+        function galleryOrbs(hostKey: string, id: string, copyName: string): string {
+            const item = copyName === "" ? root.instance(hostKey, id) : root.popupCopies[copyName];
+            if (item === null || item === undefined) return "absent";
+            const orbs = copyName === "" ? root.descendants(item).filter(child => root.typeName(child) === "VoiceOrb") : [item];
+            return JSON.stringify(orbs.map(orb => {
+                const shader = root.descendants(orb).find(child => child instanceof ShaderEffect);
+                return {
+                    tone: orb.tone, active: orb.active, level: orb.level, secondaryLevel: orb.secondaryLevel,
+                    width: orb.width, height: orb.height,
+                    url: shader === undefined ? "" : String(shader.fragmentShader),
+                    compiled: shader !== undefined && shader.status === ShaderEffect.Compiled
+                };
+            }));
+        }
         // A colour one gallery example draws with, read as a property: the
         // first item named `type` in the section under the SectionHeader
         // reading `section`, through `property`, a dotted path. Written as

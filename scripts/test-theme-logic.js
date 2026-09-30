@@ -121,6 +121,24 @@ const DEFAULTS = [
     ["kbd.paddingX", 4],
     ["kbd.paddingY", 2],
     ["iconButton.restOpacity", 0.6],
+    ["voiceOrb.size", 96],
+    ["voiceOrb.radius", 0.28],
+    ["voiceOrb.gap", 0.045],
+    ["voiceOrb.stroke", 1.5],
+    ["voiceOrb.arcStroke", 0.75],
+    ["voiceOrb.amplitude", 0.018],
+    ["voiceOrb.waveCount", 3],
+    ["voiceOrb.arcSpan", 2.4],
+    ["voiceOrb.arcOpacity", 0.6],
+    ["voiceOrb.attack", 70],
+    ["voiceOrb.release", 250],
+    ["voiceOrb.period", 6000],
+    ["voiceOrb.tone.accent", "#ff5a36ff"],
+    ["voiceOrb.tone.info", "#74a7f7ff"],
+    ["voiceOrb.tone.success", "#b4c96fff"],
+    ["voiceOrb.tone.warning", "#ffb000ff"],
+    ["voiceOrb.tone.danger", "#f43f5eff"],
+    ["voiceOrb.tone.muted", "#aaaaabff"],
     ["bar.item.iconGap", 7],
     // A window-like panel: 600 px wide, half its monitor tall, mul(4, 3) =
     // 12 from a narrower monitor's sides.
@@ -196,6 +214,9 @@ const DEFAULTS = [
 
 // A document that is accepted, and the values it must resolve to.
 const ACCEPTED = [
+    { tokens: { palette: { accent: "#123456", info: "#234567", success: "#345678", warning: "#456789", danger: "#56789a" }, color: { textMuted: "#6789ab" } }, want: [["voiceOrb.tone.accent", "#123456ff"], ["voiceOrb.tone.info", "#234567ff"], ["voiceOrb.tone.success", "#345678ff"], ["voiceOrb.tone.warning", "#456789ff"], ["voiceOrb.tone.danger", "#56789aff"], ["voiceOrb.tone.muted", "#6789abff"]] },
+    { tokens: { motion: { scale: 0 }, voiceOrb: { attack: 90, release: 300, period: 4000 } }, want: [["voiceOrb.attack", 0], ["voiceOrb.release", 0], ["voiceOrb.period", 0]] },
+    { tokens: { motion: { scale: 2 } }, want: [["voiceOrb.attack", 140], ["voiceOrb.release", 500], ["voiceOrb.period", 12000]] },
     { tokens: {}, want: [["palette.accent", "#ff5a36ff"]] },
     { tokens: { scheme: { mode: "light" } }, want: [["scheme.mode", "light"], ["palette.background", "#000000ff"]] },
     // A palette colour reaches every role derived from it; #7aa2f7 has
