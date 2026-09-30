@@ -98,7 +98,7 @@
 # and exit 78 on the first tool below it. This process holds the instance
 # lock, $XDG_RUNTIME_DIR/vgsh.lock, until it exits; the file holds the
 # shell's pid, which is the identity the shell's guard checks, and is empty
-# while this process waits to start the shell again. No process
+# from the shell's exit until this process starts the next one. No process
 # the shell starts holds the lock. Every command that contacts the shell
 # addresses that instance alone, so a shell started any other way is never
 # reached. `plugin validate`, `plugin add`,
@@ -1586,9 +1586,10 @@ self_update() {
 
 # Hyprland's monitors, as `hyprctl -j monitors` prints them, asked up to
 # supervise_compositor_tries times supervise_compositor_gap seconds apart.
-# Returns 1 when no try answered with a JSON list. Every command `run`
-# starts while it holds the instance lock closes descriptor 9 first, so no
-# process but the runner holds the lock.
+# Returns 1 when no try answered with a JSON list. Every external command
+# `run` starts while it holds the instance lock closes descriptor 9 first,
+# so no program it starts holds the lock; a `$(...)` subshell of the runner
+# holds the descriptor only while the runner waits on it.
 compositor_monitors() {
   local try out
   for ((try = 1; try <= supervise_compositor_tries; try++)); do
@@ -1602,15 +1603,16 @@ compositor_monitors() {
 }
 
 # Whether Hyprland's monitors TEXT shows a session lock: `locked`,
-# `unlocked` or `unknown`, as vgs.lock's LockModel.sessionLockState judges
-# it for the stranded-lock reading the lock plugin takes at start
+# `unlocked` or `unknown`, as the core's one reading,
+# shell/Commons/SessionLockState.js, judges it for the core's session lock
+# and the lock plugin's stranded-lock check
 # (docs/architecture/lock-polkit.md). `unknown` too when node cannot run
 # the judge, whose own error passes through on stderr.
 session_lock_state() { # TEXT
   node -e 'let text = "";
 process.stdin.setEncoding("utf8").on("data", d => { text += d; }).on("end", () => {
-  process.stdout.write(require(process.argv[1]).load(process.argv[2]).sessionLockState(text) + "\n");
-});' "$root/bin/lib/qml-library.js" "$shell_dir/plugins/vgs.lock/LockModel.js" <<<"$1" 9>&- || echo unknown
+  process.stdout.write(require(process.argv[1]).load(process.argv[2]).read(text) + "\n");
+});' "$root/bin/lib/qml-library.js" "$shell_dir/Commons/SessionLockState.js" <<<"$1" 9>&- || echo unknown
 }
 
 # One start of the shell under the held instance lock. The lock file is
@@ -1622,13 +1624,13 @@ shell_launch() {
   # directory is absent never fires once the directory appears, and a
   # folder listing of an absent directory lists the working directory:
   # docs/architecture/runtime-qml.md.
-  mkdir -p -- "$config_home/vgs" "$state_home/vgs" "$rt_dir/vgs/tui"
-  truncate -s 0 -- "$lock"
+  mkdir -p -- "$config_home/vgs" "$state_home/vgs" "$rt_dir/vgs/tui" 9>&-
+  truncate -s 0 -- "$lock" 9>&-
   # The lock proves no runner-started shell is alive, so every source
   # snapshot root under the runtime dir belongs to a dead shell.
   for stale in "$rt_dir"/vgsh-sources-*; do
     [[ -e $stale || -L $stale ]] || continue
-    rm -rf -- "${stale:?}"
+    rm -rf -- "${stale:?}" 9>&-
   done
   # The shell runs as this process's child and never in its place: this
   # process keeps descriptor 9, and the child closes its copy before it
@@ -1662,8 +1664,10 @@ shell_launch() {
 # signal reaches the shell as TERM. A trapped signal ends `wait` early with
 # no status of the shell's; bash keeps that status for the next `wait`, and
 # a `wait` on a pid that is not its child answers 127. stop records the
-# stop signal for good, and it ends a backoff wait too, so a stop during
-# the delay ends this process at once and starts no shell.
+# stop signal for good. A trap waits for the foreground command it lands
+# in, such as the session read, so stop is read again once the delay's
+# sleep has started and before any report: a stop from then on ends this
+# process at once, gives up nothing and starts no shell.
 shell_supervise() {
   local streak=0 started_us ran_ms monitors session delay backoff notice reply
   stop=""
@@ -1680,6 +1684,9 @@ shell_supervise() {
       [[ -n $forwarded ]] || break
     done
     shell_child=""
+    # The dead shell's pid, which the kernel may give another process, is
+    # named nowhere once the shell has exited, whatever comes next.
+    truncate -s 0 -- "$lock" 9>&-
     ran_ms=$(( (${EPOCHREALTIME//[!0-9]/} - started_us) / 1000 ))
     # A stop, and a clean exit, which only a deliberate stop gives.
     [[ -z $stop && $shell_status != 0 ]] || break
@@ -1693,8 +1700,8 @@ shell_supervise() {
     session="$(session_lock_state "$monitors")"
     # Only a session read as unlocked may be left with no shell: a dead
     # shell's lock stays behind Hyprland's own screen, which only a new
-    # lock client or a TTY clears.
-    if ((streak > ${#supervise_delays[@]})) && [[ $session == unlocked ]]; then
+    # lock client or a TTY clears. A stop is no give-up and shows no notice.
+    if [[ -z $stop ]] && ((streak > ${#supervise_delays[@]})) && [[ $session == unlocked ]]; then
       printf 'vgsh: shell=gave-up exits=%s status=%s\n' "$streak" "$shell_status" >&2
       printf -v notice "$supervise_notice" "$streak"
       reply="$(hyprctl notify 3 "$supervise_notice_ms" 0 "$notice" 2>&1 9>&-)" || :
@@ -1702,12 +1709,12 @@ shell_supervise() {
       break
     fi
     if ((streak <= ${#supervise_delays[@]})); then delay="${supervise_delays[streak - 1]}"; else delay="${supervise_delays[-1]}"; fi
-    # The dead shell's pid, which the kernel may give another process, is
-    # named nowhere while no shell runs.
-    truncate -s 0 -- "$lock"
-    printf 'vgsh: shell=exited status=%s relaunch=%s delay=%s session=%s\n' "$shell_status" "$streak" "$delay" "$session" >&2
     sleep "$delay" 9>&- &
     backoff=$!
+    # A stop the trap took before the sleep started, as during the session
+    # read, which the wait below would no longer see.
+    if [[ -n $stop ]]; then kill "$backoff" 2>/dev/null || :; break; fi
+    printf 'vgsh: shell=exited status=%s relaunch=%s delay=%s session=%s\n' "$shell_status" "$streak" "$delay" "$session" >&2
     wait "$backoff" || :
     if [[ -n $stop ]]; then
       kill "$backoff" 2>/dev/null || :

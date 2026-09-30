@@ -122,8 +122,8 @@ expect "the notice is dismissed for the rows after this one" ok hypr dismissnoti
 
 # The control: a runner whose give-up limit is out of reach.
 if copy_tree no-give-up && edit_tree no-give-up bin/vgsh \
-    'if ((streak > ${#supervise_delays[@]})) && [[ $session == unlocked ]]; then' \
-    'if ((streak > 1000)) && [[ $session == unlocked ]]; then'; then
+    '((streak > ${#supervise_delays[@]})) && [[ $session == unlocked ]]; then' \
+    '((streak > 1000)) && [[ $session == unlocked ]]; then'; then
   crash_loop "$sandbox/tree-no-give-up" "$sandbox/supervise-no-give-up-qs.log"
   if [[ $loop_result == "kills=6 running" ]]; then ok "control: a runner with no reachable limit still runs after six kills"; else fail "control: the no-give-up copy read $loop_result"; fi
 fi

@@ -87,7 +87,7 @@ chmod +x "$tmp/qs"
 # `-j status`, the Lua dialect. `-j monitors` appends a line to
 # STUB_HYPR_LOG and answers STUB_MONITORS, or fails as a Hyprland that is
 # gone does while STUB_MONITORS is unset. `notify` appends its words to
-# STUB_HYPR_LOG and answers ok. `dispatch` appends its request to
+# STUB_HYPR_LOG and answers STUB_NOTIFY_REPLY, ok when unset. `dispatch` appends its request to
 # STUB_HYPR_LOG, starts STUB_HYPR_LAUNCH's `run` in a session of its own
 # as Hyprland's exec does, appends that runner's pid to
 # STUB_HYPR_LOG.launched and answers ok.
@@ -103,7 +103,7 @@ case "${1:-} ${2:-}" in
     ;;
   notify*)
     printf '%s\n' "$*" >>"${STUB_HYPR_LOG:?}"
-    echo ok
+    echo "${STUB_NOTIFY_REPLY:-ok}"
     ;;
   dispatch*)
     printf '%s\n' "$*" >>"${STUB_HYPR_LOG:?}"
@@ -116,10 +116,26 @@ esac
 EOF
 chmod +x "$tmp/hyprctl"
 # Hyprland's monitors with the session unlocked, locked, and with no
-# monitor past WORKSPACE, which LockModel.sessionLockState reads unknown.
+# monitor past WORKSPACE, which shell/Commons/SessionLockState.js reads
+# unknown.
 monitors_unlocked='[{"name": "DP-1", "solitaryBlockedBy": ["WINDOWED"]}]'
 monitors_locked='[{"name": "DP-1", "solitaryBlockedBy": ["LOCK"]}]'
 monitors_unknown='[{"name": "DP-1", "solitaryBlockedBy": ["WORKSPACE"]}]'
+# A node first on a row's PATH that runs the runner's session read, its
+# only `node -e` call, SLOW_JUDGE_AT-th of a run 2 s late: it creates
+# SLOW_JUDGE_MARK, then sleeps, so a row can signal the runner while the
+# read runs. SLOW_JUDGE_COUNT counts the reads. Every other call is node's.
+mkdir -p "$tmp/slow-node"
+cat >"$tmp/slow-node/node" <<EOF
+#!/usr/bin/env bash
+if [[ \${1:-} == -e ]]; then
+  n=\$(( \$(cat -- "\$SLOW_JUDGE_COUNT" 2>/dev/null || echo 0) + 1 ))
+  echo "\$n" >"\$SLOW_JUDGE_COUNT"
+  if [[ \$n == "\$SLOW_JUDGE_AT" ]]; then : >"\$SLOW_JUDGE_MARK"; sleep 2; fi
+fi
+exec $(printf %q "$node_bin") "\$@"
+EOF
+chmod +x "$tmp/slow-node/node"
 
 # run_bg BIN RT [NAME=VALUE...]: the runner BIN started in the background
 # against the runtime directory RT, with INT at its default disposition as
@@ -249,6 +265,10 @@ runner_killed() { # BIN
 # started. runner_lines RT KEY: its `vgsh: shell=KEY ...` stderr lines,
 # joined by `;`. notices RT: the notify calls it made, each cut to its
 # first four words, the icon, the time and the colour, joined by `;`.
+# lock_file RT: `empty` while the lock file names nothing, else `pid`.
+lock_file() { if [[ -s $1/vgsh.lock ]]; then echo pid; else echo empty; fi; } # RT
+# delays RT: the delay= values of the runner's relaunch lines, joined by `,`.
+delays() { grep -o -E '^vgsh: shell=exited .* delay=[0-9.]+' -- "$1/out" | sed 's/.*delay=//' | paste -sd, || :; } # RT
 launches() { if [[ -r $1/record.pids ]]; then wc -l <"$1/record.pids"; else echo 0; fi; } # RT
 runner_lines() { grep -E "^vgsh: shell=$2 " -- "$1/out" | paste -sd';' || :; } # RT KEY
 notices() { grep -E '^notify ' -- "$1/hyprctl.log" | cut -d' ' -f1-4 | paste -sd';' || :; } # RT
@@ -311,52 +331,81 @@ stopped() { # BIN
   stop_runner
 }
 # TERM to the runner once it waits to relaunch a shell that exited 3:
-# its status, whether it ended within 2 s of the TERM, the shells it
-# started and the lock's state. The row runs a copy whose delays are 5 s,
-# so a wait the TERM does not end outlasts the bound.
+# whether the lock file named nothing during the wait, the runner's
+# status, whether it ended within 2 s of the TERM, the shells it started
+# and the lock's state. The row runs a copy whose delays are 5 s, so a
+# wait the TERM does not end outlasts the bound.
 backoff_stopped() { # BIN
   local status sent_us took_ms
   new_rt
   run_bg "$1" "$rt" STUB_PLAN=0:3 STUB_MONITORS="$monitors_unlocked" || { echo "no-shell"; return; }
   for _ in $(seq 1 100); do [[ -n $(runner_lines "$rt" exited) ]] && break; sleep 0.05; done
   [[ -n $(runner_lines "$rt" exited) ]] || { echo "no-relaunch-line"; stop_runner; return; }
+  file="$(lock_file "$rt")"
   sent_us="${EPOCHREALTIME//[!0-9]/}"
   kill -TERM "$runner"
   runner_end
   took_ms=$(( (${EPOCHREALTIME//[!0-9]/} - sent_us) / 1000 ))
-  printf 'status=%s prompt=%s launches=%s lock=%s\n' "$status" "$( ((took_ms < 2000)) && echo yes || echo "no:${took_ms}ms")" "$(launches "$rt")" "$(lock_state "$rt")"
+  printf 'file=%s status=%s prompt=%s launches=%s lock=%s\n' "$file" "$status" "$( ((took_ms < 2000)) && echo yes || echo "no:${took_ms}ms")" "$(launches "$rt")" "$(lock_state "$rt")"
   stop_runner
 }
-# Shells that exit 3 at once while Hyprland answers MONITORS, the session
-# unlocked: the runner's status, the shells it started, its relaunch and
-# give-up lines and the notices it asked for. The row runs a copy whose
-# delays are 0.1 s.
-gave_up() { # BIN
+# TERM to the runner while its session read after the AT-th exit runs 2 s
+# late, through the slow node: the runner's status, whether it ended
+# within 3.5 s of the TERM, the shells it started, its relaunch lines, its
+# give-up line and the notices it asked for. A trap waits for the read, so
+# the runner sees the stop only once the read ended.
+judge_stopped() { # BIN AT
+  local status sent_us took_ms
+  new_rt
+  run_bg "$1" "$rt" PATH="$tmp/slow-node:$base_path" SLOW_JUDGE_AT="$2" SLOW_JUDGE_MARK="$rt/judge.mark" \
+    SLOW_JUDGE_COUNT="$rt/judge.count" STUB_PLAN=0:3 STUB_MONITORS="$monitors_unlocked" || { echo "no-shell"; return; }
+  for _ in $(seq 1 200); do [[ -e $rt/judge.mark ]] && break; sleep 0.05; done
+  [[ -e $rt/judge.mark ]] || { echo "no-slow-read"; stop_runner; return; }
+  sent_us="${EPOCHREALTIME//[!0-9]/}"
+  kill -TERM "$runner"
+  runner_end
+  took_ms=$(( (${EPOCHREALTIME//[!0-9]/} - sent_us) / 1000 ))
+  printf 'status=%s prompt=%s launches=%s relaunches=%s gave_up=[%s] notices=[%s]\n' "$status" \
+    "$( ((took_ms < 3500)) && echo yes || echo "no:${took_ms}ms")" "$(launches "$rt")" \
+    "$(grep -c -E '^vgsh: shell=exited .* relaunch=' -- "$rt/out" || :)" "$(runner_lines "$rt" gave-up)" "$(notices "$rt")"
+  stop_runner
+}
+# Shells that exit 3 at once while Hyprland answers with the session
+# unlocked, and answers the notice REPLY: the runner's status, the shells
+# it started, the delays of its relaunch lines, its give-up line, the
+# notices it asked for, its notice=failed lines and whether the lock file
+# named nothing once it ended. The row runs a copy whose delays are 0.1 to
+# 0.5 s.
+gave_up() { # BIN [REPLY]
   local status
   new_rt
-  run_bg "$1" "$rt" STUB_PLAN=0:3 STUB_MONITORS="$monitors_unlocked" || { echo "no-shell"; return; }
+  run_bg "$1" "$rt" STUB_PLAN=0:3 STUB_MONITORS="$monitors_unlocked" STUB_NOTIFY_REPLY="${2:-ok}" || { echo "no-shell"; return; }
   runner_end
-  printf 'status=%s launches=%s relaunches=%s gave_up=[%s] notices=[%s] text=%s\n' "$status" "$(launches "$rt")" \
-    "$(grep -c -E '^vgsh: shell=exited .* relaunch=' -- "$rt/out" || :)" "$(runner_lines "$rt" gave-up)" "$(notices "$rt")" \
-    "$(grep -q -E '^notify 3 [0-9]+ 0 [^ ]' -- "$rt/hyprctl.log" && echo yes || echo none)"
+  printf 'status=%s launches=%s delays=%s gave_up=[%s] notices=[%s] text=%s notice_failed=[%s] file=%s\n' "$status" "$(launches "$rt")" \
+    "$(delays "$rt")" "$(runner_lines "$rt" gave-up)" "$(notices "$rt")" \
+    "$(grep -q -E '^notify 3 [0-9]+ 0 [^ ]' -- "$rt/hyprctl.log" && echo yes || echo none)" \
+    "$(grep -E '^vgsh: notice=' -- "$rt/out" | paste -sd';' || :)" "$(lock_file "$rt")"
   stop_runner
 }
-# The same with Hyprland's monitors naming the session `locked`, or
-# `unknown` when no monitor is readable: whether the runner started eight
-# shells within 5 s and still runs, the notices it asked for and its
-# seventh relaunch line. The row runs a copy whose delays are 0.1 s.
-kept_on() { # BIN locked|unknown
+# The same with Hyprland's monitors naming the session `locked`, `unknown`
+# when no monitor is readable, or `unlocked`: whether the runner started
+# eight shells within 5 s and still runs, the notices it asked for, the
+# delays of its first seven relaunch lines and its seventh. The rows run a
+# copy whose delays are 0.1 to 0.5 s; `unlocked` runs one whose session
+# read cannot run.
+kept_on() { # BIN locked|unknown|unlocked
   local n=0 monitors
   case "$2" in
     locked) monitors="$monitors_locked" ;;
     unknown) monitors="$monitors_unknown" ;;
+    unlocked) monitors="$monitors_unlocked" ;;
     *) echo "kept_on: refused: session=$2"; return ;;
   esac
   new_rt
   run_bg "$1" "$rt" STUB_PLAN=0:3 STUB_MONITORS="$monitors" || { echo "no-shell"; return; }
   for _ in $(seq 1 100); do n="$(launches "$rt")"; ((n >= 8)) && break; sleep 0.05; done
-  printf 'launches=%s runner=%s notices=[%s] seventh=[%s]\n' "$( ((n >= 8)) && echo 8+ || echo "$n")" "$(ended "$runner")" \
-    "$(notices "$rt")" "$(grep -E '^vgsh: shell=exited ' -- "$rt/out" | sed -n 7p || :)"
+  printf 'launches=%s runner=%s notices=[%s] delays=%s seventh=[%s]\n' "$( ((n >= 8)) && echo 8+ || echo "$n")" "$(ended "$runner")" \
+    "$(notices "$rt")" "$(delays "$rt" | cut -d, -f1-7)" "$(grep -E '^vgsh: shell=exited ' -- "$rt/out" | sed -n 7p || :)"
   stop_runner
 }
 # Three quick exits, a run of 2 s and quick exits after it, while Hyprland
@@ -424,11 +473,14 @@ restarted() { # BIN runner|inherited
 
 # Copies of bin/vgsh the supervision rows run, each a tree with bin/lib and
 # shell/ linked, since the runner judges the session lock through
-# bin/lib/qml-library.js and vgs.lock's LockModel.js: a `fast` table
-# whose delays are 0.1 s, a `slow` one whose delays are 5 s and a
-# `healthy` one whose delays are 0.1 s and whose healthy run is 1 s.
+# bin/lib/qml-library.js and shell/Commons/SessionLockState.js: a `fast`
+# table whose delays are 0.1 to 0.5 s, a `slow` one whose delays are 5 s,
+# a `healthy` one whose delays are the fast ones and whose healthy run is
+# 1 s, and a `no-judge` fast one whose shell/ holds no session reading, so
+# the read cannot run.
 # tree_with NAME FILE NEEDLE REPLACEMENT: copy_with's copy of FILE moved
-# into such a tree; copy names its bin/vgsh.
+# into such a tree, its shell/ TREE_SHELL when set; copy names its
+# bin/vgsh.
 tree_with() {
   local tree="$tmp/trees/$1"
   copy_with "$1" "$2" "$3" "$4"
@@ -436,18 +488,21 @@ tree_with() {
   mv -- "$copy" "$tree/bin/vgsh"
   chmod +x "$tree/bin/vgsh"
   ln -s -- "$repo/bin/lib" "$tree/bin/lib"
-  ln -s -- "$repo/shell" "$tree/shell"
+  ln -s -- "${TREE_SHELL:-$repo/shell}" "$tree/shell"
   copy="$tree/bin/vgsh"
 }
 delays_needle='supervise_delays=(0.5 1 2 4 8)'
-tree_with fast "$repo/bin/vgsh" "$delays_needle" 'supervise_delays=(0.1 0.1 0.1 0.1 0.1)'; fast="$copy"
+fast_delays='supervise_delays=(0.1 0.2 0.3 0.4 0.5)'
+tree_with fast "$repo/bin/vgsh" "$delays_needle" "$fast_delays"; fast="$copy"
 tree_with slow "$repo/bin/vgsh" "$delays_needle" 'supervise_delays=(5 5 5 5 5)'; slow="$copy"
 tree_with healthy "$fast" 'supervise_healthy_ms=60000' 'supervise_healthy_ms=1000'; healthy="$copy"
+no_judge_shell="$tmp/no-judge-shell"; mkdir -p "$no_judge_shell"
+TREE_SHELL="$no_judge_shell" tree_with no-judge "$repo/bin/vgsh" "$delays_needle" "$fast_delays"; no_judge="$copy"
 # The restart controls run on a copy that waits 1 s for the lock, not 10 s:
 # each control's restart ends on that wait.
 tree_with restart-wait "$repo/bin/vgsh" 'flock -w 10 "$lock" true' 'flock -w 1 "$lock" true'; restart_wait="$copy"
 
-gave_up_want="status=3 launches=6 relaunches=5 gave_up=[vgsh: shell=gave-up exits=6 status=3] notices=[notify 3 600000 0] text=yes"
+gave_up_want="status=3 launches=6 delays=0.1,0.2,0.3,0.4,0.5 gave_up=[vgsh: shell=gave-up exits=6 status=3] notices=[notify 3 600000 0] text=yes notice_failed=[] file=empty"
 # rows: name | verdict function and its arguments after BIN | the verdict | BIN
 rows=(
   "the lock file and VGSH_RUNNER_PID name the shell, the runner's child, which holds no descriptor on the held lock|identity|lock=shell env=shell parent=runner lockfds=0 lock=held|$repo/bin/vgsh"
@@ -460,10 +515,14 @@ rows=(
   "a killed shell is started again by the same runner, which holds the lock throughout and hands the new shell its pid|relaunched|new=yes lock=shell env=shell parent=runner probes=held line=[vgsh: shell=exited status=137 relaunch=1 delay=0.5 session=unlocked]|$repo/bin/vgsh"
   "a shell that exits 0 is not started again|clean_exit|status=0 launches=1|$repo/bin/vgsh"
   "TERM to the runner stops the shell and starts none again|stopped|status=143 launches=1 lock=free|$repo/bin/vgsh"
-  "TERM while the runner waits to relaunch ends it at once|backoff_stopped|status=3 prompt=yes launches=1 lock=free|$slow"
+  "the lock file names nothing while the runner waits, and TERM then ends it at once|backoff_stopped|file=empty status=3 prompt=yes launches=1 lock=free|$slow"
   "after the last relaunch of a streak the runner gives up with the shell's status and one error notice|gave_up|$gave_up_want|$fast"
-  "while the session is locked the runner never gives up and waits the last delay|kept_on locked|launches=8+ runner=running notices=[] seventh=[vgsh: shell=exited status=3 relaunch=7 delay=0.1 session=locked]|$fast"
-  "while the session lock is unreadable the runner never gives up|kept_on unknown|launches=8+ runner=running notices=[] seventh=[vgsh: shell=exited status=3 relaunch=7 delay=0.1 session=unknown]|$fast"
+  "while the session is locked the runner never gives up and waits the last delay|kept_on locked|launches=8+ runner=running notices=[] delays=0.1,0.2,0.3,0.4,0.5,0.5,0.5 seventh=[vgsh: shell=exited status=3 relaunch=7 delay=0.5 session=locked]|$fast"
+  "while the session lock is unreadable the runner never gives up|kept_on unknown|launches=8+ runner=running notices=[] delays=0.1,0.2,0.3,0.4,0.5,0.5,0.5 seventh=[vgsh: shell=exited status=3 relaunch=7 delay=0.5 session=unknown]|$fast"
+  "a session read that cannot run is unknown, and the runner never gives up|kept_on unlocked|launches=8+ runner=running notices=[] delays=0.1,0.2,0.3,0.4,0.5,0.5,0.5 seventh=[vgsh: shell=exited status=3 relaunch=7 delay=0.5 session=unknown]|$no_judge"
+  "a notice Hyprland does not answer ok is reported|gave_up nope|status=3 launches=6 delays=0.1,0.2,0.3,0.4,0.5 gave_up=[vgsh: shell=gave-up exits=6 status=3] notices=[notify 3 600000 0] text=yes notice_failed=[vgsh: notice=failed reply=nope] file=empty|$fast"
+  "TERM during the session read ends the runner with no relaunch and no relaunch line|judge_stopped 1|status=3 prompt=yes launches=1 relaunches=0 gave_up=[] notices=[]|$slow"
+  "TERM during the session read after the last relaunch gives nothing up and shows no notice|judge_stopped 6|status=3 prompt=yes launches=6 relaunches=5 gave_up=[] notices=[]|$fast"
   "a run as long as the healthy run starts a new streak|healthy_reset|status=3 launches=9 gave_up=[vgsh: shell=gave-up exits=6 status=3]|$healthy"
   "a Hyprland that does not answer three tries ends the runner with no relaunch|compositor_gone|status=3 launches=1 monitor_calls=3 line=[vgsh: shell=exited status=3 hyprland=gone]|$repo/bin/vgsh"
   "restart stops the runner, which starts no shell again, and the dispatched runner starts the new shell|restarted runner|restart=0 err=[] old=ended parent=ended new_parent=dispatched|$repo/bin/vgsh"
@@ -474,7 +533,16 @@ verdict_of() { # BIN ROW_FUNCTION_WORDS
   IFS=' ' read -ra words <<<"$2"
   "${words[0]}" "$1" "${words[@]:1}"
 }
-row_want() { local row="$1" name fn want bin; IFS='|' read -r name fn want bin <<<"$row"; printf '%s\n' "$want"; }
+# row_want FN: the verdict of the row whose function words are FN.
+row_want() {
+  local row name fn want bin
+  for row in "${rows[@]}"; do
+    IFS='|' read -r name fn want bin <<<"$row"
+    [[ $fn == "$1" ]] && { printf '%s\n' "$want"; return; }
+  done
+  echo "row_want: no row fn=[$1]" >&2
+  exit 1
+}
 for row in "${rows[@]}"; do
   IFS='|' read -r name fn want bin <<<"$row"
   got="$(verdict_of "$bin" "$fn")"
@@ -513,26 +581,42 @@ control status-dropped 'exit "$shell_status"' 'exit 0' \
 control no-parent-death-signal '--pdeathsig TERM' '--pdeathsig clear' \
   runner_killed "shell=ended lock=free"
 control no-relaunch 'if ! monitors="$(compositor_monitors)"; then' 'if ! monitors="$(false)"; then' \
-  relaunched "$(row_want "${rows[7]}")"
+  relaunched "$(row_want "relaunched")"
 control relaunch-after-clean-exit '[[ -z $stop && $shell_status != 0 ]] || break' '[[ -z $stop ]] || break' \
   clean_exit "status=0 launches=1"
 control stop-not-marked "trap 'stop=1; forwarded=1;" "trap 'forwarded=1;" \
   stopped "status=143 launches=1 lock=free"
 control backoff-not-interrupted 'sleep "$delay" 9>&- &' 'sleep "$delay" 9>&-; : &' \
-  backoff_stopped "status=3 prompt=yes launches=1 lock=free" "$slow"
-control limit-unreachable 'if ((streak > ${#supervise_delays[@]})) && [[ $session == unlocked ]]; then' \
-  'if ((streak > 1000)) && [[ $session == unlocked ]]; then' gave_up "$gave_up_want" "$fast"
+  backoff_stopped "$(row_want backoff_stopped)" "$slow"
+control limit-unreachable '((streak > ${#supervise_delays[@]})) && [[ $session == unlocked ]]; then' \
+  '((streak > 1000)) && [[ $session == unlocked ]]; then' gave_up "$gave_up_want" "$fast"
+control first-delay-only 'delay="${supervise_delays[streak - 1]}"' 'delay="${supervise_delays[0]}"' \
+  gave_up "$gave_up_want" "$fast"
+control lock-file-kept '    truncate -s 0 -- "$lock" 9>&-' '    :' \
+  backoff_stopped "$(row_want backoff_stopped)" "$slow"
+control lock-file-kept-after-give-up '    truncate -s 0 -- "$lock" 9>&-' '    :' \
+  gave_up "$gave_up_want" "$fast"
+TREE_SHELL="$no_judge_shell" control judge-failure-unlocked '9>&- || echo unknown' '9>&- || echo unlocked' \
+  "kept_on unlocked" "$(row_want "kept_on unlocked")" "$no_judge"
+control notice-failure-always '[[ $reply == ok ]] || printf' 'printf' \
+  gave_up "$gave_up_want" "$fast"
+control notice-failure-silent "printf 'vgsh: notice=failed reply=%s" ": 'vgsh: notice=failed reply=%s" \
+  "gave_up nope" "$(row_want "gave_up nope")" "$fast"
+control stop-before-sleep-unread '    if [[ -n $stop ]]; then kill "$backoff" 2>/dev/null || :; break; fi' \
+  '    if [[ -n "" ]]; then kill "$backoff" 2>/dev/null || :; break; fi' "judge_stopped 1" "$(row_want "judge_stopped 1")" "$slow"
+control give-up-on-stop 'if [[ -z $stop ]] && ((streak' 'if ((streak' \
+  "judge_stopped 6" "$(row_want "judge_stopped 6")" "$fast"
 control lock-ignored '[[ $session == unlocked ]]; then' '[[ -n $session ]]; then' \
-  "kept_on locked" "$(row_want "${rows[12]}")" "$fast"
+  "kept_on locked" "$(row_want "kept_on locked")" "$fast"
 control no-healthy-reset '((ran_ms < supervise_healthy_ms)) || streak=0' '((ran_ms < supervise_healthy_ms)) || :' \
   healthy_reset "status=3 launches=9 gave_up=[vgsh: shell=gave-up exits=6 status=3]" "$healthy"
 control relaunch-without-hyprland 'if ! monitors="$(compositor_monitors)"; then' "if ! monitors=\"\$(compositor_monitors || echo '[]')\"; then" \
-  compositor_gone "$(row_want "${rows[15]}")"
+  compositor_gone "$(row_want "compositor_gone")"
 control one-compositor-try 'supervise_compositor_tries=3' 'supervise_compositor_tries=1' \
-  compositor_gone "$(row_want "${rows[15]}")"
+  compositor_gone "$(row_want "compositor_gone")"
 control restart-stops-the-shell 'target="$parent"' 'target="$1"' \
-  "restarted runner" "$(row_want "${rows[16]}")" "$restart_wait"
+  "restarted runner" "$(row_want "restarted runner")" "$restart_wait"
 control restart-parent-unproven 'held="$(readlink -- "/proc/$parent/fd/9" 2>/dev/null)"' 'held="$(readlink -f -- "$lock")"' \
-  "restarted inherited" "$(row_want "${rows[17]}")" "$restart_wait"
+  "restarted inherited" "$(row_want "restarted inherited")" "$restart_wait"
 
 rows_done test-vgsh-run
