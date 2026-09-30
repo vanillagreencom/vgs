@@ -1,6 +1,6 @@
 # Local speech measurements
 
-Instrument: `shell/plugins/vgs.jarvis/measure-local`. Run: J38, 2026-09-30, from `09:45:56.664616Z` to `09:51:12.882332Z`. [The complete command and result log](jarvis-local-2026-09-30.txt) holds each start/end stamp, exact versions, outputs and unrounded readings.
+Instrument: `shell/plugins/vgs.jarvis/measure-local`. Original run: J38, 2026-09-30, from `09:45:56.664616Z` to `09:51:12.882332Z`. [The original successful-run log](jarvis-local-2026-09-30.txt) is unchanged. It contains incomplete multilingual readings and incorrect standalone synthesis ratios, explicitly superseded below. [The supplemental log](jarvis-local-2026-09-30-fix.txt) holds the corrected resident runs, reproducible Moonshine failure and arithmetic corrections.
 
 ## Inputs and machine
 
@@ -22,6 +22,8 @@ Measured source SHA-256:
 | `measure-local` | `0d3c38980a38b56a13bc8f04396f7549128531babe98f0c27525ac6564806b7c` |
 | Raw log | `271c13f81772bfaf2174bdfaf93fd3e04ff47b362262eb9de011a4149d37de94` |
 
+These bindings remain the source of reused standalone, small/medium/large and caption readings. The supplemental run uses artifact declaration `bce9c45d9d3e9647076f374f087957e3e9c9080b2863d4bbdab43d3678dad396` and instrument `555d232ddacedfc2d7993bae71b9dbdbba1d563f1c7ce8038c60d55f68ba0cf0`. Guard, provider and error-precedence changes do not replace successful old timing observations with new inference.
+
 ## Bundled-clip execution
 
 All rows below exited `0`. These are execution readings, not language accuracy or voice-quality scores.
@@ -31,14 +33,16 @@ All rows below exited `0`. These are execution readings, not language accuracy o
 | Parakeet | 0.796 | 0.103 | 0.097 | 0.032 | 1073.46 | 0.0357 |
 | Moonshine | 0.275 | 0.033 | 0.031 | 0.014 | 410.86 | 0.0115 |
 | Whisper turbo | 0.717 | 1.047 | 1.015 | 0.036 | 1613.00 | 0.3753 |
-| Kokoro | 0.521 | 0.632 | 0.630 | 0.041 | 601.42 | 0.2328 |
-| Piper | 0.502 | 0.064 | 0.063 | 0.015 | 229.98 | 0.0231 |
+| Kokoro | 0.521 | 0.632 | 0.630 | 0.041 | 601.42 | 0.2057 |
+| Piper | 0.502 | 0.064 | 0.063 | 0.015 | 229.98 | 0.0239 |
 | Silero | 0.020 | 0.010 | 0.006 | 0.005 | 78.55 | 0.0022 |
 | smart-turn | 0.452 | 0.045 | 0.053 | 0.048 | 226.66 | 0.0196 |
 | Wake model | 0.399 | 0.083 | 0.048 | 0.012 | 93.73 | 0.0179 |
 | Nemotron | 0.881 | 0.423 | 0.399 | 0.035 | 1397.90 | 0.1477 |
 
 `measure-local::outcome` checks the fixture's known transcript words, generated audio rate and duration, speech sample count and complete-turn probability. The wake row requires actual streaming decode calls. It permits no keyword hit. This clip produced none. J59 owns room accuracy and reliable wake activation.
+
+The corrected synthesis ratios use the original warm results, not new inference. Kokoro: `0.6296242729877122 / 3.0605416666666665 = 0.20572315020087803`. Piper: `0.06251812202390283 / 2.6122448979591835 = 0.023932718587275307`. The raw original ratios `0.23275775439115073` and `0.023111525897794537` divided by recognition input duration and are superseded.
 
 ## Resident tiers
 
@@ -49,10 +53,19 @@ Each row keeps the tier's entire selected set resident, including CPU Nemotron c
 | small | 2.249 | 8.219 | 8.123 | 0.063 | 1813.71 | not used | 0.1354 |
 | medium | 2.981 | 10.314 | 10.971 | 0.186 | 3303.58 | not used | 0.1829 |
 | large | 3.589 | 9.526 | 9.324 | 0.152 | 3782.72 | 4004.00 | 0.1554 |
-| multilingual CPU | 3.806 | 14.009 | 14.330 | 0.232 | 5450.77 | not used | 0.2388 |
-| multilingual CUDA | 4.426 | 11.499 | 11.317 | 0.152 | 4694.81 | 5976.00 | 0.1886 |
+| multilingual CPU | 3.278 | 18.171 | 17.682 | 0.130 | 5506.39 | not used | 0.2947 |
+| multilingual CUDA | 3.704 | 13.176 | 12.900 | 0.132 | 4801.34 | 6484.00 | 0.2150 |
 
 These observations are not admission ceilings or guarantees for other machines, languages or voices. J41 owns live free-memory checks, reserves, fallback and limits.
+
+Only the multilingual rows were re-measured, on `cachy` from `12:14:51.112156Z` to `12:16:25.544147Z`, with the complete resident set and unchanged runtime versions. Whisper executes independent `464000`, `464000` and `32000` sample segments on both first and warm turns. The original single-call SDK diagnostic says it processes only the first input window and discards remaining data. Prefix acceptance did not prove complete execution.
+
+Superseded incomplete multilingual observations, retained for comparison:
+
+| Tier | Cold load s | First turn s | Warm turn s | Unload s | Peak RAM MiB | Sampled peak GPU MiB | Input ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| multilingual CPU | 3.806 | 14.009 | 14.330 | 0.232 | 5450.77 | not used | 0.2388 |
+| multilingual CUDA | 4.426 | 11.499 | 11.317 | 0.152 | 4694.81 | 5976.00 | 0.1886 |
 
 ## Caption cost
 
@@ -72,6 +85,10 @@ Parakeet's full-buffer cost exceeds the plan's `200` ms caption interval. Nemotr
 ## Moonshine bound
 
 The unbounded `60`-second probe failed with an ONNX attention broadcast error, `7 by 2498`, and an empty transcript. Independent chunks of at most `80000` samples close the execution blocker. [The input contract](../architecture/jarvis-local.md#moonshine-input-contract) states what J39 must implement.
+
+The supplemental test-only probe reproduces that native error on `2026-09-30T12:14:25.729972629Z` and exits `1`. Its command, stderr, runtime versions and source bindings are preserved separately. Probe SHA-256: `8a1dcb68b6c4db213963533caf9043dd97d830a980b58c518961150f4c0e3070`. It does not add an unbounded production CLI.
+
+The cache-free probe follow-up reproduces the same error on `2026-09-30T12:53:45.866191927Z`, exits `1`, and uses probe SHA-256 `9555ce530ad620431c40e0793d9108465c0db88e9f6a17cbcb3e274f7248b71f`. It disables bytecode output when importing the instrument, so the runtime source tree remains unchanged. No resident tier was re-measured for this probe-only change.
 
 - The `30`-second standalone probe decoded `6` chunks. Cold load: `0.296` seconds. Warm compute: `0.395` seconds. Unload: `0.014` seconds. Peak RAM: `410.44` MiB.
 - The `60`-second small-tier probe decoded `12` chunks of `80000` samples. It consumed all `960000` samples.

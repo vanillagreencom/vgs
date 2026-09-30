@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 import wave
 
 HERE = Path(__file__).resolve().parent
+PROVIDERS = ("cpu", "cuda")
 
 
 class Unavailable(Exception):
@@ -70,6 +71,8 @@ def manifest(path):
             raise ValueError(f"runtime-or-files=missing id={artifact['id']}")
         if "maxInputSamples" in artifact and (type(artifact["maxInputSamples"]) is not int or artifact["maxInputSamples"] <= 0):
             raise ValueError(f"input-bound=invalid id={artifact['id']}")
+        if not isinstance(artifact["providers"], list) or not artifact["providers"] or any(type(p) is not str or p not in PROVIDERS for p in artifact["providers"]):
+            raise ValueError(f"artifact-provider=invalid id={artifact['id']}")
         for name, digest in artifact["files"].items():
             relative(name)
             if not re.fullmatch(r"[0-9a-f]{64}", digest):
@@ -77,6 +80,8 @@ def manifest(path):
         if not re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"]):
             raise ValueError(f"archive-sha256=invalid id={artifact['id']}")
     for tier in value["tiers"].values():
+        if type(tier["provider"]) is not str or tier["provider"] not in PROVIDERS:
+            raise ValueError("tier-provider=invalid")
         if not tier["artifacts"] or any(a not in ids for a in tier["artifacts"]):
             raise ValueError("tier=unknown-or-empty")
     return value
@@ -180,11 +185,14 @@ class GpuSamples:
             self.thread.start()
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, exc_type, primary, traceback):
         self.stop.set()
         if self.thread:
             self.thread.join()
         if self.error:
+            if primary is not None:
+                print(f"measure-local: secondary-error=gpu-sampler cause={self.error}", file=sys.stderr)
+                return False
             raise Unavailable(f"gpu-sampler=failed cause={self.error}")
 
 
@@ -248,9 +256,8 @@ def infer(artifact, model, samples, text, value, np):
     """Exercise real inference; return only JSON values, never model objects."""
     engine = artifact["engine"]
     if engine in ("parakeet", "moonshine", "whisper"):
-        # Moonshine's upstream VAD/offline-ASR path decodes separate speech
-        # segments. This instrument tests a fixed bound, not production VAD
-        # segmentation, overlap or word-boundary reconstruction.
+        # The pinned offline exports have bounded SDK inputs. This tests
+        # independent calls, not production segmentation or reconstruction.
         bound = artifact.get("maxInputSamples", len(samples))
         texts = []
         chunk_sizes = []
@@ -356,6 +363,13 @@ def outcome(artifact, result, value):
         raise ValueError(f"engine=unknown value={engine}")
 
 
+def speed(artifacts, warm, input_seconds, elapsed):
+    """Use generated duration for standalone synthesis, input for tier compute."""
+    if len(artifacts) == 1 and artifacts[0]["engine"] in ("piper", "kokoro"):
+        return elapsed / warm[0]["audio_seconds"], "generated-audio"
+    return elapsed / input_seconds, "input-audio" if len(artifacts) == 1 else "tier-input-audio"
+
+
 def run(value, artifacts, root, provider, seconds, scope):
     """Measure one artifact or a concurrently resident tier as one lifetime."""
     if {name for _, name in socket.if_nameindex()} - {"lo"}:
@@ -399,6 +413,7 @@ def run(value, artifacts, root, provider, seconds, scope):
         after_gpu = gpu.read() if provider == "cuda" else None
     if provider == "cuda" and gpu.peak == 0:
         raise Unavailable("gpu=allocation-not-observed")
+    warm_rtf, rtf_basis = speed(artifacts, warm, duration, finished - first)
     record = {"scope": scope, "provider_requested": provider, "versions": versions,
         "machine": platform.node(), "start_utc": started_utc,
         "end_utc": datetime.now(timezone.utc).isoformat(),
@@ -409,7 +424,7 @@ def run(value, artifacts, root, provider, seconds, scope):
         "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
         "rss_after_unload_bytes": rss(), "gpu_peak_bytes": gpu.peak if gpu.enabled else None,
         "gpu_after_unload_bytes": after_gpu, "gpu_poll_seconds": gpu.interval if gpu.enabled else None,
-        "warm_rtf": (finished - first) / duration, "results": results, "warm_results": warm}
+        "warm_rtf": warm_rtf, "rtf_basis": rtf_basis, "results": results, "warm_results": warm}
     print(json.dumps(record, allow_nan=False), flush=True)
 
 
@@ -423,7 +438,7 @@ def main():
     group.add_argument("--verify", action="store_true")
     group.add_argument("--artifact")
     group.add_argument("--tier")
-    parser.add_argument("--provider", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--provider", choices=PROVIDERS, default="cpu")
     parser.add_argument("--seconds", type=int, choices=(30, 60))
     args = parser.parse_args()
     value = manifest(args.manifest)
@@ -456,6 +471,6 @@ if __name__ == "__main__":
     except Unavailable as error:
         print(f"measure-local: status=not-measured {error}", file=sys.stderr)
         sys.exit(77)
-    except (ValueError, KeyError, OSError, TypeError, json.JSONDecodeError) as error:
+    except (ValueError, KeyError, OSError, TypeError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
         print(f"measure-local: failed={error}", file=sys.stderr)
         sys.exit(1)

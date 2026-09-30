@@ -8,10 +8,14 @@ self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd -P)"
 models="${JARVIS_LOCAL_MODELS:-}"
 python="${JARVIS_LOCAL_PYTHON:-}"
-if [[ -z $models || -z $python || ! -x $python ]]; then
+if [[ -z $models || -z $python || ! -x $python || ! -d $models ]]; then
   echo 'jarvis-local: status=not-measured reason=prepared-inputs-unavailable'
   exit 77
 fi
+models="$(cd -- "$models" && pwd -P)" || { echo 'jarvis-local: status=not-measured reason=models-path-unavailable' >&2; exit 77; }
+python_dir="$(cd -- "$(dirname -- "$python")" && pwd -P)" || { echo 'jarvis-local: status=not-measured reason=python-path-unavailable' >&2; exit 77; }
+# Keep the final interpreter symlink: resolving it loses a venv's identity.
+python="$python_dir/$(basename -- "$python")"
 TMP_ROOT="$(mktemp -d)" || { echo 'jarvis-local: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'jarvis-local: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'jarvis-local: scratch=resolve-failed' >&2; exit 1; }

@@ -226,7 +226,7 @@ rows=(
   "tools|scratch directory guard controls|scripts/test-scratch-dirs.sh|scripts/vgsh-rows.sh scripts/test-launcher-file-search.sh scripts/test-notifications-images.sh scripts/test-notifications-token-status.sh scripts/test-sandbox-shots.sh scripts/test-smoke-verdict.sh scripts/test-smoke-teardown.sh scripts/test-readme-shots.sh"
   "tools|v1 theme converter controls|node scripts/test-convert-v1-themes.js|tools/convert-v1-themes scripts/fixtures/convert-v1-themes/* scripts/tar-fixture.js bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js"
   "tools|Jarvis test environment controls|node scripts/test-jarvis-env.js|scripts/lib/jarvis-env.sh scripts/fixtures/jarvis-env/* scripts/smoke/harness.sh"
-  "tools|Jarvis local artifact controls|python3 scripts/test-jarvis-local.py|shell/plugins/vgs.jarvis/* scripts/lib/jarvis-env.sh"
+  "tools|Jarvis local artifact controls|python3 scripts/test-jarvis-local.py|shell/plugins/vgs.jarvis/* scripts/lib/jarvis-env.sh scripts/check-jarvis-local.sh scripts/fixtures/jarvis-local/*"
   "tools|Jarvis actual local models|scripts/check-jarvis-local.sh|shell/plugins/vgs.jarvis/* scripts/lib/jarvis-env.sh scripts/fixtures/jarvis-local/*"
   "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"

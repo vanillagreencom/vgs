@@ -303,8 +303,9 @@ cases=(
   "jarvis-fixture-all|scripts/fixtures/jarvis/prepare.js|all|$jarvis_fixture_plan"$'\nscripts/qml-smoke.sh'
   "jarvis-protocol-suite|scripts/test-jarvis-protocol.js|offline|node scripts/test-jarvis-protocol.js"$'\n'"$repo_plan"
   "jarvis-local-suite|scripts/test-jarvis-local.py|all|python3 scripts/test-jarvis-local.py"$'\n'"$repo_plan"
-  "jarvis-local-runner|scripts/check-jarvis-local.sh|all|scripts/check-jarvis-local.sh"$'\n'"$repo_plan"
-  "jarvis-local-fixture|scripts/fixtures/jarvis-local/run.py|all|scripts/check-jarvis-local.sh"$'\n'"$repo_plan"
+  "jarvis-local-runner|scripts/check-jarvis-local.sh|all|$jarvis_local_rows$repo_plan"
+  "jarvis-local-fixture|scripts/fixtures/jarvis-local/run.py|all|$jarvis_local_rows$repo_plan"
+  "jarvis-unbounded-probe|scripts/fixtures/jarvis-local/probe-moonshine.py|all|$jarvis_local_rows$repo_plan"
   "jarvis-artifacts|shell/plugins/vgs.jarvis/artifacts.json|tools|$jarvis_local_tools_plan"
   "jarvis-measure|shell/plugins/vgs.jarvis/measure-local|tools|$jarvis_local_tools_plan"
   "jarvis-clip|shell/plugins/vgs.jarvis/fixtures/probe.wav|tools|$jarvis_local_tools_plan"
