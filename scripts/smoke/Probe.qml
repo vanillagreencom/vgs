@@ -1182,7 +1182,7 @@ Scope {
                 }));
         }
         // The deepest item under an instance holding the active focus, as
-        // [type, text], so a keyboard row types only once the field it
+        // [type, text], an icon button's label as its text, so a keyboard row types only once the field it
         // means holds the keys, or "no-focus".
         function activeFocusItem(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
@@ -1190,7 +1190,19 @@ Scope {
             const focused = root.descendants(item).filter(child => child.activeFocus);
             if (focused.length === 0) return "no-focus";
             const at = focused[focused.length - 1];
-            return root.json([root.typeName(at), at.text === undefined ? null : String(at.text)]);
+            return root.json([root.typeName(at), at.label !== undefined && at.label !== "" ? String(at.label) : at.text !== undefined ? String(at.text) : null]);
+        }
+        // Whether the item holding the keys under an instance lies inside
+        // an item named `type`, such as a page, whichever of its controls
+        // holds them.
+        function activeFocusWithin(hostKey: string, id: string, type: string): bool {
+            const item = root.instance(hostKey, id);
+            if (item === null) return false;
+            const focused = root.descendants(item).filter(child => child.activeFocus);
+            if (focused.length === 0) return false;
+            for (let at = focused[focused.length - 1]; at !== null && at !== undefined && at !== item; at = at.parent)
+                if (root.typeName(at) === type) return true;
+            return false;
         }
         function activeFocusIn(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);

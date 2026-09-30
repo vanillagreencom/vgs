@@ -154,6 +154,7 @@ ui_focus_type() { ipc smoke activeFocusItem window vgs.automations | py_reply 'i
 # command and Ctrl+S, each key sent once its field holds the focus; no
 # pointer event.
 keyboard_create() {
+  expect_poll "the list holds the keys $1" true ipc smoke activeFocusWithin window vgs.automations AutomationListPage
   expect "Ctrl+N opens a new editor $1" ok ui_keys -M ctrl -k n -m ctrl
   expect_poll "the name field holds the keys $1" TextField ui_focus_type
   expect "the name is typed and Tab moves on $1" ok ui_keys -M ctrl -k a -m ctrl "$2" -k Tab

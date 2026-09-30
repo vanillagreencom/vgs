@@ -58,12 +58,17 @@ FocusScope {
 
     function close() {}
 
+    // A tab or a page change hands the keys to the page it shows, so the
+    // keyboard follows what the pointer chose.
+    function focusPage() {
+        if (place === "history") history.forceActiveFocus();
+        else if (editorOpen) editor.focusName();
+        else automationList.focusList();
+    }
+    onPlaceChanged: Qt.callLater(focusPage)
+
     function setNotice(tone, text, detail) {
         notice = { tone: tone, text: text, detail: detail || "" };
-        if (shell !== null && shell.toasts !== undefined && text !== "") {
-            try { shell.toasts.show({ title: text, message: detail || "", tone: tone, icon: tone === "danger" ? "circle-x" : tone === "success" ? "circle-check" : "info" }); }
-            catch (e) { console.warn("automations: toast=" + e.message); }
-        }
     }
 
     function friendlyFailure(failure) {
@@ -316,6 +321,18 @@ FocusScope {
         });
     }
 
+    // Ctrl+N and Ctrl+S reach the window from whichever control holds the
+    // keys, since no field takes them, as every VGS window takes its keys.
+    Keys.onPressed: event => {
+        if (event.modifiers !== Qt.ControlModifier) return;
+        if (event.key === Qt.Key_N) {
+            newDraft();
+            event.accepted = true;
+        } else if (event.key === Qt.Key_S && editorOpen) {
+            saveDraft();
+            event.accepted = true;
+        }
+    }
     Keys.onEscapePressed: event => {
         if (confirmAction !== "") {
             confirmAction = "";
@@ -331,15 +348,6 @@ FocusScope {
 
     Component.onCompleted: refreshAll()
 
-    Shortcut {
-        sequence: "Ctrl+N"
-        onActivated: root.newDraft()
-    }
-
-    Shortcut {
-        sequence: "Ctrl+S"
-        onActivated: if (root.editorOpen) root.saveDraft()
-    }
 
     EngineClient { id: client }
 
