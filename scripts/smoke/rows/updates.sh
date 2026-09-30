@@ -341,7 +341,7 @@ expect "a record that ends at its separator reads partial" partial launched
 : >"$tui_record"
 expect "an empty record reads partial" partial launched
 forget_record
-old_launched() { recorded | py_reply 'import json,os,sys; w=json.load(sys.stdin); a=w[len(w) - 1 - w[::-1].index("--") + 1:]; print(json.dumps([os.path.basename(a[0])] + a[1:]))'; }
+old_launched() { python3 -c 'import json,os,sys; w=json.loads(sys.argv[1]); a=w[len(w) - 1 - w[::-1].index("--") + 1:]; print(json.dumps([os.path.basename(a[0])] + a[1:]))' "$(recorded)"; }
 old_reader_poll() { (failures=0 behaviour_failures=0; expect_poll "the old launch reader" '["update.sh"]' old_launched >"$sandbox/reader-traceback-control.log"; echo "$failures"); }
 expect "control: a poll whose reader raises on an absent record fails once" 1 old_reader_poll
 expect "control: the failed poll names the reader's traceback" 1 grep -c -F -- "the old launch reader: the reader raised a Python traceback" "$sandbox/reader-traceback-control.log"
