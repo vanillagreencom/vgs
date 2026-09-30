@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.notifications/Service.qml, shell/plugins/vgs.notifications/CardSlot.qml
 
-What a choice on a notification in `vgs.notifications` does, which windows it brings into view, which notifications the service keeps holding after their toast leaves, and what the senders it was built for carry. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees. The Quickshell 0.3.1 facts this rests on are in [§ Quickshell 0.3.1](#quickshell-031), and the Hyprland ones in [runtime.md § Hyprland](runtime.md#hyprland).
+What a choice on a notification in `vgs.notifications` does, which windows it brings into view, which notifications the service keeps holding after their toast leaves, and what the senders it was built for carry. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees. The Quickshell 0.3.1 facts this rests on are in [§ Quickshell 0.3.1](#quickshell-031), and the Hyprland ones in [runtime-hyprland.md](runtime-hyprland.md).
 
 ## The open rule
 

@@ -31,7 +31,8 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 - `docs/architecture/configuration.md`: before touching the configuration files or their judge.
 - `docs/architecture/design-system.md`: before touching a token, the theme judge, `Theme`, a component of `qs.Ui`, or any value a surface draws with.
 - `docs/architecture/components.md`: before adding or changing a component of `qs.Ui`.
-- `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell, and for every Quickshell and Hyprland fact the code rests on.
+- `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell, and for every Quickshell fact the code rests on.
+- `docs/architecture/runtime-hyprland.md`: before touching a dispatch, `Compositor` or `Dispatch.js`, for every Hyprland fact the code rests on.
 - `docs/architecture/validation.md`: before touching `scripts/validate` or one of its rows.
 - `docs/architecture/validation-smoke.md`: before touching the nested sandbox, its harness or a smoke row's verdict.
 - `docs/architecture/validation-smoke-faults.md`: before touching a sandbox fault the smoke excuses, a mode a row holds on the nested output, or the smoke's closing verdict.

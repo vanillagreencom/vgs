@@ -11,7 +11,7 @@
 # state before the reveal. Hyprland v0.56.2's focus dispatcher already
 # shows the workspace, the special workspace, the group tab and the
 # monitor of the window it focuses, and ends a fullscreen over it
-# (docs/architecture/runtime.md § Hyprland), so the old path, that
+# (docs/architecture/runtime-hyprland.md), so the old path, that
 # dispatcher alone on the first window of the application, fails only
 # where the reveal decides something: whether the window already shows,
 # which of several windows, and whether to move at all when the

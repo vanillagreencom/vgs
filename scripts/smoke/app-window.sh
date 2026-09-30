@@ -53,7 +53,7 @@ window_address() { window_of "$1" address | python3 -c 'import json,sys; t=sys.s
 # `centred` when the one shell window titled TITLE has its centre within
 # 1 px of its monitor's work area centre, the monitor's box less its
 # reserved space and general:float_gaps, where Hyprland v0.56.2 centres a
-# floating window (docs/architecture/runtime.md § Hyprland); else both
+# floating window (docs/architecture/runtime-hyprland.md); else both
 # centres.
 window_centred() { # TITLE
   local clients monitors gaps

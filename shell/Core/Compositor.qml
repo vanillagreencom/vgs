@@ -12,7 +12,7 @@ import "Dispatch.js" as Dispatch
 // sentence, so exit status alone says nothing. One process drains a bounded
 // queue, preserving each request until all of its completion signals land.
 // `reveal` brings an application's window into view; its decisions are
-// Dispatch.js's and the Hyprland facts it rests on are runtime.md's.
+// Dispatch.js's and the Hyprland facts it rests on are runtime-hyprland.md's.
 Singleton {
     id: root
 

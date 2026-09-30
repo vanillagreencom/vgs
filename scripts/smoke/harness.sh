@@ -910,7 +910,7 @@ layer_bar_clear() { # NAMESPACE TOKEN
 # the mode MODE, such as 480x720, at SCALE, 1 by default, and the layout's
 # origin, through a Lua monitor rule; the reply is hyprctl's. The nested
 # Wayland output takes any mode and an integer scale; a headless output
-# stays 0x0 in the sandbox (docs/architecture/runtime.md § Hyprland). A
+# stays 0x0 in the sandbox (docs/architecture/runtime-hyprland.md). A
 # row restores the mode it read first.
 output_mode() { hypr eval "hl.monitor({ output = \"$1\", mode = \"$2\", position = \"0x0\", scale = ${3:-1} })"; }
 # mode_scale_of NAME: output NAME's mode and scale as `WxH scale=S`, such

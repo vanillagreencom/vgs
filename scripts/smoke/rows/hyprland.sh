@@ -11,9 +11,10 @@
 # windows the harness's toplevel helper maps, each stopped by the pid the
 # row started.
 #
-# Hyprland v0.56.2 reads no layer rule back (docs/architecture/runtime.md
-# § Hyprland), so the rows hold the layer rules through the written file
-# and an empty configerrors, where Hyprland lists a field it refuses.
+# Hyprland v0.56.2 reads no layer rule back
+# (docs/architecture/runtime-hyprland.md), so the rows hold the layer rules
+# through the written file and an empty configerrors, where Hyprland lists a
+# field it refuses.
 set -euo pipefail
 hypr_lua="$home/.config/hypr/hyprland.lua"
 hypr_layer="$home/.local/state/vgs/hypr/vgs.lua"
@@ -105,7 +106,7 @@ tui_size() { tui_client size "$1"; }
 # the centre of its monitor's work area, else both centres. Hyprland
 # v0.56.2 centres a floating window on that work area: the monitor's
 # logical box less its reserved space, [left, top, right, bottom], and less
-# general:float_gaps, CSS order (docs/architecture/runtime.md § Hyprland).
+# general:float_gaps, CSS order (docs/architecture/runtime-hyprland.md).
 # hyprctl prints the window's place in whole pixels, hence the 1 px.
 tui_centred() {
   local clients monitors gaps
@@ -298,8 +299,8 @@ expect "no plugin reports a Hyprland problem" '[]' hypr_problems
 
 # Each bind reaches its plugin. wtype types on a virtual keyboard with
 # keycodes of its own, which a bind resolves only by keysym, so the sandbox
-# user's settings after the line turn that on (docs/architecture/runtime.md
-# § Hyprland).
+# user's settings after the line turn that on
+# (docs/architecture/runtime-hyprland.md).
 printf '%s\n' 'hl.config({ input = { resolve_binds_by_sym = true } })' >>"$hypr_lua"
 expect "the nested instance reloads with binds resolved by keysym" ok hypr reload config-only
 expect "no launcher surface shows before SUPER+SPACE" 0 layer_count vgs:overlay

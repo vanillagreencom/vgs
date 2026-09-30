@@ -34,11 +34,12 @@ settings_binds() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps
 # min(size.window.width, width - 2 * size.window.gutter) wide,
 # size.window.heightShare of the height tall and centred on the monitor's
 # work area, its box less the space the bar reserves and general:float_gaps,
-# where Hyprland centres a floating window (docs/architecture/runtime.md
-# § Hyprland), within one pixel; else the misfits. The monitor, the clients
-# and the gaps come from one batched request, which the compositor answers
-# from one state. Given MODE, the mode a row holds, a monitor at another
-# mode reads ["mode=<WxH> want=<MODE>"] and no window is measured against it.
+# where Hyprland centres a floating window
+# (docs/architecture/runtime-hyprland.md), within one pixel; else the
+# misfits. The monitor, the clients and the gaps come from one batched
+# request, which the compositor answers from one state. Given MODE, the
+# mode a row holds, a monitor at another mode reads
+# ["mode=<WxH> want=<MODE>"] and no window is measured against it.
 window_fits() {
   local width share gutter
   width="$(ipc smoke themeValue size.window.width)" || return

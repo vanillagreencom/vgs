@@ -39,6 +39,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [requirements.md](requirements.md) and [requirement-notice.md](requirement-notice.md): read before touching a manifest's `requirements`, `config/requirements.json`, the scan's probe, the `missing` lines or the notice.
 - [tui.md](tui.md), [tui-capability.md](tui-capability.md), [tui-records.md](tui-records.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability, its exit records or `vgsh sudo`.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
+- [runtime-hyprland.md](runtime-hyprland.md): read before touching a dispatch, `Compositor` or `Dispatch.js`, or relying on what Hyprland does.
 - [runtime-pointer.md](runtime-pointer.md): read before touching a pointer handler, a cursor, a hover reading or a popup.
 - [validation.md](validation.md) and [validation-smoke.md](validation-smoke.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
 - [validation-smoke-faults.md](validation-smoke-faults.md): read before touching a sandbox fault the smoke excuses, a mode a row holds on the nested output, or `scripts/smoke/verdict.sh`.

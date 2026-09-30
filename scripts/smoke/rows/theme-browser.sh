@@ -89,7 +89,7 @@ expect_poll "the compositor lists the themes shortcut" 1 themes_global
 # wtype types on a virtual keyboard with keycodes of its own, which a bind
 # resolves only by keysym, so the sandbox user's settings turn that on
 # for these rows, as rows/hyprland.sh does for its own (docs/architecture/
-# runtime.md § Hyprland), and the file is put back after them.
+# runtime-hyprland.md), and the file is put back after them.
 hypr_lua="$home/.config/hypr/hyprland.lua"
 cp -p -- "$hypr_lua" "$sandbox/hyprland-before-browser.lua"
 printf '%s\n' 'hl.config({ input = { resolve_binds_by_sym = true } })' >>"$hypr_lua"
