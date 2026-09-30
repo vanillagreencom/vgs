@@ -47,6 +47,7 @@ How a VGS session locks and how it answers polkit. Both are native plugins on ob
   - `polkit.sh` reads the core's `polkitFlows` count, kept over the shell's whole life, as 0.
   - Both run the harness's helper watcher, which records each `unix_chkpwd`, `polkit-agent-helper-1`, `sudo` or `faillock` process under the sandbox every 50 ms.
   - The controls run early in `lock.sh`, before its restarts: a plugin copy starts one stand-in check with PAM's start removed, and the harness runs a copy of `sleep` named `unix_chkpwd`. The row's last readings must count exactly those two.
+- `scripts/sandbox-shots.sh lock` shoots the lock screen in the nested sandbox, locked and after one and ten wrong attempts, by the same test-only means: the probe calls the service's `fail()` and releases the lock with `sessionUnlock`. No sandbox path shows the polkit prompt, which opens only on a live flow.
 - A live polkit flow cannot run in the sandbox: it needs polkitd and the setuid `polkit-agent-helper-1`. `scripts/test-polkit-model.js` covers the prompt's decisions, and `scripts/smoke/rows/polkit.sh` the agent, its status and the refused flowless summon.
 - The sandbox's system bus has no logind, so the lock row stands in `systemd-inhibit`, `busctl` and `dbus-monitor`, and announces one sleep through a trigger file.
 

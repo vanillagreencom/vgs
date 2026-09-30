@@ -14,13 +14,15 @@
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
 # SCENE is gallery, settings, manager, launcher, notifications, bar,
-# panels, devtools, dialog, narrow, theme-browser or wallpaper-browser. bar
+# panels, devtools, dialog, lock, narrow, theme-browser or
+# wallpaper-browser. bar
 # is the bar with every first-party widget and each widget's tooltip or
 # hover; panels is the Agent Warden panel and the updates
 # flyout, each opened from its widget over planted status; devtools is the
-# Dev Tools window; dialog is the core's requirement notice; narrow holds a
+# Dev Tools window; dialog is the core's requirement notice; lock is the
+# vgs.lock screen, locked and after wrong attempts; narrow holds a
 # monitor 480 by 720 logical pixels and takes the bar, panels, devtools,
-# dialog, launcher, notifications and the first gallery pages again, each
+# dialog, lock, launcher, notifications and the first gallery pages again, each
 # shot named <scene>-<mode>-narrow-*; theme-browser and wallpaper-browser
 # are the vgs.themes browsers, taken only when named. The default is every
 # other scene the tree ships, or gallery and the manager's scene with
@@ -58,6 +60,14 @@
 # hyphens is refused as `sandbox-shots: refused: theme-card=<value>`, and
 # with the theme-browser scene a name the tree's catalog lacks as
 # `sandbox-shots: refused: theme-card=<value> tree=<rev or checkout>`.
+# The lock scene enables vgs.lock with its sleep hook and idle watch off,
+# locks the nested session, and shoots the lock screen, then after one and
+# after ten wrong attempts. No password is typed and no PAM runs: the
+# probe calls the service's `fail()`, the step PAM's refusal takes, and
+# releases the lock with `sessionUnlock`, test code that never ships
+# (docs/architecture/lock-polkit.md § Validation). It disables the probe
+# fixture, which holds `lock`, while it runs, when the settings scene
+# enabled it.
 # --hidden refuses every shot not taken with the nested window hidden on
 # the host (SHOT_WINDOW_REQUIRE in scripts/smoke/shot.sh), so a run that
 # exits 0 proves each shot's frame arrived while the window was hidden.
@@ -102,7 +112,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|settings|manager|launcher|notifications|bar|panels|devtools|dialog|narrow|theme-browser|wallpaper-browser) scenes+=("$1"); shift ;;
+    gallery|settings|manager|launcher|notifications|bar|panels|devtools|dialog|lock|narrow|theme-browser|wallpaper-browser) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -177,6 +187,7 @@ scene_ships() {
     devtools) ships_plugin vgs.devtools ;;
     theme-browser|wallpaper-browser) ships_plugin vgs.themes ;;
     dialog) [[ -f $tree/shell/Hosts/NoticeHost.qml ]] ;;
+    lock) ships_plugin vgs.lock ;;
     narrow) scene_ships bar && scene_ships panels && scene_ships devtools && scene_ships dialog && scene_ships launcher && scene_ships notifications && scene_ships gallery ;;
     *) printf 'sandbox-shots: refused: scene=%s reason=unknown\n' "$1" >&2; exit 2 ;;
   esac
@@ -186,7 +197,7 @@ if [[ ${#scenes[@]} -eq 0 ]]; then
     scenes=(gallery)
     [[ -z $manager_scene ]] || scenes+=("$manager_scene")
   else
-    for scene in gallery settings launcher notifications bar panels devtools dialog narrow; do
+    for scene in gallery settings launcher notifications bar panels devtools dialog lock narrow; do
       if scene_ships "$scene"; then scenes+=("$scene"); fi
     done
   fi
@@ -967,11 +978,44 @@ scene_narrow() { # MODE
   scene_panels "$1-narrow"
   scene_devtools "$1-narrow"
   scene_dialog "$1-narrow"
+  ! scene_ships lock || scene_lock "$1-narrow"
   scene_launcher "$1-narrow"
   scene_notifications "$1-narrow"
   scene_gallery "$1-narrow"
   gallery_pages=12
   narrow_end
+}
+
+lock_core() { ipc shell lent | py_reply 'import json,sys; l=json.load(sys.stdin)["lock"]; print(json.dumps([l["requested"], l["secure"], l["content"]]))'; }
+lock_failures() { ipc vgs.lock invoke status '' | py_reply 'import json,sys; print(json.load(sys.stdin)["failures"])'; }
+# lock_fail N: N wrong attempts through the service's own failure step,
+# with no PAM.
+lock_fail() {
+  local i
+  for ((i = 0; i < $1; i++)); do
+    [[ $(ipc smoke invokeInstance service vgs.lock fail '') != no-function ]] || { fail "vgs.lock has no fail()"; return; }
+  done
+}
+scene_lock() { # MODE
+  local probe
+  probe="$(plugin_enabled acme.probe)" || probe=unreadable
+  [[ $probe != True ]] || expect "disabling the probe fixture, which holds lock, is allowed" ok ipc shell setPluginEnabled acme.probe false
+  expect "enabling vgs.lock is allowed" ok ipc shell setPluginEnabled vgs.lock true
+  expect_poll "vgs.lock is built" True record_exists vgs.lock
+  expect "the lock answers ok" ok ipc vgs.lock invoke lock ''
+  expect_poll "the lock is confirmed with the lock screen" '[true, true, true]' lock_core
+  take "lock-$1"
+  lock_fail 1
+  expect_poll "one wrong attempt is shown" 1 lock_failures
+  take "lock-$1-wrong"
+  lock_fail 9
+  expect_poll "ten wrong attempts are shown" 10 lock_failures
+  take "lock-$1-pause"
+  expect "the probe releases the lock" ok ipc smoke sessionUnlock
+  expect_poll "the core holds no lock" '[false, false, true]' lock_core
+  expect "disabling vgs.lock is allowed" ok ipc shell setPluginEnabled vgs.lock false
+  expect_poll "vgs.lock is gone" False record_exists vgs.lock
+  [[ $probe != True ]] || expect "re-enabling the probe fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
 }
 
 # The setup each scene needs, once each, in the order the scenes first
@@ -982,7 +1026,8 @@ need_setup() { local s; for s in "${setups[@]}"; do [[ $s == "$1" ]] && return 0
 for scene in "${scenes[@]}"; do
   case $scene in
     bar) need_setup launcher; need_setup panels; need_setup bar ;;
-    narrow) for s in launcher panels bar devtools dialog notifications gallery; do need_setup "$s"; done ;;
+    narrow) for s in launcher panels bar devtools dialog notifications gallery; do need_setup "$s"; done
+      ! scene_ships lock || need_setup lock ;;
     *) need_setup "$scene" ;;
   esac
 done
@@ -1041,6 +1086,24 @@ PY2
       cp -R -- "$fixtures/acme.needs/." "$home/.config/vgs/plugins/acme.needs/"
       expect "the needs fixture is scanned" ok ipc shell rescanPlugins
       expect_poll "the needs fixture is listed" True plugin_known acme.needs ;;
+    lock)
+      # The sleep hook and the idle watch stay off: no logind stand-in runs
+      # here, and an idle lock would cover the other scenes.
+      python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+config = json.load(open(path))
+rows = config.setdefault("plugins", [])
+row = next((r for r in rows if r.get("id") == "vgs.lock"), None)
+if row is None:
+    row = {"id": "vgs.lock"}
+    rows.append(row)
+row.update({"lockBeforeSleep": False, "idleLockSeconds": 0})
+with open(path + ".tmp", "w") as out:
+    json.dump(config, out)
+os.replace(path + ".tmp", path)
+PY
+      ;;
     launcher|notifications)
       # The notifications read the synthetic Slack's workspace list once,
       # when they start, beside a stub libsecret that holds no token: the
