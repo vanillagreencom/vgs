@@ -304,11 +304,13 @@ git_quiet init -q
 git_quiet add shell bin config themes
 git_quiet commit -q -m manager
 old_rev="$(git -C "$shots_repo" rev-parse HEAD)"
-mkdir -p "$shots_repo/shell/plugins/vgs.settings" "$shots_repo/shell/plugins/vgs.themes"
+mkdir -p "$shots_repo/shell/plugins/vgs.settings" "$shots_repo/shell/plugins/vgs.themes" "$shots_repo/shell/plugins/vgs.polkit"
 : >"$shots_repo/shell/plugins/vgs.settings/manifest.json"
 # The checkout ships the theme browsers, so their scene reaches the theme
-# card check; it ships no Dev Tools, whose scene is refused.
+# card check; it ships no Dev Tools, whose scene is refused. It ships the
+# polkit prompt, which the earlier revision does not.
 : >"$shots_repo/shell/plugins/vgs.themes/manifest.json"
+: >"$shots_repo/shell/plugins/vgs.polkit/manifest.json"
 git -C "$shots_repo" rm -q shell/plugins/vgs.bar/Manager.qml
 git_quiet add shell
 git_quiet commit -q -m settings
@@ -337,10 +339,12 @@ scene_cases=(
   "a theme card that is no catalog name is refused" 2 "sandbox-shots: refused: theme-card=../x" --theme-card ../x settings
   "a theme card the catalog lacks is refused" 2 "sandbox-shots: refused: theme-card=nosuch tree=checkout" --theme-card nosuch theme-browser
   "a checkout without the Dev Tools plugin refuses the devtools scene" 2 "sandbox-shots: refused: scene=devtools tree=checkout" devtools
+  "a checkout with the polkit plugin takes the polkit scene" 77 "qml-smoke: status=not-measured" polkit
+  "a revision without the polkit plugin refuses the polkit scene" 2 "sandbox-shots: refused: scene=polkit tree=$old_rev" --rev "$old_rev" polkit
 )
 # Each case is label, status, line, then its arguments up to the next case,
 # counted by the arguments each row above carries.
-scene_arity=(1 3 3 1 3 3 3 3 1)
+scene_arity=(1 3 3 1 3 3 3 3 1 1 3)
 # Where each case starts in scene_cases and how many arguments it takes, by
 # label, for the controls below.
 declare -A scene_at scene_argc
@@ -367,6 +371,9 @@ shots_controls=(
   "a scene's plugin is not looked for"
   "[[ -f \$tree/shell/plugins/\$id/manifest.json ]] || return 1" "true || return 1"
   "a checkout without the Dev Tools plugin refuses the devtools scene"
+  "the polkit scene's plugin is not looked for"
+  "    polkit) ships_plugin vgs.polkit ;;" "    polkit) true ;;"
+  "a revision without the polkit plugin refuses the polkit scene"
   "a refused scale goes on to the harness"
   "refused: scale=%s\\n' \"\$scale\" >&2; exit 2; }" "refused: scale=%s\\n' \"\$scale\" >&2; }"
   "a scale other than 1 or 2 is refused"

@@ -468,6 +468,53 @@ EOF
   chmod 755 "$shim/mise" "$shim/docker" "$shim/podman" "$shim/pacman"
 }
 
+# automations_stand_ins STUB: vgs.automations's host commands in the
+# shell's own PATH directory, each logging its argv as one JSON line in
+# STUB/<name>.calls: a systemctl that answers every verb and fails
+# daemon-reload while STUB/fail-reload exists, a systemd-run that runs the
+# argv after `--` with its --setenv words exported, a notify-send that
+# prints an id, and a loginctl that answers `no`. A shim file one of them
+# covers is kept under STUB/saved until automations_stand_ins_restore STUB
+# puts it back and removes the stand-ins. rows/automations.sh and the
+# Settings scene of scripts/sandbox-shots.sh enable the plugin over them.
+automations_stand_in_names=(systemctl systemd-run notify-send loginctl)
+automations_stand_ins() { # STUB
+  local stub="$1" name
+  mkdir -p -- "$stub/saved"
+  for name in "${automations_stand_in_names[@]}"; do
+    if [[ -e $shim/$name ]]; then mv -- "$shim/$name" "$stub/saved/$name"; fi
+  done
+  cat >"$shim/systemctl" <<EOF
+#!/usr/bin/env bash
+python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$stub/systemctl.calls"
+if [[ \${2:-} == daemon-reload && -e "$stub/fail-reload" ]]; then echo "Failed to reload daemon: stand-in" >&2; exit 1; fi
+exit 0
+EOF
+  cat >"$shim/systemd-run" <<EOF
+#!/usr/bin/env bash
+python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$stub/systemd-run.calls"
+while [[ \$# -gt 0 && \$1 != -- ]]; do
+  case "\$1" in --setenv=*) export "\${1#--setenv=}" ;; esac
+  shift
+done
+shift
+"\$@" >>"$stub/systemd-run.out" 2>&1 || true
+EOF
+  cat >"$shim/notify-send" <<EOF
+#!/usr/bin/env bash
+python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$stub/notify-send.calls"
+echo 7
+EOF
+  printf '#!/usr/bin/env bash\necho no\n' >"$shim/loginctl"
+  chmod 755 "$shim/systemctl" "$shim/systemd-run" "$shim/notify-send" "$shim/loginctl"
+}
+automations_stand_ins_restore() { # STUB
+  local name
+  for name in "${automations_stand_in_names[@]}"; do
+    if [[ -e $1/saved/$name ]]; then mv -f -- "$1/saved/$name" "$shim/$name"; else rm -f -- "$shim/$name"; fi
+  done
+}
+
 # The libsecret stand-in vgs.notifications reads its Slack tokens
 # through, in the directory the harness hands the shell as
 # VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR. $shim/secret-tool.states

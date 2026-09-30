@@ -1,9 +1,9 @@
 # Automations, vgs.automations. The harness starts it disabled; this row
-# enables it over stand-ins it writes in the shell's own PATH directory: a
-# systemctl that answers show-environment and logs every other verb, a
-# systemd-run that logs its argv and runs the argv after `--`, a notify-send
-# that logs its argv and prints an id, and a loginctl that answers `no`;
-# the harness's crontab stand-in serves the whole run. No call can reach the
+# enables it over the harness's automations_stand_ins in the shell's own
+# PATH directory: a systemctl that logs every verb, a systemd-run that logs
+# its argv and runs the argv after `--`, a notify-send that logs its argv
+# and prints an id, and a loginctl that answers `no`; the harness's crontab
+# stand-in serves the whole run. No call can reach the
 # host's systemd user manager or the user's crontab: the sandbox's runtime
 # directory and session bus are its own, and every command the plugin runs
 # resolves to a stand-in first. The row drives the engine, bin/automations,
@@ -27,37 +27,9 @@
 # files they covered restored.
 set -euo pipefail
 auto_stub="$sandbox/automations-stub"
-auto_saved="$sandbox/automations-saved"
-mkdir -p "$auto_stub" "$auto_saved"
-auto_names=(systemctl systemd-run notify-send loginctl)
-for name in "${auto_names[@]}"; do
-  if [[ -e $shim/$name ]]; then mv -- "$shim/$name" "$auto_saved/$name"; fi
-done
 # The systemctl stand-in fails daemon-reload while $auto_stub/fail-reload
 # exists, so a row can make a sync fail.
-cat >"$shim/systemctl" <<EOF
-#!/usr/bin/env bash
-python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$auto_stub/systemctl.calls"
-if [[ \${2:-} == daemon-reload && -e "$auto_stub/fail-reload" ]]; then echo "Failed to reload daemon: stand-in" >&2; exit 1; fi
-exit 0
-EOF
-cat >"$shim/systemd-run" <<EOF
-#!/usr/bin/env bash
-python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$auto_stub/systemd-run.calls"
-while [[ \$# -gt 0 && \$1 != -- ]]; do
-  case "\$1" in --setenv=*) export "\${1#--setenv=}" ;; esac
-  shift
-done
-shift
-"\$@" >>"$auto_stub/systemd-run.out" 2>&1 || true
-EOF
-cat >"$shim/notify-send" <<EOF
-#!/usr/bin/env bash
-python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$auto_stub/notify-send.calls"
-echo 7
-EOF
-printf '#!/usr/bin/env bash\necho no\n' >"$shim/loginctl"
-chmod 755 "$shim/systemctl" "$shim/systemd-run" "$shim/notify-send" "$shim/loginctl"
+automations_stand_ins "$auto_stub"
 terminal_stand_in
 
 auto_engine="$repo/shell/plugins/vgs.automations/bin/automations"
@@ -167,6 +139,4 @@ expect "the engine removes the automation" removed=nightly auto_last remove nigh
 expect "its units are gone" '[]' auto_units
 expect "disabling the automations is allowed" ok ipc shell setPluginEnabled vgs.automations false
 expect_poll "the disabled service holds no status record or IPC target" '[null, false]' auto_lent
-for name in "${auto_names[@]}"; do
-  if [[ -e $auto_saved/$name ]]; then mv -f -- "$auto_saved/$name" "$shim/$name"; else rm -f -- "$shim/$name"; fi
-done
+automations_stand_ins_restore "$auto_stub"

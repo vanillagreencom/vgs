@@ -46,6 +46,11 @@ Scope {
     // file a row writes beside the shipped one for a dismissal control, by
     // the name the row gives each.
     property var popupCopies: ({})
+    // The vgs.polkit prompt over a stand-in authentication flow, for the
+    // polkit scene of scripts/sandbox-shots.sh: no sandbox path runs a live
+    // flow (docs/architecture/lock-polkit.md § Validation). While shown it
+    // is { surface, prompt, flow }, else null.
+    property var polkitStandIn: null
     // Quickshell 0.3.1 can cut large IPC replies. Keep this equal to
     // harness.sh's ipc_reply_chars; docs/architecture/runtime.md names the fact.
     readonly property int replyChars: 32768
@@ -170,6 +175,53 @@ Scope {
     }
 
     FileView { id: uiModule; path: Qt.resolvedUrl("Ui/qmldir"); blockLoading: true }
+
+    // The stand-in flow holds the members of Quickshell's AuthFlow that
+    // PolkitModel.viewOf and the prompt read, as pkexec asks for a
+    // program. Its submit and cancel only count, so nothing reaches polkitd
+    // or PAM, and no password is ever typed into it.
+    Component {
+        id: polkitStandInFlow
+        QtObject {
+            property string message: "Authentication is needed to run `/usr/bin/pacman' as the super user"
+            property string actionId: "org.freedesktop.policykit.exec"
+            property var identities: [{ displayName: "Ada Lovelace", string: "ada", isGroup: false }]
+            property var selectedIdentity: identities[0]
+            property bool isResponseRequired: true
+            property string inputPrompt: "Password: "
+            property bool responseVisible: false
+            property string supplementaryMessage: ""
+            property bool supplementaryIsError: false
+            property bool failed: false
+            property bool isCompleted: false
+            property bool isCancelled: false
+            property int submits: 0
+            property int cancels: 0
+            function submit(response) { submits += 1; }
+            function cancelAuthenticationRequest() {
+                cancels += 1;
+                isCancelled = true;
+            }
+        }
+    }
+
+    // The overlay layer surface the summon host builds for an unanchored
+    // summon (the `layer` component of shell/Hosts/SummonHost.qml), with
+    // the placement and keyboard focus the core's judge gives kind overlay.
+    Component {
+        id: polkitStandInSurface
+        PanelWindow {
+            readonly property var place: PluginLogic.surfacePlacement("overlay", {}, Theme.space.md)
+            anchors { top: place.anchors.top; bottom: place.anchors.bottom; left: place.anchors.left; right: place.anchors.right }
+            margins { top: place.margins.top; bottom: place.margins.bottom; left: place.margins.left; right: place.margins.right }
+            exclusionMode: place.exclusion === "ignore" ? ExclusionMode.Ignore : ExclusionMode.Normal
+            exclusiveZone: 0
+            color: "transparent"
+            WlrLayershell.namespace: "vgs:overlay"
+            WlrLayershell.layer: place.layer === "top" ? WlrLayer.Top : WlrLayer.Overlay
+            WlrLayershell.keyboardFocus: PluginLogic.layerKeyboardFocus("overlay", false) === "exclusive" ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+        }
+    }
 
     Connections {
         target: root.layerFrameListening ? root.layerFrameWindow : null
@@ -1120,6 +1172,66 @@ Scope {
             root.popupCopies = next;
             made.visible = true;
             return "ok";
+        }
+        // The prompt of FILE, the sandbox tree's vgs.polkit Prompt.qml,
+        // built in a stand-in of the summon host's overlay layer surface on
+        // the focused screen and opened as the host opens it, over a fresh
+        // stand-in flow its `shell` lends as the polkit agent's. The plugin
+        // itself stays disabled, so the core builds no agent. `ok`, or a
+        // keyed refusal.
+        function polkitStandInOpen(file: string): string {
+            if (root.polkitStandIn !== null) return "refused: stand-in=open";
+            const screen = Compositor.focusedScreen();
+            if (screen === null) return "refused: screen=none";
+            const component = Qt.createComponent("file://" + file);
+            if (component.status !== Component.Ready) return root.answer("error: " + component.errorString().trim().replace(/\n/g, " "));
+            const flow = polkitStandInFlow.createObject(root);
+            const surface = polkitStandInSurface.createObject(root, { visible: false });
+            if (flow === null || surface === null) {
+                if (flow !== null) flow.destroy();
+                if (surface !== null) surface.destroy();
+                return "error: create";
+            }
+            const prompt = component.createObject(surface.contentItem);
+            if (prompt === null) {
+                surface.destroy();
+                flow.destroy();
+                return "error: prompt";
+            }
+            surface.screen = screen;
+            prompt.anchors.fill = surface.contentItem;
+            // Assigned after creation, as the core assigns it: a JS object
+            // handed to createObject crosses a QVariant conversion
+            // (docs/architecture/runtime-qml.md).
+            prompt.shell = { polkit: { agent: { flow: flow } } };
+            root.polkitStandIn = { surface: surface, prompt: prompt, flow: flow };
+            surface.visible = true;
+            try {
+                prompt.open("{}");
+            } catch (e) {
+                return root.answer("error: open " + e.message);
+            }
+            return "ok";
+        }
+        // The stand-in flow after a failed attempt: PAM asks again and
+        // the prompt shows the failed note.
+        function polkitStandInFail(): string {
+            if (root.polkitStandIn === null) return "absent";
+            root.polkitStandIn.flow.failed = true;
+            return "ok";
+        }
+        // Close the prompt as the host does before it hides a surface,
+        // then destroy the surface, the prompt and the flow. Answers the
+        // flow's submit and cancel counts as JSON, read after the close.
+        function polkitStandInDrop(): string {
+            const standIn = root.polkitStandIn;
+            if (standIn === null) return "absent";
+            root.polkitStandIn = null;
+            standIn.prompt.close();
+            const counts = root.json({ submits: standIn.flow.submits, cancels: standIn.flow.cancels });
+            standIn.surface.destroy();
+            standIn.flow.destroy();
+            return counts;
         }
         // Build a copy of ThemeRunner from FILE, a path under the shell's
         // Core directory so its imports resolve as the shipped one's do:

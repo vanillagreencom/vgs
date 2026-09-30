@@ -14,13 +14,15 @@
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
 # SCENE is gallery, settings, manager, launcher, notifications, bar,
-# panels, devtools, dialog, lock, narrow, theme-browser or
-# wallpaper-browser. bar
+# panels, devtools, dialog, lock, polkit, narrow, theme-browser or
+# wallpaper-browser. settings takes the automations' page among the
+# plugin pages, when the tree ships vgs.automations. bar
 # is the bar with every first-party widget and each widget's tooltip or
 # hover; panels is the Agent Warden panel and the updates
 # flyout, each opened from its widget over planted status; devtools is the
 # Dev Tools window; dialog is the core's requirement notice; lock is the
-# vgs.lock screen, locked and after wrong attempts; narrow holds a
+# vgs.lock screen, locked and after wrong attempts; polkit is the
+# vgs.polkit prompt, asking and after a failed attempt; narrow holds a
 # monitor 480 by 720 logical pixels and takes the bar, panels, devtools,
 # dialog, lock, launcher, notifications and the first gallery pages again, each
 # shot named <scene>-<mode>-narrow-*; theme-browser and wallpaper-browser
@@ -68,6 +70,15 @@
 # (docs/architecture/lock-polkit.md § Validation). It disables the probe
 # fixture, which holds `lock`, while it runs, when the settings scene
 # enabled it.
+# The polkit scene builds the plugin's own Prompt.qml over a stand-in
+# authentication flow the probe owns, in a stand-in of the summon host's
+# overlay surface (polkitStandInOpen in scripts/smoke/Probe.qml), with
+# vgs.polkit disabled, so no agent and no request exist. Nothing is typed,
+# the stand-in's submit only counts, and the scene reads that no request
+# went live and no authentication helper ran. The Settings scene enables
+# vgs.automations over the harness's automations_stand_ins for its page's
+# shot, so no call reaches the host's systemd user manager, and disables it
+# again.
 # --hidden refuses every shot not taken with the nested window hidden on
 # the host (SHOT_WINDOW_REQUIRE in scripts/smoke/shot.sh), so a run that
 # exits 0 proves each shot's frame arrived while the window was hidden.
@@ -112,7 +123,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|settings|manager|launcher|notifications|bar|panels|devtools|dialog|lock|narrow|theme-browser|wallpaper-browser) scenes+=("$1"); shift ;;
+    gallery|settings|manager|launcher|notifications|bar|panels|devtools|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -188,6 +199,7 @@ scene_ships() {
     theme-browser|wallpaper-browser) ships_plugin vgs.themes ;;
     dialog) [[ -f $tree/shell/Hosts/NoticeHost.qml ]] ;;
     lock) ships_plugin vgs.lock ;;
+    polkit) ships_plugin vgs.polkit ;;
     narrow) scene_ships bar && scene_ships panels && scene_ships devtools && scene_ships dialog && scene_ships launcher && scene_ships notifications && scene_ships gallery ;;
     *) printf 'sandbox-shots: refused: scene=%s reason=unknown\n' "$1" >&2; exit 2 ;;
   esac
@@ -197,7 +209,7 @@ if [[ ${#scenes[@]} -eq 0 ]]; then
     scenes=(gallery)
     [[ -z $manager_scene ]] || scenes+=("$manager_scene")
   else
-    for scene in gallery settings launcher notifications bar panels devtools dialog lock narrow; do
+    for scene in gallery settings launcher notifications bar panels devtools dialog lock polkit narrow; do
       if scene_ships "$scene"; then scenes+=("$scene"); fi
     done
   fi
@@ -248,7 +260,9 @@ if [[ $manager_scene == settings ]]; then settings_kind="$(summoned_kind vgs.set
 settings_surface="$(summoned_surface "$settings_kind" Settings)"
 has_agent_warden=false
 has_bar_plugin=false
+has_automations=false
 [[ -f $tree/shell/plugins/vgs.agent-warden/manifest.json ]] && has_agent_warden=true
+[[ -f $tree/shell/plugins/vgs.automations/manifest.json ]] && has_automations=true
 [[ -f $tree/shell/plugins/vgs.bar/manifest.json ]] && has_bar_plugin=true
 settings_count() { surface_count "$settings_surface"; }
 
@@ -460,15 +474,15 @@ settings_close() {
 # section, on the page of this checkout and of a revision before per-workspace
 # tokens alike.
 slack_legacy_command="secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
-# The Slack section of the notifications' page in its scroll area's content
-# coordinates, as `START END HEIGHT`: its heading's top, the bottom of its
-# last line's command, and the area's height. The bar spans the area, so its
-# top is the area's.
-slack_section() {
+# settings_section HEADING TYPE TEXT: the page's section headed HEADING,
+# through the item TYPE TEXT, in its scroll area's content coordinates, as
+# `START END HEIGHT`: the heading's top, that item's bottom, and the area's
+# height. The bar spans the area, so its top is the area's.
+settings_section() {
   local area header last
   area="$(settings_scroll)" && [[ $area == \{* ]] || { echo "area=${area:-unread}"; return 1; }
-  header="$(ipc smoke windowGeometry "$settings_kind" vgs.settings SectionHeader Slack)" && [[ $header == \[* ]] || { echo "heading=${header:-unread}"; return 1; }
-  last="$(ipc smoke windowGeometry "$settings_kind" vgs.settings CodeLine "$slack_legacy_command")" && [[ $last == \[* ]] || { echo "last-line=${last:-unread}"; return 1; }
+  header="$(ipc smoke windowGeometry "$settings_kind" vgs.settings SectionHeader "$1")" && [[ $header == \[* ]] || { echo "heading=${header:-unread}"; return 1; }
+  last="$(ipc smoke windowGeometry "$settings_kind" vgs.settings "$2" "$3")" && [[ $last == \[* ]] || { echo "last-line=${last:-unread}"; return 1; }
   python3 -c 'import json,sys
 a, h, l = (json.loads(v) for v in sys.argv[1:4])
 top, y = a["bar"][1], a["contentY"]
@@ -490,17 +504,21 @@ print(0 if most <= 0 or travel <= 0 else round((max(0, min(want, most)) - a["con
   read -r tx ty < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")") || return 1
   drag "$tx" "$ty" "$tx" "$((ty + move))"
 }
-# Whether every status row of the notifications' page is reported.
-notifications_reported() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"]; print(len(r) == 1 and len(r[0]["status"]) > 0 and all(s["report"] == "reported" for s in r[0]["status"]))'; }
+# Whether every status row of plugin ID's page is reported.
+page_reported() { # ID
+  ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]]; print(len(r) == 1 and len(r[0]["status"]) > 0 and all(s["report"] == "reported" for s in r[0]["status"]))' "$1"
+}
 # The Settings window: the list opened from the gear, the pointer on the
 # gear; a search nothing matches; a plugin page with many grouped settings at its top, dragged down
 # its scroll bar, and with its Mode select open; a plugin with keys; the
+# automations' page at its Status section; the
 # title's menu open with its scroll bar under the pointer; the notifications' page scrolled to its
 # Slack token rows, over two shots when they are taller than the page; and
 # the list and a page on a monitor narrower than the window's width token.
 settings_empty() { [[ $(ipc smoke itemGeometry "$settings_kind" vgs.settings Label 'No plugin matches "zzqxv"') == \[* ]] && echo shown || echo hidden; }
 scene_settings() { # MODE
-  local area at tx ty title x y
+  # A section shot keeps its heading margin px below the area's top edge.
+  local area at tx ty title x y section start end height margin=12
   click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
   expect_poll "the gear opens the Settings window" 1 settings_count
   expect_poll "the Settings window holds the keyboard" true ipc smoke activeFocusIn "$settings_kind" vgs.settings
@@ -576,6 +594,31 @@ scene_settings() { # MODE
     settings_drag_page_down "the Bar page" || true
     take "settings-$1-bar-scrolled"
   fi
+  # The automations' page at its top, the plugin enabled over the stand-ins
+  # rows/automations.sh reads (automations_stand_ins in
+  # scripts/smoke/harness.sh), so no call reaches the host's systemd user
+  # manager; disabled again and the stand-ins removed after the shot.
+  if "$has_automations"; then
+    automations_stand_ins "$sandbox/shots-automations-$1"
+    expect "the automations' stand-ins are scanned" ok ipc shell rescanPlugins
+    expect "enabling vgs.automations is allowed" ok ipc shell setPluginEnabled vgs.automations true
+    expect_poll "vgs.automations is built" True record_exists vgs.automations
+    expect "the window opens the automations' page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.automations
+    expect_poll "the automations' page is shown" '"vgs.automations"' settings_page
+    expect_poll "the automations' status rows are reported" True page_reported vgs.automations
+    # The Status section's heading at the top.
+    if section="$(settings_section Status SectionHeader Status)"; then
+      read -r start _ _ <<<"$section"
+      settings_scroll_to "$((start - margin))" || fail "the scroll to the automations' status failed"
+    else
+      fail "the automations' Status section is unreadable: $section"
+    fi
+    park_pointer
+    take "settings-$1-automations"
+    expect "disabling vgs.automations is allowed" ok ipc shell setPluginEnabled vgs.automations false
+    expect_poll "vgs.automations is gone" False record_exists vgs.automations
+    automations_stand_ins_restore "$sandbox/shots-automations-$1"
+  fi
   expect "the window opens the launcher's page again" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
   expect_poll "the launcher's page is shown again" '"vgs.launcher"' settings_page
   click_in "$settings_surface" "$settings_kind" vgs.settings TitleButton Launcher || fail "the click on the title failed"
@@ -596,12 +639,11 @@ scene_settings() { # MODE
   park_pointer
   expect "the window opens the notifications' page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.notifications
   expect_poll "the notifications' page is shown" '"vgs.notifications"' settings_page
-  expect_poll "the notifications' status rows are reported" True notifications_reported
+  expect_poll "the notifications' status rows are reported" True page_reported vgs.notifications
   # The Slack section in view: its heading at the top, and, when the
   # section is taller than the area, a second shot with its last line at
   # the bottom, so every line and command shows across the two.
-  local section start end height margin=12
-  if section="$(slack_section)"; then
+  if section="$(settings_section Slack CodeLine "$slack_legacy_command")"; then
     read -r start end height <<<"$section"
     settings_scroll_to "$((start - margin))" || fail "the scroll to the Slack section failed"
     park_pointer
@@ -1018,6 +1060,32 @@ scene_lock() { # MODE
   [[ $probe != True ]] || expect "re-enabling the probe fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
 }
 
+# The vgs.polkit prompt, asking and after a failed attempt, over the
+# probe's stand-in flow (polkitStandInOpen in scripts/smoke/Probe.qml): the
+# plugin's own Prompt.qml in a stand-in of the summon host's overlay
+# surface. vgs.polkit stays disabled and nothing is typed; the scene reads
+# that no request went live, that the stand-in was never submitted and
+# that no authentication helper ran while it was open, as rows/polkit.sh
+# reads them (docs/architecture/lock-polkit.md § Validation).
+polkit_flows() { ipc shell lent | py_reply 'import json,sys; print(json.load(sys.stdin)["polkitFlows"])'; }
+scene_polkit() { # MODE
+  local watch_log="$sandbox/shots-polkit-$1-auth.log"
+  auth_watch_start "$watch_log"
+  expect "vgs.polkit stays disabled for its prompt's shots" False plugin_enabled vgs.polkit
+  expect "the stand-in prompt opens" ok ipc smoke polkitStandInOpen "$repo/shell/plugins/vgs.polkit/Prompt.qml"
+  expect_poll "the stand-in prompt maps its surface" 1 layer_count vgs:overlay
+  park_pointer
+  take "polkit-$1"
+  expect "the stand-in flow reads a failed attempt" ok ipc smoke polkitStandInFail
+  take "polkit-$1-failed"
+  expect "the prompt closes and cancels only the stand-in, which was never submitted" '{"submits":0,"cancels":1}' ipc smoke polkitStandInDrop
+  expect_poll "the stand-in prompt's surface is gone" 0 layer_count vgs:overlay
+  expect "no authentication request went live in this shell" 0 polkit_flows
+  expect "no authentication helper runs under the shell" none auth_helpers "$shell_qs_pid"
+  kill "$auth_watch_pid" 2>/dev/null || fail "stopping the helper watcher pid $auth_watch_pid failed"
+  expect "while the prompt was open, the watcher saw no authentication helper" "" cat -- "$watch_log"
+}
+
 # The setup each scene needs, once each, in the order the scenes first
 # need them: the bar draws the launcher's and the panels' widgets, and the
 # narrow pass takes every other scene's surfaces again.
@@ -1036,7 +1104,7 @@ done
 shots_vsys_line='vsys sees one thing worth a look on this computer.'
 for scene in "${setups[@]}"; do
   case $scene in
-    gallery|manager|theme-browser|wallpaper-browser) ;;
+    gallery|manager|polkit|theme-browser|wallpaper-browser) ;;
     bar)
       # The gear, the Settings plugin's widget, and the themes widget: the
       # sandbox starts vgs.themes enabled and unplaced, and enabling a
