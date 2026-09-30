@@ -50,3 +50,4 @@ One line per decision record that shapes the architecture; the full log with dat
 - [D055](../decisions/D055-theme-browser-previews.md): theme browser previews use package `preview.png` first, then a live token preview for the selected card.
 - [D056](../decisions/D056-read-only-session-state.md): plugins read session lock state through a shared capability without lock authority. Refines D012.
 - [D057](../decisions/D057-setting-options-from-status.md): string settings take options from their plugin's choices status and keep unavailable configured ids. Refines D032 and D037.
+- [D058](../decisions/D058-layer-input-union.md): passive layers take pointer input on the union of their `inputItems`; `LayerHost` shares the core notice surface's mask mechanism. Refines D026.

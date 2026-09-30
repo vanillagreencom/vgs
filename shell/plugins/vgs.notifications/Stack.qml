@@ -26,7 +26,7 @@ Item {
     readonly property bool panelOpen: service !== null && service.panelOpen
     readonly property bool panelClosing: service !== null && service.panelClosing
     readonly property bool inputAll: panelOpen
-    readonly property Item inputItem: column
+    readonly property var inputItems: [column]
 
     // pointer-cursor-exempt: a press here is a click away from the open panel, not a control
     MouseArea {

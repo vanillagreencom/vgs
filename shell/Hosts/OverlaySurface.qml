@@ -2,9 +2,9 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 
-// The layer window a core host draws a notice in, on the overlay layer:
-// the toast stack and the requirement notice. The compositor keeps it in
-// the area other layers leave free, such as the screen less the bar, and it
+// The layer window for passive plugin content and core notices, on the
+// overlay layer. The compositor keeps it in the area other layers leave
+// free, such as the screen less the bar, and it
 // reserves none. `inset` is the gap on every anchored edge.
 //
 // `placement` is `center` or one corner: `top-left`, `top-right`,
@@ -14,13 +14,14 @@ import Quickshell.Wayland
 //
 // Pointer input reaches the surface only on `inputItems`: the mask is the
 // union of their rectangles, and with none every press passes through to
-// what is below.
+// what is below. `inputAll` instead lets the whole surface take input.
 PanelWindow {
     id: surface
 
     required property string placement
     required property int inset
     property var inputItems: []
+    property bool inputAll: false
 
     readonly property var edges: edgesOf(placement)
 
@@ -40,7 +41,7 @@ PanelWindow {
     exclusionMode: ExclusionMode.Normal
     exclusiveZone: 0
     color: "transparent"
-    mask: inputRegion
+    mask: inputAll ? null : inputRegion
     WlrLayershell.layer: WlrLayer.Overlay
 
     Region {
@@ -48,6 +49,7 @@ PanelWindow {
         regions: inputRegions.items
     }
 
+    // REVISIT(D058): non-rectangular input needs more than an item's rectangle.
     Instantiator {
         id: inputRegions
         property var items: []

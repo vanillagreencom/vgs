@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-28
 
-**Status**: Active
+**Status**: Active (input contract → D058)
 
 **Research**: VGS-476
 

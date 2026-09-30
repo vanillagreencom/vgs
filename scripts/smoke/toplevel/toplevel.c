@@ -17,6 +17,10 @@
  * the window the keyboard focus or takes it away, and `key <code>
  * pressed` or `key <code> released` for each key the window receives, so
  * a row reads which window the keyboard reached.
+ * When the seat has a pointer it prints `button <code> pressed` and
+ * `button <code> released` for each button event delivered to this client.
+ * The layers row uses these events to prove click-through, not just an
+ * unchanged counter on the layer that could also mean swallowed input.
  * Exit 2 on a bad invocation, 1 when the display cannot be opened, lacks a
  * global the helper needs or fails, or a buffer cannot be made, printed as
  * `toplevel: refused: <key>=<value>`.
@@ -43,6 +47,7 @@ static struct wl_shm *shm = NULL;
 static struct xdg_wm_base *wm_base = NULL;
 static struct wl_seat *seat = NULL;
 static struct wl_keyboard *keyboard = NULL;
+static struct wl_pointer *pointer = NULL;
 static struct wl_surface *surface = NULL;
 static const char *app_id = NULL;
 static const char *title = NULL;
@@ -221,11 +226,66 @@ static void on_modifiers(void *data, struct wl_keyboard *kb, uint32_t serial, ui
 /* The seat is bound at version 1, which sends no repeat_info. */
 static const struct wl_keyboard_listener keyboard_listener = { on_keymap, on_enter, on_leave, on_key, on_modifiers, NULL };
 
+/* The seat is bound at version 1, so only enter, leave, motion, button and
+ * axis events can arrive. Only button events are part of the row's log. */
+static void on_pointer_enter(void *data, struct wl_pointer *p, uint32_t serial, struct wl_surface *entered, wl_fixed_t x, wl_fixed_t y) {
+    (void)data;
+    (void)p;
+    (void)serial;
+    (void)entered;
+    (void)x;
+    (void)y;
+}
+
+static void on_pointer_leave(void *data, struct wl_pointer *p, uint32_t serial, struct wl_surface *left) {
+    (void)data;
+    (void)p;
+    (void)serial;
+    (void)left;
+}
+
+static void on_pointer_motion(void *data, struct wl_pointer *p, uint32_t time, wl_fixed_t x, wl_fixed_t y) {
+    (void)data;
+    (void)p;
+    (void)time;
+    (void)x;
+    (void)y;
+}
+
+static void on_pointer_button(void *data, struct wl_pointer *p, uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
+    (void)data;
+    (void)p;
+    (void)serial;
+    (void)time;
+    printf("button %u %s\n", button, state == WL_POINTER_BUTTON_STATE_PRESSED ? "pressed" : "released");
+    fflush(stdout);
+}
+
+static void on_pointer_axis(void *data, struct wl_pointer *p, uint32_t time, uint32_t axis, wl_fixed_t value) {
+    (void)data;
+    (void)p;
+    (void)time;
+    (void)axis;
+    (void)value;
+}
+
+static const struct wl_pointer_listener pointer_listener = {
+    .enter = on_pointer_enter,
+    .leave = on_pointer_leave,
+    .motion = on_pointer_motion,
+    .button = on_pointer_button,
+    .axis = on_pointer_axis
+};
+
 static void on_capabilities(void *data, struct wl_seat *s, uint32_t capabilities) {
     (void)data;
     if ((capabilities & WL_SEAT_CAPABILITY_KEYBOARD) && keyboard == NULL) {
         keyboard = wl_seat_get_keyboard(s);
         wl_keyboard_add_listener(keyboard, &keyboard_listener, NULL);
+    }
+    if ((capabilities & WL_SEAT_CAPABILITY_POINTER) && pointer == NULL) {
+        pointer = wl_seat_get_pointer(s);
+        wl_pointer_add_listener(pointer, &pointer_listener, NULL);
     }
 }
 
@@ -316,6 +376,7 @@ int main(int argc, char **argv) {
     }
     if (buffer_failed) status = 1;
     if (keyboard != NULL) wl_keyboard_destroy(keyboard);
+    if (pointer != NULL) wl_pointer_destroy(pointer);
     if (seat != NULL) wl_seat_destroy(seat);
     xdg_toplevel_destroy(toplevel);
     xdg_surface_destroy(xdg_surface);

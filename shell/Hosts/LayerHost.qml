@@ -9,7 +9,7 @@ import qs.Core
 // overlay layer and never takes keyboard focus, so it cannot steal input
 // from the focused application. Pointer input reaches it only where its
 // content says: the whole surface while the content's `inputAll` is true,
-// otherwise the rectangle of its `inputItem`, and nowhere without one. The
+// otherwise the union of its `inputItems`, and nowhere without any. The
 // core assigns the content its `screen` after creation; a content without
 // that property is not built, logged, and maps no surface. A screen that
 // goes takes its surfaces with it.
@@ -32,7 +32,7 @@ Scope {
             Variants {
                 model: Layers.serials
 
-                PanelWindow {
+                OverlaySurface {
                     id: win
 
                     required property int modelData
@@ -43,25 +43,16 @@ Scope {
                     // The screen name the content was built on, kept while the
                     // screen itself reads null during teardown.
                     property string builtOn: ""
-                    readonly property bool inputAll: content !== null && content.inputAll === true
-                    readonly property Item inputItem: content !== null && content.inputItem instanceof Item ? content.inputItem : null
-
+                    placement: "center"
+                    inset: 0
+                    inputAll: content !== null && content.inputAll === true
+                    inputItems: content !== null && content.inputItems !== undefined ? content.inputItems : []
                     screen: onScreen.modelData
-                    anchors { top: true; bottom: true; left: true; right: true }
-                    exclusionMode: ExclusionMode.Normal
-                    exclusiveZone: 0
-                    color: "transparent"
                     // Mapped only once its content is built, so a content the
                     // host refused leaves no surface.
                     visible: content !== null
-                    mask: inputAll ? null : inputRegion
                     WlrLayershell.namespace: "vgs:layer"
-                    WlrLayershell.layer: WlrLayer.Overlay
                     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-
-                    // An item-less region is empty: the surface lets every
-                    // press through.
-                    Region { id: inputRegion; item: win.inputItem }
 
                     Component.onCompleted: build()
                     Component.onDestruction: drop()

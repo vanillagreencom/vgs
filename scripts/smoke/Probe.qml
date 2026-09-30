@@ -320,6 +320,15 @@ Scope {
                 }
             return JSON.stringify(out);
         }
+        // A missing LayerHost inputItems binding, planted only in the
+        // sandbox instance. A redraw restores the shipped binding.
+        function layerInputDrop(id: string): string {
+            const entries = Layers.entries.filter(e => e.pluginId === id);
+            if (entries.length !== 1) return "registrations=" + entries.length;
+            for (const name of Object.keys(entries[0].screens))
+                entries[0].screens[name].QsWindow.window.inputItems = [];
+            return "ok";
+        }
         // The box of the first visible, enabled item named `type` whose
         // `property` reads `value` in a plugin's layer copies, sorted by
         // screen, as [x, y, w, h] in its window, or "absent". A layer the
@@ -866,6 +875,38 @@ Scope {
             delete next[name];
             root.popupCopies = next;
             copy.destroy();
+            return "ok";
+        }
+        // Build a disposable OverlaySurface copy with the real layer
+        // component, on its first screen. Only the copy's mask differs;
+        // the fixture, pointer and receiver are the row's normal ones.
+        // popupDrop owns its teardown with the other surface copies.
+        function layerSurfaceLoad(name: string, file: string, id: string): string {
+            if (name in root.popupCopies) return "loaded";
+            const entry = Layers.entries.find(e => e.pluginId === id);
+            if (entry === undefined) return "absent";
+            const original = entry.screens[Object.keys(entry.screens).sort()[0]];
+            if (original === undefined) return "no-screen";
+            const component = Qt.createComponent("file://" + file);
+            if (component.status !== Component.Ready) return "error: " + component.errorString().trim().replace(/\n/g, " ");
+            const made = component.createObject(root, { placement: "center", inset: 0, visible: false });
+            if (made === null) return "error: create";
+            made.screen = original.screen;
+            made.WlrLayershell.namespace = "vgs:layer-control";
+            made.WlrLayershell.keyboardFocus = WlrKeyboardFocus.None;
+            const content = entry.component.createObject(made.contentItem);
+            if (content === null) {
+                made.destroy();
+                return "error: content";
+            }
+            content.screen = original.screen;
+            content.anchors.fill = made.contentItem;
+            made.inputItems = Qt.binding(() => content.inputItems);
+            made.inputAll = Qt.binding(() => content.inputAll);
+            const next = Object.assign({}, root.popupCopies);
+            next[name] = made;
+            root.popupCopies = next;
+            made.visible = true;
             return "ok";
         }
         // Build a copy of ThemeRunner from FILE, a path under the shell's
