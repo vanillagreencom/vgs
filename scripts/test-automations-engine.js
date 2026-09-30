@@ -6,7 +6,8 @@
 // records it writes before and after the command), the notifications it
 // sends through a stand-in notify-send, run-now through a stand-in
 // systemd-run, the scheduled trigger's guard, history with a running and a
-// vanished run, clear and pruning with the plugin's historyDays setting, a
+// vanished run, clear and pruning with the plugin's historyDays setting, the
+// cron startup line that catches up a missed occurrence, a
 // timed-out run that waits for a descendant ignoring SIGTERM, and output
 // with no line break, which reaches the transcript in pieces. The snippet
 // keeps each candidate line cut to what a snippet shows; that bounds the
@@ -466,6 +467,28 @@ const CASES = {
         assert.equal(fs.readFileSync(path.join(w.stub, "crontab"), "utf8"), "MAILTO=me\n5 * * * * mine\n", "remove drops the block alone");
     },
 
+    "under cron a catch-up automation runs a missed occurrence at startup"(engine) {
+        const w = world({ systemd: "down" });
+        // A daily time two hours back: the machine was off when it came.
+        const missed = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        const time = String(missed.getUTCHours()).padStart(2, "0") + ":" + String(missed.getUTCMinutes()).padStart(2, "0");
+        const schedule = { frequency: "daily", interval: 1, times: [time], start: "2026-01-01", end: { type: "never" } };
+        const late = add(w, engine, { name: "Late", schedule: schedule, catchUp: true });
+        const strict = add(w, engine, { name: "Strict", schedule: schedule, catchUp: false });
+        const startup = fs.readFileSync(path.join(w.stub, "crontab"), "utf8").split("\n").filter(line => line.startsWith("@reboot "));
+        assert.equal(startup.length, 1, "one startup line, for the automation that catches up: " + startup.join(" | "));
+        assert.match(startup[0], /^@reboot env '[^']*' '[^']*' '[^']*' '[^']*\/flock' '-n' '-E' '75' '-o' '[^']*\/late\.lock' .* 'run' '--scheduled' 'late'$/, "the startup line runs the locked scheduled trigger");
+        // Nothing was handled since before the missed occurrence.
+        for (const id of [late, strict]) write(path.join(w.home, ".local", "state", "vgs", "automations", "guard", id + ".json"), JSON.stringify({ handledThrough: 0 }));
+        const boot = childProcess.spawnSync("sh", ["-c", startup[0].slice("@reboot ".length)], { encoding: "utf8", env: w.env, cwd: w.home, timeout: 60000 });
+        assert.equal(boot.status, 0, "the startup line runs: " + boot.stderr);
+        const rec = ended(w, late);
+        same([rec.trigger, rec.outcome, rec.slot === null ? null : new Date(rec.slot).getUTCHours() * 60 + new Date(rec.slot).getUTCMinutes()], ["scheduled", "succeeded", missed.getUTCHours() * 60 + missed.getUTCMinutes()], "the startup trigger ran the missed occurrence");
+        // Without catch-up the same trigger, as the next calendar line would
+        // make it, finds the occurrence late and runs nothing.
+        same([cli(w, engine, ["run", "--scheduled", strict]).first, runFiles(w).filter(n => n.startsWith(strict + "@"))], ["automations: skipped=strict reason=late", []]);
+    },
+
     "with neither scheduler sync refuses"(engine) {
         const w = world({ systemd: "down", stubs: ["systemctl", "notify-send", "loginctl"] });
         const out = cli(w, engine, ["add", "--definition", JSON.stringify(def({}))]);
@@ -540,6 +563,7 @@ const CONTROLS = [
     ["prune reads historyDays", "clear keeps a running run and prune keeps the retention", "return { ok: true, days: Logic.retentionDays(JSON.parse(out.stdout).historyDays) };", "return { ok: true, days: 30 };"],
     ["clear keeps a running run", "clear keeps a running run and prune keeps the retention", "judged.rows.filter(row => row.outcome !== \"running\")", "judged.rows"],
     ["cron is the fallback", "without a systemd user manager sync keeps a crontab block", "changed = writeCrontab(requireCommand(\"crontab\"), Logic.cronLines(", "changed = writeCrontab(requireCommand(\"crontab\"), [] || Logic.cronLines("],
+    ["cron lines run the scheduled trigger", "under cron a catch-up automation runs a missed occurrence at startup", "Logic.cronLines(store.automations, a => runnerArgv(engine, a.id, \"scheduled\"), runnerEnvironment)", "Logic.cronLines(store.automations, a => runnerArgv(engine, a.id, \"manual\"), runnerEnvironment)"],
     ["a crontab without a table reads empty", "without a systemd user manager sync keeps a crontab block", "if (out.status === 1 && /^no crontab for /.test(firstLine(out.stderr))) return \"\";", ""],
     ["no scheduler refuses", "with neither scheduler sync refuses", "if (chosen === \"none\") refuse(\"scheduler=none\", \"neither a systemd user manager nor crontab answered\");", ""]
 ];

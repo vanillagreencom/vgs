@@ -214,7 +214,9 @@ function verify(logic) {
     assert.throws(() => logic.systemdQuote("a\nb"), /control character/);
     same(["vgs-automation-backup.timer", "vgs-automation-backup.service", "vgs-automation-Backup.timer", "other.timer", "vgs-automation-backup.timer~"].map(logic.isOwnedUnit), [true, true, false, false, false]);
     const lines = logic.cronLines([automation({ schedule: TWICE_DAILY }), automation({ id: "paused", enabled: false })], a => ["/bin/runner", "run", a.id], ["XDG_STATE_HOME=/it's"]);
-    same(lines, ["30 8 * * * env 'XDG_STATE_HOME=/it'\\''s' '/bin/runner' 'run' 'backup'", "0 17 * * * env 'XDG_STATE_HOME=/it'\\''s' '/bin/runner' 'run' 'backup'"], "a paused automation has no line");
+    same(lines, ["30 8 * * * env 'XDG_STATE_HOME=/it'\\''s' '/bin/runner' 'run' 'backup'", "0 17 * * * env 'XDG_STATE_HOME=/it'\\''s' '/bin/runner' 'run' 'backup'"], "a paused automation has no line, and one without catch-up no startup line");
+    same(logic.cronLines([automation({ catchUp: true }), automation({ id: "paused", enabled: false, catchUp: true })], a => ["/bin/runner", "run", a.id], ["X=1"]),
+        ["0 9 * * * env 'X=1' '/bin/runner' 'run' 'backup'", "@reboot env 'X=1' '/bin/runner' 'run' 'backup'"], "catch-up adds a startup line with the same command; a paused automation has none");
     assert.throws(() => logic.cronQuote("/100%"), /control character or %/);
     const B = logic.CRON_BEGIN, E = logic.CRON_END;
     same(logic.crontabWith("", ["a"]), { ok: true, text: [B, "a", E, ""].join("\n") });
@@ -454,6 +456,8 @@ const CONTROLS = [
     ["a unit argument doubles $", ".replace(/\\$/g, \"$$$$\")", ""],
     ["catch-up is Persistent=true", "lines.push(\"Persistent=\" + (automation.catchUp ? \"true\" : \"false\"));", "lines.push(\"Persistent=true\");"],
     ["a paused automation has no cron line", "if (!automations[i].enabled) continue;", "if (false) continue;"],
+    ["catch-up runs at startup under cron", "if (automations[i].catchUp) out.push(\"@reboot \" + command);", ""],
+    ["only catch-up runs at startup under cron", "if (automations[i].catchUp) out.push(", "if (true) out.push("],
     ["cron refuses a %", "if (/[\\u0000-\\u001f\\u007f%]/.test(s)) throw", "if (/[\\u0000-\\u001f\\u007f]/.test(s)) throw"],
     ["the user's crontab lines stay", "var kept = begin === -1 ? rows : rows.slice(0, begin).concat(rows.slice(end + 1));", "var kept = [];"],
     ["a malformed block is refused", "return { ok: false, error: \"crontab: block=malformed\" };", "return { ok: true, text: \"\" };"],

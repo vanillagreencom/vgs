@@ -789,7 +789,10 @@ function cronQuote(arg) {
 
 // The crontab lines of every enabled automation: its fields, then `env`
 // with the directories the runner reads and the runner argv
-// `argvFor(automation)` answers.
+// `argvFor(automation)` answers. An automation that catches up also runs
+// the same scheduled trigger at `@reboot`, cron's Persistent=true: the
+// guard then runs the latest occurrence the machine was off for, since
+// catch-up lets a late one run, and nothing when that one was handled.
 function cronLines(automations, argvFor, environment) {
     var out = [];
     var env = environment.map(cronQuote).join(" ");
@@ -798,6 +801,7 @@ function cronLines(automations, argvFor, environment) {
         var command = "env " + env + " " + argvFor(automations[i]).map(cronQuote).join(" ");
         var fields = cronFields(automations[i].schedule);
         for (var f = 0; f < fields.length; f++) out.push(fields[f] + " " + command);
+        if (automations[i].catchUp) out.push("@reboot " + command);
     }
     return out;
 }
