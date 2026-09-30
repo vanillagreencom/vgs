@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Commons
 import qs.Ui
 BarWidget {
     id: root
@@ -40,7 +41,7 @@ BarWidget {
                 width: 160
                 Item {
                     id: probe
-                    readonly property int padding: 8
+                    readonly property int padding: Theme.popover.padding
                     width: parent.width
                     height: input.height
                     TextField { id: input; placeholderText: "type"; width: parent.width }

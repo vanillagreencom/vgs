@@ -387,6 +387,47 @@ expect_poll "the flyout draws one row per source" \
   '[["System", "2 updates", "2", "Update"], ["AUR", "1 update", "1", "Update"], ["Flatpak", "1 update", "1", "Update"], ["mise", "1 update", "1", "Update"], ["VGS", "1 update", "1", "Update"], ["Plugins", "1 update", "1", "Update"], ["Themes", "Up to date", "0"]]' flyout_rows
 click_item panel vgs.updates ListItem System || fail "the click on the flyout's System row failed"
 expect_poll "a click on a row lists its packages" '["System", "2 updates", "2", "Update", "coreutils 9.11-2 → 9.12-1", "linux 6.1 → 6.2"]' flyout_row 0
+# The flyout's geometry with a row expanded: every source's count Badge
+# ends on one right edge, whether its row offers Update or not, and the
+# footer's buttons lie inside the panel, below its body, while the body
+# grows toward its cap and scrolls past it. Each check holds within one
+# pixel. The footer's controls are the unit mutations of tst_pane (the
+# footer outside the body, the pane's fitted height); the count column is
+# the panel's own reserved slot, and its control moves one count 8 px left
+# in a copy of the same reading, which the check refuses. `[]` is the pass.
+flyout_geometry() {
+  local rows
+  rows="$(ipc smoke descendantGeometry panel vgs.updates)" || return
+  python3 - "$rows" "${1:-}" <<'PY'
+import json, sys
+rows, plant = json.loads(sys.argv[1]), sys.argv[2] == "shift"
+out = []
+def inside(j, i):
+    while j != -1:
+        if j == i: return True
+        j = rows[j]["parent"]
+    return False
+def shown(r): return r["box"][2] > 0 and r["box"][3] > 0
+panel = rows[0]["box"]
+sources = [i for i, r in enumerate(rows) if r["type"] == "Disclosure" and shown(r)]
+edges = []
+for i in sources:
+    badges = [r for j, r in enumerate(rows) if r["type"] == "Badge" and inside(j, i) and shown(r)]
+    if len(badges) != 1: out.append("row%d badges=%d" % (len(edges), len(badges))); continue
+    edges.append(badges[0]["box"][0] + badges[0]["box"][2] - (8 if plant and not edges else 0))
+if len(edges) < 2: out.append("rows=%d" % len(edges))
+elif max(edges) - min(edges) > 1: out.append("count.right=%s" % edges)
+for text in ("Refresh", "Open last log"):
+    found = [r for r in rows if r["type"] == "Button" and r.get("text") == text and shown(r)]
+    if len(found) != 1: out.append("%s=%d" % (text, len(found))); continue
+    b = found[0]["box"]
+    if b[1] < panel[1] - 1 or b[1] + b[3] > panel[1] + panel[3] + 1: out.append("%s.y=%.2f-%.2f panel=%.2f-%.2f" % (text, b[1], b[1] + b[3], panel[1], panel[1] + panel[3]))
+print(json.dumps(out))
+PY
+}
+geometry expect_poll "the flyout's counts share one right edge and its footer stays inside the panel" '[]' flyout_geometry
+flyout_shifted() { flyout_geometry shift | python3 -c 'import json,sys; print(any(e.startswith("count.right") for e in json.load(sys.stdin)))'; }
+expect "control: a count moved off the column is refused" True flyout_shifted
 
 # Each button's argv, as the terminal stand-in records it. The first
 # Update is the System row's.

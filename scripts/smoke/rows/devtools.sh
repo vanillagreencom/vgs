@@ -102,6 +102,25 @@ click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow VGS Button Detail
 expect_poll "Details shows the whole error line to copy" 1 vgs_error_lines
 click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow VGS Button "Hide details" || fail "the click on the VGS row's Hide details failed"
 expect_poll "Hide details folds the error line again" 0 vgs_error_lines
+# The window's insets: the content starts, at the VGS section's heading,
+# the same distance in from the window's left side as the VGS row's last
+# chip ends from its right side, within one pixel. The control moves the
+# chip 8 px left in a copy of the same reading, which the check refuses.
+# `[]` is the pass.
+devtools_insets() {
+  python3 - "$(ipc smoke shownWindowGeometry window vgs.devtools SectionHeader VGS)" "$(ipc smoke scopedWindowGeometry window vgs.devtools ToolRow VGS Badge Unknown)" "$(ipc smoke readInstance window vgs.devtools width)" "${1:-}" <<'PY'
+import json, sys
+head, chip, width, plant = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "narrow"
+if not head.startswith("[") or not chip.startswith("[") or width in ("absent", "undefined"):
+    print(json.dumps(["heading=%s chip=%s width=%s" % (head, chip, width)])); sys.exit()
+head, chip, width = json.loads(head), json.loads(chip), json.loads(width)
+left, right = head[0], width - (chip[0] + chip[2] - (8 if plant else 0))
+print(json.dumps([] if abs(left - right) <= 1 else ["left=%.2f right=%.2f" % (left, right)]))
+PY
+}
+devtools_insets_planted() { devtools_insets narrow | python3 -c 'import json,sys; print(len(json.load(sys.stdin)) > 0)'; }
+geometry expect_poll "the content sits the same distance in from both window sides" '[]' devtools_insets
+expect "control: a row narrowed on one side is refused" True devtools_insets_planted
 expect_poll "the absent agent draws Not installed and Install" "$(texts "$agent_name" "Not installed" Install)" row_texts "$agent_name"
 expect_poll "the other mise tool draws its version and its actions" "$(texts github:acme/extra 1.0.0 Update Remove)" row_texts github:acme/extra
 

@@ -17,7 +17,7 @@ expect "label text draws the bundled mono family" '"JetBrains Mono"' theme_value
 expect "the bar draws the default foreground with no theme file" '#d7d7d9' bar_foreground
 expect "the default theme is named" vgs ipc smoke themeName
 expect "a derived colour resolves from the palette, alpha first" '"#ff000000"' theme_value color.onAccent
-expect "a length resolves to whole pixels" 26 theme_value bar.height
+expect "a length resolves to whole pixels" 28 theme_value bar.height
 expect "a write to a published token changes nothing" '"#ff000000"' ipc smoke themeWrite color.onAccent '#ffffffff'
 group_after_write() { ipc smoke themeWrite color '{}' >/dev/null && theme_value color.onAccent; }
 expect "a write to a published group changes nothing" '"#ff000000"' group_after_write

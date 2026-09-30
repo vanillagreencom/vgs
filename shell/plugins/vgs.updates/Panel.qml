@@ -6,7 +6,7 @@ import "UpdatesLogic.js" as Logic
 
 // The Updates flyout: where updates stand, one row per source the service
 // published with its count, the packages it lists when opened and its own
-// Update when it has updates, then Update everything, and a footer with
+// Update when it has updates, and a footer with Update everything over
 // Refresh, the last check's time and the last run's log. It draws the
 // status the service publishes and runs nothing itself: Refresh asks the
 // service's `check` through the plugin's own IPC, and every update and the
@@ -58,9 +58,10 @@ Item {
         anchors.fill: parent
     }
 
-    // One inset box: the heading, the scrolling sources and Update
-    // everything, and a footer that stays in view while the sources
-    // scroll. The panel fits its content up to `size.panel.maxHeight`.
+    // One inset box: the heading, the scrolling sources, and a footer
+    // with Update everything, Refresh and the last log that stays in view
+    // while the sources scroll; Pane draws the divider over it while more
+    // sources lie below. The panel fits its content up to `size.panel.maxHeight`.
     Pane {
         id: layout
         anchors.fill: parent
@@ -178,20 +179,18 @@ Item {
             wrapMode: Text.Wrap
         }
 
-        Button {
-            width: layout.contentWidth
-            variant: "primary"
-            text: "Update everything"
-            iconName: "download"
-            onClicked: root.run("all")
-        }
-
         footer: [
             Column {
                 width: layout.contentWidth
                 spacing: Theme.stack.group
 
-                Divider { width: parent.width }
+                Button {
+                    width: parent.width
+                    variant: "primary"
+                    text: "Update everything"
+                    iconName: "download"
+                    onClicked: root.run("all")
+                }
 
                 Item {
                     width: parent.width

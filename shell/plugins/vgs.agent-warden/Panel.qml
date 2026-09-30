@@ -193,8 +193,6 @@ Item {
                 width: layout.contentWidth
                 spacing: Theme.stack.group
 
-                Divider { width: parent.width }
-
                 Item {
                     width: parent.width
                     implicitHeight: Math.max(checkedLabel.implicitHeight, linkButton.implicitHeight)

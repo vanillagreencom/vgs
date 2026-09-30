@@ -13,11 +13,41 @@ expect "the gallery maps no layer surface" 0 layer_count vgs:panel
 expect_poll "the gallery draws every component of the module" '[]' ipc smoke galleryMissing window vgs.gallery
 render expect_poll "the gallery's headings are drawn with a size" 13 ipc smoke galleryHeadings window vgs.gallery
 geometry expect "every example stays inside the gallery" '[]' ipc smoke galleryOverflow window vgs.gallery
+# No block of the gallery draws over another: the title and each section's
+# heading, in the order the body lays them out, each start at or below the
+# end of the one before, within one pixel. The control moves the third
+# heading onto the second in a copy of the same reading, which the check
+# refuses. `[]` is the pass.
+gallery_sections=(Surfaces Typography Buttons Choices Inputs Feedback Dialogs Cards Carousel "Titles and scrolling" Lists "List motion")
+gallery_stack() {
+  local boxes=() title name
+  title="$(ipc smoke shownWindowGeometry window vgs.gallery Label Gallery)" || return
+  for name in "${gallery_sections[@]}"; do boxes+=("$(ipc smoke shownWindowGeometry window vgs.gallery SectionHeader "$name")"); done
+  python3 - "${1:-}" "$title" "${boxes[@]}" <<'PY'
+import json, sys
+plant, raw = sys.argv[1] == "overlap", sys.argv[2:]
+bad = [r for r in raw if not r.startswith("[")]
+if bad:
+    print(json.dumps(["unread=%s" % bad])); sys.exit()
+boxes = [json.loads(r) for r in raw]
+if plant: boxes[3] = [boxes[3][0], boxes[2][1] + 4] + boxes[3][2:]
+out = []
+for n in range(1, len(boxes)):
+    prev, cur = boxes[n - 1], boxes[n]
+    if cur[1] < prev[1] + prev[3] - 1: out.append("block%d.top=%.2f prev.bottom=%.2f" % (n, cur[1], prev[1] + prev[3]))
+print(json.dumps(out))
+PY
+}
+gallery_stack_planted() { gallery_stack overlap | python3 -c 'import json,sys; print(len(json.load(sys.stdin)) > 0)'; }
+geometry expect_poll "no block of the gallery draws over another" '[]' gallery_stack
+expect "control: a heading moved onto the one before is refused" True gallery_stack_planted
 # The cursor over the controls, with the Buttons section scrolled to the
 # top: the hand over an enabled button, switch and checkbox, and the arrow
 # over each disabled one, which Qt skips when it picks the cursor.
 gallery_box() { ipc smoke shownWindowGeometry window vgs.gallery "$1" "$2"; }
-gallery_offset() { python3 -c 'import json,sys; print(int(json.loads(sys.argv[1])[1] - json.loads(sys.argv[2])[1]))' "$(gallery_box SectionHeader "$1")" "$(gallery_box Label Gallery)"; }
+# A section's distance below the first one, read at the top, is the
+# scroll that brings it to the top: the title sits in the fixed header.
+gallery_offset() { python3 -c 'import json,sys; print(int(json.loads(sys.argv[1])[1] - json.loads(sys.argv[2])[1]))' "$(gallery_box SectionHeader "$1")" "$(gallery_box SectionHeader Surfaces)"; }
 # Property readback is separate from the engine's compiled shader status.
 orb_examples_ok() { ipc smoke galleryOrbs window vgs.gallery '' | py_reply 'import json,sys
 rows=json.load(sys.stdin)

@@ -281,9 +281,10 @@ page_alignment() {
   label_w="$(ipc smoke themeValue field.labelWidth)" || return
   label_gap="$(ipc smoke themeValue field.labelGap)" || return
   inset="$(ipc smoke themeValue inset.window)" || return
-  python3 - "$rows" "$label_w" "$label_gap" "$inset" "$1" "$2" <<'PY'
+  ring="$(( $(ipc smoke themeValue focusRing.width) + $(ipc smoke themeValue focusRing.offset) ))" || return
+  python3 - "$rows" "$label_w" "$label_gap" "$inset" "$1" "$2" "$ring" <<'PY'
 import json, sys
-rows, label_w, label_gap, inset, want_settings, want_keys = (json.loads(a) for a in sys.argv[1:])
+rows, label_w, label_gap, inset, want_settings, want_keys, ring = (json.loads(a) for a in sys.argv[1:])
 out = []
 def inside(j, i):
     while j != -1:
@@ -300,7 +301,8 @@ if len(page) != 1 or len(areas) != 1:
     print(json.dumps(["pages=%d areas=%d" % (len(page), len(areas))])); sys.exit()
 area = rows[areas[0]]
 column_right = right(area) - inset
-content_left = area["box"][0]
+# Pane's viewport starts a focus ring's room left of the content edge.
+content_left = area["box"][0] + ring
 check("content.leftInset", content_left - rows[page[0]]["box"][0], inset)
 check("content.rightInset", right(rows[page[0]]) - column_right, inset)
 headers = [i for i, r in enumerate(rows) if r["type"] == "SectionHeader" and inside(i, page[0])]
@@ -603,6 +605,61 @@ expect_poll "Escape closes the Settings request's notice" null notice_shown
 settings_show ""
 expect "a row opens its page by name" ok ipc smoke invokeInstance window vgs.settings openPlugin acme.probe
 expect_poll "the page is open again" '"acme.probe"' settings_page
+# The plugin page's header and metadata. The header row is at least
+# `size.control.md` tall; the back button's glyph, not its box, sits on the
+# content edge the description starts at; the title's capital centre sits
+# on the row's centre; each read-only metadata row (Author, Version,
+# Source) is at least `row.compactHeight` tall and no taller than that or
+# its tallest text, and consecutive ones sit `stack.row` apart. Each check
+# holds within one pixel and reads minimums and containment, so a larger
+# theme font passes. The controls are the unit mutations of
+# tst_titlebutton (capCentre), tst_button (glyphStart) and tst_spacing (a
+# compact field). `[]` is the pass.
+page_geometry() {
+  local rows md compact gap glyph cap
+  rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
+  md="$(ipc smoke themeValue size.control.md)" || return
+  compact="$(ipc smoke themeValue row.compactHeight)" || return
+  gap="$(ipc smoke themeValue stack.row)" || return
+  glyph="$(ipc smoke readShownDescendant window vgs.settings IconButton glyphStart)" || return
+  cap="$(ipc smoke readShownDescendant window vgs.settings TitleButton capCentre)" || return
+  python3 - "$rows" "$md" "$compact" "$gap" "$glyph" "$cap" <<'PY'
+import json, sys
+rows, md, compact, gap, glyph, cap = (json.loads(a) for a in sys.argv[1:])
+out = []
+def inside(j, i):
+    while j != -1:
+        if j == i: return True
+        j = rows[j]["parent"]
+    return False
+def shown(r): return r["box"][2] > 0 and r["box"][3] > 0
+def check(name, got, want):
+    if abs(got - want) > 1: out.append("%s=%.2f want=%.2f" % (name, got, want))
+pages = [i for i, r in enumerate(rows) if r["type"] == "PluginPage" and shown(r)]
+if len(pages) != 1: print(json.dumps(["pages=%d" % len(pages)])); sys.exit()
+under = lambda kind: [i for i, r in enumerate(rows) if r["type"] == kind and inside(i, pages[0]) and shown(r)]
+headers, backs, titles = under("PageHeader"), under("IconButton"), under("TitleButton")
+hints = [i for i in under("Label") if rows[i].get("role") == "hint"]
+if len(headers) != 1 or not backs or len(titles) != 1 or not hints:
+    print(json.dumps(["headers=%d backs=%d titles=%d hints=%d" % (len(headers), len(backs), len(titles), len(hints))])); sys.exit()
+header, back, title = rows[headers[0]], rows[backs[0]], rows[titles[0]]
+if header["box"][3] < md - 1: out.append("header.height=%.2f min=%d" % (header["box"][3], md))
+check("back.glyph.x", back["box"][0] + glyph, rows[hints[0]]["box"][0])
+check("title.capCentre", title["box"][1] + cap, header["box"][1] + header["box"][3] / 2)
+fields = []
+for i in under("Field"):
+    texts = [rows[j] for j, r in enumerate(rows) if r["type"] == "Label" and inside(j, i) and shown(r)]
+    if any(t.get("text") in ("Author", "Version", "Source") for t in texts):
+        fields.append((rows[i], max(t["box"][3] for t in texts)))
+if len(fields) != 3: out.append("metadata=%d" % len(fields))
+for n, (field, tallest) in enumerate(fields):
+    h = field["box"][3]
+    if h < compact - 1 or h > max(compact, tallest) + 1: out.append("metadata%d.height=%.2f compact=%d tallest=%.2f" % (n, h, compact, tallest))
+    if n: check("metadata%d.gap" % n, field["box"][1] - (fields[n - 1][0]["box"][1] + fields[n - 1][0]["box"][3]), gap)
+print(json.dumps(out))
+PY
+}
+geometry expect_poll "the plugin page's header puts the back glyph on the content edge and the title on its centre, and its metadata rows are compact" '[]' page_geometry
 type_keys -k Escape || fail "sending Escape to the page failed"
 expect_poll "Escape pops the page" '""' settings_page
 type_keys -k Escape || fail "sending Escape to the list failed"
