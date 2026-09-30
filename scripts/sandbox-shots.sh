@@ -57,8 +57,9 @@
 # logical size and the shell draws each PNG in device pixels. Each shot at
 # scale 2 checks before and after its capture (shot_held in
 # scripts/smoke/shot.sh) that the output still reads that mode, since a
-# host resize or refocus, or a writer not identified, resets it
-# (held_mode_state in scripts/smoke/harness.sh), and fails when it does
+# configure the host sends the nested window, such as a resize or a
+# refocus, resets it
+# (held_mode_state in scripts/smoke/mode-hold.sh), and fails when it does
 # not. Another value is refused as
 # `sandbox-shots: refused: scale=<value>`.
 # --size WxH holds the nested output at W by H logical pixels, at the run's

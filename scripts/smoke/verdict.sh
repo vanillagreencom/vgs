@@ -1,6 +1,6 @@
 # Sourced by harness.sh and by scripts/test-smoke-verdict.sh; defines the
 # failure tally the rows write and the smoke's closing verdict, and reads no
-# sandbox state of its own: fail asks held_mode_state, which harness.sh
+# sandbox state of its own: fail asks held_mode_state, which mode-hold.sh
 # defines, only while a row holds a mode.
 
 failures=0
@@ -16,11 +16,11 @@ behaviour_failures=0
 stalled_render=false
 row_class=behaviour
 # A mode a row holds on a nested output, as (OUTPUT STATE), STATE its mode
-# and scale as mode_scale_of in harness.sh reads them, empty when no row
+# and scale as mode_scale_of in mode-hold.sh reads them, empty when no row
 # holds one; hold_mode and release_mode alone write it. A row that fails
 # after the output left the held mode counts in mode_resets and never as
 # behaviour, unless it runs under `hold`: it measured an output the sandbox
-# reset (held_mode_state in harness.sh).
+# reset (held_mode_state in mode-hold.sh).
 mode_hold=()
 mode_resets=0
 # fail MESSAGE: one failed row, counted by its class and printed.
@@ -54,7 +54,7 @@ nested_output_unallocated() {
 # smoke_verdict FAILURES BEHAVIOUR_FAILURES STALLED_RENDER MODE_RESETS LOG...:
 # prints the run's closing line and returns its exit status. MODE_RESETS
 # counts the failures of rows that ran after the nested output left a mode
-# they held (hold_mode in harness.sh); a run whose every failure is one of
+# they held (hold_mode in mode-hold.sh); a run whose every failure is one of
 # them measured an output the sandbox reset, not the shell, and reports
 # not-measured. A run whose failures are all geometry, render or mode-reset
 # rows met a sandbox fault when a render row drew no frame, or when the

@@ -160,7 +160,7 @@ shot() {
 
 # shot_held NAME READER [ARGS...]: `shot NAME` under a held output mode.
 # READER with ARGS prints the hold's state, `held` while the output reads
-# the held mode (held_mode_state in scripts/smoke/harness.sh). A state
+# the held mode (held_mode_state in scripts/smoke/mode-hold.sh). A state
 # other than `held`, or a reader that fails, before the capture refuses it
 # untaken. After a capture, such a state means the output left the mode
 # while shot waited for a settled frame: the PNG stays but shows no held

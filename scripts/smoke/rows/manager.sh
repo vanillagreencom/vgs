@@ -703,7 +703,7 @@ expect_poll "the window is gone after the shortcut" 0 window_count Settings
 # holds a 480 by 720 mode, and the window keeps `size.window.gutter` a side
 # and half the monitor's height, centred on it; the mode it had is then
 # restored, so later rows meet the monitor they read at the start. The host
-# can reset a held mode under the rows (held_mode_state in harness.sh): the
+# can reset a held mode under the rows (held_mode_state in mode-hold.sh): the
 # window check reads the mode with the window and names a reset rather than
 # measuring the window against it.
 narrow_mode=480x720

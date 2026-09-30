@@ -1,6 +1,7 @@
 # Sourced by qml-smoke.sh; owns the sandbox and shared readers.
 set -euo pipefail
 source "$repo/scripts/smoke/verdict.sh"
+source "$repo/scripts/smoke/mode-hold.sh"
 source "$repo/scripts/smoke/tree.sh"
 source "$repo/scripts/smoke/shot.sh"
 source "$repo/scripts/smoke/app-window.sh"
@@ -1429,79 +1430,6 @@ layer_bar_clear() { # NAMESPACE TOKEN
   local t
   t="$(layer_bar_geometry "$1" "$2")" || return
   layer_bar_contract_value <<<"$t"
-}
-# monitor_rule NAME MODE [SCALE]: the Lua monitor rule that gives output
-# NAME the mode MODE, such as 480x720, at SCALE, 1 by default, and the
-# layout's origin. The nested Wayland output takes any mode and an integer
-# scale; a headless output stays 0x0 in the sandbox
-# (docs/architecture/runtime-hyprland-nested.md).
-monitor_rule() { printf 'hl.monitor({ output = "%s", mode = "%s", position = "0x0", scale = %s })\n' "$1" "$2" "${3:-1}"; }
-# output_mode NAME MODE [SCALE]: the nested compositor applies
-# monitor_rule's rule now through `hyprctl eval`; the reply is hyprctl's.
-# A configuration reload drops the rule but leaves the output at its mode
-# and scale, unless a rule the configuration loads gives the output
-# another (docs/architecture/runtime-hyprland.md). Under a hold it stands
-# for a reset, and a reload applies the held rule again from
-# mode_hold_file. A row restores the mode it read first.
-output_mode() { hypr eval "$(monitor_rule "$@")"; }
-# mode_scale_of NAME: output NAME's mode and scale as `WxH scale=S`, such
-# as `3510x1866 scale=2`, the mode in device pixels; returns 1 when no
-# monitor has that name.
-mode_scale_of() { hypr -j monitors | python3 -c 'import json,sys; m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]]; print("%dx%d scale=%g" % (m[0]["width"], m[0]["height"], m[0]["scale"])) if len(m)==1 else sys.exit(1)' "$1"; }
-# hold_mode LABEL NAME MODE [SCALE]: output NAME takes MODE at SCALE, 1 by
-# default, and the rows after it hold that mode and scale until
-# release_mode. The rule goes into mode_hold_file, which every load of the
-# configuration runs, and output_mode applies it now. The hold begins once
-# the monitor reads both; a mode or a scale never taken is a failure,
-# holds nothing and leaves no hold file.
-hold_mode() {
-  local label="$1" output="$2" want="$3 scale=${4:-1}" failed_before="$failures"
-  [[ ${#mode_hold[@]} -eq 0 ]] || { fail "$label: ${mode_hold[0]} already holds ${mode_hold[1]}; hold_mode does not nest"; return; }
-  if ! monitor_rule "$output" "$3" "${4:-1}" >"$mode_hold_file.next" || ! mv -T -- "$mode_hold_file.next" "$mode_hold_file"; then
-    fail "$label: the hold file $mode_hold_file is not written"
-    rm -f -- "$mode_hold_file.next" || fail "$label: the partial hold file $mode_hold_file.next is not removed"
-    return 0
-  fi
-  expect "$label" ok output_mode "$output" "$3" "${4:-1}"
-  expect_poll "$output reads $want" "$want" mode_scale_of "$output"
-  if [[ $failures -eq $failed_before ]]; then
-    mode_hold=("$output" "$want")
-  else
-    rm -f -- "$mode_hold_file" || fail "$label: the hold file $mode_hold_file of a hold never taken is not removed"
-  fi
-  return 0
-}
-# held_mode_state: what became of the held mode, as one word. `held`: the
-# output reads its mode and scale. `reset`: the output reads another mode
-# or another scale. Once the hold began, a writer the row does not control
-# can move a nested output off it, and that is not what a held row
-# measures. The host is one. Hyprland gives a Wayland-backend output the
-# size of every configure the host sends the nested window that differs
-# from its rule's mode (src/output/Monitor.cpp, the output's state
-# listener, Hyprland v0.56.2), and the host sends one whenever it resizes
-# the window or changes its state, focus included. It changes the size,
-# not the scale. A scale-2 run of scripts/sandbox-shots.sh once read the
-# output at its own mode and scale 1, from a writer not identified
-# (docs/architecture/validation-smoke-faults.md).
-# A configuration reload, which the shell runs when its Hyprland layer
-# changes, drops every rule `hyprctl eval` added
-# (src/config/lua/ConfigManager.cpp, CConfigManager::reload, v0.56.2) and
-# applies the rule mode_hold_file names again. The shell writes no monitor
-# rule of its own.
-# `unreadable`: the monitor cannot be read, which excuses nothing.
-held_mode_state() {
-  local state
-  state="$(mode_scale_of "${mode_hold[0]}")" || { echo unreadable; return; }
-  if [[ $state == "${mode_hold[1]}" ]]; then echo held; else echo reset; fi
-}
-# release_mode LABEL NAME MODE [SCALE]: any hold ends, its file goes, and
-# output NAME takes MODE at SCALE, 1 by default, again, whether or not
-# hold_mode's mode was taken, and reads both before the rows go on.
-release_mode() {
-  mode_hold=()
-  rm -f -- "$mode_hold_file" || fail "$1: the hold file $mode_hold_file is not removed"
-  expect "$1" ok output_mode "$2" "$3" "${4:-1}"
-  expect_poll "$2 reads $3 scale=${4:-1}" "$3 scale=${4:-1}" mode_scale_of "$2"
 }
 # The first monitor's mode as WxH, its logical width, and its name.
 first_mode() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print("%dx%d" % (m["width"], m["height"]))'; }
