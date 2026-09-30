@@ -150,7 +150,7 @@ COMMIT_GUARDS_MD_REFS_SOURCE_PATHS = "*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java 
 
 # Max re-review cycles per issue before the verdict pass; the re-review
 # re-entry refuses once cycles is past it.
-REVIEW_MAX_CYCLES = "4"
+REVIEW_MAX_CYCLES = "1"
 
 # Diff-scoped local checks, including the isolated smoke only when affected.
 DEV_VALIDATE_CMD = "scripts/validate"
