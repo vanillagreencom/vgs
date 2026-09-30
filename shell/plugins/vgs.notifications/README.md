@@ -4,6 +4,12 @@
 
 The core's notification server takes the `org.freedesktop.Notifications` name while the plugin is enabled, so another notification daemon must not run beside it.
 
+![Three notifications on screen](../../../docs/images/plugins/vgs.notifications-toasts.webp)
+
+![The inbox with three notifications](../../../docs/images/plugins/vgs.notifications-inbox.webp)
+
+Screenshots made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Opening the panel
 
 | Path | How |

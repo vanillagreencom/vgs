@@ -2,6 +2,10 @@
 
 `vgs.polkit` is the session's polkit agent. When an application needs administrator rights, such as `pkexec` or a system settings change, it asks for your password in a dialog drawn in the applied theme.
 
+![The password prompt for a program run with pkexec](../../../docs/images/plugins/vgs.polkit-prompt.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Install
 
 The plugin ships with VGS and is enabled by default. polkitd accepts one agent per session, so stop any other polkit agent, such as `hyprpolkitagent` or `polkit-gnome`, from your Hyprland autostart.

@@ -2,6 +2,10 @@
 
 `vgs.launcher`: a Spotlight launcher. One glass search field opens over the screen; typing searches every menu row and installed application, `f:` searches files and `F:` folders, and Ctrl+B or the menu button shows the category tree. It is a port of the customised Spotlight launcher of the owner's Omarchy dotfiles, drawn and behaving as that one does, on this shell's plugin contract.
 
+![The launcher showing its categories](../../../docs/images/plugins/vgs.launcher-list.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Opening it
 
 | Path | How |

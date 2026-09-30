@@ -2,6 +2,10 @@
 
 `vgs.lock` is the lock screen. It locks the session and unlocks it with your password, drawn in the applied theme over the theme's background image. The session stays locked if the shell stops or crashes.
 
+![The lock screen after a wrong password](../../../docs/images/plugins/vgs.lock-screen.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Install
 
 The plugin ships with VGS and is enabled by default. Its password check needs no setup: the plugin carries its own PAM stack. Locking before sleep needs `systemd-inhibit`, `busctl` and `dbus-monitor`, which systemd and D-Bus provide. If one is missing, the shell's requirement notice installs it in one click, and the hook starts by itself once it is there.

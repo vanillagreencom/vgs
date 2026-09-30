@@ -2,6 +2,10 @@
 
 `vgs.gallery`: a window that draws every component of the design system in every variant and state, so a theme author previews a whole theme at once. It has no setting and no key.
 
+![The gallery window with its surfaces and text roles](../../../docs/images/plugins/vgs.gallery-window.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Opening it
 
 `vgsh ipc call shell summon window vgs.gallery '{}'` opens it on the focused monitor. `vgsh ipc call shell hide window vgs.gallery` closes it, and `... toggle window vgs.gallery '{}'` does either.

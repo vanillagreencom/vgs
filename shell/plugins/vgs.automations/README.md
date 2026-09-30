@@ -2,6 +2,10 @@
 
 `vgs.automations` runs a shell command of yours on a schedule, such as every weekday at 09:00, every 2 weeks on Monday, or the second Tuesday of each month. Each run keeps a transcript for up to 30 days, and a run that fails always sends a notification whose click opens that transcript. The schedules are systemd user timers, so a run happens whether or not the shell is running.
 
+![The automations' status on their Settings page](../../../docs/images/plugins/vgs.automations-page.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Install
 
 The plugin ships with VGS and is enabled by default. It needs `notify-send` (libnotify) and a systemd user manager; where none answers, it uses your crontab (`cronie`) instead.

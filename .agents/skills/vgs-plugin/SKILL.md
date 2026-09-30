@@ -54,6 +54,7 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 - A command the user must see or answer runs in a floating TUI: a script under the plugin's `tui/`, declared as data in the manifest's `tui` key and opened with `shell.tui.run`, never a command string: [`docs/architecture/tui-capability.md` § The capability](../../../docs/architecture/tui-capability.md#the-capability).
 - No cache keyed by data other applications supply without a ceiling.
 - Every Quickshell type, property and signal comes from the 0.3.1 reference on Context7: `ctx7 docs /websites/quickshell_v0_3_1 <query>`.
+- A first-party plugin's README shows a screenshot made by `scripts/readme-shots.sh`, with its row in `docs/images/plugins/shots.tsv`: [`docs/architecture/readme-images.md`](../../../docs/architecture/readme-images.md).
 - Land with `scripts/validate manifests`, `scripts/validate boundary` and `scripts/validate qml` clean, the last with the readback rows [`workflows/new-plugin.md`](workflows/new-plugin.md) step 9 names.
 
 ## Workflows

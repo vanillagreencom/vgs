@@ -2,6 +2,10 @@
 
 The bar across the top of every screen. It draws its own workspaces and clock, and holds plugin widgets in a left, a center and a right section.
 
+![The bar with its workspaces, its clock and plugin widgets](../../../docs/images/plugins/vgs.bar-bar.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Features
 
 - One bar per screen, above windows, with space reserved so windows never sit under it.

@@ -2,6 +2,10 @@
 
 `vgs.updates` is the service that owns update checks for VGS, the bar widget and flyout that show them ([§ Bar widget and flyout](#bar-widget-and-flyout)), and the floating TUIs that run the updates ([pipeline.md](pipeline.md)).
 
+![The updates flyout with its System row open](../../../docs/images/plugins/vgs.updates-flyout.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Sources
 
 The service runs this command with argv only:

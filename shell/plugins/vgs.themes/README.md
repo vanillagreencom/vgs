@@ -2,6 +2,10 @@
 
 A bar button that opens a panel listing every theme package, a full-screen theme browser and wallpaper browser, and the applied theme's wallpaper on every screen, under every window. A click on a package applies it to the shell and to every application the theme targets.
 
+![The theme browser showing an installed theme](../../../docs/images/plugins/vgs.themes-browser.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Features
 
 - A Themes button for the bar. The shipped bar does not show it: `bin/vgsh plugin enable vgs.themes` adds it to the right section.

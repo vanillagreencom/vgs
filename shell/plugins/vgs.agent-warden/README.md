@@ -4,6 +4,10 @@
 
 `bin/vgsh plugin enable vgs.agent-warden` puts the shield in the bar's right section.
 
+![The Agent Warden panel, open from its shield, reporting two problems](../../../docs/images/plugins/vgs.agent-warden-panel.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Setting up the warden
 
 1. Install vsys: `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash`, or `paru -S vsys` on Arch Linux.

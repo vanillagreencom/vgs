@@ -2,6 +2,10 @@
 
 `vgs.settings`: the window that lists every plugin the shell found and opens a page for each, with its details, its settings and its keys. It lists itself, so it can be disabled, rebound and opened at one plugin's page like any other plugin.
 
+![The launcher's page in the Settings window](../../../docs/images/plugins/vgs.settings-page.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Opening it
 
 | Path | How |

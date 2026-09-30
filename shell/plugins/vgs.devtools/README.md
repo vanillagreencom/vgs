@@ -2,6 +2,10 @@
 
 `vgs.devtools` holds a catalog of developer tools, its judge, the engine that installs, updates and removes each row, and a window that shows each row's state with its actions. `vgsh ipc call vgs.devtools invoke open` opens the window.
 
+![The Dev Tools window listing coding agents](../../../docs/images/plugins/vgs.devtools-window.webp)
+
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+
 ## Files
 
 - `catalog.json`: The data source for agents, apps, tools, environments, editors, terminals and databases.
