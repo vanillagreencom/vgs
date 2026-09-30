@@ -27,9 +27,12 @@
 # --rev; the manager's scene is `settings` for a tree that ships
 # vgs.settings and `manager`, the bar's manager panel, for one that ships
 # the bar's manager built-in. A scene the tree does not ship is refused as
-# `sandbox-shots: refused: scene=<scene> tree=<rev or checkout>`. --modes is a comma list of dark
-# and light, dark by default with --rev and both otherwise: dark is the
-# defaults (theme `vgs`), light is this checkout's themes/light package.
+# `sandbox-shots: refused: scene=<scene> tree=<rev or checkout>`. --modes is a comma list of dark,
+# light and rounded, dark by default with --rev and dark and light
+# otherwise: dark is the defaults (theme `vgs`), light is this checkout's
+# themes/light package, and rounded is the defaults with `radius.sm`,
+# `radius.md` and `radius.lg` at 6, 12 and 16, so every theme-rounded
+# component shows whether its content clears its corners.
 # --rev REV runs that revision's shell, bin, config and themes (git archive),
 # with the runtime helpers a revision before bin/lib kept under scripts/,
 # under this checkout's harness and probe, for a before shot; the plugin
@@ -103,7 +106,7 @@ done
 [[ -n $modes ]] || { if [[ -n $rev ]]; then modes=dark; else modes=dark,light; fi; }
 IFS=, read -r -a mode_list <<<"$modes"
 for mode in "${mode_list[@]}"; do
-  [[ $mode == dark || $mode == light ]] || { printf 'sandbox-shots: refused: mode=%s\n' "$mode" >&2; exit 2; }
+  [[ $mode == dark || $mode == light || $mode == rounded ]] || { printf 'sandbox-shots: refused: mode=%s\n' "$mode" >&2; exit 2; }
 done
 [[ $scale == 1 || $scale == 2 ]] || { printf 'sandbox-shots: refused: scale=%s\n' "$scale" >&2; exit 2; }
 [[ -z $shot_size || $shot_size =~ ^[1-9][0-9]*x[1-9][0-9]*$ ]] || { printf 'sandbox-shots: refused: size=%s\n' "$shot_size" >&2; exit 2; }
@@ -278,10 +281,41 @@ take() { # NAME
   esac
 }
 centre_of() { python3 -c 'import json,sys; t=sys.argv[1]; r=json.loads(t) if t.startswith("[") else None; print("%d %d" % (r[0] + r[2] / 2, r[1] + r[3] / 2) if r else "none")' "$1"; }
-# hover_on LABEL HOST ID TYPE TEXT: the pointer on the centre of that item,
+# hover_on LABEL HOST ID TYPE TEXT [SURFACE]: the pointer on the centre of
+# that item, held until the item reports the pointer over it twice in a
+# row, so a hover shot shows the hover state; an item that has no hover
+# state of its own is hover_text's. A layer's item is found through
+# point_item in scripts/smoke/harness.sh; a window's item needs SURFACE,
+# the window's surface name, since its box is read in the window.
+# window_point SURFACE HOST ID TYPE TEXT: that window item's centre on the
+# output, as `X Y`.
 # arriving by two motions: the launcher follows the pointer only once it
 # has moved over the list (selectFromPointer in its Launcher.qml).
+window_point() {
+  local rect
+  rect="$(ipc smoke windowGeometry "$2" "$3" "$4" "$5")" && [[ $rect == \[* ]] || return 1
+  at_centre "$1" "$rect"
+}
 hover_on() {
+  local x y i held=0
+  if [[ -z ${6:-} ]]; then
+    if ! point_item "$2" "$3" "$4" "$5" >/dev/null; then fail "$1: $4 \"$5\" under $2 $3 never reported the pointer"; return 1; fi
+    ok "$1"; return 0
+  fi
+  for i in $(seq 1 50); do
+    if read -r x y < <(window_point "$6" "$2" "$3" "$4" "$5"); then
+      hover "$((x + i % 2))" "$y" || { fail "$1: the hover failed"; return 1; }
+      if [[ $(ipc smoke itemHovered "$2" "$3" "$4" "$5") == true ]]; then held=$((held + 1)); else held=0; fi
+      if (( held >= 2 )); then ok "$1"; return 0; fi
+    fi
+    sleep 0.1
+  done
+  fail "$1: $4 \"$5\" in $6 never reported the pointer"
+  return 1
+}
+# hover_text LABEL HOST ID TYPE TEXT: the pointer on the centre of a text
+# that has no hover state; the caller proves the state the hover drives.
+hover_text() {
   local label="$1" rect at="" x y
   for _ in $(seq 1 25); do
     rect="$(ipc smoke itemGeometry "$2" "$3" "$4" "$5")" && at="$(centre_of "$rect")" && [[ $at != none ]] && break
@@ -318,14 +352,34 @@ narrow_end() {
 }
 
 theme_file="$home/.config/vgs/theme.json"
-set_mode() { # dark|light
+set_mode() { # dark|light|rounded
   local name
   case $1 in
     dark) printf '{ "schemaVersion": 1, "name": "vgs", "tokens": {} }\n' >"$theme_file.tmp"; name=vgs ;;
+    rounded) printf '{ "schemaVersion": 1, "name": "rounded", "tokens": { "radius": { "sm": 6, "md": 12, "lg": 16 } } }\n' >"$theme_file.tmp"; name=rounded ;;
     light) cp -- "$checkout/themes/light/theme.json" "$theme_file.tmp"; name=light ;;
   esac
   mv -T -- "$theme_file.tmp" "$theme_file"
   expect_poll "the $1 theme ($name) is published" "$name" ipc smoke themeName
+}
+
+# The gallery's field in error, scrolled to a third of the way down the
+# view and clicked, so the shot shows its focus ring in the error colour.
+gallery_error_focus() { # MODE
+  local box y x
+  ipc smoke scrollTo "$gallery_kind" vgs.gallery 0 >/dev/null || { fail "the gallery did not scroll to its top"; return; }
+  box="$(ipc smoke windowGeometry "$gallery_kind" vgs.gallery TextField taken)"
+  [[ $box == \[* ]] || { fail "the gallery's field in error has no box: $box"; return; }
+  y="$(python3 -c 'import json,sys; print(max(0, int(json.loads(sys.argv[1])[1]) - 200))' "$box")"
+  ipc smoke scrollTo "$gallery_kind" vgs.gallery "$y" >/dev/null || { fail "the gallery did not scroll to its field in error"; return; }
+  read -r x y < <(window_point "$gallery_surface" "$gallery_kind" vgs.gallery TextField taken) || { fail "the gallery's field in error has no box on the output"; return; }
+  if hover "$((x - 1))" "$y" && click "$x" "$y"; then
+    expect_poll "the field in error holds the keyboard" true ipc smoke activeFocusIn "$gallery_kind" vgs.gallery
+    take "gallery-$1-error-focus"
+  else
+    fail "the click on the gallery's field in error failed"
+  fi
+  park_pointer
 }
 
 # One shot per page of the gallery's scrolling list, a page's height less
@@ -345,6 +399,7 @@ scene_gallery() { # MODE
     (( cy + h < ch )) || break
     y=$(( cy + h - 40 )); page=$(( page + 1 ))
   done
+  gallery_error_focus "$1"
   expect "the gallery hides" ok ipc shell hide "$gallery_kind" vgs.gallery
   expect_poll "the gallery's surface is gone" 0 surface_count "$gallery_surface"
 }
@@ -406,21 +461,30 @@ print(0 if most <= 0 or travel <= 0 else round((max(0, min(want, most)) - a["con
 # Whether every status row of the notifications' page is reported.
 notifications_reported() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"]; print(len(r) == 1 and len(r[0]["status"]) > 0 and all(s["report"] == "reported" for s in r[0]["status"]))'; }
 # The Settings window: the list opened from the gear, the pointer on the
-# gear; a plugin page with many grouped settings at its top, dragged down
+# gear; a search nothing matches; a plugin page with many grouped settings at its top, dragged down
 # its scroll bar, and with its Mode select open; a plugin with keys; the
 # title's menu open with its scroll bar under the pointer; the notifications' page scrolled to its
 # Slack token rows, over two shots when they are taller than the page; and
 # the list and a page on a monitor narrower than the window's width token.
+settings_empty() { [[ $(ipc smoke itemGeometry "$settings_kind" vgs.settings Button "Clear search") == \[* ]] && echo shown || echo hidden; }
 scene_settings() { # MODE
   local area at tx ty title x y
   click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
   expect_poll "the gear opens the Settings window" 1 settings_count
   expect_poll "the Settings window holds the keyboard" true ipc smoke activeFocusIn "$settings_kind" vgs.settings
   take "settings-$1-list"
+  # A search nothing matches: the empty state and its way back.
+  type_keys "zzqxv" || fail "typing a search nothing matches failed"
+  expect_poll "the list shows its empty state" shown settings_empty
+  take "settings-$1-empty"
+  if read -r x y < <(window_point "$settings_surface" "$settings_kind" vgs.settings Button "Clear search") && hover "$((x - 1))" "$y" && click "$x" "$y"; then :; else fail "the click on Clear search failed"; fi
+  expect_poll "Clear search empties the search" '""' ipc smoke readShownDescendant "$settings_kind" vgs.settings TextField text
+  park_pointer
   # The gear draws no text, so it is found by its label.
   if at="$(centre_of "$(ipc smoke labelledGeometry "$(bar_key)" vgs.settings BarItem Settings)")" && [[ $at != none ]]; then
     read -r x y <<<"$at"
-    if hover "$((x - 6))" "$y" && hover "$x" "$y"; then take "settings-$1-gear"; else fail "the hover on the gear failed"; fi
+    if hover "$((x - 6))" "$y" && hover "$x" "$y" \
+      && expect_poll "the gear shows its hover" true ipc smoke readDescendant "$(bar_key)" vgs.settings BarItem hovered; then take "settings-$1-gear"; else fail "the hover on the gear failed"; fi
   else
     fail "the gear has no box"
   fi
@@ -652,7 +716,9 @@ scene_launcher() { # MODE
   expect_poll "Down selects the second row" 1 ipc smoke readInstance overlay vgs.launcher selectedIndex
   take "launcher-$1-selected"
   second="$(launcher_rows | python3 -c 'import json,sys; print(json.load(sys.stdin)[2][1])')" || second=""
-  hover_on "the pointer rests on the launcher's third row" overlay vgs.launcher QQuickText "$second" && take "launcher-$1-hover"
+  hover_text "the pointer rests on the launcher's third row" overlay vgs.launcher QQuickText "$second" \
+    && expect_poll "the pointer selects the third row" 2 ipc smoke readInstance overlay vgs.launcher selectedIndex \
+    && take "launcher-$1-hover"
   # The file flyout: a right click on a file hit, then the pointer on one of
   # its entries, whose highlight draws over the flyout's glass.
   touch -- "$home/shots-flyout.txt"
@@ -661,7 +727,7 @@ scene_launcher() { # MODE
   if file_at="$(centre_of "$(ipc smoke itemGeometry overlay vgs.launcher QQuickText shots-flyout.txt)")" && [[ $file_at != none ]] && read -r fx fy <<<"$file_at" && hover "$fx" "$fy" && right_click "$fx" "$fy"; then
     # The flyout grows in from the click; its entries hold still once it has.
     expect_poll "the flyout has opened" same settled_box overlay vgs.launcher QQuickText "Copy path"
-    hover_on "the pointer rests on the flyout's Copy path" overlay vgs.launcher QQuickText "Copy path" && take "launcher-$1-flyout"
+    hover_text "the pointer rests on the flyout's Copy path" overlay vgs.launcher QQuickText "Copy path" && take "launcher-$1-flyout"
   else
     fail "the right click on the planted file failed"
   fi
@@ -774,7 +840,9 @@ scene_bar() { # MODE
     park_pointer
     expect_poll "the $id tooltip closes" false tooltip_opened "$id"
   done
-  hover_widget "the pointer rests on the launcher's widget" vgs.launcher && take "bar-$1-hover-launcher"
+  hover_widget "the pointer rests on the launcher's widget" vgs.launcher \
+    && expect_poll "the launcher's widget shows its hover" true ipc smoke readDescendant "$(bar_key)" vgs.launcher BarItem hovered \
+    && take "bar-$1-hover-launcher"
   park_pointer
   take "bar-$1"
 }
@@ -826,7 +894,7 @@ scene_devtools() { # MODE
   expect_poll "the Dev Tools window draws its sections" True devtools_sections
   park_pointer
   take "devtools-$1-top"
-  hover_on "the pointer rests on an Install button" window vgs.devtools Button Install && take "devtools-$1-hover"
+  hover_on "the pointer rests on an Install button" window vgs.devtools Button Install "window:Dev Tools" && take "devtools-$1-hover"
   park_pointer
   while (( page <= 4 )); do
     at="$(ipc smoke scrollTo window vgs.devtools "$y")" || at=""
