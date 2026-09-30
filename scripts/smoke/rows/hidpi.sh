@@ -30,9 +30,7 @@
 # harness.sh's start_shell, so it reuses the smoke startup poll intervals:
 # 10 ms for the first bar and one `vgsh ipc` round trip for readiness.
 set -euo pipefail
-ipc() {
-  "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
-}
+ipc() { ipc_via "$repo/bin/vgsh" "$@"; }
 # stop_shell fails the row itself when the instance lock stays held; the
 # start below then fails on the held lock too, and the row goes on.
 stop_shell || :

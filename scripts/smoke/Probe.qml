@@ -42,7 +42,31 @@ Scope {
     // file a row writes beside the shipped one for a dismissal control, by
     // the name the row gives each.
     property var popupCopies: ({})
+    // Quickshell 0.3.1 can cut large IPC replies. Keep this equal to
+    // harness.sh's ipc_reply_chars; docs/architecture/runtime.md names the fact.
+    readonly property int replyChars: 32768
+    property int nextReplyId: 1
+    property var replyPages: ({})
+    property var replyPageOrder: []
     readonly property var runnerContext: ({ id: "smoke-runner-copy", onDispose: () => () => {} })
+
+    function answer(text) {
+        if (typeof text !== "string") return text;
+        if (text.length <= root.replyChars) return text;
+        const id = String(root.nextReplyId++);
+        root.replyPages[id] = text;
+        root.replyPageOrder = root.replyPageOrder.concat([id]);
+        while (root.replyPageOrder.length > 8) {
+            const drop = root.replyPageOrder.shift();
+            delete root.replyPages[drop];
+        }
+        return "paged=" + id;
+    }
+
+    function json(value) {
+        const text = JSON.stringify(value);
+        return root.answer(text === undefined ? "undefined" : text);
+    }
 
     // Call the copy's member VERB with ARGS, then `done`, then any EXTRA,
     // its answers kept by verb; the member's reply, `ok` for none.
@@ -54,7 +78,7 @@ Scope {
             root.runnerAnswers = next;
         };
         const reply = root.runnerCopy[verb](root.runnerContext, ...args, done, ...extra);
-        return reply === undefined ? "ok" : String(reply);
+        return reply === undefined ? "ok" : root.answer(String(reply));
     }
 
     function note(event) { root.startOrder = root.startOrder.concat([event]); }
@@ -170,6 +194,12 @@ Scope {
         return null;
     }
 
+    function shownIn(rootItem, child) {
+        for (let at = child; at !== null && at !== rootItem; at = at.parent)
+            if (!at.visible) return false;
+        return child.visible;
+    }
+
     // The first visible, enabled item named `type` whose `text`, or `name`
     // for an icon, is `text` inside the first visible item named
     // `scopeType` that draws `scopeText`, under an instance, or null: one
@@ -191,7 +221,7 @@ Scope {
         const item = root.instance(hostKey, id);
         if (item === null) return "absent";
         const found = root.descendants(item).find(child => root.typeName(child) === type && (child.text === text || child.label === text) && child.visible && (child.enabled || !enabledOnly));
-        return found === undefined ? "absent" : JSON.stringify(root.windowBox(found));
+        return found === undefined ? "absent" : root.json(root.windowBox(found));
     }
 
     function fieldOf(panel, id, key) {
@@ -201,7 +231,7 @@ Scope {
     function geometry(item) {
         if (item === null) return "absent";
         const at = item.mapToGlobal(0, 0);
-        return JSON.stringify([at.x, at.y, item.width, item.height]);
+        return root.json([at.x, at.y, item.width, item.height]);
     }
 
     // An item's box in its own window's coordinates, as [x, y, w, h]: a
@@ -223,7 +253,7 @@ Scope {
         const item = instance(hostKey, id);
         if (item === null) return "absent";
         const value = item[property];
-        const json = JSON.stringify(value);
+        const json = root.json(value);
         return json === undefined ? "undefined" : json;
     }
 
@@ -232,7 +262,7 @@ Scope {
         if (item === null) return "absent";
         if (name === "applySetting") {
             const a = JSON.parse(arg);
-            return item.writeSetting(a.id, a.key, a.value);
+            return root.answer(item.writeSetting(a.id, a.key, a.value));
         }
         if (name === "fieldChoice" || name === "chooseField") {
             const a = JSON.parse(arg);
@@ -244,7 +274,7 @@ Scope {
                 editor.choose(a.index);
                 return "chosen";
             }
-            return JSON.stringify({ model: editor.model, index: editor.currentIndex, text: editor.currentText, value: field.value, enabled: editor.enabled });
+            return root.json({ model: editor.model, index: editor.currentIndex, text: editor.currentText, value: field.value, enabled: editor.enabled });
         }
         if (name === "applyKey") {
             // A drawn Keys row's edit, as the row emits it: `key` absent
@@ -267,17 +297,17 @@ Scope {
             editor.cursorPosition = 1;
             heldField = { id: a.id, key: a.key, field: field };
             heldEditor = editor;
-            return JSON.stringify(windowBox(editor));
+            return root.json(windowBox(editor));
         }
         if (name === "heldFieldState") {
             if (heldField === null || heldEditor === null) return "absent";
-            return JSON.stringify({ same: fieldOf(item, heldField.id, heldField.key) === heldField.field,
+            return root.json({ same: fieldOf(item, heldField.id, heldField.key) === heldField.field,
                 focus: heldEditor.focus, activeFocus: heldEditor.activeFocus,
                 text: heldEditor.text, cursor: heldEditor.cursorPosition });
         }
         if (typeof item[name] !== "function") return "no-function";
         const result = item[name](arg);
-        return result === undefined ? "" : String(result);
+        return result === undefined ? "" : root.answer(String(result));
     }
 
     // A token's QML value as JSON.
@@ -287,7 +317,7 @@ Scope {
             if (node === undefined || node === null) return "absent";
             node = node[key];
         }
-        return node === undefined ? "absent" : JSON.stringify(node);
+        return node === undefined ? "absent" : root.json(node);
     }
 
     // Write into a published group the way a careless plugin would; answers
@@ -302,10 +332,24 @@ Scope {
 
     IpcHandler {
         target: "smoke"
+        function pageChars(): int { return root.replyChars; }
+        function page(id: string, index: int): string {
+            const text = root.replyPages[id];
+            if (text === undefined) return "absent";
+            const sliceChars = root.replyChars - 16;
+            const pages = Math.ceil(text.length / sliceChars);
+            if (index < 0 || index >= pages) return "refused: page=" + index + " pages=" + pages;
+            const out = pages + " " + text.slice(index * sliceChars, (index + 1) * sliceChars);
+            if (index === pages - 1) {
+                delete root.replyPages[id];
+                root.replyPageOrder = root.replyPageOrder.filter(replyId => replyId !== id);
+            }
+            return out;
+        }
         // Every top-level group of the token table that Theme does not
         // publish as a frozen object, so an empty list is the pass.
         function themeUnpublished(): string {
-            return JSON.stringify(Object.keys(Tokens.TOKENS).filter(group => typeof Theme[group] !== "object" || Theme[group] === null || !Object.isFrozen(Theme[group])));
+            return root.json(Object.keys(Tokens.TOKENS).filter(group => typeof Theme[group] !== "object" || Theme[group] === null || !Object.isFrozen(Theme[group])));
         }
         function themeValue(path: string): string { return root.themeValue(path); }
         // Each surface the layer host built for a plugin, sorted by screen:
@@ -318,7 +362,7 @@ Scope {
                     const win = entry.screens[name].QsWindow.window;
                     out.push([name, win.WlrLayershell.keyboardFocus === WlrKeyboardFocus.None, win.WlrLayershell.layer === WlrLayer.Overlay, win.exclusionMode === ExclusionMode.Normal]);
                 }
-            return JSON.stringify(out);
+            return root.json(out);
         }
         // A missing LayerHost inputItems binding, planted only in the
         // sandbox instance. A redraw restores the shipped binding.
@@ -336,7 +380,7 @@ Scope {
         // layer's position from `hyprctl layers`.
         function layerItemGeometry(id: string, type: string, property: string, value: string): string {
             const found = root.layerItem(id, type, property, value);
-            return found === null ? "absent" : JSON.stringify(root.windowBox(found));
+            return found === null ? "absent" : root.json(root.windowBox(found));
         }
         // Whether that item reports the pointer over it: "true", "false",
         // or "absent" with no such item, as itemHovered answers for an
@@ -360,7 +404,18 @@ Scope {
                         for (const name of names) values[name] = item[name] !== null && typeof item[name] === "object" && "hslHue" in item[name] ? item[name].toString() : item[name];
                         out.push([screen, [Math.round(at.x), Math.round(at.y), Math.round(item.width), Math.round(item.height)], values]);
                     }
-            return JSON.stringify(out);
+            return root.json(out);
+        }
+        // A small reading for latency rows that only need a count, not each text item.
+        function layerItemsWith(id: string, type: string, property: string, needle: string): int {
+            let total = 0;
+            for (const entry of Layers.entries.filter(e => e.pluginId === id))
+                for (const screen of Object.keys(entry.screens).sort()) {
+                    const rootItem = entry.screens[screen];
+                    for (const item of root.descendants(rootItem).filter(i => root.typeName(i) === type && root.shownIn(rootItem, i)))
+                        if (String(item[property]).indexOf(needle) !== -1) total += 1;
+                }
+            return total;
         }
         // Saves the first item of a type in a plugin's layer copies whose
         // property reads the value to PATH as a PNG: the item and its
@@ -381,7 +436,7 @@ Scope {
             return "absent";
         }
         // pending, saved or unsaved, and the path, for the last grab.
-        function grabbed(): string { return root.grab; }
+        function grabbed(): string { return root.answer(root.grab); }
         // Every shader effect in a plugin's layer copies: [screen, its
         // fragment shader's URL, whether it compiled].
         function layerShaders(id: string): string {
@@ -390,7 +445,7 @@ Scope {
                 for (const screen of Object.keys(entry.screens).sort())
                     for (const item of root.descendants(entry.screens[screen]).filter(i => i instanceof ShaderEffect))
                         out.push([screen, String(item.fragmentShader), item.status === ShaderEffect.Compiled]);
-            return JSON.stringify(out);
+            return root.json(out);
         }
         // A service's ListModel property as a list of rows, each the roles
         // named in the comma list.
@@ -403,10 +458,10 @@ Scope {
                 const row = list.get(i);
                 out.push(roles.split(",").map(r => row[r]));
             }
-            return JSON.stringify(out);
+            return root.json(out);
         }
-        function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.closeGeometry(index); }
-        function toastWindowGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : Plugins.hosts.toast.toastWindowGeometry(index); }
+        function toastCloseGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : root.answer(Plugins.hosts.toast.closeGeometry(index)); }
+        function toastWindowGeometry(index: int): string { return Plugins.hosts.toast === undefined ? "absent" : root.answer(Plugins.hosts.toast.toastWindowGeometry(index)); }
         // The requirement notice's dialog: whether an item in it holds the
         // keyboard focus, and what it draws as { title, message, rows,
         // actions, busy }, `rows` the visible lines under the message.
@@ -419,16 +474,16 @@ Scope {
         function noticeWindowGeometry(part: string): string {
             const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
             if (dialog === null) return "absent";
-            if (part === "card") return JSON.stringify(root.windowBox(dialog));
+            if (part === "card") return root.json(root.windowBox(dialog));
             if (part !== "title") return "refused: part=" + part + " want=card|title";
             const title = root.descendants(dialog).find(child => root.typeName(child) === "Label" && child.visible && child.text === dialog.title);
-            return title === undefined ? "absent" : JSON.stringify(root.windowBox(title));
+            return title === undefined ? "absent" : root.json(root.windowBox(title));
         }
         function noticeDrawn(): string {
             const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
             if (dialog === null) return "absent";
             const labels = root.descendants(dialog).filter(child => root.typeName(child) === "Label" && child.visible);
-            return JSON.stringify({
+            return root.json({
                 title: dialog.title,
                 message: dialog.message,
                 rows: labels.map(label => label.text).filter(text => text !== dialog.title && text !== dialog.message && !dialog.entries.some(entry => entry.label === text)),
@@ -457,7 +512,7 @@ Scope {
                     const m = /^(\w+)_QMLTYPE_/.exec(String(drawn));
                     if (m !== null) seen[m[1]] = true;
                 }
-            return JSON.stringify(names.filter(name => !seen[name]));
+            return root.json(names.filter(name => !seen[name]));
         }
         // Examples drawn past the gallery's right edge, so a row that does
         // not wrap to the panel names itself; an empty list is the pass.
@@ -470,7 +525,7 @@ Scope {
                 const right = child.mapToItem(item, child.width, 0).x;
                 if (right > item.width + 1) out.push(String(child).split("(")[0] + ":" + Math.round(right));
             }
-            return JSON.stringify(out);
+            return root.json(out);
         }
         // Scrolls the one shown ScrollArea under an instance to `y`, held
         // inside its content, so scripts/sandbox-shots.sh captures each
@@ -483,7 +538,7 @@ Scope {
             if (areas.length !== 1) return "shown-scroll-areas=" + areas.length;
             const flick = areas[0];
             flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
-            return JSON.stringify([flick.contentY, flick.contentHeight, flick.height]);
+            return root.json([flick.contentY, flick.contentHeight, flick.height]);
         }
         function galleryHeadings(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
@@ -499,7 +554,7 @@ Scope {
             const orbs = copyName === "" ? root.descendants(item).filter(child => root.typeName(child) === "VoiceOrb") : [item];
             const title = root.descendants(item).find(child => root.typeName(child) === "Label" && child.text === "Gallery");
             const viewport = root.shownScrollAreas(item)[0];
-            return JSON.stringify(orbs.map(orb => {
+            return root.json(orbs.map(orb => {
                 const shader = root.descendants(orb).find(child => child instanceof ShaderEffect);
                 const point = orb.mapToGlobal(0, 0);
                 const viewPoint = viewport === undefined ? null : orb.mapToItem(viewport, 0, 0);
@@ -546,17 +601,17 @@ Scope {
                 let value = example;
                 for (const key of property.split(".")) value = value === null || value === undefined ? undefined : value[key];
                 if (value === null || value === undefined || typeof value.a !== "number") return "not-colour";
-                return ThemeLogic.formatColor(value);
+                return root.answer(ThemeLogic.formatColor(value));
             }
             return "no-example";
         }
         function themeWrite(path: string, value: string): string { return root.themeWrite(path, value); }
-        function themeName(): string { return Theme.name; }
+        function themeName(): string { return root.answer(Theme.name); }
         function themeRevision(): int { return Theme.revision; }
         function fontAvailable(family: string): bool { return Qt.fontFamilies().indexOf(family) !== -1; }
         function buildCount(): int { return root.builds; }
         function frames(): int { return root.frames; }
-        function startOrder(): string { return JSON.stringify(root.startOrder); }
+        function startOrder(): string { return root.json(root.startOrder); }
         // A detached process the shell starts that runs until GATE exists,
         // for SECONDS at most, so it can outlive the shell and never the
         // row. It stands in for a long child of the shell, such as a
@@ -585,7 +640,7 @@ Scope {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
             const items = root.descendants(item);
-            return JSON.stringify(items.map(child => {
+            return root.json(items.map(child => {
                 const at = child.mapToGlobal(0, 0);
                 return {
                     type: root.typeName(child),
@@ -609,7 +664,7 @@ Scope {
                 const own = node instanceof Text && node.visible && node.text !== "" ? [node.text] : [];
                 return own.concat(...Array.from(node.children || []).map(texts));
             };
-            return JSON.stringify(root.descendants(item).filter(child => root.typeName(child) === type).map(texts));
+            return root.json(root.descendants(item).filter(child => root.typeName(child) === type).map(texts));
         }
         // Every item named `type` under an instance, in tree order, as the
         // colours its visible descendants named `childType` fill with,
@@ -617,7 +672,7 @@ Scope {
         function itemColours(hostKey: string, id: string, type: string, childType: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
-            return JSON.stringify(root.descendants(item).filter(child => root.typeName(child) === type).map(found =>
+            return root.json(root.descendants(item).filter(child => root.typeName(child) === type).map(found =>
                 root.descendants(found).filter(child => child !== found && child.visible && root.typeName(child) === childType).map(child => ThemeLogic.formatColor(child.color))));
         }
         // The box of the first visible, enabled item named `type` whose
@@ -650,7 +705,7 @@ Scope {
             if (item === null) return "absent";
             const states = { [Image.Null]: "null", [Image.Ready]: "ready", [Image.Loading]: "loading", [Image.Error]: "error" };
             const local = url => url === "" ? "" : decodeURIComponent(url.replace(/^file:\/\//, "").replace(/\?.*$/, ""));
-            return JSON.stringify(root.descendants(item).filter(child => child instanceof Image).map(image =>
+            return root.json(root.descendants(item).filter(child => child instanceof Image).map(image =>
                 [local(image.source.toString()), states[image.status], [image.width, image.height], [image.implicitWidth, image.implicitHeight], [image.sourceSize.width, image.sourceSize.height]]));
         }
         // The screen the host handed an instance, as [width, height,
@@ -659,7 +714,7 @@ Scope {
         function screenOf(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null || !item.screen) return "absent";
-            return JSON.stringify([item.screen.width, item.screen.height, item.screen.devicePixelRatio]);
+            return root.json([item.screen.width, item.screen.height, item.screen.devicePixelRatio]);
         }
         function hasWorkspaceAction(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);
@@ -670,7 +725,7 @@ Scope {
         function textOf(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             const label = item === null ? undefined : root.descendants(item).find(child => child instanceof Text);
-            return label === undefined ? "absent" : JSON.stringify(label.text);
+            return label === undefined ? "absent" : root.json(label.text);
         }
         function drawnFields(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
@@ -679,7 +734,7 @@ Scope {
             for (const row of item.plugins) counts[row.id] = 0;
             for (const field of root.descendants(item))
                 if (typeof field.apply === "function" && field.pluginId !== undefined) counts[field.pluginId] += 1;
-            return JSON.stringify(counts);
+            return root.json(counts);
         }
         function childIndex(hostKey: string, id: string): int {
             const item = root.instance(hostKey, id);
@@ -697,7 +752,7 @@ Scope {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
             const takesEdit = child => child instanceof TextInput || (child instanceof TextEdit && !child.readOnly) || child.checkable === true || typeof child.apply === "function" || typeof child.applyKey === "function";
-            return JSON.stringify(root.descendants(item).filter(child => root.typeName(child) === "StatusRow").map(row =>
+            return root.json(root.descendants(item).filter(child => root.typeName(child) === "StatusRow").map(row =>
                 root.descendants(row).filter(child => child !== row && takesEdit(child)).map(child => root.typeName(child))));
         }
         // Keep an instance's `status` provider, answering `held` or `absent`.
@@ -713,16 +768,16 @@ Scope {
         function doctorOffer(hostKey: string, id: string, owner: string, commands: string): string {
             const item = root.instance(hostKey, id);
             if (item === null || item.shell === null || item.shell.doctor === undefined) return "absent";
-            return item.shell.doctor.offer(owner, commands.split(","));
+            return root.answer(item.shell.doctor.offer(owner, commands.split(",")));
         }
         function doctorMissing(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null || item.shell === null || item.shell.doctor === undefined) return "absent";
-            return JSON.stringify(item.shell.doctor.missing);
+            return root.json(item.shell.doctor.missing);
         }
         // Publish a JSON value through the kept provider; its reply.
         function heldStatusSet(key: string, valueJson: string): string {
-            return root.heldStatus === null ? "absent" : root.heldStatus.set(key, JSON.parse(valueJson));
+            return root.heldStatus === null ? "absent" : root.answer(root.heldStatus.set(key, JSON.parse(valueJson)));
         }
         // The first visible, enabled item named `type` under an instance
         // whose `text`, or `label` for an icon button, is `text`, as its
@@ -730,7 +785,7 @@ Scope {
         // windowGeometry for the item scopedItem finds.
         function scopedWindowGeometry(hostKey: string, id: string, scopeType: string, scopeText: string, type: string, text: string): string {
             const found = root.scopedItem(hostKey, id, scopeType, scopeText, type, text);
-            return found === null ? "absent" : JSON.stringify(root.windowBox(found));
+            return found === null ? "absent" : root.json(root.windowBox(found));
         }
         function windowGeometry(hostKey: string, id: string, type: string, text: string): string {
             return root.labelledBox(hostKey, id, type, text, true);
@@ -763,7 +818,7 @@ Scope {
                 at = at.nextItemInFocusChain(steps > 0);
                 out.push(at ? pageOf(at) : "end");
             }
-            return JSON.stringify(out);
+            return root.json(out);
         }
         // Every Menu under an instance, in tree order, as it stands: open or
         // not, its entries' texts, the checked ones, the highlighted one and
@@ -771,7 +826,7 @@ Scope {
         function menus(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
-            return JSON.stringify(root.descendants(item).filter(child => typeof child.items === "function" && child.opened !== undefined).map(menu => {
+            return root.json(root.descendants(item).filter(child => typeof child.items === "function" && child.opened !== undefined).map(menu => {
                 const entries = menu.items();
                 return {
                     opened: menu.opened,
@@ -790,7 +845,7 @@ Scope {
         function scrollAreas(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
-            return JSON.stringify(root.shownScrollAreas(item).map(area => ({
+            return root.json(root.shownScrollAreas(item).map(area => ({
                 contentY: area.contentY,
                 contentHeight: area.contentHeight,
                 height: area.height,
@@ -811,7 +866,7 @@ Scope {
             if (item === null) return "absent";
             const found = root.descendants(item).find(child => root.typeName(child) === type);
             if (found === undefined) return "absent";
-            const json = JSON.stringify(found[property]);
+            const json = root.json(found[property]);
             return json === undefined ? "undefined" : json;
         }
         // readDescendant over the items whose every ancestor is visible:
@@ -823,7 +878,7 @@ Scope {
             const placed = child => { for (let at = child.parent; at !== null && at !== item; at = at.parent) if (!at.visible) return false; return true; };
             const found = root.descendants(item).find(child => root.typeName(child) === type && placed(child));
             if (found === undefined) return "absent";
-            const json = JSON.stringify(found[property]);
+            const json = root.json(found[property]);
             return json === undefined ? "undefined" : json;
         }
         // The name the theme browser's centre card draws, as JSON, or
@@ -832,7 +887,7 @@ Scope {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
             const found = root.descendants(item).find(child => root.typeName(child) === "ThemeCard" && child.current === true);
-            return found === undefined ? "absent" : JSON.stringify(found.modelData.name);
+            return found === undefined ? "absent" : root.json(found.modelData.name);
         }
         function paletteStrips(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
@@ -842,7 +897,7 @@ Scope {
                     if (at.visible === false) return false;
                 return true;
             };
-            return JSON.stringify(root.descendants(item)
+            return root.json(root.descendants(item)
                 .filter(child => root.typeName(child) === "ThemeCard")
                 .map(card => {
                     const strip = root.descendants(card).find(child => child.objectName === "paletteStrip" || (root.typeName(child) === "Row" && child.parent === card && child.height === Theme.space.xxl));
@@ -861,7 +916,7 @@ Scope {
             if (item === null) return "absent";
             const rows = root.descendants(item).filter(child => /^LauncherRow_QMLTYPE_/.test(String(child)) && child.index >= 0);
             rows.sort((a, b) => a.index - b.index);
-            return JSON.stringify(rows.map(row => [row.kind, row.label, row.detail]));
+            return root.json(rows.map(row => [row.kind, row.label, row.detail]));
         }
         // The launcher's edge light: the URL its shader loaded from and
         // whether the engine compiled it.
@@ -870,7 +925,7 @@ Scope {
             if (item === null) return "absent";
             const shader = root.descendants(item).find(child => child instanceof ShaderEffect);
             if (shader === undefined) return "no-shader";
-            return JSON.stringify({ url: String(shader.fragmentShader), compiled: shader.status === ShaderEffect.Compiled, log: shader.log });
+            return root.json({ url: String(shader.fragmentShader), compiled: shader.status === ShaderEffect.Compiled, log: shader.log });
         }
         // Build a copy of a popup from FILE, a path beside the shipped file
         // so its imports and sibling types resolve as the shipped one's do,
@@ -898,7 +953,7 @@ Scope {
                 } else initial[key] = resolve(value);
             }
             const component = Qt.createComponent("file://" + file);
-            if (component.status !== Component.Ready) return "error: " + component.errorString().trim().replace(/\n/g, " ");
+            if (component.status !== Component.Ready) return root.answer("error: " + component.errorString().trim().replace(/\n/g, " "));
             const made = component.createObject(item, initial);
             if (made === null) return "error: create";
             for (const key of Object.keys(lists)) made[key] = lists[key];
@@ -917,7 +972,7 @@ Scope {
         // PROPERTY of copy NAME as JSON, or `absent`.
         function popupRead(name: string, property: string): string {
             const copy = root.popupCopies[name];
-            return copy === undefined ? "absent" : JSON.stringify(copy[property]);
+            return copy === undefined ? "absent" : root.json(copy[property]);
         }
         function popupDrop(name: string): string {
             const copy = root.popupCopies[name];
@@ -939,7 +994,7 @@ Scope {
             const original = entry.screens[Object.keys(entry.screens).sort()[0]];
             if (original === undefined) return "no-screen";
             const component = Qt.createComponent("file://" + file);
-            if (component.status !== Component.Ready) return "error: " + component.errorString().trim().replace(/\n/g, " ");
+            if (component.status !== Component.Ready) return root.answer("error: " + component.errorString().trim().replace(/\n/g, " "));
             const made = component.createObject(root, { placement: "center", inset: 0, visible: false });
             if (made === null) return "error: create";
             made.screen = original.screen;
@@ -966,7 +1021,7 @@ Scope {
         function runnerLoad(file: string): string {
             if (root.runnerCopy !== null) return "loaded";
             const component = Qt.createComponent("file://" + file);
-            if (component.status !== Component.Ready) return "error: " + component.errorString();
+            if (component.status !== Component.Ready) return root.answer("error: " + component.errorString());
             const made = component.createObject(root);
             if (made === null) return "error: create";
             root.runnerAnswers = {};
@@ -988,7 +1043,7 @@ Scope {
             return verb in root.runnerAnswers ? root.runnerAnswers[verb].count : 0;
         }
         // The copy's lending record, or `absent`.
-        function runnerRecord(): string { return root.runnerCopy === null ? "absent" : JSON.stringify(root.runnerCopy.record()); }
+        function runnerRecord(): string { return root.runnerCopy === null ? "absent" : root.json(root.runnerCopy.record()); }
         function runnerDrop(): string {
             if (root.runnerCopy === null) return "absent";
             root.runnerCopy.destroy();

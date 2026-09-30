@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One planted reader per rule of check-smoke-readers.py, the forms it must
 pass, the unreadable directories, and the repository's own rows against a
-coverage floor, with a copy of the notifications row whose emoji reader runs
+coverage floor, with a copy of a notifications row JSON reader running
 python3 itself as the required member. Each row builds a throwaway rows
 directory holding one row, runs the check on it and asserts the rule key,
 the line and the exit status."""
@@ -92,11 +92,11 @@ with tempfile.TemporaryDirectory() as tmp:
     counts = re.fullmatch(r"check-smoke-readers: ok files=(\d+) readers=(\d+)\n", result.stdout)
     check("the repository's rows pass above the coverage floor", result.returncode == 0 and counts is not None and int(counts.group(1)) >= 30 and int(counts.group(2)) >= 200, result)
 
-    # The required member: the notifications row's emoji reader, reverted
-    # to python3 in a copy, is found where the row defines it.
+    # The required member: a notifications row JSON reader, reverted to
+    # python3 in a copy, is found where the row defines it.
     with open(os.path.join(ROWS, "notifications.sh")) as source:
         text = source.read()
-    reader = "emoji_texts() { ipc smoke layerItems vgs.notifications QQuickText text,visible | py_reply '"
+    reader = "drawn_images() { ipc smoke layerItems vgs.notifications QQuickText text,visible | py_reply '"
     if text.count(reader) != 1:
         print(f"FAIL  the emoji reader is not defined once in {ROWS}/notifications.sh: the required member moved")
         failures += 1
@@ -107,7 +107,7 @@ with tempfile.TemporaryDirectory() as tmp:
         line = text[:text.index(reader)].count("\n") + 1
         found = [l for l in result.stdout.splitlines() if not l.startswith("check-smoke-readers:")]
         want = f"inline-reader {os.path.join(rows, 'row.sh')}:{line} "
-        check("the emoji reader run through python3 is refused", result.returncode == 1 and len(found) == 1 and found[0].startswith(want), result)
+        check("the notifications JSON reader run through python3 is refused", result.returncode == 1 and len(found) == 1 and found[0].startswith(want), result)
 
 if failures:
     print(f"test-check-smoke-readers: failures={failures}")

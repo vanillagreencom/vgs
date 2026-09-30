@@ -70,8 +70,8 @@
 # call for a Slack card with six custom emoji to its body naming the
 # images on every screen, and VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS on the time
 # from the history call to forty such cards naming theirs
-# (rows/notifications.sh), each polled back to back through the probe,
-# one reading per IPC round trip of about 22 ms. The defaults are twice the
+# (rows/notifications.sh), each counted by the probe and polled back to
+# back, one reading per IPC round trip of about 22 ms. The defaults are twice the
 # highest reading of two passes of that procedure on the same machine on
 # 2026-09-29, at load average 4 to 7, with 10 toast and 6 inbox readings a
 # pass: 43 to 61 ms and 101 to 114 ms.

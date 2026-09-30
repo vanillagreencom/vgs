@@ -109,22 +109,44 @@ chmod 755 "$shim/notify-send"
 warden_sent_count() { if [[ -f $warden_sent ]]; then wc -l <"$warden_sent"; else echo 0; fi; }
 # warden_notices_since N: each call after the first N as [urgency, title,
 # whether it offers Open vsys], sorted, one JSON list. The runs one status
-# starts write in any order.
-warden_notices_since() {
-  python3 - "$warden_sent" "$1" <<'PY'
+# starts write in any order. A record still being appended has no newline
+# yet, so these readers ignore that last record until the next poll.
+warden_record_read() {
+  python3 - "$warden_sent" "$@" <<'PY'
 import json, os, sys
-path, skip = sys.argv[1], int(sys.argv[2])
-calls = [json.loads(l) for l in open(path)][skip:] if os.path.exists(path) else []
-print(json.dumps(sorted([a[a.index("-u") + 1], a[a.index("--") + 1], "-A" in a] for a in calls)))
+
+def records(path):
+    if not os.path.exists(path):
+        return []
+    text = open(path).read()
+    lines = text.splitlines()
+    if text and not text.endswith("\n"):
+        lines = lines[:-1]
+    return [json.loads(line) for line in lines]
+
+path, mode = sys.argv[1], sys.argv[2]
+if mode == "notices":
+    calls = records(path)[int(sys.argv[3]):]
+    print(json.dumps(sorted([a[a.index("-u") + 1], a[a.index("--") + 1], "-A" in a] for a in calls)))
+elif mode == "call":
+    calls = records(path)[int(sys.argv[3]):]
+    found = [a for a in calls if a[a.index("--") + 1] == sys.argv[4]]
+    print(json.dumps(found[0]) if found else "absent")
+else:
+    raise SystemExit("mode=" + mode)
 PY
 }
+warden_notices_since() { warden_record_read notices "$1"; }
 # warden_call N TITLE: the argv of the first call after the first N whose
 # title is TITLE, as one JSON line, or `absent`.
-warden_call() { python3 -c '
-import json, os, sys
-calls = [json.loads(l) for l in open(sys.argv[1])][int(sys.argv[2]):] if os.path.exists(sys.argv[1]) else []
-found = [a for a in calls if a[a.index("--") + 1] == sys.argv[3]]
-print(json.dumps(found[0]) if found else "absent")' "$warden_sent" "$1" "$2"; }
+warden_call() { warden_record_read call "$1" "$2"; }
+warden_whole_line_control() {
+  local planted="$sandbox/warden-cut-records"
+  printf '%s\n' '["-a", "Agent Warden", "-u", "low", "--", "Whole", "body"]' >"$planted"
+  printf '%s' '["-a", "Agent Warden", "-u", "low", "--", "Cut' >>"$planted"
+  (warden_sent="$planted"; printf '%s|%s\n' "$(warden_notices_since 0)" "$(warden_call 0 Whole)")
+}
+expect "control: whole-line notice readers ignore a cut final record" '[["low", "Whole", false]]|["-a", "Agent Warden", "-u", "low", "--", "Whole", "body"]' warden_whole_line_control
 # The heartbeat as the warden reads it: `fresh` when the file holds a time
 # in milliseconds and was written in the last 10 s, `stale` otherwise, or
 # `absent`.

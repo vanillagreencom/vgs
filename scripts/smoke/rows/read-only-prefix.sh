@@ -85,9 +85,7 @@ PY
 tree_snapshot "$readonly_dest/usr" >"$sandbox/read-only-before.txt"
 
 installed_bin="$readonly_dest/usr/bin/vgsh"
-ipc() {
-  "${shell_env[@]}" "$installed_bin" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
-}
+ipc() { ipc_via "$installed_bin" "$@"; }
 if stop_shell && start_shell "$readonly_dest/usr" "$sandbox/read-only-qs.log" bar PATH="$signal_shim:$shell_start_path" VGS_READ_ONLY_SIGNAL_LOG="$signal_log"; then
   ok "the shell starts from a non-writable installed prefix"
 fi

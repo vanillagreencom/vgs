@@ -35,9 +35,7 @@
 # names the runner among its holders. The row runs last and leaves the
 # last copy running for the harness's teardown.
 set -euo pipefail
-ipc() {
-  "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
-}
+ipc() { ipc_via "$repo/bin/vgsh" "$@"; }
 for fixture in acme.locker acme.contention; do
   rm -rf -- "$home/.config/vgs/plugins/$fixture"
   mkdir -p -- "$home/.config/vgs/plugins/$fixture"

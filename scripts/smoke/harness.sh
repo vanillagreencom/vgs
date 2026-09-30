@@ -615,25 +615,136 @@ expect_cursor_at() { # LABEL SHAPE X Y
   fail "$label: got ${seen:-no shape} want $want"
 }
 
-# qs prints its own log lines on stdout ahead of the reply; the reply is the last line.
-ipc() {
-  "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
+# Probe.qml uses the same bound before it pages a reply.
+ipc_reply_chars=32768
+ipc_last_reply=""
+
+ipc_call_last() { # VGSH TARGET FUNCTION [ARG...]
+  local vgsh="$1" out status
+  shift
+  ipc_last_reply=""
+  out="$("${shell_env[@]}" "$vgsh" ipc call "$@" 2>>"$sandbox/ipc.log")" || status=$?
+  status="${status:-0}"
+  ipc_last_reply="${out##*$'\n'}"
+  return "$status"
+}
+
+ipc_strip_ansi() { sed $'s/\x1b\[[0-9;]*m//g' <<<"$1"; }
+
+ipc_failure_text() { # LINE
+  local line="$1" stripped
+  case "$line" in
+    *quickshell.ipc*|"Function not found."|"Target not found."|"Not ready to accept queries yet."|"Target required to send message."|"Function required to send message."|Too\ many\ arguments\ provided*|Too\ few\ arguments\ provided*|Unable\ to\ parse\ argument*|Function\ definition:*) ;;
+    *) return 1 ;;
+  esac
+  stripped="$(ipc_strip_ansi "$line")" || return 1
+  case "$stripped" in
+    *"ERROR quickshell.ipc"*|"Function not found."|"Target not found."|"Not ready to accept queries yet."|"Target required to send message."|"Function required to send message."|Too\ many\ arguments\ provided*|Too\ few\ arguments\ provided*|Unable\ to\ parse\ argument*|Function\ definition:*) printf '%s\n' "$stripped" ;;
+    *) return 1 ;;
+  esac
+}
+
+ipc_failed() { # TARGET FUNCTION LINE
+  local text
+  text="$(ipc_failure_text "$3")" || return 1
+  printf 'ipc: %s %s: %s\n' "$1" "$2" "$text" >>"$sandbox/ipc.log"
+  return 0
+}
+
+ipc_page_failed() { # TEXT
+  printf 'ipc: smoke page: %s\n' "$1" >>"$sandbox/ipc.log"
+  printf 'ipc-failed\n'
+  return 1
+}
+
+ipc_pages() { # VGSH ID
+  local vgsh="$1" id="$2" index=0 pages="" reply count slice text="" status
+  while :; do
+    if ipc_call_last "$vgsh" smoke page "$id" "$index"; then
+      :
+    else
+      status=$?
+      ipc_page_failed "status=$status reply=${ipc_last_reply:-}"
+      return 1
+    fi
+    if ipc_failed smoke page "$ipc_last_reply"; then
+      printf 'ipc-failed\n'
+      return 1
+    fi
+    reply="$ipc_last_reply"
+    if [[ $reply =~ ^([0-9]+)[[:space:]](.*)$ ]]; then
+      count="${BASH_REMATCH[1]}"
+      slice="${BASH_REMATCH[2]}"
+    else
+      ipc_page_failed "bad-header reply=$reply"
+      return 1
+    fi
+    if [[ -z $pages ]]; then
+      pages="$count"
+      if [[ ! $pages =~ ^[1-9][0-9]*$ ]]; then ipc_page_failed "bad-count reply=$reply"; return 1; fi
+    elif [[ $count != "$pages" ]]; then
+      ipc_page_failed "count-changed first=$pages reply=$reply"
+      return 1
+    fi
+    text+="$slice"
+    index=$((index + 1))
+    [[ $index -ge $pages ]] && break
+  done
+  printf '%s\n' "$text"
+}
+
+ipc_via() { # VGSH TARGET FUNCTION [ARG...]
+  local vgsh="$1" target="$2" fn="$3" status reply id
+  shift 3
+  if ipc_call_last "$vgsh" "$target" "$fn" "$@"; then
+    :
+  else
+    status=$?
+    [[ -n $ipc_last_reply ]] && printf '%s\n' "$ipc_last_reply"
+    return "$status"
+  fi
+  if ipc_failed "$target" "$fn" "$ipc_last_reply"; then
+    printf 'ipc-failed\n'
+    return 1
+  fi
+  reply="$ipc_last_reply"
+  if [[ $target == smoke && $reply =~ ^paged=([0-9]+)$ ]]; then
+    id="${BASH_REMATCH[1]}"
+    ipc_pages "$vgsh" "$id"
+    return
+  fi
+  if ((${#reply} > ipc_reply_chars)); then
+    printf '%s %s chars=%d bound=%d\n' "$target" "$fn" "${#reply}" "$ipc_reply_chars" >>"$sandbox/ipc-oversize.log"
+  fi
+  printf '%s\n' "$reply"
+}
+
+# qs can print log lines before a reply; ipc_via returns one whole reply,
+# reassembles probe pages and answers ipc-failed for client failure lines.
+ipc() { ipc_via "$repo/bin/vgsh" "$@"; }
+
+ipc_oversize_check() { # ROW
+  [[ -s $sandbox/ipc-oversize.log ]] || return 0
+  fail "$1: unpaged IPC replies exceeded $ipc_reply_chars chars"
+  sed 's/^/        /' -- "$sandbox/ipc-oversize.log"
+  : >"$sandbox/ipc-oversize.log"
 }
 # py_reply PROGRAM [ARG...]: python3 -c PROGRAM ARG... over the reply on
 # stdin, or the reply itself when it is a state word such as `absent`,
 # which the smoke probe answers in place of JSON while the instance,
-# surface or item it reads is not built, and `recorded` before the
-# terminal stand-in writes its record, or a count word such as `areas=0`
-# that an upstream reader answers. A poll over such a reply reads
-# through this, so it retries on the word rather than raising on it. A
-# word is lower-case letters joined by hyphens, with an optional `=N`;
-# true, false and null are JSON and parsed. An empty reply, what a failed
-# ipc call prints, is a failed read that answers the word `empty`, so a
-# poll's last reading names it. Every row reader that parses JSON from its
-# stdin runs through this: scripts/check-smoke-readers.py refuses one that
-# python3 runs itself, in the forms its header names.
+# surface or item it reads is not built, `ipc-failed` when the transport
+# saw a failed client reply, and `recorded` before the terminal stand-in
+# writes its record, or a count word such as `areas=0` that an upstream
+# reader answers. A poll over such a reply reads through this, so it
+# retries on the word rather than raising on it. A word is lower-case
+# letters joined by hyphens, with an optional `=N`; true, false and null
+# are JSON and parsed. An empty reply is a failed read that answers the
+# word `empty`. On a Python failure, py_reply prints an escaped prefix of
+# the raw reply. Every row reader that parses JSON from its stdin runs
+# through this: scripts/check-smoke-readers.py refuses one that python3
+# runs itself, in the forms its header names.
 py_reply() { # PROGRAM [ARG...]
-  local reply
+  local reply status
   reply="$(cat)" || return
   if [[ -z $reply ]]; then
     echo empty
@@ -643,7 +754,16 @@ py_reply() { # PROGRAM [ARG...]
     printf '%s\n' "$reply"
     return 0
   fi
-  python3 -c "$1" "${@:2}" <<<"$reply"
+  if python3 -c "$1" "${@:2}" <<<"$reply"; then
+    return 0
+  else
+    status=$?
+  fi
+  python3 - "$reply" <<'PY' >&2
+import sys
+print("py_reply: the reply was: " + repr(sys.argv[1][:200]))
+PY
+  return "$status"
 }
 
 # The theme runner's jobs as [verb, name, waiters] rows, from the lending
@@ -1466,6 +1586,7 @@ smoke_row() { # NAME [DIR]
   elif [[ $smoke_row_count -gt 0 ]]; then
     fail "$smoke_row_name: its output holds $smoke_row_count Python traceback(s): $smoke_row_out"
   fi
+  ipc_oversize_check "$smoke_row_name"
 }
 
 smoke_finish() {
