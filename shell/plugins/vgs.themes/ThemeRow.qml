@@ -5,7 +5,9 @@ import qs.Ui
 // One row in the themes panel. An installed row applies its package, an
 // uninstalled catalog row runs its action, and a row with neither is not a
 // click target. The row shows the package name, source or catalog metadata,
-// badges, a swatch, an optional action button and problem lines.
+// badges, a swatch, an optional action button and problem lines; the
+// button and the lines start at the row's text column, `stack.row` under
+// the row and each other.
 Column {
     id: root
 
@@ -48,10 +50,11 @@ Column {
     // requests the row's action.
     signal actionRequested()
 
-    spacing: Theme.space.xxs
+    spacing: Theme.stack.row
 
     ListItem {
-        width: parent.width
+        id: row
+        width: root.width
         text: root.name
         secondary: root.reason === "" ? root.source : root.source + ", " + root.reason
         iconName: "palette"
@@ -72,7 +75,7 @@ Column {
             Badge { visible: root.packageState === "refused"; text: "Refused"; tone: "danger" },
             Row {
                 visible: root.busyText !== ""
-                spacing: Theme.space.xxs
+                spacing: Theme.control.gap
                 anchors.verticalCenter: parent.verticalCenter
                 Spinner { anchors.verticalCenter: parent.verticalCenter }
                 Label {
@@ -83,7 +86,7 @@ Column {
             },
             Row {
                 visible: root.swatch !== null
-                spacing: Theme.space.xxs
+                spacing: Theme.stack.row
                 anchors.verticalCenter: parent.verticalCenter
                 Repeater {
                     model: root.swatch === null ? [] : Object.keys(root.swatch)
@@ -101,7 +104,7 @@ Column {
 
     Button {
         visible: root.actionLabel !== ""
-        x: Theme.row.paddingX
+        x: row.textStart
         width: implicitWidth
         height: implicitHeight
         text: root.actionLabel
@@ -117,8 +120,8 @@ Column {
         Label {
             required property string modelData
             role: "hint"
-            x: Theme.row.paddingX
-            width: root.width - 2 * Theme.row.paddingX
+            x: row.textStart
+            width: Math.max(0, root.width - row.textStart - row.rightPadding)
             text: modelData
             color: Theme.color.danger
             wrapMode: Text.Wrap

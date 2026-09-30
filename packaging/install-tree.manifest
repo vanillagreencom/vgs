@@ -263,6 +263,7 @@ f share/vgs/shell/plugins/vgs.themes/Browser.qml
 f share/vgs/shell/plugins/vgs.themes/BrowserLogic.js
 f share/vgs/shell/plugins/vgs.themes/DesktopPreview.qml
 f share/vgs/shell/plugins/vgs.themes/Files.js
+f share/vgs/shell/plugins/vgs.themes/KeyHints.qml
 f share/vgs/shell/plugins/vgs.themes/Service.qml
 f share/vgs/shell/plugins/vgs.themes/ThemeCard.qml
 f share/vgs/shell/plugins/vgs.themes/ThemePaletteStrip.qml

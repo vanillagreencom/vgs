@@ -356,170 +356,198 @@ FocusScope {
         event.accepted = true;
     }
 
-    Column {
-        id: controls
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: carousel.top
-        anchors.bottomMargin: Theme.space.lg
-        spacing: Theme.space.lg
+    // One inset box centred on the output, as Omarchy centres its picker:
+    // the tabs and the scope in the header, the rail in the body, and the
+    // selected card's name, badges and filter, the running step, the
+    // failures and the keys in the footer.
+    Pane {
+        id: layout
+        anchors.centerIn: parent
+        width: parent.width
+        container: "overlay"
+        fitToContent: true
+        maximumHeight: parent.height
 
-        Tabs {
-            anchors.horizontalCenter: parent.horizontalCenter
-            model: BrowserLogic.VIEWS.map(v => v.label)
-            currentIndex: 0
-            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)
-            onCurrentIndexChanged: if (currentIndex !== 0) root.switchRequested(1)
-        }
+        header: [
+            Column {
+                width: layout.contentWidth
+                spacing: Theme.stack.group
 
-        Row {
-            id: scope
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.space.sm
+                Tabs {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    model: BrowserLogic.VIEWS.map(v => v.label)
+                    currentIndex: 0
+                    onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)
+                    onCurrentIndexChanged: if (currentIndex !== 0) root.switchRequested(1)
+                }
 
-            SegmentedControl {
-                anchors.verticalCenter: parent.verticalCenter
-                model: BrowserLogic.SCOPES.map(s => s.label)
-                currentIndex: root.scopeIndex
-                // A segment click focuses the control, and a click on the chosen
-                // segment emits no `activated`, so the control hands the keyboard
-                // back to the rail whenever it takes it, after the click ends.
-                onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)
-                onActivated: index => {
-                    root.scopeIndex = index;
-                    currentIndex = Qt.binding(() => root.scopeIndex);
+                Row {
+                    id: scope
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: Theme.stack.inline
+
+                    SegmentedControl {
+                        anchors.verticalCenter: parent.verticalCenter
+                        model: BrowserLogic.SCOPES.map(s => s.label)
+                        currentIndex: root.scopeIndex
+                        // A segment click focuses the control, and a click on the chosen
+                        // segment emits no `activated`, so the control hands the keyboard
+                        // back to the rail whenever it takes it, after the click ends.
+                        onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)
+                        onActivated: index => {
+                            root.scopeIndex = index;
+                            currentIndex = Qt.binding(() => root.scopeIndex);
+                        }
+                    }
+                    Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+I" }
                 }
             }
-            Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+I" }
-        }
-    }
+        ]
 
-    CardCarousel {
-        id: carousel
-        anchors.top: parent.top
-        anchors.topMargin: controls.implicitHeight + Theme.space.xxxl * 3
-        anchors.bottom: caption.top
-        anchors.bottomMargin: Theme.space.xl
-        anchors.left: parent.left
-        anchors.right: parent.right
-        focus: true
-        devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
-        tabSteps: false
-        Keys.onTabPressed: event => { root.switchRequested(1); event.accepted = true; }
-        Keys.onBacktabPressed: event => { root.switchRequested(-1); event.accepted = true; }
-        model: ScriptModel {
-            values: root.shownCards.map(card => {
-                const sharpened = root.previewCache[card.name] === undefined ? card : Object.assign({}, card, { sharpenedImage: root.previewCache[card.name] });
-                return Object.assign({ key: BrowserLogic.railKey(BrowserLogic.cardKey(sharpened), root.generation), generation: root.generation }, sharpened);
-            })
-            objectProp: "key"
-        }
-        delegate: ThemeCard {
-            busy: root.job !== null && root.job.name === modelData.name
-        }
-        onCurrentIndexChanged: if (currentIndex < root.shownCards.length) {
-            root.selectedName = root.shownCards[currentIndex].name;
-            root.requestPreview(root.shownCards[currentIndex]);
-        }
-        onActivated: root.activate()
-    }
+        // The rail takes the height its width asks for, or what the output
+        // leaves it once the header, the footer and their gaps are placed,
+        // in whole pixels, so the body's height never overflows the pane's
+        // by a rounding error and shows a scroll bar.
+        Item {
+            width: layout.contentWidth
+            height: Math.floor(Math.min(carousel.implicitHeight, root.height - 2 * layout.contentInset - layout.headerHeight - layout.footerHeight - 2 * layout.gap))
 
-    Label {
-        role: "body"
-        anchors.centerIn: carousel
-        visible: root.shownCards.length === 0 && root.listReason === ""
-        text: !root.loaded ? "Loading themes" : root.filterText === "" ? "No theme is installed" : "No theme matches " + JSON.stringify(root.filterText)
-    }
-
-    Column {
-        id: caption
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: Theme.space.xxxl
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: Math.min(parent.width - 2 * Theme.space.xxl, Theme.carousel.expandedWidth)
-        spacing: Theme.space.sm
-
-        Label {
-            role: "display"
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
-            text: root.selected === null ? "" : root.selected.label
-        }
-
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.space.xs
-            Badge {
-                visible: root.selected !== null && root.selected.displayed
-                text: "Displayed"
-                tone: "accent"
+            CardCarousel {
+                id: carousel
+                anchors.fill: parent
+                focus: true
+                devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
+                tabSteps: false
+                Keys.onTabPressed: event => { root.switchRequested(1); event.accepted = true; }
+                Keys.onBacktabPressed: event => { root.switchRequested(-1); event.accepted = true; }
+                model: ScriptModel {
+                    values: root.shownCards.map(card => {
+                        const sharpened = root.previewCache[card.name] === undefined ? card : Object.assign({}, card, { sharpenedImage: root.previewCache[card.name] });
+                        return Object.assign({ key: BrowserLogic.railKey(BrowserLogic.cardKey(sharpened), root.generation), generation: root.generation }, sharpened);
+                    })
+                    objectProp: "key"
+                }
+                delegate: ThemeCard {
+                    busy: root.job !== null && root.job.name === modelData.name
+                }
+                onCurrentIndexChanged: if (currentIndex < root.shownCards.length) {
+                    root.selectedName = root.shownCards[currentIndex].name;
+                    root.requestPreview(root.shownCards[currentIndex]);
+                }
+                onActivated: root.activate()
             }
-            Badge {
-                visible: root.selected !== null && !root.selected.installed
-                text: "Not installed"
-            }
-            Badge {
-                visible: root.selected !== null && root.selected.state !== "ok"
-                text: "Refused"
-                tone: "danger"
-            }
-            Badge {
-                visible: root.selected !== null && root.selected.imagery !== null && !root.selected.imagery.installed
-                text: root.selected === null || root.selected.imagery === null ? "" : "Wallpapers " + BrowserLogic.sizeText(root.selected.imagery.size)
-                tone: "info"
+
+            // No card to show: the list loading, no theme at all, or a
+            // filter no card matches, which Clear filter, as Escape, undoes.
+            EmptyState {
+                anchors.centerIn: parent
+                width: Math.min(parent.width, Theme.carousel.expandedWidth)
+                visible: root.shownCards.length === 0 && root.listReason === ""
+                iconName: !root.loaded ? "" : root.filterText === "" ? "palette" : "search-x"
+                text: !root.loaded ? "Loading themes" : root.filterText === "" ? "No theme is installed" : "No theme matches " + JSON.stringify(root.filterText)
+                actionText: root.loaded && root.filterText !== "" ? "Clear filter" : ""
+                onActivated: {
+                    root.editFilter({ kind: "clear" });
+                    Qt.callLater(root.focusRail);
+                }
             }
         }
 
-        Label {
-            role: "h3"
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideMiddle
-            visible: root.filterText !== ""
-            text: root.filterText
-        }
+        footer: [
+            Column {
+                id: caption
+                x: (layout.contentWidth - width) / 2
+                width: Math.min(layout.contentWidth, Theme.carousel.expandedWidth)
+                spacing: Theme.stack.group
 
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.space.sm
-            visible: root.job !== null && root.job.step !== "download"
-            Spinner { anchors.verticalCenter: parent.verticalCenter }
-            Label {
-                role: "body"
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.job === null ? "" : (root.job.step === "install" ? "Installing " : "Applying ") + BrowserLogic.label(root.job.name)
+                Column {
+                    width: parent.width
+                    spacing: Theme.stack.row
+
+                    Label {
+                        role: "display"
+                        visible: root.selected !== null
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                        text: root.selected === null ? "" : root.selected.label
+                    }
+
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Theme.stack.inline
+                        Badge {
+                            visible: root.selected !== null && root.selected.displayed
+                            text: "Displayed"
+                            tone: "accent"
+                        }
+                        Badge {
+                            visible: root.selected !== null && !root.selected.installed
+                            text: "Not installed"
+                        }
+                        Badge {
+                            visible: root.selected !== null && root.selected.state !== "ok"
+                            text: "Refused"
+                            tone: "danger"
+                        }
+                        Badge {
+                            visible: root.selected !== null && root.selected.imagery !== null && !root.selected.imagery.installed
+                            text: root.selected === null || root.selected.imagery === null ? "" : "Wallpapers " + BrowserLogic.sizeText(root.selected.imagery.size)
+                            tone: "info"
+                        }
+                    }
+
+                    Label {
+                        role: "h3"
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideMiddle
+                        visible: root.filterText !== ""
+                        text: root.filterText
+                    }
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: Theme.control.gap
+                    visible: root.job !== null && root.job.step !== "download"
+                    Spinner { anchors.verticalCenter: parent.verticalCenter }
+                    Label {
+                        role: "item"
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.job === null ? "" : (root.job.step === "install" ? "Installing " : "Applying ") + BrowserLogic.label(root.job.name)
+                    }
+                }
+
+                Repeater {
+                    model: [
+                        root.problem,
+                        root.listReason === "" ? "" : "The theme list failed: " + root.listReason,
+                        root.catalogReason === "" ? "" : "The catalog failed: " + root.catalogReason,
+                        root.imagesReason === "" ? "" : "The image list failed: " + root.imagesReason
+                    ].filter(line => line !== "")
+                    Label {
+                        required property string modelData
+                        role: "body"
+                        width: caption.width
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        color: Theme.color.danger
+                        text: modelData
+                    }
+                }
+
+                KeyHints {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    hints: [
+                        { key: "Enter", text: "Apply theme" },
+                        { key: "Tab", text: "Themes / Wallpapers" },
+                        { key: "Esc", text: root.filterText === "" ? "Close" : "Clear filter" },
+                        { key: "", text: "Type to search" }
+                    ]
+                }
             }
-        }
-
-        Repeater {
-            model: [
-                root.problem,
-                root.listReason === "" ? "" : "The theme list failed: " + root.listReason,
-                root.catalogReason === "" ? "" : "The catalog failed: " + root.catalogReason,
-                root.imagesReason === "" ? "" : "The image list failed: " + root.imagesReason
-            ].filter(line => line !== "")
-            Label {
-                required property string modelData
-                role: "body"
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                color: Theme.color.danger
-                text: modelData
-            }
-        }
-
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.space.sm
-            Kbd { text: "Enter" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Apply theme" }
-            Kbd { text: "Tab" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Themes / Wallpapers" }
-            Kbd { text: "Esc" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: root.filterText === "" ? "Close" : "Clear filter" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Type to search" }
-        }
+        ]
     }
 
     Scrim {

@@ -1,8 +1,9 @@
 import QtQuick
 import qs.Commons
 
-// A separable palette layer for a theme card. VGS-596 can move this layer
-// without changing the preview body below it.
+// A theme card's palette as one strip of equal blocks, every colour but
+// the background, which the card itself shows. The card places and sizes
+// it over its preview.
 Row {
     id: root
 

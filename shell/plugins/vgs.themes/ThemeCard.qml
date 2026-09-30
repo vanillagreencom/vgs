@@ -7,7 +7,9 @@ import "Files.js" as Files
 // when one ships, else the selected card draws a live desktop preview from
 // the package's tokens over its wallpaper. Side cards stay cheap image or
 // palette cards. A Spinner turns over the card while the browser installs
-// or applies its theme.
+// or applies its theme. The palette card's name keeps the card's lean from
+// each side, which clears the angled edge at mid-height for every unit up
+// to `carousel.maxScale` 2, where the drawn lean is twice the token.
 Item {
     id: root
 
@@ -69,9 +71,9 @@ Item {
         color: root.colors === null ? Theme.color.surface : Theme.toColor(root.colors.background)
 
         Label {
-            role: "h2"
+            role: "bodyStrong"
             anchors.centerIn: parent
-            width: parent.width - 2 * Theme.space.xxl
+            width: parent.width - 2 * Theme.angledCard.skew
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
             text: root.modelData.label

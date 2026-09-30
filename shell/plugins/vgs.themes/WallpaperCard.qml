@@ -8,8 +8,9 @@ import "Files.js" as Files
 // generation, so a file replaced under its name is read again. The
 // download or update card, and an image card while its image loads or
 // when it cannot be read, fill with the surface colour and name the card
-// under an icon. A Spinner turns over the card while the browser sets its
-// image or runs its download.
+// under an icon, the name keeping the card's lean from each side, as the
+// theme card's does. A Spinner turns over the card while the browser sets
+// its image or runs its download.
 Item {
     id: root
 
@@ -32,8 +33,8 @@ Item {
 
         Column {
             anchors.centerIn: parent
-            width: parent.width - 2 * Theme.space.xxl
-            spacing: Theme.space.sm
+            width: parent.width - 2 * Theme.angledCard.skew
+            spacing: Theme.stack.group
 
             Icon {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -43,7 +44,7 @@ Item {
             }
 
             Label {
-                role: "h2"
+                role: "bodyStrong"
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideMiddle

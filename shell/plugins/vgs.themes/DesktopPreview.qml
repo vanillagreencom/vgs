@@ -2,6 +2,13 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
+// A theme's desktop drawn from its tokens: its wallpaper, a bar, a
+// terminal, an editor and a notification, laid out on a reference display
+// of `desktopPreview.referenceWidth` by `referenceHeight` and scaled to
+// cover the card, so every length below is a reference pixel. Each window
+// keeps `safeInset` from the card's edge plus the card's lean, so none
+// crosses the angled edge, and its content clears the theme's own window
+// corner (Inset.clearing).
 Item {
     id: root
 
@@ -34,6 +41,12 @@ Item {
     readonly property real safeRight: safeInset + Math.max(0, (desktop.x + desktop.width * scale - root.width) / Math.max(scale, 0.1))
     readonly property rect mockBounds: Qt.rect(desktop.x, desktop.y, desktop.width * scale, desktop.height * scale)
     readonly property string accentHex: accentColor.toString()
+
+    // The inset of a window's content: `desktopPreview.padding`, grown until
+    // its corners clear the window's corner.
+    function contentInset(box) {
+        return Math.ceil(Inset.clearing(Theme.desktopPreview.padding, box.radius, box.width, box.height, Theme.inset.cornerStep, Theme.desktopPreview.padding));
+    }
 
     function token(path) {
         let node = root.tokens;
@@ -104,7 +117,7 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: root.safeLeft
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.space.sm
+                spacing: Theme.space.md
 
                 Repeater {
                     model: 5
@@ -165,8 +178,8 @@ Item {
 
             Column {
                 anchors.fill: parent
-                anchors.margins: Theme.space.lg
-                spacing: Theme.space.sm
+                anchors.margins: root.contentInset(terminal)
+                spacing: Theme.desktopPreview.lineGap
 
                 Repeater {
                     model: root.terminalLines
@@ -185,7 +198,7 @@ Item {
                         model: 16
                         Rectangle {
                             required property int index
-                            width: (terminal.width - 2 * Theme.space.lg - 7 * Theme.space.xs) / 8
+                            width: (parent.width - 7 * Theme.space.xs) / 8
                             height: Theme.space.lg
                             color: root.terminalColor(index)
                         }
@@ -216,8 +229,8 @@ Item {
 
             Column {
                 anchors.fill: parent
-                anchors.margins: Theme.space.lg
-                spacing: Theme.space.xs
+                anchors.margins: root.contentInset(editor)
+                spacing: Theme.desktopPreview.lineGap
 
                 Repeater {
                     model: root.codeLines
@@ -232,10 +245,11 @@ Item {
         }
 
         Rectangle {
+            id: notification
             x: editor.x
             y: editor.y + editor.height + Theme.desktopPreview.gap
             width: editor.width
-            height: parent.height - y - root.safeRight
+            height: parent.height - y - root.safeInset
             radius: root.windowRadius
             color: root.surfaceColor
             border.color: root.inactiveBorderColor
@@ -243,8 +257,8 @@ Item {
 
             Column {
                 anchors.fill: parent
-                anchors.margins: Theme.space.lg
-                spacing: Theme.space.sm
+                anchors.margins: root.contentInset(notification)
+                spacing: Theme.desktopPreview.lineGap
 
                 Label { role: "label"; color: root.mutedColor; text: root.title }
                 Rectangle { width: parent.width; height: Theme.space.xxl; radius: Theme.radius.sm; color: root.accentColor }

@@ -316,188 +316,217 @@ FocusScope {
         onTriggered: root.downloading = root.shell.theme.last.downloading
     }
 
-    Column {
-        id: controls
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: carousel.top
-        anchors.bottomMargin: Theme.space.lg
-        spacing: Theme.space.lg
+    // One inset box centred on the output, as the theme view's: the tabs,
+    // the source and the scope in the header, the rail in the body, and
+    // the selected card's name and badges, the running step, the failures
+    // and the keys in the footer.
+    Pane {
+        id: layout
+        anchors.centerIn: parent
+        width: parent.width
+        container: "overlay"
+        fitToContent: true
+        maximumHeight: parent.height
 
-        Tabs {
-            anchors.horizontalCenter: parent.horizontalCenter
-            model: BrowserLogic.VIEWS.map(v => v.label)
-            currentIndex: 1
-            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
-            onCurrentIndexChanged: if (currentIndex !== 1) root.switchRequested(-1)
-        }
+        header: [
+            Column {
+                width: layout.contentWidth
+                spacing: Theme.stack.group
 
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.space.lg
-
-            // A segment click focuses its control, and a click on the chosen
-            // segment emits no `activated`, so each control hands the keyboard
-            // back to the view whenever it takes it, after the click ends.
-            Row {
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.space.sm
-                SegmentedControl {
-                    id: sourceControl
-                    anchors.verticalCenter: parent.verticalCenter
-                    model: BrowserLogic.WALLPAPER_SOURCES.map(s => s.label)
-                    currentIndex: root.sourceIndex
+                Tabs {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    model: BrowserLogic.VIEWS.map(v => v.label)
+                    currentIndex: 1
                     onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
-                    onActivated: index => {
-                        root.sourceIndex = index;
-                        currentIndex = Qt.binding(() => root.sourceIndex);
+                    onCurrentIndexChanged: if (currentIndex !== 1) root.switchRequested(-1)
+                }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: Theme.stack.group
+
+                    // A segment click focuses its control, and a click on the chosen
+                    // segment emits no `activated`, so each control hands the keyboard
+                    // back to the view whenever it takes it, after the click ends.
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.stack.inline
+                        SegmentedControl {
+                            id: sourceControl
+                            anchors.verticalCenter: parent.verticalCenter
+                            model: BrowserLogic.WALLPAPER_SOURCES.map(s => s.label)
+                            currentIndex: root.sourceIndex
+                            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
+                            onActivated: index => {
+                                root.sourceIndex = index;
+                                currentIndex = Qt.binding(() => root.sourceIndex);
+                            }
+                        }
+                        Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+S" }
+                    }
+
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.scoped
+                        spacing: Theme.stack.inline
+                        SegmentedControl {
+                            id: scopeControl
+                            anchors.verticalCenter: parent.verticalCenter
+                            model: BrowserLogic.SCREEN_SCOPES.map(s => s.label)
+                            currentIndex: root.scopeIndex
+                            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
+                            onActivated: index => {
+                                root.chooseScope(index);
+                                currentIndex = Qt.binding(() => root.scopeIndex);
+                            }
+                        }
+                        Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+M" }
                     }
                 }
-                Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+S" }
+            }
+        ]
+
+        // The rail takes the height its width asks for, or what the output
+        // leaves it once the header, the footer and their gaps are placed,
+        // in whole pixels, so the body's height never overflows the pane's
+        // by a rounding error and shows a scroll bar.
+        Item {
+            width: layout.contentWidth
+            height: Math.floor(Math.min(carousel.implicitHeight, root.height - 2 * layout.contentInset - layout.headerHeight - layout.footerHeight - 2 * layout.gap))
+
+            CardCarousel {
+                id: carousel
+                anchors.fill: parent
+                devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
+                tabSteps: false
+                model: ScriptModel {
+                    values: root.cards.map(card => Object.assign({ railKey: BrowserLogic.railKey(card.key, root.generation), generation: root.generation }, card))
+                    objectProp: "railKey"
+                }
+                delegate: WallpaperCard {
+                    busy: root.job !== null && root.job.key === modelData.key
+                }
+                onCurrentIndexChanged: {
+                    if (root.seeding || currentIndex >= root.cards.length) return;
+                    root.moved = true;
+                    root.selectedKey = root.cards[currentIndex].key;
+                }
+                onActivated: root.activate()
             }
 
-            Row {
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.scoped
-                spacing: Theme.space.sm
-                SegmentedControl {
-                    id: scopeControl
-                    anchors.verticalCenter: parent.verticalCenter
-                    model: BrowserLogic.SCREEN_SCOPES.map(s => s.label)
-                    currentIndex: root.scopeIndex
-                    onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
-                    onActivated: index => {
-                        root.chooseScope(index);
-                        currentIndex = Qt.binding(() => root.scopeIndex);
+            // No card to show: the lists loading, or no image under the
+            // source, where the applied theme's own empty list offers every
+            // source's images, as Alt+S does.
+            EmptyState {
+                anchors.centerIn: parent
+                width: Math.min(parent.width, Theme.carousel.expandedWidth)
+                visible: root.cards.length === 0 && root.imagesReason === ""
+                iconName: root.loaded ? "image-off" : ""
+                text: BrowserLogic.wallpaperEmpty(root.loaded, root.source, root.applied)
+                actionText: root.loaded && root.source === "theme" ? "Show every source" : ""
+                onActivated: {
+                    root.flipSource();
+                    Qt.callLater(root.takeKeys);
+                }
+            }
+        }
+
+        footer: [
+            Column {
+                id: caption
+                x: (layout.contentWidth - width) / 2
+                width: Math.min(layout.contentWidth, Theme.carousel.expandedWidth)
+                spacing: Theme.stack.group
+
+                Column {
+                    width: parent.width
+                    spacing: Theme.stack.row
+
+                    Label {
+                        role: "display"
+                        visible: root.selected !== null
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideMiddle
+                        text: root.selected === null ? "" : root.selected.label
+                    }
+
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Theme.stack.inline
+                        Badge {
+                            visible: root.selected !== null && root.selected.kind === "image" && root.selected.path === root.shownPath
+                            text: "Shown"
+                            tone: "accent"
+                        }
+                        Badge {
+                            visible: root.selected !== null && (root.source === "all" || root.selected.kind !== "image")
+                            text: root.selected === null ? "" : root.selected.sourceLabel
+                        }
+                        Badge {
+                            visible: root.selected !== null && root.selected.kind !== "image"
+                            text: root.selected === null || root.selected.kind === "image" ? "" : BrowserLogic.sizeText(root.selected.size)
+                            tone: "info"
+                        }
                     }
                 }
-                Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+M" }
+
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: Theme.control.gap
+                    visible: root.job !== null && (root.job.step === "set" || root.job.step === "apply")
+                    Spinner { anchors.verticalCenter: parent.verticalCenter }
+                    Label {
+                        role: "item"
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.job === null ? "" : root.job.step === "set" ? "Setting " + root.job.name : "Applying " + BrowserLogic.label(root.job.name)
+                    }
+                }
+
+                Column {
+                    width: parent.width
+                    spacing: Theme.stack.row
+                    visible: root.job !== null && (root.job.step === "download" || root.job.step === "update")
+
+                    ProgressBar {
+                        width: parent.width
+                        indeterminate: BrowserLogic.progressValue(root.downloading) === null
+                        value: BrowserLogic.progressValue(root.downloading) === null ? 0 : BrowserLogic.progressValue(root.downloading)
+                    }
+                    Label {
+                        role: "hint"
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: BrowserLogic.progressText(root.downloading)
+                    }
+                }
+
+                Repeater {
+                    model: [
+                        root.problem,
+                        root.imagesReason === "" ? "" : "The image list failed: " + root.imagesReason,
+                        root.catalogReason === "" ? "" : "The catalog failed: " + root.catalogReason
+                    ].filter(line => line !== "")
+                    Label {
+                        required property string modelData
+                        role: "body"
+                        width: caption.width
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        color: Theme.color.danger
+                        text: modelData
+                    }
+                }
+
+                KeyHints {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    hints: [
+                        { key: "Enter", text: root.selected === null || root.selected.kind === "image" ? "Set wallpaper" : root.selected.kind === "download" ? "Download wallpapers" : "Update wallpapers" },
+                        { key: "Tab", text: "Themes / Wallpapers" },
+                        { key: "Esc", text: "Close" }
+                    ]
+                }
             }
-        }
-    }
-
-    CardCarousel {
-        id: carousel
-        anchors.top: parent.top
-        anchors.topMargin: controls.implicitHeight + Theme.space.xxxl * 3
-        anchors.bottom: caption.top
-        anchors.bottomMargin: Theme.space.xl
-        anchors.left: parent.left
-        anchors.right: parent.right
-        devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
-        tabSteps: false
-        model: ScriptModel {
-            values: root.cards.map(card => Object.assign({ railKey: BrowserLogic.railKey(card.key, root.generation), generation: root.generation }, card))
-            objectProp: "railKey"
-        }
-        delegate: WallpaperCard {
-            busy: root.job !== null && root.job.key === modelData.key
-        }
-        onCurrentIndexChanged: {
-            if (root.seeding || currentIndex >= root.cards.length) return;
-            root.moved = true;
-            root.selectedKey = root.cards[currentIndex].key;
-        }
-        onActivated: root.activate()
-    }
-
-    Label {
-        role: "body"
-        anchors.centerIn: carousel
-        visible: root.cards.length === 0 && root.imagesReason === ""
-        text: BrowserLogic.wallpaperEmpty(root.loaded, root.source, root.applied)
-    }
-
-    Column {
-        id: caption
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: Theme.space.xxxl
-        anchors.horizontalCenter: parent.horizontalCenter
-        width: Math.min(parent.width - 2 * Theme.space.xxl, Theme.carousel.expandedWidth)
-        spacing: Theme.space.sm
-
-        Label {
-            role: "display"
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideMiddle
-            text: root.selected === null ? "" : root.selected.label
-        }
-
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.space.xs
-            Badge {
-                visible: root.selected !== null && root.selected.kind === "image" && root.selected.path === root.shownPath
-                text: "Shown"
-                tone: "accent"
-            }
-            Badge {
-                visible: root.selected !== null && (root.source === "all" || root.selected.kind !== "image")
-                text: root.selected === null ? "" : root.selected.sourceLabel
-            }
-            Badge {
-                visible: root.selected !== null && root.selected.kind !== "image"
-                text: root.selected === null || root.selected.kind === "image" ? "" : BrowserLogic.sizeText(root.selected.size)
-                tone: "info"
-            }
-        }
-
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.space.sm
-            visible: root.job !== null && (root.job.step === "set" || root.job.step === "apply")
-            Spinner { anchors.verticalCenter: parent.verticalCenter }
-            Label {
-                role: "body"
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.job === null ? "" : root.job.step === "set" ? "Setting " + root.job.name : "Applying " + BrowserLogic.label(root.job.name)
-            }
-        }
-
-        ProgressBar {
-            width: parent.width
-            visible: root.job !== null && (root.job.step === "download" || root.job.step === "update")
-            indeterminate: BrowserLogic.progressValue(root.downloading) === null
-            value: BrowserLogic.progressValue(root.downloading) === null ? 0 : BrowserLogic.progressValue(root.downloading)
-        }
-        Label {
-            role: "hint"
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            visible: root.job !== null && (root.job.step === "download" || root.job.step === "update")
-            text: BrowserLogic.progressText(root.downloading)
-        }
-
-        Repeater {
-            model: [
-                root.problem,
-                root.imagesReason === "" ? "" : "The image list failed: " + root.imagesReason,
-                root.catalogReason === "" ? "" : "The catalog failed: " + root.catalogReason
-            ].filter(line => line !== "")
-            Label {
-                required property string modelData
-                role: "body"
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                color: Theme.color.danger
-                text: modelData
-            }
-        }
-
-        Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.space.sm
-            Kbd { text: "Enter" }
-            Label {
-                role: "hint"
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.selected === null || root.selected.kind === "image" ? "Set wallpaper" : root.selected.kind === "download" ? "Download wallpapers" : "Update wallpapers"
-            }
-            Kbd { text: "Tab" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Themes / Wallpapers" }
-            Kbd { text: "Esc" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Close" }
-        }
+        ]
     }
 }
