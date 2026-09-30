@@ -30,6 +30,24 @@ Item {
 
     function close() {}
 
+    function viewIndex() {
+        const names = BrowserLogic.viewNames();
+        const index = names.indexOf(view);
+        return index < 0 ? 0 : index;
+    }
+
+    function switchView(direction) {
+        if (busy) return;
+        const names = BrowserLogic.viewNames();
+        const next = ((viewIndex() + direction) % names.length + names.length) % names.length;
+        view = names[next];
+    }
+
+    function navigate(direction) {
+        if (page.item !== null && typeof page.item.navigate === "function")
+            page.item.navigate(direction);
+    }
+
     // Ask the host to take the browser down, unless a step runs.
     function dismiss() {
         if (busy) return;
@@ -41,6 +59,7 @@ Item {
         onClicked: root.dismiss()
     }
 
+
     Loader {
         id: page
         anchors.fill: parent
@@ -51,6 +70,7 @@ Item {
         onLoaded: {
             item.shell = Qt.binding(() => root.shell);
             item.closeRequested.connect(root.dismiss);
+            if (item.switchRequested) item.switchRequested.connect(root.switchView);
         }
     }
 }

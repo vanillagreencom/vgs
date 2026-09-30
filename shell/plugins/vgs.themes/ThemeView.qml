@@ -14,11 +14,12 @@ import "BrowserLogic.js" as BrowserLogic
 // view open with a line naming it and the reason; a step that succeeds and
 // offers nothing asks the browser to close.
 //
-// Keys: Left, Right, Tab, Shift+Tab, Home, End and the wheel move through
-// the rail, as the carousel takes them, and Up and Down step as Left and
-// Right do. A printable character types into the filter, Backspace erases
-// a character, Ctrl+Backspace a word and Ctrl+U the whole filter. Escape
-// clears the filter, then asks to close. Enter applies the selected card.
+// Keys: Left, Right, Home, End and the wheel move through the rail, and Up
+// and Down step as Left and Right do. Tab and Shift+Tab switch the top
+// tabs. Alt+I switches the scope. A printable character types into the
+// filter, Backspace erases a character, Ctrl+Backspace a word and Ctrl+U
+// the whole filter. Escape clears the filter, then asks to close. Enter
+// applies the selected card.
 //
 // The view is built with the overlay and destroyed with it, so it reads
 // everything on open: the list, the catalog and every image, again after
@@ -27,9 +28,11 @@ FocusScope {
     id: root
 
     property var shell: null
+    property bool alive: true
 
     // Asks the browser to close; the browser holds it while `busy`.
     signal closeRequested()
+    signal switchRequested(int direction)
 
     // The last answers: the list's packages, the catalog's entries and
     // every package's images, each null before it arrives or after it
@@ -80,28 +83,32 @@ FocusScope {
     // Read the list, the catalog and every image, then build the cards and
     // run THEN, when given. Each answer is kept as it arrives.
     function refresh(then) {
+        const view = root;
         let waiting = 3;
         const answered = () => {
             waiting -= 1;
             if (waiting > 0) return;
-            root.loaded = true;
-            if (root.selectedName === "") root.selectedName = Theme.name;
-            root.cards = root.packages === null ? [] : BrowserLogic.cards(root.packages, root.entries, root.images, Theme.name);
+            view.loaded = true;
+            if (view.selectedName === "") view.selectedName = Theme.name;
+            view.cards = view.packages === null ? [] : BrowserLogic.cards(view.packages, view.entries, view.images, Theme.name);
             if (then !== undefined) then();
         };
         shell.theme.list(result => {
+            if (!view.alive) return;
             root.listReason = result.reason === null ? "" : result.reason;
-            root.packages = result.reason === null ? result.packages : null;
+            view.packages = result.reason === null ? result.packages : null;
             answered();
         });
         shell.theme.catalog(result => {
+            if (!view.alive) return;
             root.catalogReason = result.reason === null ? "" : result.reason;
-            root.entries = result.reason === null ? result.entries : null;
+            view.entries = result.reason === null ? result.entries : null;
             answered();
         });
         const reply = shell.theme.images("all", result => {
+            if (!view.alive) return;
             root.imagesReason = result.state === "ok" ? "" : result.reason;
-            root.images = result.state === "ok" ? result.images : null;
+            view.images = result.state === "ok" ? result.images : null;
             answered();
         });
         if (reply !== "ok") throw new Error("themes: images all " + reply);
@@ -116,6 +123,25 @@ FocusScope {
     }
 
     function focusRail() { carousel.forceActiveFocus(); }
+
+    function toggleScope() {
+        scopeIndex = (scopeIndex + 1) % BrowserLogic.SCOPES.length;
+    }
+
+    function navigate(direction) {
+        switch (direction) {
+        case "left":
+        case "up":
+            carousel.step(-1);
+            break;
+        case "right":
+        case "down":
+            carousel.step(1);
+            break;
+        default:
+            throw new Error("themes: direction=" + direction);
+        }
+    }
 
     // End the running step with LINE, "" for none. A step that failed may
     // still have changed what is on disk, an install before the apply after
@@ -257,6 +283,7 @@ FocusScope {
     }
 
     Component.onCompleted: start()
+    Component.onDestruction: alive = false
     onShellChanged: start()
     onSelectedChanged: requestPreview(selected)
 
@@ -291,44 +318,94 @@ FocusScope {
             return;
         }
         const control = (event.modifiers & Qt.ControlModifier) !== 0;
-        const other = (event.modifiers & (Qt.AltModifier | Qt.MetaModifier)) !== 0;
-        if (event.key === Qt.Key_Escape) cancel();
-        else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) activate();
-        else if (event.key === Qt.Key_Up) carousel.step(-1);
-        else if (event.key === Qt.Key_Down) carousel.step(1);
-        else if (event.key === Qt.Key_Backspace && !other) editFilter({ kind: control ? "eraseWord" : "erase" });
-        else if (event.key === Qt.Key_U && control && !other && (event.modifiers & Qt.ShiftModifier) === 0) editFilter({ kind: "clear" });
-        else if (!control && !other && BrowserLogic.typable(event.text)) editFilter({ kind: "type", text: event.text });
-        else return;
+        const alt = (event.modifiers & Qt.AltModifier) !== 0;
+        const meta = (event.modifiers & Qt.MetaModifier) !== 0;
+        const shift = (event.modifiers & Qt.ShiftModifier) !== 0;
+        const action = BrowserLogic.themeAction(event.key, shift, control, alt, meta);
+        switch (action) {
+        case "back":
+            carousel.step(-1);
+            break;
+        case "forward":
+            carousel.step(1);
+            break;
+        case "activate":
+            activate();
+            break;
+        case "close":
+            cancel();
+            break;
+        case "scope":
+            toggleScope();
+            break;
+        case "tab-next":
+            switchRequested(1);
+            break;
+        case "tab-previous":
+            switchRequested(-1);
+            break;
+        case "":
+            if (event.key === Qt.Key_Backspace && !alt && !meta) editFilter({ kind: control ? "eraseWord" : "erase" });
+            else if (event.key === Qt.Key_U && control && !alt && !meta && !shift) editFilter({ kind: "clear" });
+            else if (!control && !alt && !meta && BrowserLogic.typable(event.text)) editFilter({ kind: "type", text: event.text });
+            else return;
+            break;
+        default:
+            throw new Error("themes: theme action=" + action);
+        }
         event.accepted = true;
     }
 
-    SegmentedControl {
-        id: scope
-        anchors.top: parent.top
-        anchors.topMargin: Theme.space.xxxl
+    Column {
+        id: controls
         anchors.horizontalCenter: parent.horizontalCenter
-        model: BrowserLogic.SCOPES.map(s => s.label)
-        currentIndex: root.scopeIndex
-        // A segment click focuses the control, and a click on the chosen
-        // segment emits no `activated`, so the control hands the keyboard
-        // back to the rail whenever it takes it, after the click ends.
-        onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)
-        onActivated: index => {
-            root.scopeIndex = index;
+        anchors.bottom: carousel.top
+        anchors.bottomMargin: Theme.space.lg
+        spacing: Theme.space.lg
+
+        Tabs {
+            anchors.horizontalCenter: parent.horizontalCenter
+            model: BrowserLogic.VIEWS.map(v => v.label)
+            currentIndex: 0
+            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)
+            onCurrentIndexChanged: if (currentIndex !== 0) root.switchRequested(1)
+        }
+
+        Row {
+            id: scope
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Theme.space.sm
+
+            SegmentedControl {
+                anchors.verticalCenter: parent.verticalCenter
+                model: BrowserLogic.SCOPES.map(s => s.label)
+                currentIndex: root.scopeIndex
+                // A segment click focuses the control, and a click on the chosen
+                // segment emits no `activated`, so the control hands the keyboard
+                // back to the rail whenever it takes it, after the click ends.
+                onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)
+                onActivated: index => {
+                    root.scopeIndex = index;
+                    currentIndex = Qt.binding(() => root.scopeIndex);
+                }
+            }
+            Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+I" }
         }
     }
 
     CardCarousel {
         id: carousel
-        anchors.top: scope.bottom
-        anchors.topMargin: Theme.space.xl
+        anchors.top: parent.top
+        anchors.topMargin: controls.implicitHeight + Theme.space.xxxl * 3
         anchors.bottom: caption.top
         anchors.bottomMargin: Theme.space.xl
         anchors.left: parent.left
         anchors.right: parent.right
         focus: true
         devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
+        tabSteps: false
+        Keys.onTabPressed: event => { root.switchRequested(1); event.accepted = true; }
+        Keys.onBacktabPressed: event => { root.switchRequested(-1); event.accepted = true; }
         model: ScriptModel {
             values: root.shownCards.map(card => {
                 const sharpened = root.previewCache[card.name] === undefined ? card : Object.assign({}, card, { sharpenedImage: root.previewCache[card.name] });
@@ -436,10 +513,12 @@ FocusScope {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Theme.space.sm
             Kbd { text: "Enter" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Apply" }
+            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Apply theme" }
+            Kbd { text: "Tab" }
+            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Themes / Wallpapers" }
             Kbd { text: "Esc" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: root.filterText === "" ? "Close" : "Clear the filter" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Type to filter" }
+            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: root.filterText === "" ? "Close" : "Clear filter" }
+            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Type to search" }
         }
     }
 

@@ -30,25 +30,26 @@ A bar button that opens a panel listing every theme package, a full-screen theme
 - `SUPER+T`: open or close the full-screen theme browser. In the wallpaper browser, open the theme browser.
 - `SUPER+W`: open or close the full-screen wallpaper browser. In the theme browser, open the wallpaper browser.
 
+In both full-screen browsers:
+
+- `Tab` and `Shift+Tab`: switch between Themes and Wallpapers.
+- `Left`, `Right`, `Up`, `Down`, `Home`, `End` and the wheel: move through cards.
+- The user's Hyprland directional focus keys also move through cards while the browser is open.
+- `Enter`: apply the selected theme, set the selected wallpaper, or run the Download or Update card.
+- `Esc`: close. In the theme browser, it clears the filter first.
+- Click on a side card: select it. Click on the selected card: apply it or set it. Click the scrim: close.
+
 In the theme browser:
 
-- `Left`, `Right`, `Tab`, `Shift+Tab`, `Home`, `End` and the wheel: move through cards.
-- `Up` and `Down`: move through cards.
-- `Enter`: install when needed, then apply.
-- `Esc`: clear the filter. Press it again to close.
+- `Alt+I`: switch between All and Installed.
 - Typing: filter by package name or label.
-- Click on a side card: select it. Click on the selected card: apply it. Click the scrim: close.
 
 In the wallpaper browser:
 
-- `Left`, `Up`, `A`, `Right`, `Down`, `D`, `Home`, `End` and the wheel: move through cards.
-- `S`: switch between Theme and All.
-- `W`, `Tab` and `Shift+Tab`: switch between All monitors and This monitor. With one monitor, `Tab` and `Shift+Tab` move through cards.
-- `Enter`: set the image, or run the Download or Update card.
-- `Esc`: close.
-- Click on a side card: select it. Click on the selected card: set it. Click the scrim: close.
+- `Alt+S`: switch between Theme and All.
+- `Alt+M`: switch between All monitors and This monitor when that control is shown.
 
-The plugin declares both shortcuts in its manifest. Remove the owner's old `SUPER+T` v1 theme-picker line and `SUPER+W` v1 wallpaper-picker line from `~/.config/hypr/config/keybinds.lua` before using these keys, because Hyprland fires every matching bind.
+The plugin declares both shortcuts in its manifest. The generated Hyprland layer captures the keyboard while the browser is open, so matching user window binds do not reach windows behind it.
 
 ## Capabilities
 

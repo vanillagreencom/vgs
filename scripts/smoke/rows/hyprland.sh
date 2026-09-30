@@ -27,7 +27,7 @@ applied() { local out; out="$(vgsh_run theme apply "$1")" || return; printf '%s\
 # The binds whose description names a vgs shortcut, as [modmask, key,
 # dispatcher, description]: a Lua bind's dispatcher is `__lua`, so the
 # description is what names its shortcut.
-vgs_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["dispatcher"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs."))))'; }
+vgs_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["dispatcher"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs.") and b.get("submap", "") in ("", "default"))))'; }
 config_errors() { hypr -j configerrors | py_reply 'import json,sys; print(json.dumps([e for e in json.load(sys.stdin) if e]))'; }
 # A border option as the nested instance holds it, and what Hyprland prints
 # for a one-colour border of `#rrggbbaa` TOKEN_VALUE: hex aarrggbb with no

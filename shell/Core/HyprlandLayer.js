@@ -103,6 +103,25 @@ var MOTION = {
     }
 };
 
+// Full-screen overlay keyboard capture. The generated layer loads first in
+// hyprland.lua, so it can learn focus dispatchers the user builds after it.
+var OVERLAY_CAPTURE = {
+    submap: "vgs:capture",
+    namespace: "vgs:overlay",
+    appid: "vgs",
+    shortcuts: { left: "overlay-left", right: "overlay-right", up: "overlay-up", down: "overlay-down" }
+};
+
+function overlayCaptureDirections() {
+    return ["left", "right", "up", "down"];
+}
+
+function overlayCaptureGlobal(direction) {
+    var name = OVERLAY_CAPTURE.shortcuts[direction];
+    if (name === undefined) throw new Error("HyprlandLayer: overlay direction " + JSON.stringify(direction) + " unknown");
+    return OVERLAY_CAPTURE.appid + ":" + name;
+}
+
 // A Theme colour, `#aarrggbb`, as Hyprland reads one: `rgba(rrggbbaa)`.
 function hyprColour(name, value) {
     if (typeof value !== "string" || !/^#[0-9a-fA-F]{8}$/.test(value))
@@ -258,6 +277,106 @@ function appWindowLines() {
     ];
 }
 
+
+function bindPlan(sections) {
+    var held = Object.create(null);
+    var conflicts = [];
+    var rows = sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).map(function (section) {
+        var bindRows = section.binds.map(function (bind) {
+            var global = section.id + ":" + bind.shortcut;
+            if (bind.key === null) return { kind: "unbound", bind: bind, global: global };
+            if (held[bind.key] !== undefined) {
+                conflicts.push({ id: section.id, shortcut: bind.shortcut, key: bind.key, heldBy: held[bind.key] });
+                return { kind: "skipped", bind: bind, global: global, heldBy: held[bind.key] };
+            }
+            held[bind.key] = section.id;
+            return { kind: "bound", bind: bind, global: global };
+        });
+        return { section: section, binds: bindRows };
+    });
+    return { sections: rows, conflicts: conflicts };
+}
+
+function overlayCapturePluginBindLines(plan) {
+    var lines = [];
+    plan.sections.forEach(function (row) {
+        row.binds.forEach(function (entry) {
+            if (entry.kind === "bound")
+                lines.push("    hl.bind(\"" + bindKeys(entry.bind.key) + "\", hl.dsp.global(\"" + entry.global + "\"), { description = \"" + entry.global + "\" })");
+        });
+    });
+    return lines;
+}
+
+function overlayCaptureLines(plan) {
+    var submap = OVERLAY_CAPTURE.submap;
+    var namespace = OVERLAY_CAPTURE.namespace;
+    var globals = {};
+    overlayCaptureDirections().forEach(function (direction) { globals[direction] = overlayCaptureGlobal(direction); });
+    return [
+        "-- Overlay keyboard capture: full-screen vgs overlays own keys through a submap.",
+        "do",
+        "    local capture = hl.__vgs_overlay_capture or { directions = setmetatable({}, { __mode = \"k\" }) }",
+        "    hl.__vgs_overlay_capture = capture",
+        "    capture.submap = \"" + submap + "\"",
+        "    capture.namespace = \"" + namespace + "\"",
+        "    capture.globals = { left = \"" + globals.left + "\", right = \"" + globals.right + "\", up = \"" + globals.up + "\", down = \"" + globals.down + "\", l = \"" + globals.left + "\", r = \"" + globals.right + "\", u = \"" + globals.up + "\", d = \"" + globals.down + "\" }",
+        "    hl.define_submap(capture.submap, function()"
+    ].concat(overlayCapturePluginBindLines(plan), [
+        "    end)",
+        "    local function vgs_overlay_capture_open(closing)",
+        "        for _, layer in ipairs(hl.get_layers()) do",
+        "            if layer ~= closing and layer.namespace == capture.namespace and layer.mapped then return true end",
+        "        end",
+        "        return false",
+        "    end",
+        "    local function vgs_overlay_capture_update(closing)",
+        "        if vgs_overlay_capture_open(closing) then",
+        "            hl.dispatch(hl.dsp.submap(capture.submap))",
+        "        elseif hl.get_current_submap() == capture.submap then",
+        "            hl.dispatch(hl.dsp.submap(\"reset\"))",
+        "        end",
+        "    end",
+        "    if not capture.wrapped then",
+        "        capture.wrapped = true",
+        "        capture.focus = hl.dsp.focus",
+        "        capture.bind = hl.bind",
+        "        hl.dsp.focus = function(opts)",
+        "            local dispatcher = capture.focus(opts)",
+        "            pcall(function()",
+        "                if type(opts) == \"table\" and type(opts.direction) == \"string\" and capture.globals[opts.direction] ~= nil then",
+        "                    capture.directions[dispatcher] = opts.direction",
+        "                end",
+        "            end)",
+        "            return dispatcher",
+        "        end",
+        "        hl.bind = function(keys, dispatcher, opts)",
+        "            local bind = capture.bind(keys, dispatcher, opts)",
+        "            pcall(function()",
+        "                local direction = capture.directions[dispatcher]",
+        "                local in_default = bind ~= nil and (bind.submap == nil or bind.submap == \"\" or bind.submap == \"default\")",
+        "                if direction ~= nil and in_default then",
+        "                    hl.define_submap(capture.submap, function()",
+        "                        capture.bind(keys, hl.dsp.global(capture.globals[direction]), { description = capture.globals[direction] })",
+        "                    end)",
+        "                end",
+        "            end)",
+        "            return bind",
+        "        end",
+        "    end",
+        "    if not capture.events then",
+        "        capture.events = true",
+        "        hl.on(\"layer.opened\", function() vgs_overlay_capture_update() end)",
+        "        hl.on(\"layer.closed\", function(layer)",
+        "            vgs_overlay_capture_update(layer)",
+        "        end)",
+        "        hl.on(\"config.reloaded\", vgs_overlay_capture_update)",
+        "    end",
+        "    vgs_overlay_capture_update()",
+        "end"
+    ]);
+}
+
 // A layer rule as data: its namespace and effects, which two plugins
 // declaring the same rule share.
 function ruleKey(rule) {
@@ -288,6 +407,7 @@ function ruleLine(id, rule) {
 // TUIs' window rules follow them, then the shell's application window rule,
 // before any plugin section, whatever the sections.
 function render(sections, theme, themeName, highestScale) {
+    var plan = bindPlan(sections);
     var switches = groupSwitches(sections);
     var lines = [
         "-- Generated by the vgs shell; an edit here is lost. The shell writes this",
@@ -305,11 +425,10 @@ function render(sections, theme, themeName, highestScale) {
     lines.push("");
     if (switches.groups.motion.enabled) lines = lines.concat(motionLines(theme));
     else lines.push(disabledGroupLine("motion", switches.groups.motion.setting));
-    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines());
-    var held = Object.create(null);
+    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan));
     var written = Object.create(null);
-    var conflicts = [];
-    sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).forEach(function (section) {
+    plan.sections.forEach(function (row) {
+        var section = row.section;
         if (section.binds.length === 0 && section.layerRules.length === 0) return;
         lines.push("", "-- " + section.id + " " + commentText(section.version) + ": binds and layer rules from its manifest");
         section.layerRules.forEach(function (rule) {
@@ -321,22 +440,19 @@ function render(sections, theme, themeName, highestScale) {
             written[key] = section.id;
             lines.push(ruleLine(section.id, rule));
         });
-        section.binds.forEach(function (bind) {
-            var global = section.id + ":" + bind.shortcut;
-            if (bind.key === null) {
-                lines.push("-- unbound " + global + ": shell.json sets its key to null");
+        row.binds.forEach(function (entry) {
+            if (entry.kind === "unbound") {
+                lines.push("-- unbound " + entry.global + ": shell.json sets its key to null");
                 return;
             }
-            if (held[bind.key] !== undefined) {
-                lines.push("-- skipped " + bind.key + ": already bound by " + held[bind.key]);
-                conflicts.push({ id: section.id, shortcut: bind.shortcut, key: bind.key, heldBy: held[bind.key] });
+            if (entry.kind === "skipped") {
+                lines.push("-- skipped " + entry.bind.key + ": already bound by " + entry.heldBy);
                 return;
             }
-            held[bind.key] = section.id;
-            lines.push("hl.bind(\"" + bindKeys(bind.key) + "\", hl.dsp.global(\"" + global + "\"), { description = \"" + global + "\" })");
+            lines.push("hl.bind(\"" + bindKeys(entry.bind.key) + "\", hl.dsp.global(\"" + entry.global + "\"), { description = \"" + entry.global + "\" })");
         });
     });
-    return { text: lines.join("\n") + "\n", conflicts: conflicts, appearanceConflicts: switches.conflicts };
+    return { text: lines.join("\n") + "\n", conflicts: plan.conflicts, appearanceConflicts: switches.conflicts };
 }
 
 // The writer's sequence, HyprlandLayer.qml's one decision about what to do

@@ -552,6 +552,48 @@ scene_launcher() { # MODE
   expect_poll "the launcher closes" 0 layer_count vgs:overlay
 }
 
+
+
+prepare_theme_browser_scene() {
+  local theme_dir="$home/.config/vgs/themes/nord"
+  if ! hypr -j monitors | grep -q 'VGS-SHOT'; then
+    hypr output create headless VGS-SHOT >/dev/null || true
+  fi
+  mkdir -p -- "$theme_dir/backgrounds"
+  cp -- "$checkout/themes/catalog/nord/theme.json" "$theme_dir/theme.json"
+  cp -- "$checkout/themes/catalog/nord/terminal.json" "$theme_dir/terminal.json"
+  cp -- "$checkout/themes/catalog/thumbnails/nord.jpg" "$theme_dir/backgrounds/a.jpg"
+  cp -- "$checkout/themes/catalog/thumbnails/akane.jpg" "$theme_dir/backgrounds/b.jpg"
+  "${shell_env[@]}" "$repo/bin/vgsh" theme apply nord >/dev/null || fail "nord applies for browser screenshots"
+  expect_poll "nord is published for browser screenshots" nord ipc smoke themeName
+}
+
+scene_theme-browser() { # MODE
+  prepare_theme_browser_scene
+  expect "enabling vgs.themes is allowed" ok ipc shell setPluginEnabled vgs.themes true
+  expect_poll "vgs.themes is built" True record_exists vgs.themes
+  expect "the theme browser summons" ok ipc shell summon overlay vgs.themes '{"view":"themes"}'
+  expect_poll "the theme browser maps its overlay" 1 layer_count vgs:overlay
+  expect_poll "the theme browser holds the keyboard" true ipc smoke activeFocusIn overlay vgs.themes
+  expect_poll "the theme browser loads its cards" true ipc smoke readDescendant overlay vgs.themes ThemeView loaded
+  take "theme-browser-$1-open"
+  expect "the theme browser hides" ok ipc shell hide overlay vgs.themes
+  expect_poll "the theme browser overlay is gone" 0 layer_count vgs:overlay
+}
+
+scene_wallpaper-browser() { # MODE
+  prepare_theme_browser_scene
+  expect "enabling vgs.themes is allowed" ok ipc shell setPluginEnabled vgs.themes true
+  expect_poll "vgs.themes is built" True record_exists vgs.themes
+  expect "the wallpaper browser summons" ok ipc shell summon overlay vgs.themes '{"view":"wallpapers"}'
+  expect_poll "the wallpaper browser maps its overlay" 1 layer_count vgs:overlay
+  expect_poll "the wallpaper browser holds the keyboard" true ipc smoke activeFocusIn overlay vgs.themes
+  expect_poll "the wallpaper browser loads its cards" true ipc smoke readDescendant overlay vgs.themes WallpaperView loaded
+  take "wallpaper-browser-$1-open"
+  expect "the wallpaper browser hides" ok ipc shell hide overlay vgs.themes
+  expect_poll "the wallpaper browser overlay is gone" 0 layer_count vgs:overlay
+}
+
 notify() { # APP SUMMARY BODY ACTIONS HINTS: prints the id
   "${shell_env[@]}" gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications \
     --method org.freedesktop.Notifications.Notify "$1" 0 "" "$2" "$3" "$4" "$5" 30000 | python3 -c 'import re,sys; print(re.search(r"uint32 (\d+)", sys.stdin.read()).group(1))'

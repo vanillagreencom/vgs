@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Wayland
 import qs.Core
 import qs.Commons
+import "../Core/HyprlandLayer.js" as Layer
 
 // The surfaces of one summonable kind: `panel`, `overlay`, `menu` or
 // `window`. A plugin of that kind is drawn only while summoned. `summon`
@@ -80,6 +81,21 @@ Scope {
 
     function toggle(id, payloadJson, origin) {
         return PluginLogic.hasOwn(instances, id) ? hide(id) : summon(id, payloadJson, origin);
+    }
+
+    function navigate(direction) {
+        if (host.kind !== "overlay") return "ignored";
+        if (Layer.overlayCaptureDirections().indexOf(direction) === -1)
+            return "refused: direction=" + JSON.stringify(direction);
+        for (let i = openIds.length - 1; i >= 0; i--) {
+            const id = openIds[i];
+            const instance = instances[id];
+            if (instance && typeof instance.navigate === "function") {
+                instance.navigate(direction);
+                return "ok";
+            }
+        }
+        return "ignored";
     }
 
     function built(id, instance) {
@@ -173,7 +189,7 @@ Scope {
                     color: "transparent"
                     WlrLayershell.namespace: "vgs:" + host.kind
                     WlrLayershell.layer: place.layer === "top" ? WlrLayer.Top : WlrLayer.Overlay
-                    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+                    WlrLayershell.keyboardFocus: PluginLogic.layerKeyboardFocus(host.kind, entry.request.anchored) === "exclusive" ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
 
                     Component.onCompleted: if (place.error !== "") console.error("summon host: " + entry.modelData + " " + place.error)
 

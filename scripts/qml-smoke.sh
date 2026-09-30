@@ -207,5 +207,6 @@ smoke_row read-only-prefix
 smoke_row notices-control
 smoke_row hidpi
 smoke_row start-order
+smoke_row overlay-capture
 
 smoke_finish

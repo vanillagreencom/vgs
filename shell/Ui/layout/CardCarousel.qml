@@ -47,6 +47,9 @@ Item {
     property var model: 0
     property Component delegate: null
     property int currentIndex: 0
+    // Whether Tab and Shift+Tab step cards. Full-screen browsers turn this
+    // off so Tab switches their top-level tabs.
+    property bool tabSteps: true
     // Device pixels per pixel of the carousel, for the decode sizes.
     property real devicePixelRatio: Screen.devicePixelRatio
 
@@ -64,13 +67,17 @@ Item {
     Keys.onPressed: event => {
         switch (event.key) {
         case Qt.Key_Left:
+            step(-1);
+            break;
         case Qt.Key_Backtab:
+            if (!tabSteps) return;
             step(-1);
             break;
         case Qt.Key_Right:
             step(1);
             break;
         case Qt.Key_Tab:
+            if (!tabSteps) return;
             step(event.modifiers & Qt.ShiftModifier ? -1 : 1);
             break;
         case Qt.Key_Home:

@@ -45,6 +45,71 @@ const APP_SECTION = [
     "hl.window_rule({ name = \"vgs:window\", match = { class = \"^org\\\\.vgs\\\\.shell$\" }, float = true, center = true })"
 ];
 
+function captureSection(pluginLines) {
+    return [
+        "-- Overlay keyboard capture: full-screen vgs overlays own keys through a submap.",
+        "do",
+        "    local capture = hl.__vgs_overlay_capture or { directions = setmetatable({}, { __mode = \"k\" }) }",
+        "    hl.__vgs_overlay_capture = capture",
+        "    capture.submap = \"vgs:capture\"",
+        "    capture.namespace = \"vgs:overlay\"",
+        "    capture.globals = { left = \"vgs:overlay-left\", right = \"vgs:overlay-right\", up = \"vgs:overlay-up\", down = \"vgs:overlay-down\", l = \"vgs:overlay-left\", r = \"vgs:overlay-right\", u = \"vgs:overlay-up\", d = \"vgs:overlay-down\" }",
+        "    hl.define_submap(capture.submap, function()",
+        ...pluginLines,
+        "    end)",
+        "    local function vgs_overlay_capture_open(closing)",
+        "        for _, layer in ipairs(hl.get_layers()) do",
+        "            if layer ~= closing and layer.namespace == capture.namespace and layer.mapped then return true end",
+        "        end",
+        "        return false",
+        "    end",
+        "    local function vgs_overlay_capture_update(closing)",
+        "        if vgs_overlay_capture_open(closing) then",
+        "            hl.dispatch(hl.dsp.submap(capture.submap))",
+        "        elseif hl.get_current_submap() == capture.submap then",
+        "            hl.dispatch(hl.dsp.submap(\"reset\"))",
+        "        end",
+        "    end",
+        "    if not capture.wrapped then",
+        "        capture.wrapped = true",
+        "        capture.focus = hl.dsp.focus",
+        "        capture.bind = hl.bind",
+        "        hl.dsp.focus = function(opts)",
+        "            local dispatcher = capture.focus(opts)",
+        "            pcall(function()",
+        "                if type(opts) == \"table\" and type(opts.direction) == \"string\" and capture.globals[opts.direction] ~= nil then",
+        "                    capture.directions[dispatcher] = opts.direction",
+        "                end",
+        "            end)",
+        "            return dispatcher",
+        "        end",
+        "        hl.bind = function(keys, dispatcher, opts)",
+        "            local bind = capture.bind(keys, dispatcher, opts)",
+        "            pcall(function()",
+        "                local direction = capture.directions[dispatcher]",
+        "                local in_default = bind ~= nil and (bind.submap == nil or bind.submap == \"\" or bind.submap == \"default\")",
+        "                if direction ~= nil and in_default then",
+        "                    hl.define_submap(capture.submap, function()",
+        "                        capture.bind(keys, hl.dsp.global(capture.globals[direction]), { description = capture.globals[direction] })",
+        "                    end)",
+        "                end",
+        "            end)",
+        "            return bind",
+        "        end",
+        "    end",
+        "    if not capture.events then",
+        "        capture.events = true",
+        "        hl.on(\"layer.opened\", function() vgs_overlay_capture_update() end)",
+        "        hl.on(\"layer.closed\", function(layer)",
+        "            vgs_overlay_capture_update(layer)",
+        "        end)",
+        "        hl.on(\"config.reloaded\", vgs_overlay_capture_update)",
+        "    end",
+        "    vgs_overlay_capture_update()",
+        "end"
+    ];
+}
+
 // The app-id shell.qml's leading pragmas give every toplevel, read as
 // Quickshell 0.3.1 reads them (src/launch/launch.cpp): each `//@ pragma`
 // line up to the first line that starts with `import`, the last AppId
@@ -177,7 +242,11 @@ function verify(logic, layer, shellText) {
     assert.ok(bareLines.indexOf("-- Theme appearance: corner radius.") < bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off."), "radius is before motion");
     assert.ok(bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off.") < bareLines.indexOf(TUI_SECTION[0]), "theme appearance is before floating TUIs");
     assert.ok(bareLines.indexOf(TUI_SECTION[0]) < bareLines.indexOf(APP_SECTION[0]), "floating TUIs are before application windows");
-    same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, ""], "a layer with no plugin section ends with the floating TUIs' window rules, then the application window rule");
+    same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, "", ...captureSection([]), ""], "a layer with no plugin section ends with the floating TUIs window rules, the application window rule, then overlay capture");
+    same(layer.OVERLAY_CAPTURE, { submap: "vgs:capture", namespace: "vgs:overlay", appid: "vgs", shortcuts: { left: "overlay-left", right: "overlay-right", up: "overlay-up", down: "overlay-down" } }, "the overlay capture names its submap, namespace and shortcuts");
+    same(layer.overlayCaptureDirections(), ["left", "right", "up", "down"], "the overlay capture direction list");
+    assert.equal(layer.overlayCaptureGlobal("left"), "vgs:overlay-left", "the overlay capture global is derived");
+    assert.throws(() => layer.overlayCaptureGlobal("next"), /overlay direction/, "unknown overlay directions are refused");
     same(layer.APP_WINDOW, { appId: "org.vgs.shell", rule: "vgs:window" }, "the application windows' app-id and rule name");
     same(pragmaAppId(shellText), layer.APP_WINDOW.appId, "shell.qml's AppId pragma is the application windows' app-id");
     assert.ok(lines(bare).some(line => line.includes("`" + layer.REGENERATE + "`")), "the header names the regenerate command");
@@ -270,6 +339,11 @@ function verify(logic, layer, shellText) {
         ...TUI_SECTION,
         "",
         ...APP_SECTION,
+        "",
+        ...captureSection([
+            "    hl.bind(\"SUPER + SPACE\", hl.dsp.global(\"acme.keys:toggle\"), { description = \"acme.keys:toggle\" })",
+            "    hl.bind(\"SUPER + N\", hl.dsp.global(\"vgs.notes:inbox\"), { description = \"vgs.notes:inbox\" })",
+        ]),
         "",
         "-- acme.keys 2?os.exit(): binds and layer rules from its manifest",
         "hl.layer_rule({ name = \"acme.keys:overlay\", match = { namespace = \"^vgs:overlay$\" }, blur = true, ignore_alpha = 0.6 })",
@@ -403,10 +477,10 @@ const CONTROLS = [
     [logicFile, "row key normalised", "return { shortcut: bind.shortcut, key: key.key };\n    });", "return { shortcut: bind.shortcut, key: keys[bind.shortcut] };\n    });"],
     [logicFile, "unknown keys", "return names.indexOf(name) === -1; }).sort()", "return false; }).sort()"],
     [logicFile, "appearance setting resolved", "appearance[group] = { setting: setting, enabled: settings[setting] === true };", "appearance[group] = { setting: setting, enabled: true };"],
-    [layerFile, "sections by id", "sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; })", "sections.slice()"],
+    [layerFile, "sections by id", "var rows = sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).map(function (section) {\n        var bindRows", "var rows = sections.slice().map(function (section) {\n        var bindRows"],
     [layerFile, "empty section unwritten", "if (section.binds.length === 0 && section.layerRules.length === 0) return;", ""],
     [layerFile, "first id keeps a key", "if (held[bind.key] !== undefined) {", "if (false) {"],
-    [layerFile, "unbound bind", "if (bind.key === null) {", "if (false) {"],
+    [layerFile, "unbound bind", "if (bind.key === null) return { kind: \"unbound\"", "if (false) return { kind: \"unbound\""],
     [layerFile, "identical rule once", "if (written[key] !== undefined) {", "if (false) {"],
     [layerFile, "rule effects compared", "return JSON.stringify([rule.namespace, rule.blur", "return JSON.stringify([rule.namespace]); ([rule.namespace, rule.blur"],
     [layerFile, "comment text", "return String(text).replace(/[^\\x20-\\x7e]/g, \"?\");", "return String(text);"],
@@ -421,16 +495,24 @@ const CONTROLS = [
     [layerFile, "smooth motion preset", "    smooth: {\n        curves: {", "    silky: {\n        curves: {"],
     [layerFile, "appearance defaults", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: false };", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: true };"],
     [layerFile, "appearance owner sorted", "}).sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });", "});"],
-    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "lines = lines.concat([\"\"], appWindowLines());"],
-    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines());"],
+    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));"],
+    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));"],
     [layerFile, "floating TUI class escapes each dot", ".join(\"\\\\\\\\.\")", ".join(\".\")"],
     [layerFile, "floating TUI class anchored", "return \"\\\"^\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"$\\\"\";", "return \"\\\"\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"\\\"\";"],
-    [layerFile, "application window rule written", "[\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "[\"\"], tuiWindowLines());"],
-    [layerFile, "application window rule after the TUIs", "[\"\"], tuiWindowLines(), [\"\"], appWindowLines());", "[\"\"], appWindowLines(), [\"\"], tuiWindowLines());"],
+    [layerFile, "application window rule written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan));"],
+    [layerFile, "application window rule after the TUIs", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan));"],
     [layerFile, "application window class is the shell's app-id", "match = { class = \" + classLiteral(APP_WINDOW.appId) + \" }", "match = { class = \" + classLiteral(\"org.quickshell\") + \" }"],
     [shellFile, "shell.qml sets the shell's app-id", "//@ pragma AppId org.vgs.shell\n", ""],
     [shellFile, "shell.qml's app-id is the layer's", "//@ pragma AppId org.vgs.shell\n", "//@ pragma AppId org.vgs.other\n"],
     [shellFile, "the app-id pragma comes before the imports", "//@ pragma AppId org.vgs.shell\nimport QtQuick\n", "import QtQuick\n//@ pragma AppId org.vgs.shell\n"],
+    [layerFile, "overlay capture section written", 'appWindowLines(), [""], overlayCaptureLines(plan)', 'appWindowLines()'],
+    [layerFile, "capture binds enabled plugin shortcuts", "].concat(overlayCapturePluginBindLines(plan), [", "].concat([], ["],
+    [layerFile, "capture wraps focus dispatchers", "hl.dsp.focus = function(opts)", "hl.dsp.focus = capture.focus --"],
+    [layerFile, "capture wraps binds", "hl.bind = function(keys, dispatcher, opts)", "hl.bind = capture.bind --"],
+    [layerFile, "capture tracks overlay layers", "layer.namespace == capture.namespace and layer.mapped", "false"],
+    [layerFile, "capture resets only its submap", "elseif hl.get_current_submap() == capture.submap then", "else"],
+    [layerFile, "capture listens for layer close", "hl.on(\\\"layer.closed\\\", function(layer)", "-- no layer close"],
+    [layerFile, "capture listens for config reload", "hl.on(\\\"config.reloaded\\\", vgs_overlay_capture_update)", "-- no config reload"],
     [layerFile, "a stale view is read first", "if (state.queuedForce || state.stale)", "if (state.queuedForce)"],
     [layerFile, "a queued render reads first", "if (state.queuedForce || state.stale)", "if (state.stale)"],
     [layerFile, "a queued render forces its cycle", "forcing: state.forcing || state.queuedForce,", "forcing: state.forcing,"],

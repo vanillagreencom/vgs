@@ -11,7 +11,7 @@ Every surface a user sees is one of two classes, [D044](../decisions/D044-applic
 | Class | Surfaces | Behaviour |
 |---|---|---|
 | Application window | kind `window` | A Hyprland window. Hyprland draws its border, in the active colour while it is focused and the inactive colour while it is not, gives it the keyboard when it is focused and takes the keyboard to any other window the user focuses, and moves, resizes, floats, tiles and closes it on the user's keys and rules. |
-| Transient overlay | the launcher (`overlay`), the notifications and toasts, the requirement notice, a summon under an anchor (a widget's flyout) and the popups of `qs.Ui` | Not a window: it never tiles, moves or floats. A flyout and a popup close on a click outside them and hold the keyboard only while they are open; the launcher holds the keyboard while it is open. |
+| Transient overlay | the launcher (`overlay`), the notifications and toasts, the requirement notice, a summon under an anchor (a widget's flyout) and the popups of `qs.Ui` | Not a window: it never tiles, moves or floats. A flyout and a popup close on a click outside them and hold the keyboard only while they are open; a full-screen `overlay` takes exclusive keyboard focus and the Hyprland capture submap while it is open. |
 
 An unanchored `panel` or `menu` is a layer surface. The shipped application windows are `vgs.settings`, `vgs.devtools` and `vgs.gallery`.
 
@@ -36,4 +36,4 @@ An unanchored `panel` or `menu` is a layer surface. The shipped application wind
 
 ## Decisions
 
-[D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md), [D018](../decisions/D018-overlays-are-quickshell-popups.md), [D044](../decisions/D044-application-windows-are-hyprland-toplevels.md).
+[D005](../decisions/D005-kinds-are-surfaces-no-dependencies.md), [D018](../decisions/D018-overlays-are-quickshell-popups.md), [D044](../decisions/D044-application-windows-are-hyprland-toplevels.md), [D059](../decisions/D059-overlay-keyboard-capture.md).

@@ -2353,6 +2353,21 @@ function summonSurface(kind, anchored) {
     return anchored ? "popup" : "layer";
 }
 
+// Whether an unanchored summon of KIND is a full-screen overlay whose
+// layer must own the keyboard until it closes. Anchored popups already
+// take their own grab, and application windows are Hyprland toplevels.
+function capturesOverlayKeyboard(kind, anchored) {
+    if (SUMMONABLE_KINDS.indexOf(kind) === -1)
+        throw new Error("capturesOverlayKeyboard: kind " + JSON.stringify(kind) + " is not summonable");
+    return kind === "overlay" && !anchored;
+}
+
+// The WlrKeyboardFocus variant a layer summon uses, as a string the host
+// maps to the Quickshell enum.
+function layerKeyboardFocus(kind, anchored) {
+    return capturesOverlayKeyboard(kind, anchored) ? "exclusive" : "on-demand";
+}
+
 // Layer placement for a summon without an item anchor. Popups delegate
 // anchored placement to the compositor. Unknown user placement falls back
 // to center and returns an error for the host to report. A centred panel or

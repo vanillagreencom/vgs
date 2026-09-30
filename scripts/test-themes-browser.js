@@ -49,12 +49,21 @@ const EDITS = [
 
 function verify(logic, files) {
     // Views and payloads.
-    same(logic.VIEWS.map(v => [v.name, v.source]), [["themes", "ThemeView.qml"], ["wallpapers", "WallpaperView.qml"]]);
+    same(logic.VIEWS.map(v => [v.name, v.label, v.source]), [["themes", "Themes", "ThemeView.qml"], ["wallpapers", "Wallpapers", "WallpaperView.qml"]]);
     assert.equal(logic.viewSource("themes"), "ThemeView.qml");
     assert.equal(logic.viewSource("wallpapers"), "WallpaperView.qml");
     same(logic.parsePayload(JSON.stringify({ view: "wallpapers" })), { view: "wallpapers" });
     assert.throws(() => logic.viewSource("fonts"), /view="fonts" unknown/);
     for (const view of logic.VIEWS) assert.ok(fs.existsSync(path.join(dir, view.source)), "view " + view.name + " names a file beside Browser.qml");
+    for (const qml of ["ThemeView.qml", "WallpaperView.qml"]) {
+        const text = fs.readFileSync(path.join(dir, qml), "utf8");
+        assert.equal(/view\.(listReason|catalogReason|imagesReason)/.test(text), false, qml + " reads status fields from root, not the captured refresh view");
+    }
+    const themeQml = fs.readFileSync(path.join(dir, "ThemeView.qml"), "utf8");
+    assert.ok(themeQml.includes("currentIndex = Qt.binding(() => root.scopeIndex);"), "ThemeView restores the scope control index binding after activation");
+    assert.ok(themeQml.includes("onActiveFocusChanged: if (activeFocus) Qt.callLater(root.focusRail)"), "ThemeView tab clicks return focus to the carousel");
+    const wallpaperQml = fs.readFileSync(path.join(dir, "WallpaperView.qml"), "utf8");
+    assert.ok(wallpaperQml.includes("onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)"), "WallpaperView tab clicks return focus to the keyboard owner");
     same(logic.parsePayload("{}"), { view: "themes" }, "an empty payload opens the first view");
     same(logic.parsePayload(""), { view: "themes" }, "no payload opens the first view");
     same(logic.parsePayload(JSON.stringify({ view: "themes" })), { view: "themes" });
@@ -191,36 +200,49 @@ function verify(logic, files) {
 }
 
 // Qt::Key codes, from qnamespace.h.
-const K = { Escape: 0x01000000, Tab: 0x01000001, Backtab: 0x01000002, Return: 0x01000004, Enter: 0x01000005, Home: 0x01000010, End: 0x01000011, Left: 0x01000012, Up: 0x01000013, Right: 0x01000014, Down: 0x01000015, A: 0x41, D: 0x44, S: 0x53, W: 0x57, Q: 0x51, Space: 0x20 };
+const K = { Escape: 0x01000000, Tab: 0x01000001, Backtab: 0x01000002, Return: 0x01000004, Enter: 0x01000005, Home: 0x01000010, End: 0x01000011, Left: 0x01000012, Up: 0x01000013, Right: 0x01000014, Down: 0x01000015, A: 0x41, D: 0x44, I: 0x49, M: 0x4d, S: 0x53, W: 0x57, Q: 0x51, Space: 0x20 };
 
-// Keys: [label, key, shift, chord, scoped, action].
+// Theme keys: [label, key, shift, control, alt, meta, action].
+const THEME_KEYS = [
+    ["Up steps back", K.Up, false, false, false, false, "back"],
+    ["Down steps forward", K.Down, false, false, false, false, "forward"],
+    ["Return activates", K.Return, false, false, false, false, "activate"],
+    ["Escape closes or clears", K.Escape, false, false, false, false, "close"],
+    ["Tab switches to the next top tab", K.Tab, false, false, false, false, "tab-next"],
+    ["Shift+Tab switches to the previous top tab", K.Tab, true, false, false, false, "tab-previous"],
+    ["Backtab switches to the previous top tab", K.Backtab, false, false, false, false, "tab-previous"],
+    ["Alt+I flips All and Installed", K.I, false, false, true, false, "scope"],
+    ["plain I passes to the filter", K.I, false, false, false, false, ""],
+    ["a Meta chord passes on", K.I, false, false, true, true, ""]
+];
+
+// Wallpaper keys: [label, key, shift, control, alt, meta, scoped, action].
 const WALLPAPER_KEYS = [
-    ["Left steps back", K.Left, false, false, false, "back"],
-    ["Up steps back", K.Up, false, false, false, "back"],
-    ["A steps back", K.A, false, false, false, "back"],
-    ["Right steps forward", K.Right, false, false, false, "forward"],
-    ["Down steps forward", K.Down, false, false, false, "forward"],
-    ["D steps forward", K.D, false, false, false, "forward"],
-    ["Home goes first", K.Home, false, false, false, "first"],
-    ["End goes last", K.End, false, false, false, "last"],
-    ["Return activates", K.Return, false, false, false, "activate"],
-    ["Enter activates", K.Enter, false, false, false, "activate"],
-    ["Escape closes", K.Escape, false, false, false, "close"],
-    ["S flips the source", K.S, false, false, false, "source"],
-    ["S flips the source beside the scope", K.S, false, false, true, "source"],
-    ["W does nothing without the scope", K.W, false, false, false, ""],
-    ["W flips the scope", K.W, false, false, true, "scope"],
-    ["Tab steps forward without the scope", K.Tab, false, false, false, "forward"],
-    ["Tab flips the scope", K.Tab, false, false, true, "scope"],
-    ["Backtab steps back without the scope", K.Backtab, true, false, false, "back"],
-    ["Backtab flips the scope", K.Backtab, true, false, true, "scope"],
-    ["Shift+Tab steps back without the scope", K.Tab, true, false, false, "back"],
-    ["Shift+Tab flips the scope", K.Tab, true, false, true, "scope"],
-    ["Left steps back beside the scope", K.Left, false, false, true, "back"],
-    ["a chord passes on", K.S, false, true, true, ""],
-    ["a chord on Enter passes on", K.Return, false, true, false, ""],
-    ["Q passes on", K.Q, false, false, true, ""],
-    ["Space passes on", K.Space, false, false, false, ""]
+    ["Left steps back", K.Left, false, false, false, false, false, "back"],
+    ["Up steps back", K.Up, false, false, false, false, false, "back"],
+    ["Right steps forward", K.Right, false, false, false, false, false, "forward"],
+    ["Down steps forward", K.Down, false, false, false, false, false, "forward"],
+    ["Home goes first", K.Home, false, false, false, false, false, "first"],
+    ["End goes last", K.End, false, false, false, false, false, "last"],
+    ["Return activates", K.Return, false, false, false, false, false, "activate"],
+    ["Enter activates", K.Enter, false, false, false, false, false, "activate"],
+    ["Escape closes", K.Escape, false, false, false, false, false, "close"],
+    ["Alt+S flips the source", K.S, false, false, true, false, false, "source"],
+    ["Alt+S flips the source beside the scope", K.S, false, false, true, false, true, "source"],
+    ["plain S passes on", K.S, false, false, false, false, false, ""],
+    ["plain A passes on", K.A, false, false, false, false, false, ""],
+    ["plain D passes on", K.D, false, false, false, false, false, ""],
+    ["Alt+M does nothing without the scope", K.M, false, false, true, false, false, ""],
+    ["Alt+M flips the scope", K.M, false, false, true, false, true, "scope"],
+    ["plain W passes on beside the scope", K.W, false, false, false, false, true, ""],
+    ["Tab switches to the next top tab", K.Tab, false, false, false, false, false, "tab-next"],
+    ["Shift+Tab switches to the previous top tab", K.Tab, true, false, false, false, false, "tab-previous"],
+    ["Backtab switches to the previous top tab", K.Backtab, false, false, false, false, true, "tab-previous"],
+    ["Left steps back beside the scope", K.Left, false, false, false, false, true, "back"],
+    ["a control chord passes on", K.S, false, true, true, false, true, ""],
+    ["a meta chord passes on", K.Return, false, false, false, true, false, ""],
+    ["Q passes on", K.Q, false, false, false, false, true, ""],
+    ["Space passes on", K.Space, false, false, false, false, false, ""]
 ];
 
 // The wallpaper view: sources, scopes, cards, the offer card, the keys
@@ -229,8 +251,10 @@ function verifyWallpapers(logic) {
     same(logic.WALLPAPER_SOURCES.map(s => [s.source, s.label]), [["theme", "Theme"], ["all", "All"]]);
     same(logic.SCREEN_SCOPES.map(s => [s.scope, s.label]), [["every", "All monitors"], ["this", "This monitor"]]);
 
-    for (const [label, key, shift, chord, scoped, action] of WALLPAPER_KEYS)
-        assert.equal(logic.wallpaperAction(key, shift, chord, scoped), action, label);
+    for (const [label, key, shift, control, alt, meta, action] of THEME_KEYS)
+        assert.equal(logic.themeAction(key, shift, control, alt, meta), action, label);
+    for (const [label, key, shift, control, alt, meta, scoped, action] of WALLPAPER_KEYS)
+        assert.equal(logic.wallpaperAction(key, shift, control, alt, meta, scoped), action, label);
 
     for (const [count, want] of [[0, false], [1, false], [2, true], [3, true]])
         assert.equal(logic.scopeShown(count), want, "scope shown with " + count + " screens");
@@ -317,10 +341,12 @@ const CONTROLS = [
     ["rail key holds the generation", "return JSON.stringify([generation, key]);", "return JSON.stringify([key]);"],
     ["key holds the preview inputs", "return JSON.stringify([card.name, card.label, card.previewImage, card.palette, card.tokens, card.terminal]);", "return JSON.stringify([card.name, card.label]);"],
     ["partial names the panel", 'if (result.state === "partial") return', 'if (false) return'],
-    ["wallpaper chords pass on", 'if (chord) return "";', ""],
-    ["wallpaper shift tab", "key === KEY.Tab && shift ? KEY.Backtab : key", "key"],
-    ["wallpaper scoped keys", 'return scoped && hasOwn(row, "scoped") ? row.scoped : row.action;', "return row.action;"],
-    ["wallpaper home-row back", "    { key: KEY.A, action: \"back\" },\n", ""],
+    ["theme tab switches top tabs", "if (key === KEY.Tab || key === KEY.Backtab) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;", "if (false) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;"],
+    ["theme toggle uses Alt", "if (alt) return key === KEY.I ? \"scope\" : \"\";", "if (true) return key === KEY.I ? \"scope\" : \"\";"],
+    ["wallpaper control and meta chords pass on", 'if (meta || control) return "";', ""],
+    ["wallpaper tab switches top tabs", "if (key === KEY.Backtab || key === KEY.Tab) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;", "if (false) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;"],
+    ["wallpaper source uses Alt", "if (key === KEY.S) return \"source\";", "if (false) return \"source\";"],
+    ["wallpaper scope uses Alt+M", "if (key === KEY.M) return scoped ? \"scope\" : \"\";", "if (false) return scoped ? \"scope\" : \"\";"],
     ["scope needs two screens", "return screenCount >= 2;", "return screenCount >= 1;"],
     ["hidden scope is every screen", "return scopeShown(screenCount) ? SCREEN_SCOPES[index].scope : SCREEN_SCOPES[0].scope;", "return SCREEN_SCOPES[index].scope;"],
     ["this screen shows its own", "return hasOwn(screenPaths, name) ? screenPaths[name] : current;", "return current;"],

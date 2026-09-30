@@ -29,7 +29,7 @@ user_file="$home/.config/vgs/shell.json"
 # `absent` when the row holds no entry.
 user_key() { python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1])).get("plugins", []) if r["id"] == "vgs.settings"]; k=rows[0].get("keys", {}) if rows else {}; print(json.dumps(k["toggle"]) if "toggle" in k else "absent")' "$user_file"; }
 # The binds Hyprland holds for the Settings shortcut, as [modmask, key].
-settings_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.settings:toggle")))'; }
+settings_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.settings:toggle" and b.get("submap", "") in ("", "default"))))'; }
 # window_fits MONITOR [MODE]: [] when the Settings window on MONITOR is
 # min(size.window.width, width - 2 * size.window.gutter) wide,
 # size.window.heightShare of the height tall and centred on the monitor's

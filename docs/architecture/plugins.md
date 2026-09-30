@@ -23,7 +23,7 @@ A kind names a surface the core can host. A plugin declares every kind it can fi
 
 Enabled means: the active bar, with every other kind it declares; a bar widget placed in a section; any other plugin listed in `plugins` or first-party. A plugin declaring `bar` is enabled only as the active bar. `disabledPlugins` wins over every other rule: a placed widget listed there leaves the bar and its layout entry stays in the file. A listed id no discovered plugin has enables and disables nothing and is reported: [configuration.md § Unknown ids](configuration.md#unknown-ids).
 
-`summon`, `hide` and `toggle` reach the summonable kinds. Which surface each summon builds, a layer surface, a popup under an anchor or a Hyprland window, and how each one opens, closes and places itself, is in [surfaces.md](surfaces.md).
+`summon`, `hide` and `toggle` reach the summonable kinds. Which surface each summon builds, a layer surface, a popup under an anchor or a Hyprland window, and how each one opens, closes and places itself, is in [surfaces.md](surfaces.md). An overlay entry may implement `navigate(direction)`, with `left`, `right`, `up` or `down`; the core calls it when the Hyprland capture layer receives a learned directional focus bind. An overlay without it ignores the key.
 
 Disabling the active bar hides every shown bar widget, named in the manager's reply; they return with the next bar. Enabling a bar makes it the active bar.
 

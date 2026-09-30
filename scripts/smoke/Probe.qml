@@ -832,7 +832,23 @@ Scope {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
             const found = root.descendants(item).find(child => root.typeName(child) === "ThemeCard" && child.current === true);
-            return found === undefined ? "absent" : JSON.stringify(found.cardName);
+            return found === undefined ? "absent" : JSON.stringify(found.modelData.name);
+        }
+        function paletteStrips(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const shown = child => {
+                for (let at = child; at !== null && at !== item; at = at.parent)
+                    if (at.visible === false) return false;
+                return true;
+            };
+            return JSON.stringify(root.descendants(item)
+                .filter(child => root.typeName(child) === "ThemeCard")
+                .map(card => {
+                    const strip = root.descendants(card).find(child => child.objectName === "paletteStrip" || (root.typeName(child) === "Row" && child.parent === card && child.height === Theme.space.xxl));
+                    const swatches = strip === undefined ? [] : root.descendants(strip).filter(child => child !== strip && child.visible && child.width > 0 && child.color !== undefined);
+                    return [card.modelData.name, shown(card), strip !== undefined && shown(strip), swatches.length];
+                }));
         }
         function activeFocusIn(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);

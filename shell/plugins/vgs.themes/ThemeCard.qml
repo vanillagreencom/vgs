@@ -21,7 +21,6 @@ Item {
     // Whether the browser is installing, applying or downloading for this
     // theme.
     property bool busy: false
-    readonly property string cardName: modelData.name
 
     readonly property var colors: modelData.palette
     readonly property bool packagePreview: typeof modelData.previewImage === "string" && modelData.previewImage !== ""
@@ -93,6 +92,7 @@ Item {
     }
 
     ThemePaletteStrip {
+        objectName: "paletteStrip"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom

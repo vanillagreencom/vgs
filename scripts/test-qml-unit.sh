@@ -199,7 +199,7 @@ mutations=(
   "a click on a slice selects nothing|layout/CardCarousel.qml|else root.currentIndex = slot.index;|else {}|tst_carousel.qml"
   "a click on the current card activates nothing|layout/CardCarousel.qml|if (slot.offset === 0) root.activated(slot.index);|if (slot.offset === 0) {}|tst_carousel.qml"
   "a click lands on a card's bounding box|layout/CardCarousel.qml|return internal.inside(card, point);|return true;|tst_carousel.qml"
-  "Left steps forward|layout/CardCarousel.qml|step(-1);|step(1);|tst_carousel.qml"
+  "Left steps forward|layout/CardCarousel.qml|case Qt.Key_Left:|case Qt.Key_unknown:|tst_carousel.qml"
   "Backtab steps nowhere|layout/CardCarousel.qml|case Qt.Key_Backtab:|case Qt.Key_unknown:|tst_carousel.qml"
   "Right steps back|layout/CardCarousel.qml|step(1);|step(-1);|tst_carousel.qml"
   "Shift+Tab steps forward|layout/CardCarousel.qml|step(event.modifiers & Qt.ShiftModifier ? -1 : 1);|step(1);|tst_carousel.qml"

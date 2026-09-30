@@ -555,6 +555,13 @@ function suite(ctx, check) {
     for (const [name, kind, anchored, want] of surfaceRows)
         check("summonSurface: " + name, ctx.summonSurface(kind, anchored), want);
     check("summonSurface refuses a kind no host summons", (() => { try { return ctx.summonSurface("background", false); } catch (e) { return e.message; } })(), "summonSurface: kind \"background\" is not summonable");
+
+    check("capturesOverlayKeyboard: unanchored overlay captures", ctx.capturesOverlayKeyboard("overlay", false), true);
+    check("capturesOverlayKeyboard: anchored overlay does not capture", ctx.capturesOverlayKeyboard("overlay", true), false);
+    check("capturesOverlayKeyboard: panel does not capture", ctx.capturesOverlayKeyboard("panel", false), false);
+    check("capturesOverlayKeyboard refuses a kind no host summons", (() => { try { return ctx.capturesOverlayKeyboard("background", false); } catch (e) { return e.message; } })(), "capturesOverlayKeyboard: kind \"background\" is not summonable");
+    check("layerKeyboardFocus: capturing overlay is exclusive", ctx.layerKeyboardFocus("overlay", false), "exclusive");
+    check("layerKeyboardFocus: non-capturing layer is on demand", ctx.layerKeyboardFocus("panel", false), "on-demand");
 }
 
 suite(load(LOGIC), report);
@@ -614,6 +621,9 @@ const CONTROLS = [
     ["an anchored window is a toplevel", "if (kind === \"window\") return \"window\";", "if (kind === \"window\" && !anchored) return \"window\";"],
     ["an anchored summon is a popup", "return anchored ? \"popup\" : \"layer\";", "return \"layer\";"],
     ["a kind no host summons is refused a surface", "if (SUMMONABLE_KINDS.indexOf(kind) === -1)\n        throw new Error(\"summonSurface", "if (false)\n        throw new Error(\"summonSurface"],
+    ["only full-screen overlays capture the keyboard", "return kind === \"overlay\" && !anchored;", "return kind === \"overlay\";"],
+    ["keyboard capture refuses an unsummonable kind", "if (SUMMONABLE_KINDS.indexOf(kind) === -1)\n        throw new Error(\"capturesOverlayKeyboard", "if (false)\n        throw new Error(\"capturesOverlayKeyboard"],
+    ["capturing layers take exclusive focus", "return capturesOverlayKeyboard(kind, anchored) ? \"exclusive\" : \"on-demand\";", "return \"on-demand\";"],
     ["a centred surface ignores reserved space", "exclusion: placement === \"center\" ? \"ignore\" : \"normal\"", "exclusion: \"normal\""],
     ["requires is refused by name", "if (hasOwn(raw, \"requires\"))", "if (false)"],
     ["requirements is a manifest key", "\"hyprland\", \"requirements\", ", "\"hyprland\", "],

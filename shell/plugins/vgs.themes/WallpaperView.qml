@@ -17,13 +17,13 @@ import "BrowserLogic.js" as BrowserLogic
 // `last.downloading`, applies the theme again so its image shows, reads
 // the lists again and stays open.
 //
-// Keys, BrowserLogic.WALLPAPER_KEYS: Left, Up and A step back, Right, Down
-// and D forward, Home and End go to the first and the last card, Enter
-// sets the selected image or runs the selected card, Escape asks to close,
-// S flips the source, and W, Tab and Shift+Tab flip the scope while its
-// control shows; without it Tab and Shift+Tab step. An item of the view
-// holds the keyboard and the rail never takes the focus, because the rail
-// takes Tab as a step.
+// Keys, BrowserLogic.WALLPAPER_KEYS: Left and Up step back, Right and Down
+// step forward, Home and End go to the first and the last card, Enter sets
+// the selected image or runs the selected card, and Escape asks to close.
+// Tab and Shift+Tab switch the top tabs. Alt+S flips the source, and Alt+M
+// flips the scope while its control shows. An item of the view holds the
+// keyboard and the rail never takes the focus, so Tab cannot leave the
+// view before the view handles it.
 //
 // The view is built with each open and destroyed with the browser, so the
 // scope starts on All monitors every time. It reads every image and the
@@ -34,9 +34,11 @@ FocusScope {
     id: root
 
     property var shell: null
+    property bool alive: true
 
     // Asks the browser to close; the browser holds it while `busy`.
     signal closeRequested()
+    signal switchRequested(int direction)
 
     // The last answers: every source's images and the catalog's entries,
     // each null before it arrives or after it failed, beside the reason it
@@ -99,8 +101,14 @@ FocusScope {
         id: keyboard
         focus: true
         Keys.onPressed: event => {
-            const chord = (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) !== 0;
-            const action = BrowserLogic.wallpaperAction(event.key, (event.modifiers & Qt.ShiftModifier) !== 0, chord, root.scoped);
+            const action = BrowserLogic.wallpaperAction(
+                event.key,
+                (event.modifiers & Qt.ShiftModifier) !== 0,
+                (event.modifiers & Qt.ControlModifier) !== 0,
+                (event.modifiers & Qt.AltModifier) !== 0,
+                (event.modifiers & Qt.MetaModifier) !== 0,
+                root.scoped
+            );
             switch (action) {
             case "":
                 return;
@@ -128,6 +136,12 @@ FocusScope {
             case "scope":
                 root.flipScope();
                 break;
+            case "tab-next":
+                root.switchRequested(1);
+                break;
+            case "tab-previous":
+                root.switchRequested(-1);
+                break;
             default:
                 throw new Error("themes: wallpaper action=" + action);
             }
@@ -137,20 +151,23 @@ FocusScope {
 
     // Read every image and the catalog; each answer is kept as it arrives.
     function refresh() {
+        const view = root;
         let waiting = 2;
         const answered = () => {
             waiting -= 1;
-            if (waiting === 0) root.loaded = true;
+            if (waiting === 0) view.loaded = true;
         };
         const reply = shell.theme.images("all", result => {
+            if (!view.alive) return;
             root.imagesReason = result.state === "ok" ? "" : result.reason;
-            root.images = result.state === "ok" ? result.images : null;
+            view.images = result.state === "ok" ? result.images : null;
             answered();
         });
         if (reply !== "ok") throw new Error("themes: images all " + reply);
         shell.theme.catalog(result => {
+            if (!view.alive) return;
             root.catalogReason = result.reason === null ? "" : result.reason;
-            root.entries = result.reason === null ? result.entries : null;
+            view.entries = result.reason === null ? result.entries : null;
             answered();
         });
     }
@@ -182,6 +199,21 @@ FocusScope {
     }
 
     function takeKeys() { keyboard.forceActiveFocus(); }
+
+    function navigate(direction) {
+        switch (direction) {
+        case "left":
+        case "up":
+            carousel.step(-1);
+            break;
+        case "right":
+        case "down":
+            carousel.step(1);
+            break;
+        default:
+            throw new Error("themes: direction=" + direction);
+        }
+    }
 
     function nextGeneration() {
         generation = Math.max(Date.now(), generation + 1);
@@ -266,6 +298,7 @@ FocusScope {
     }
 
     Component.onCompleted: start()
+    Component.onDestruction: alive = false
     onShellChanged: start()
 
     // An apply from elsewhere changes the applied theme's images.
@@ -283,49 +316,75 @@ FocusScope {
         onTriggered: root.downloading = root.shell.theme.last.downloading
     }
 
-    Row {
+    Column {
         id: controls
-        anchors.top: parent.top
-        anchors.topMargin: Theme.space.xxxl
         anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: carousel.top
+        anchors.bottomMargin: Theme.space.lg
         spacing: Theme.space.lg
 
-        // A segment click focuses its control, and a click on the chosen
-        // segment emits no `activated`, so each control hands the keyboard
-        // back to the view whenever it takes it, after the click ends.
-        SegmentedControl {
-            id: sourceControl
-            model: BrowserLogic.WALLPAPER_SOURCES.map(s => s.label)
-            currentIndex: root.sourceIndex
+        Tabs {
+            anchors.horizontalCenter: parent.horizontalCenter
+            model: BrowserLogic.VIEWS.map(v => v.label)
+            currentIndex: 1
             onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
-            onActivated: index => {
-                root.sourceIndex = index;
-                currentIndex = Qt.binding(() => root.sourceIndex);
-            }
+            onCurrentIndexChanged: if (currentIndex !== 1) root.switchRequested(-1)
         }
 
-        SegmentedControl {
-            id: scopeControl
-            visible: root.scoped
-            model: BrowserLogic.SCREEN_SCOPES.map(s => s.label)
-            currentIndex: root.scopeIndex
-            onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
-            onActivated: index => {
-                root.chooseScope(index);
-                currentIndex = Qt.binding(() => root.scopeIndex);
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Theme.space.lg
+
+            // A segment click focuses its control, and a click on the chosen
+            // segment emits no `activated`, so each control hands the keyboard
+            // back to the view whenever it takes it, after the click ends.
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Theme.space.sm
+                SegmentedControl {
+                    id: sourceControl
+                    anchors.verticalCenter: parent.verticalCenter
+                    model: BrowserLogic.WALLPAPER_SOURCES.map(s => s.label)
+                    currentIndex: root.sourceIndex
+                    onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
+                    onActivated: index => {
+                        root.sourceIndex = index;
+                        currentIndex = Qt.binding(() => root.sourceIndex);
+                    }
+                }
+                Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+S" }
+            }
+
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.scoped
+                spacing: Theme.space.sm
+                SegmentedControl {
+                    id: scopeControl
+                    anchors.verticalCenter: parent.verticalCenter
+                    model: BrowserLogic.SCREEN_SCOPES.map(s => s.label)
+                    currentIndex: root.scopeIndex
+                    onActiveFocusChanged: if (activeFocus) Qt.callLater(root.takeKeys)
+                    onActivated: index => {
+                        root.chooseScope(index);
+                        currentIndex = Qt.binding(() => root.scopeIndex);
+                    }
+                }
+                Kbd { anchors.verticalCenter: parent.verticalCenter; text: "Alt+M" }
             }
         }
     }
 
     CardCarousel {
         id: carousel
-        anchors.top: controls.bottom
-        anchors.topMargin: Theme.space.xl
+        anchors.top: parent.top
+        anchors.topMargin: controls.implicitHeight + Theme.space.xxxl * 3
         anchors.bottom: caption.top
         anchors.bottomMargin: Theme.space.xl
         anchors.left: parent.left
         anchors.right: parent.right
         devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
+        tabSteps: false
         model: ScriptModel {
             values: root.cards.map(card => Object.assign({ railKey: BrowserLogic.railKey(card.key, root.generation), generation: root.generation }, card))
             objectProp: "railKey"
@@ -433,12 +492,10 @@ FocusScope {
             Label {
                 role: "hint"
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.selected === null || root.selected.kind === "image" ? "Set" : root.selected.kind === "download" ? "Download" : "Update"
+                text: root.selected === null || root.selected.kind === "image" ? "Set wallpaper" : root.selected.kind === "download" ? "Download wallpapers" : "Update wallpapers"
             }
-            Kbd { text: "S" }
-            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Theme or all" }
-            Kbd { visible: root.scoped; text: "W" }
-            Label { role: "hint"; visible: root.scoped; anchors.verticalCenter: parent.verticalCenter; text: "Monitors" }
+            Kbd { text: "Tab" }
+            Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Themes / Wallpapers" }
             Kbd { text: "Esc" }
             Label { role: "hint"; anchors.verticalCenter: parent.verticalCenter; text: "Close" }
         }

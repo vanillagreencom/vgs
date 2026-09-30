@@ -413,6 +413,11 @@ Singleton {
         return hosts[kind][verb](id, payloadJson, origin || null);
     }
 
+    function navigateOverlay(direction) {
+        if (!Logic.hasOwn(hosts, "overlay")) return "refused: no-host=overlay";
+        return hosts.overlay.navigate(direction);
+    }
+
     // Enable or disable one plugin. The reply is one keyed line the CLI
     // prints as is: `ok`, `ok hidden=<a,b>` when disabling the active bar
     // takes those widgets off the screen, `unknown: <id>`, or a refusal

@@ -390,7 +390,7 @@ Every changing tool reads the state back: a Hyprland dispatcher can answer `ok` 
 
 ## 10. Decisions to record
 
-Numbers are taken at landing, from D055. Each lands with its issue and its doc: `docs/architecture/jarvis.md`, split as the byte ceilings require, plus edits to each core doc the issue changes and the vgs-plugin skill's `api.md`.
+Numbers are taken at landing from the decision index. Each lands with its issue and its doc: `docs/architecture/jarvis.md`, split as the byte ceilings require, plus edits to each core doc the issue changes and the vgs-plugin skill's `api.md`.
 
 | Decision | Refines | Lands with |
 |---|---|---|

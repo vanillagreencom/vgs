@@ -73,3 +73,7 @@ The decision holds. The layer gains a second constant core section after the flo
 ## Revisit Outcome (2026-09-29, VGS-585)
 
 [D048](D048-theme-owned-hyprland-appearance.md) refines this decision. The one generated layer now writes theme-owned Hyprland appearance before the floating TUI rules and application window rule: borders, radius and motion, each behind a manifest-declared switch. The core still names no plugin. A plugin declares `hyprland.appearance` in its manifest, and the first enabled declaration by plugin id owns the switches. If no plugin owns a group, the core default keeps border and radius output on and motion output off.
+
+## Revisit Outcome (2026-09-29, VGS-596)
+
+The decision holds. The layer gains a third constant core section after the shell window rule: overlay keyboard capture. [D059](D059-overlay-keyboard-capture.md) records it. Plugins still declare only binds and layer rules as data. The capture section repeats enabled plugin binds inside the `vgs:capture` submap and wraps `hl.dsp.focus` and `hl.bind` to learn the user's default-map directional focus binds. The wrapper uses runtime values handed to `hl.bind`; no user key text is rendered into the generated file. The section enters and leaves capture by reading `hl.get_layers()` for mapped `vgs:overlay` layers on layer open, layer close and config reload.

@@ -15,8 +15,8 @@
 // Browser.qml that draws it. The first view is the one a payload without
 // `view` opens. A view is one row here and its file.
 var VIEWS = [
-    { name: "themes", description: "Open or close the theme browser", source: "ThemeView.qml" },
-    { name: "wallpapers", description: "Open or close the wallpaper browser", source: "WallpaperView.qml" }
+    { name: "themes", label: "Themes", description: "Open or close the theme browser", source: "ThemeView.qml" },
+    { name: "wallpapers", label: "Wallpapers", description: "Open or close the wallpaper browser", source: "WallpaperView.qml" }
 ];
 var PAYLOAD_KEYS = ["view"];
 
@@ -286,46 +286,59 @@ var KEY = {
     Up: 0x01000013,
     Right: 0x01000014,
     Down: 0x01000015,
-    A: 0x41,
-    D: 0x44,
+    I: 0x49,
+    M: 0x4d,
     S: 0x53,
     W: 0x57
 };
 
-// The wallpaper view's keys, v1's set for a browser with no filter: each
-// row a key code and its action, and for Tab, Backtab and W the action
-// while the scope control shows, `scoped`. A key no row names, and any key
-// held with Ctrl, Alt or Meta, has no action and passes on.
+var TAB_ACTIONS = { next: "tab-next", previous: "tab-previous" };
+
+// The theme browser's control keys. Letter shortcuts use Alt so they never
+// collide with type-to-filter.
+function themeAction(key, shift, control, alt, meta) {
+    if (control || meta) return "";
+    if (key === KEY.Tab || key === KEY.Backtab) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;
+    if (alt) return key === KEY.I ? "scope" : "";
+    switch (key) {
+    case KEY.Up: return "back";
+    case KEY.Down: return "forward";
+    case KEY.Return:
+    case KEY.Enter: return "activate";
+    case KEY.Escape: return "close";
+    default: return "";
+    }
+}
+
+// The wallpaper view's keys. Letter shortcuts use Alt so the same rule
+// holds beside the theme view's filter.
 var WALLPAPER_KEYS = [
     { key: KEY.Left, action: "back" },
     { key: KEY.Up, action: "back" },
-    { key: KEY.A, action: "back" },
     { key: KEY.Right, action: "forward" },
     { key: KEY.Down, action: "forward" },
-    { key: KEY.D, action: "forward" },
     { key: KEY.Home, action: "first" },
     { key: KEY.End, action: "last" },
     { key: KEY.Return, action: "activate" },
     { key: KEY.Enter, action: "activate" },
-    { key: KEY.Escape, action: "close" },
-    { key: KEY.S, action: "source" },
-    { key: KEY.W, action: "", scoped: "scope" },
-    { key: KEY.Tab, action: "forward", scoped: "scope" },
-    { key: KEY.Backtab, action: "back", scoped: "scope" }
+    { key: KEY.Escape, action: "close" }
 ];
 
-// The action of KEY, a Qt key code, pressed with MODIFIERS: SHIFT, the
-// Shift bit, and CHORD, whether Ctrl, Alt or Meta is held; SCOPED whether
-// the scope control shows. One of `back`, `forward`, `first`, `last`,
-// `activate`, `close`, `source`, `scope`, or "" for a key that passes on.
-// Shift with Tab is Backtab, as Qt delivers it on some keyboards.
-function wallpaperAction(key, shift, chord, scoped) {
-    if (chord) return "";
-    var code = key === KEY.Tab && shift ? KEY.Backtab : key;
+// The action of KEY, a Qt key code. One of `back`, `forward`, `first`,
+// `last`, `activate`, `close`, `source`, `scope`, `tab-next`,
+// `tab-previous`, or "" for a key that passes on.
+function wallpaperAction(key, shift, control, alt, meta, scoped) {
+    if (meta || control) return "";
+    if (key === KEY.Backtab || key === KEY.Tab) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;
+    if (alt) {
+        if (key === KEY.S) return "source";
+        if (key === KEY.M) return scoped ? "scope" : "";
+        return "";
+    }
     for (var i = 0; i < WALLPAPER_KEYS.length; i++) {
         var row = WALLPAPER_KEYS[i];
-        if (row.key !== code) continue;
-        return scoped && hasOwn(row, "scoped") ? row.scoped : row.action;
+        if (row.key !== key) continue;
+        return row.action;
     }
     return "";
 }

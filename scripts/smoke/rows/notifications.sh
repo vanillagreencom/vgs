@@ -6,6 +6,7 @@
 # No owner data reaches it: every notification here is made up. The row ends
 # with the plugin disabled and every registration released.
 set -euo pipefail
+expected_errors+=('notifications: refused: status=slackTokens reason=retired')
 note_state="$home/.local/state/vgs/notifications/state.json"
 note_images="$home/.local/state/vgs/notifications/images"
 notes() { ipc vgs.notifications invoke "$1" "${2:-}"; }
