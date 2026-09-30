@@ -312,6 +312,8 @@ mkdir -p "$shots_repo/shell/plugins/vgs.settings" "$shots_repo/shell/plugins/vgs
 git -C "$shots_repo" rm -q shell/plugins/vgs.bar/Manager.qml
 git_quiet add shell
 git_quiet commit -q -m settings
+# The harness loads bin/lib/ipc-reply.sh from the checkout it runs in.
+ln -s "$repo/bin/lib" "$shots_repo/bin/lib"
 # scene_case SCRIPT LABEL STATUS LINE ARG...: SCRIPT run from the scratch
 # repository gives STATUS and LINE on stderr, or with STATUS 77 a stdout
 # line starting LINE.
