@@ -153,15 +153,38 @@ The long pass's events, checked and reported in this order:
                              --repo. A parked record's item is an --item for
                              this check alone, and the merge of the pull
                              request its record names, in that repository,
-                             runs the close below at once: nothing wakes a
-                             parked sandbox. Another pull request on the
-                             branch's name is reported and closes nothing,
-                             under a parked-merge-unmatched note on stderr
-                             naming the recorded key and the keys seen; the
-                             repository is matched in lower case, GitHub's
-                             names being case-insensitive
+                             is followed by parked-merged below. Another pull
+                             request on the branch's name is reported and
+                             hands nothing on, under a parked-merge-unmatched
+                             note on stderr naming the recorded key and the
+                             keys seen; the repository is matched in lower
+                             case, GitHub's names being case-insensitive
+  EVENT parked-merged <item> pr=<N> repo=<owner/repo>
+                             the pull request a parked record names merged in
+                             that repository, repo= in lower case: the
+                             sandbox stays stopped, the record stays parked
+                             and nothing is closed, since nothing here wakes a
+                             parked sandbox and the record carries no launch
+                             flags. The overseer relaunches the lane, which
+                             runs its own post-merge. Printed in the pass
+                             that reports the merge, and again ahead of every
+                             heartbeat while the record still reads parked
+                             and its merged row holds that pull request; the
+                             relaunch rewriting the record stopped ends it
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
+  EVENT outside-contribution <repo>#<N> kind=<pr|issue> author=<login> [head=<sha>]
+                             an open pull request in any --repo, or an open
+                             issue in the first, whose author is outside the
+                             fleet: not an app or bot account, and not a
+                             login GitHub associates with the repository as
+                             OWNER, MEMBER or COLLABORATOR. A pull request
+                             carries head=, its head commit on the list.
+                             Reported once while it stays open, and a pull
+                             request again once per new head; a
+                             first-repository baseline row keeps it quiet,
+                             and closing it clears the row.
+                             ORCH_EXTERNAL_TRIAGE=off lists nothing
   EVENT lane-ready <item>    a lane open-terminal handed to a background job
                              while its host prepared it is launched: its
                              record reads running, and the watch carries it
@@ -198,21 +221,11 @@ The long pass's events, checked and reported in this order:
                              lane watched
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted
                              item already reported merged, once the pass finds
-                             its worktree gone, or under the merged event of a
-                             parked record, whose sandbox is stopped and whose
-                             close needs no pane: `lane-close` succeeded;
-                             the provider's output follows, then `kept=none`
-                             when that output has no `kept=` line because the
-                             close archived nothing. A lane exiting while its
-                             worktree stands is not closed. A parked close
-                             that fails is lane-close-failed on stderr and
-                             drops the parked pull request's key alone from
-                             its merged row, committed at once, so the next
-                             pass reports that merge again and retries the
-                             close, while the pass's other merges stay
-                             delivered and this pass runs on to its remaining
-                             checks and exits 2 at its end; lane-close-refused
-                             commits it and is never retried
+                             its worktree gone: `lane-close` succeeded; the
+                             provider's output follows, then `kept=none` when
+                             that output has no `kept=` line because the close
+                             kept no archive. A lane exiting while its
+                             worktree stands is not closed
   EVENT lane-close-refused <item>
                              the same close exited 3: its clone or worktree
                              has user-owned changes. Generated whole-file render
@@ -239,7 +252,11 @@ The long pass's events, checked and reported in this order:
                              harnesses draw OR names a time zone this host
                              cannot resolve. A clause naming a clock and no
                              day is pinned to the first occurrence after the
-                             pass this watch first saw the banner on
+                             pass this watch first saw the banner on. The pass
+                             that sees the banner gone, replaced or its window
+                             gone keeps the wall, from that first pass, in the
+                             `pauses` of the last fleet record naming the
+                             window
   EVENT usage-limit-passed <lane> [<config-dir>] resets=<utc>
                              the same banner, naming a reset that has gone by:
                              the screen is remembering a spent window that has
@@ -287,7 +304,8 @@ The long pass's events, checked and reported in this order:
                              settings. Reported on every long pass while it
                              stays due, so it stops once a report is written;
                              read only with --state
-  EVENT heartbeat            --max-loops long passes with no event. A line
+  EVENT heartbeat            --max-loops long passes with no event, after
+                             the repeated parked-merged lines above. A line
                              `  failing <item> <key>` follows for every lane
                              of the current fleet whose failure still stands,
                              reported once and quiet since, then every
@@ -309,7 +327,8 @@ The long pass's events, checked and reported in this order:
                              --repo on an issue-N branch, from a listing of its
                              own that exits 2 as owed-list-truncated at 1000.
                              A record running, preparing or parked owes
-                             nothing. `merged` is a record carrying its merge's
+                             nothing; a parked one over its merge is named by
+                             parked-merged instead. `merged` is a record carrying its merge's
                              `cycle`. A record with no harness is `queue`.
                              Every other verdict reads the accounts of the
                              record's host, its `host` or `local`, as
@@ -372,9 +391,9 @@ start's `lane-mail inbox --item overseer` moves too, acknowledged only once
 its notes are printed, whatever state directory, --since or checkout this
 watch runs with. A session start's read between the peek and the
 acknowledgement reports a note twice. The lane-mail hooks move it too, for
-a lead session in the checkout while no repeat watch holds the fleet state:
-with single passes, every lead session there, the overseer included. A line
-they take is not reported here.
+the session the fleet record names while no repeat watch holds the fleet
+state: with single passes, the overseer itself. A line they take is not
+reported here.
 Before every mail pass the overseer's session is read once, as the long pass
 reads it; while it reads exited, or walled, no mailbox is read, so a
 successor finds what was sent in the meantime. A rows wall stands unless its
@@ -411,8 +430,8 @@ verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: overseer-dead,
 overseer-walled, merged, lane-asking, usage-limit, model-capacity,
-lane-exited, idle-after-return, handoff and account are keyed in that
-baseline. Mail is reported at least once and never lost: lane-question,
+lane-exited, idle-after-return, handoff, account and outside-contribution are
+keyed in that baseline. Mail is reported at least once and never lost: lane-question,
 lane-notice, directive-unread and, for a directive read after its lane is
 first watched, directive-read are keyed in the mail pass's own file beside
 it, owner-note, owner-ask-resolved and peer-note by the overseer mailbox's
@@ -421,7 +440,7 @@ twice: a repeated id is one already seen. A lane whose to-lane read
 lane-mail reports `missed` has nothing reported or moved that pass; a cursor
 below the one reported holds only its directive lines. Each repeats only when what it reports changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
-new record, another account state. An unchanged standing overseer-mark is the one keyed line that
+new record, another account state, a pull request's new head. An unchanged standing overseer-mark is the one keyed line that
 comes back on a timer: it is reported every ORCH_OVERSEER_MARK_REPEAT passes
 while it stands, so a repeat there is the interval and never a new crossing.
 A suppressed line still holds: a walled lane
@@ -510,11 +529,12 @@ Options:
                       from the pane, the named fallback, where it names
                       none; a death relaunches from the line the fleet
                       state already holds where its record names this pane
-                      by server and pane id, the last line a launch, a
-                      succession or a watch start recorded for it, which a
-                      session restarted by hand may not have been started
-                      with; a record naming another pane, or none, reports
-                      the death with no successor, naming that record
+                      by server, server start and pane id, the last line a
+                      launch, a succession or a watch start recorded for
+                      it, which a session restarted by hand may not have
+                      been started with; a record naming another pane, or
+                      none, reports the death with no successor, naming
+                      that record
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits, or
                       ORCH_WATCH_MAIL_INTERVAL where that is shorter and the
@@ -570,7 +590,9 @@ Options:
                       pane is gone and its mailbox and state are on a stopped
                       disk, so no other check reads it, and the merge of the
                       pull request its `parked` names, in that repository,
-                      runs the hosted close in the same pass.
+                      prints parked-merged in the same pass and at every
+                      heartbeat while the record reads parked, and closes
+                      nothing.
                       The set is noted on stderr as fleet-read whenever a
                       read changes what the reader last carried, with the
                       count of records whose status is not running, so a
@@ -623,9 +645,9 @@ Which mode fits the overseer's harness:
                every line is handled. Nothing reports overseer-dead
 references/watch-delivery.md holds each harness's mechanism and re-arm rule.
 
-When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
-Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
-actions:write. When pr-watch.sh is absent, the step is skipped with one stderr note.
+When pr-watch.sh is installed, oversee-watch runs it on every pass for every
+--repo; it reads GitHub's review state and writes nothing. When pr-watch.sh is
+absent, the step is skipped with one stderr note.
 Inside tmux, an --item with no LANE_WINDOW skips the pane checks with one
 stderr note; outside tmux there is no pane to read and nothing is noted.
 
@@ -637,6 +659,10 @@ Environment:
                               triage, said once, and reads the owed items from
                               open PRs; with a team a missing tracker CLI or
                               workflow-state exits 2 rather than dropping it
+  ORCH_EXTERNAL_TRIAGE        `on` (default) runs the outside-contribution
+                              check on every long pass, reading each --repo's
+                              open pull requests and the first's open issues;
+                              `off` lists nothing. Any other value exits 2
   ORCH_STATE_DIR              workflow-state directory; relative paths join
                               the project root; absolute paths stay unchanged
   ORCH_WATCH_TAIL_LINES       most lines any one event's pane payload prints,
@@ -696,14 +722,14 @@ Environment:
                               read that passes it leaves the mark unjudged for
                               that pass, and on a host without `timeout` the
                               read runs unbounded
-  PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
-                              triage, lane-asking, usage-limit, handoff and
-                              account rows — the mail pass's file beside the
-                              first one, holding each lane mailbox's read
-                              position and when the last long pass started,
-                              plus claims/ and usage/, both shared across the
-                              repositories that point here
+                              triage, lane-asking, usage-limit, handoff,
+                              account and outside-contribution rows — the
+                              mail pass's file beside the first one, holding
+                              each lane mailbox's read position and when the
+                              last long pass started, plus claims/ and
+                              usage/, both shared across the repositories
+                              that point here
   ORCH_WATCH_MAIL_INTERVAL    seconds from the start of one mail pass to the
                               next, a whole number, default 20, and the most
                               --repeat waits between two runs after one that
@@ -735,7 +761,7 @@ USAGE
 # restate it in prose. Bounded in length by that row: the fleet log takes
 # ORCH_FLEET_LOG_ROW_BYTES per row, and the row carries the notice's reason
 # and pane ahead of this, never a path.
-OW_REPLAY_RULE='A death replays the held line only where the record names this pane by server and pane id: the last line a launch, a succession or a watch start recorded for it, which a session restarted by hand may not have started with. A record naming another pane, or no line, means a death with no successor.'
+OW_REPLAY_RULE='A death replays the held line only where the record names this pane by server, server start and pane id: the last line a launch, a succession or a watch start recorded for it, which a session restarted by hand may not have started with. A record naming another pane, or no line, means a death with no successor.'
 
 ow_message() { # REASON FIELD=VALUE...
   local reason="$1" text field
@@ -763,7 +789,7 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
     overseer-fallback) text='The overseer session rows could not judge it, so this pass judges its pane, the named fallback, as the watch did before the rows existed. The cause names why: no rows file recorded for this pane (unrecorded), a fleet state that could not be read (state-unreadable), no row in the file yet (none), a row naming a harness that emits no session end or usage-limit event (unsupported), or a file that could not be read (unreadable).' ;;
     overseer-line-missing) text='This start could not build the overseer launch line, so the fleet state keeps the line it already holds, or none. The pane is still watched. '"$OW_REPLAY_RULE"' The held field is that line, none where the record holds none for this pane, or unread where the record could not be read. The detail under this line is the refusal of oversee-succeed --print-launch-line.' ;;
-    overseer-unrecorded) text='This start could not record the overseer pane in the fleet state, so the record stays as it was. The pane is still watched. '"$OW_REPLAY_RULE"' The held field is that line, none where the record holds none for this pane, or unread where the record, or the pane key that names it, could not be read. The step field names what failed.' ;;
+    overseer-unrecorded) text='This start could not record the overseer pane in the fleet state, so the record stays as it was. The pane is still watched. '"$OW_REPLAY_RULE"' The held field is that line, none where the record holds none for this pane, or unread where the record, or the pane key or server start that names it, could not be read. The step field names what failed.' ;;
     overseer-notice-failed) text='An overseer notice could not be delivered on the channel the field names. A notice from a pass still had its event line printed; a notice from the watch start has none.' ;;
     overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
     overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The fields name the spent account and the reset its banner states; a notice carrying both went to the fleet log and the overseer mailbox.' ;;
@@ -791,6 +817,9 @@ ow_message() { # REASON FIELD=VALUE...
     repo-duplicate) text='Name each repository once.' ;;
     pr-list-failed) text='The GitHub PR list command failed.' ;;
     pr-list-invalid) text='The GitHub PR list output could not be parsed.' ;;
+    outside-list-failed) text='The GitHub list of open issues and pull requests the outside-contribution check reads failed.' ;;
+    outside-list-invalid) text='The GitHub list of open issues and pull requests carried a line the outside-contribution check cannot read: a number, a pr or issue kind, a login, and a pull request head commit.' ;;
+    external-triage-invalid) text='ORCH_EXTERNAL_TRIAGE takes on or off.' ;;
     triage-state-failed) text='The fleet triage verdict log could not be read.' ;;
     triage-item-invalid) text='The fleet triage log contains an invalid issue identifier.' ;;
     time-failed) text='The current UTC time could not be read.' ;;
@@ -802,7 +831,7 @@ ow_message() { # REASON FIELD=VALUE...
     owed-wall-unjudged) text='lanes pick could not judge the wall for this host, harness and model, so the owed items on them read unjudged this heartbeat. Its own words follow.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
-    parked-merge-unmatched) text='A pull request merged on the parked item'"'"'s branch name, reported above as merged, is not the one its record names, so the parked sandbox stays stopped: recorded= is the record'"'"'s <repo>#<number> in lower case and seen= the merged keys this pass found. The lane closes when the recorded pull request merges in that repository.' ;;
+    parked-merge-unmatched) text='A pull request merged on the parked item'"'"'s branch name, reported above as merged, is not the one its record names, so no parked-merged follows it and the parked sandbox stays stopped: recorded= is the record'"'"'s <repo>#<number> in lower case and seen= the merged keys this pass found. parked-merged follows when the recorded pull request merges in that repository.' ;;
     hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
     hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
     root-invalid) text='Spell --root as ITEM=PATH, with the item in letters, digits, dot, underscore and hyphen.' ;;
@@ -846,6 +875,7 @@ ow_message() { # REASON FIELD=VALUE...
     account-unread) text='The account roster could not be read this pass, so no account event is judged and a heartbeat carries account-roster unread in place of the roster. The baseline stands for the next read. The field names the exit, the seconds the ceiling allowed, or parse=failed when the listing or a record in it could not be read.' ;;
     account-reset-unparsed) text='The binding_resets_at the baseline held could not be parsed into a time, so whether that bucket reset settles nothing, and the baseline has already moved to the new reading: that reset is not reported. Status and headroom changes on the account are still judged.' ;;
     claim-missing) text='The pane has no live lane claim. The usage event names no account.' ;;
+    wall-unrecorded) text='A wall this watch saw end on the lane could not be kept in its lane record, so oversee-cycle reads that walled time as the wait it fell in. The workflow-state refusal follows. Other watch checks continue.' ;;
     reducer-baseline) text='The initial PR attention is the baseline. Only new attention produces events.' ;;
     state-target-invalid) text='The watch state target is not a regular file.' ;;
     long-pass-unfinished) text='The long pass exited 0 without writing its status, so whether it found news is unknown.' ;;

@@ -5,12 +5,12 @@
 #
 # Two passes on one clock: the mail pass reads every mailbox and the lane
 # records on ORCH_WATCH_MAIL_INTERVAL, and the long pass (one lane snapshot,
-# pr-watch, merged items, team triage, lane preparation, lane classification,
-# accounts, report) runs forked on --interval. A check that finds an
-# event records it and the pass runs on to the next check, so no kind starves
-# another: a reducer line on every pass or a lane parked on its limit banner
-# would otherwise be the only thing the watch ever said. The block carries the
-# latest pr-watch context once. Live tracker and pane reads remain
+# pr-watch, merged items, team triage, outside contributions, lane
+# preparation, lane classification, accounts, report) runs forked on
+# --interval. A check that finds an event records it and the pass runs on to
+# the next check, so no kind starves another: a reducer line on every pass or
+# a lane parked on its limit banner would otherwise be the only thing the watch
+# ever said. The block carries the latest pr-watch context once. Live tracker and pane reads remain
 # authoritative; persisted state holds only edge keys. Usage, event details,
 # configuration, and failure contracts live in usage(), which lib/oversee-watch-text.sh
 # holds beside the message catalog.
@@ -192,6 +192,8 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/lane-model.sh"
 # shellcheck source=lib/pr-watch-pass.sh
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
+# shellcheck source=lib/outside-contribution.sh
+source "$SCRIPT_DIR/lib/outside-contribution.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/tmux-server.sh
@@ -264,6 +266,7 @@ PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 #   start-stalled<TAB><item><TAB><running_at epoch>|<passes since reported, or seen>
 #   lane-failed<TAB><item><TAB><the last lane-local failure the long pass reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
+#   outside-contribution<TAB><repo>#<number><TAB><pr HEAD_SHA|issue>
 #   account<TAB><harness>|<through>|<config dir><TAB><status>|<verdict>|<binding_resets_at or ->
 # And in the mail pass's file:
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
@@ -390,7 +393,8 @@ fi
 # of events inside one overseer's context. The default holds the measured
 # Claude Code dialogs and the Codex trust dialog whole; the Codex model
 # picker's slice is longer and keeps its bottom 12 lines
-# (tests/fixtures/oversee-watch). What the cap trims is gone from the event,
+# (https://github.com/vanillagreencom/kendex/tree/main/skills/orch/tests/fixtures/oversee-watch).
+# What the cap trims is gone from the event,
 # and only a larger cap brings it back.
 WATCH_TAIL_LINES="${ORCH_WATCH_TAIL_LINES:-12}"
 [[ "$WATCH_TAIL_LINES" =~ ^[1-9][0-9]*$ ]] || die tail-lines-invalid "" "value=$WATCH_TAIL_LINES"
@@ -521,7 +525,7 @@ check_root_entries() { # KIND ENTRY...
   done
 }
 
-# Whether the item is a parked record's, for the merged check's close, with
+# Whether the item is a parked record's, for the merged check's hand, with
 # PARKED_KEY the `<repo>#<number>` of the pull request its park judged.
 PARKED_KEY=""
 item_parked() { # ITEM
@@ -620,12 +624,13 @@ PREPARE_ROWS=""
 
 # The parked records, one per line as item and `<repo>#<number>`: a lane
 # lane-close --park stopped with its disk kept, and the pull request its park
-# judged, whose merge alone the merged check closes it on. Nothing else reads
-# it: its pane is gone and its mailbox is on a stopped disk. The repository
-# is lowercased here, the one spelling check_repo_set gives every --repo, so
-# the key meets the merged side's whatever case the record's writer used:
-# GitHub reads owner and repository names case-insensitively, and a record
-# carries the spelling gh repo view or the launch's --repo gave it.
+# judged, whose merge alone the merged check hands on as parked-merged.
+# Nothing else reads it: its pane is gone and its mailbox is on a stopped
+# disk. The repository is lowercased here, the one spelling check_repo_set
+# gives every --repo, so the key meets the merged side's whatever case the
+# record's writer used: GitHub reads owner and repository names
+# case-insensitively, and a record carries the spelling gh repo view or the
+# launch's --repo gave it.
 PARKED_ROWS_FILTER='
   (.lanes // [])[] | select(type == "object" and .status == "parked")
   | if ((.item? | type) != "string" or (.item | length) == 0) then error("lane-field field=item value=\(.item | tojson)")
@@ -989,6 +994,7 @@ if [[ -n "$SINCE" ]]; then
     ow_message triage-disabled "setting=LINEAR_TEAM" "value=${LINEAR_TEAM:-}" >&2
   fi
 fi
+outside_contribution_init
 
 check_item_set
 
@@ -1288,21 +1294,19 @@ MAIL_STATE_FILE="$(pw_state_file "${REPOS[0]}").mail"
 # delivered, so a merged item still in --item on a re-run is not news again,
 # while a further PR on the branch, in any repo, is. The rows are committed
 # once, after the lines are out.
-# A parked item's merge closes its sandbox here, in the pass that reports it:
-# the lane has no pane to exit and nothing wakes a parked sandbox. The close
+# A parked item's merge is handed to the overseer as parked-merged, in the
+# pass that reports it: the lane has no pane to exit and nothing wakes a
+# parked sandbox, and the record carries no launch flags, so the resume is the
+# overseer's relaunch, after which the lane runs its own post-merge. The hand
 # is owed to the pull request its park judged, in the repository it read it
 # in, and to no other pull request on the branch's name, which is reported as
-# any item's is and closes nothing. The merged row is committed before the
-# close, which cannot be undone, so a run that stops after the close never
-# closes the lane twice; a close that fails drops the parked key alone from
-# the row, the pass's other merges staying delivered, and commits it at once,
-# before the next item's reads can end the pass, so the next pass reports
-# that merge again and retries, and this pass fails as a whole at its end
-# while its remaining checks still run. A refused close, exit 3, keeps
-# its row: the user settles that checkout, and nothing retries it.
+# any item's is and hands nothing. The record stays parked and nothing is
+# closed here: the relaunched lane's own completion is what closes it. The
+# merged row that holds the key is what parked_merged_owed repeats the hand
+# from at each heartbeat while the record still reads parked.
 check_merged() {
   [[ -n "$ITEM_BRANCHES" ]] || return 0
-  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line retry state="${PW_SEEN[0]}"
+  local errf="$WORK_DIR/merged.err" item branch repo list hit hits prior keys fresh key line state="${PW_SEEN[0]}"
   for item in "${MERGED_ITEMS[@]}"; do
     branch="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"
     hits=""
@@ -1339,18 +1343,32 @@ check_merged() {
       ow_message parked-merge-unmatched "item=$item" "recorded=$PARKED_KEY" "seen=${fresh// /,}" >&2
       continue
     fi
-    lane_row_commit "$state"
-    if ! close_hosted_lane "$item"; then
-      retry=" $keys "; retry="${retry/ $PARKED_KEY / }"; retry="${retry# }"; retry="${retry% }"
-      if [[ -n "$retry" ]]; then state="$(lane_row_set merged "$state" "$item" "$retry")"
-      else state="$(lane_row_clear merged "$state" "$item")"; fi
-      lane_row_commit "$state"
-      PASS_FAILED=1
-    fi
-    [[ -z "$CLOSE_TERMED" ]] || { lane_row_commit "$state"; exit 143; }
+    parked_merged_line "$item" "$PARKED_KEY"
   done
   state="$(lane_row_prune merged "$state" "${MERGED_ITEMS[@]}")"
   lane_row_commit "$state"
+}
+
+# The parked-merged line, one spelling for the merged check's fresh merge and
+# the heartbeat's repeat.
+parked_merged_line() { # ITEM KEY
+  echo "EVENT parked-merged $1 pr=${2##*#} repo=${2%#*}"
+}
+
+# The hand is level-triggered from the record: every record still reading
+# parked whose recorded `<repo>#<number>` is in its item's merged row of STATE,
+# the committed baseline the merged check writes, is handed on again. Nothing
+# here ends the repeat; the relaunch rewriting the record stopped does, so a
+# relaunch refused, or an overseer that compacted or handed off after the
+# first hand, still has the merge named at the next heartbeat. Errexit is off
+# under the caller's `||`, so the row read returns its own failure.
+parked_merged_owed() { # STATE
+  local i row
+  for i in ${PARKED_ITEMS[@]+"${!PARKED_ITEMS[@]}"}; do
+    row="$(lane_row_get merged "$1" "${PARKED_ITEMS[$i]}")" || return 1
+    [[ " $row " == *" ${PARKED_KEYS[$i]} "* ]] || continue
+    parked_merged_line "${PARKED_ITEMS[$i]}" "${PARKED_KEYS[$i]}"
+  done
 }
 
 check_triage() {
@@ -1426,10 +1444,7 @@ check_triage() {
 # pass that finds it, and the rows are committed once, after the lines are out.
 check_handoff() {
   [[ ${#ITEMS[@]} -gt 0 ]] || return 0
-  local item answer rec rc key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
-  # The verdict line `handoff-standing` publishes, the one place its text lives
-  # in this script.
-  local verdict='workflow-state: handoff-standing'
+  local item rec key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
   for item in "${ITEMS[@]}"; do
     grep -qxF -- "$item" <<<"$PASS_FAILED_ITEMS" && continue
     if ! item_state_dir "$item"; then
@@ -1438,29 +1453,24 @@ check_handoff() {
       lane_row_commit "$state"
       continue
     fi
-    # `handoff-standing` owns the test and publishes its verdict as the word on
-    # its first line, so that word is read here and its status is not: a script
-    # its settings loader killed before the verb ran exits with a status of its
-    # own, and only a run that reached the verb writes a verdict. `none` is no
-    # record standing, a state file that is not there included, and `stands`
-    # carries the record on the line under it. Anything else, an install
-    # without the verb included, is a state this pass could not read, and is
-    # reported rather than passed off as "no handoff".
-    rc=0
-    answer="$("$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" handoff-standing "$item" 2>"$errf")" || rc=$?
-    if [[ "$rc" -eq 0 && "$answer" == "$verdict=none" ]]; then
-      state="$(lane_row_clear handoff "$state" "$item")"
-      state="$(lane_row_clear lane-failed "$state" "$item")"
-      continue
-    fi
-    if [[ "$rc" -ne 0 || "$answer" != "$verdict=stands"$'\n'* ]]; then
-      lane_failure_set handoff-read-failed "$(cat "$errf")" "item=$item" "path=$ITEM_STATE_DIR"
-      lane_failure_report "$item" "$state"
-      state="$LANE_FAILURE_STATE"
-      lane_row_commit "$state"
-      continue
-    fi
-    rec="${answer#*$'\n'}"
+    # lib/lane-state.sh reads the verdict. A state this pass could not read,
+    # an install without the verb included, is reported rather than passed
+    # off as "no handoff".
+    lane_handoff_standing . "$errf" "$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" handoff-standing "$item"
+    case "$LANE_HANDOFF_STATE" in
+      none)
+        state="$(lane_row_clear handoff "$state" "$item")"
+        state="$(lane_row_clear lane-failed "$state" "$item")"
+        continue ;;
+      stands) ;;
+      *)
+        lane_failure_set handoff-read-failed "$(cat "$errf")" "item=$item" "path=$ITEM_STATE_DIR"
+        lane_failure_report "$item" "$state"
+        state="$LANE_FAILURE_STATE"
+        lane_row_commit "$state"
+        continue ;;
+    esac
+    rec="$LANE_HANDOFF_RECORD"
     state="$(lane_row_clear lane-failed "$state" "$item")"
     key="$(printf '%s' "$rec" | cksum | awk '{ print $1 }')"
     prior="$(lane_row_get handoff "$state" "$item")"
@@ -1960,6 +1970,24 @@ lane_row_prune() {
 # names from sharing one snapshot and classifying each other's screens.
 LANE_OBS=""
 LANE_TURNS=()
+# wall_pause LANE SEEN_AT — the wall this watch first saw on LANE's pane at
+# SEEN_AT, epoch, and sees no longer this pass, kept as {from, to, cause} in
+# the `pauses` of the last lane record whose window LANE names, in the fleet
+# state lane-close is handed: oversee-cycle reads a lane's walled time from
+# there and nowhere else. The pass that sees the banner gone, replaced or its
+# window gone is the wall's end, so the pause runs to that pass. A window no
+# record names keeps nothing. A write that fails is said and the pass goes on,
+# since the wall's history is not what the overseer acts on.
+wall_pause() { # LANE SEEN_AT
+  local errf="$WORK_DIR/wall-pause.err"
+  [[ "$2" =~ ^[0-9]+$ && "$2" -lt "$PASS_NOW" ]] || return 0
+  "$WORKFLOW_STATE" --state-dir "$FLEET_STATE_DIR" update oversee \
+    --arg window "$1" --argjson from "$2" --argjson to "$PASS_NOW" \
+    '([(.lanes // []) | to_entries[] | select(.value.window == $window) | .key] | last) as $i
+     | if $i == null then . else .lanes[$i].pauses += [{from: ($from | todate), to: ($to | todate), cause: "walled"}] end' \
+    >/dev/null 2>"$errf" || { ow_message wall-unrecorded "lane=$1" >&2; cat -- "$errf" >&2; }
+}
+
 lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<"$1"; }
 lane_obs_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
@@ -2018,16 +2046,21 @@ observe_lanes() {
   LANE_OBS=""
   LANE_TURNS=()
   LANE_ROWS=()
-  [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local lane target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
+  # No early return for an empty fleet: the rows of the last lanes to leave
+  # still end their walls and are pruned below.
+  local lane kind target pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
-  for lane in "${LANES[@]}"; do
+  for lane in ${LANES[@]+"${LANES[@]}"}; do
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
     rm -f "$capture" "$capture.$$.tmp"
     if ! lane_window_listed "$lane"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       state="$(lane_row_clear lane-asking "$state" "$lane")"
+      if ! prior="$(lane_row_get usage-limit "$state" "$lane")"; then
+        die state-read-failed "" "lane=$lane" "row=usage-limit"
+      fi
+      [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
       state="$(lane_row_clear usage-limit "$state" "$lane")"
       state="$(lane_row_clear model-capacity "$state" "$lane")"
       state="$(lane_row_clear lane-exited "$state" "$lane")"
@@ -2085,18 +2118,26 @@ observe_lanes() {
     reset_key="$(usage_reset_key "$banner")"
     prior="$(lane_row_get usage-limit "$state" "$lane")"
     if [[ -n "$banner" ]]; then
-      seen_pane=""; seen_key=""
+      seen_at=""; seen_pane=""; seen_key=""
       [[ -z "$prior" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$prior"
-      [[ "$seen_pane" == "$key" && "$seen_key" == "$reset_key" ]] \
-        || state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key")"
+      if [[ "$seen_pane" != "$key" || "$seen_key" != "$reset_key" ]]; then
+        [[ -z "$prior" ]] || wall_pause "$lane" "$seen_at"
+        state="$(lane_row_set usage-limit "$state" "$lane" "$PASS_NOW|$key||$reset_key")"
+      fi
     else
+      [[ -z "$prior" ]] || wall_pause "$lane" "${prior%%|*}"
       state="$(lane_row_clear usage-limit "$state" "$lane")"
     fi
   done
-  state="$(lane_row_prune usage-limit "$state" "${LANES[@]}")"
-  state="$(lane_row_prune model-capacity "$state" "${LANES[@]}")"
-  state="$(lane_row_prune lane-exited "$state" "${LANES[@]}")"
-  state="$(lane_row_prune lane-idle "$state" "${LANES[@]}")"
+  # A wall on a window that left the fleet ends with it.
+  while IFS=$'\t' read -r kind lane prior; do
+    [[ "$kind" == usage-limit ]] && ! window_listed "$lane" || continue
+    wall_pause "$lane" "${prior%%|*}"
+  done <<<"$state"
+  state="$(lane_row_prune usage-limit "$state" ${LANES[@]+"${LANES[@]}"})"
+  state="$(lane_row_prune model-capacity "$state" ${LANES[@]+"${LANES[@]}"})"
+  state="$(lane_row_prune lane-exited "$state" ${LANES[@]+"${LANES[@]}"})"
+  state="$(lane_row_prune lane-idle "$state" ${LANES[@]+"${LANES[@]}"})"
   lane_row_commit "$state"
 }
 
@@ -2159,9 +2200,11 @@ overseer_publish() { # NOTICE RECORD ERR_FILE
 # that was taken, and how a relaunch describes where the successor's account
 # came from. Every other plan reads the same for both, because the reason no
 # successor opens is the same reason. RECORD is the fleet state's overseer
-# record key, `<server> <pane>` or empty for none, and IDENTITY this pane's;
-# the no-line plan names which of the three shapes left it with no line.
-overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD IDENTITY
+# record key, `<server> <pane>` or empty for none, and MINE 1 where that
+# record names this session (overseer_record_read), which the key alone does
+# not say: an earlier server handed the same pid and pane id left the same
+# one. The no-line plan names which of the three shapes left it with no line.
+overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD MINE
   local kind="$1" notice="$WORK_DIR/overseer-$1.txt" record="$WORK_DIR/overseer-$1.json"
   local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text
   now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
@@ -2178,7 +2221,7 @@ overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN RECORD IDENTITY
     no-line)
       if [[ -z "$6" ]]; then
         plan_text='The fleet state holds no overseer record, so no successor is launched; start one by hand.'
-      elif [[ "$6" == "$7" ]]; then
+      elif [[ "$7" == 1 ]]; then
         plan_text='The fleet state record for this pane holds no launch line, so no successor is launched; start one by hand.'
       else
         plan_text="The fleet state record names another session, tmux server ${6%% *} pane ${6#* }, whose launch line is not replayed as this pane's, so no successor is launched; start one by hand."
@@ -2459,10 +2502,13 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 # turn end and nowhere else. A record another session wrote, a predecessor's
 # until this one's first turn end, says nothing of this one: one naming
 # another pane, a harness other than the one the fleet record names for this
-# pane (check_overseer's OVERSEER_RECORD_HARNESS), which is what separates a
-# Copilot overseer, writing neither rows nor records, from a predecessor in
-# the same pane, or a session other than the one the pane's latest SessionStart
-# row names.
+# pane (check_overseer's OVERSEER_RECORD_HARNESS), or a session other than
+# the one the pane's latest SessionStart row names. A Copilot overseer writes
+# records, readings and gaps, and Stop rows but no SessionStart row
+# (hooks/session-start-row.sh is not run on copilot), so only the harness
+# separates it from a predecessor in the same pane: a Copilot predecessor's
+# record, a gap drawing overseer-context-unmeasured among them, stands as this
+# session's until this session's first turn end rewrites it.
 #
 # `overseer-context-unmeasured` where the record carries a gap, the reason the
 # hook took no reading; `overseer-context-stale` where the record's `at` is
@@ -2511,7 +2557,8 @@ overseer_context_check() { # PANE IDENTITY
 }
 
 # The overseer's own session as one reading: OV_WINDOW, OV_IDENTITY (`<server>
-# <pane>`, the key its rows are kept under), OV_STATE, the word the shared
+# <pane>`, the key its rows are kept under), OV_START (its server's start,
+# which the record is judged against), OV_STATE, the word the shared
 # judge would give it, and OV_SOURCE, what settled that word. The long pass
 # reads it before its checks and the mail pass before it takes any mail, so
 # both read one session the one way. A pane that cannot be read is noted once
@@ -2538,6 +2585,7 @@ overseer_context_check() { # PANE IDENTITY
 # capture, empty on every other source.
 OV_WINDOW=""
 OV_IDENTITY=""
+OV_START=""
 OV_SCREEN=""
 OV_STATE=""
 OV_SOURCE=""
@@ -2560,11 +2608,16 @@ overseer_pane_read() { # PANE
   OV_WINDOW="$OL_INSPECT_WINDOW"
   server="$OL_INSPECT_SERVER"
   OV_IDENTITY="$server $pane"
+  # Unread, the start would read this pane's own record as another session's,
+  # and a death judged on it is reported with no line to relaunch.
+  OV_START="$(ol_session_start "$server" "$pane")" \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=server-start"; return 1; }
   [[ "$OL_INSPECT_STATE" != exited ]] || bare=1
   [[ ",$OL_INSPECT_CAUSE," != *,process-probe,* ]] || note_probe_unusable "$pane" "$OL_INSPECT_PROBE"
   # The rows file and the exit status the record holds for THIS pane on THIS
-  # server, and neither for a record naming another session: that one's are
-  # not this pane's. An exit status is `overseer-run`'s, written once the
+  # server, by `ol_names`, and neither for a record naming another session:
+  # that one's, an earlier server's handed the same pid and pane among them,
+  # are not this pane's. An exit status is `overseer-run`'s, written once the
   # launch line returned (lib/overseer-launch.sh § ol_record_exit), and it
   # settles the session, `source=record`, only over the state that return
   # leaves: a bare shell with nothing under it. A harness the person started
@@ -2572,7 +2625,7 @@ overseer_pane_read() { # PANE
   # earlier session's.
   cause=unrecorded exit_status=""
   if ! rows="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee \
-    "if (.overseer.server // \"\") == \"$server\" and (.overseer.pane // \"\") == \"$pane\"
+    "$OL_JQ_DEFS if .overseer | ol_names(\"$server\"; \"$OV_START\"; \"$pane\")
      then \"\\(.overseer.exit.status // \"\")\\t\\(.overseer.session_rows // \"\")\" else \"\" end" 2>"$errf")"; then
     cause=state-unreadable rows=""
   fi
@@ -2637,7 +2690,7 @@ overseer_judge() { # PANE
 
 check_overseer() {
   local pane="${TMUX_PANE:-}" window screen prior count succession plan
-  local record record_field identity rows attempt completed passes=""
+  local record record_mine record_field identity rows attempt completed passes=""
   local ov_case row other succeed_rc below banner banner_rc
   local errf="$WORK_DIR/overseer.err"
   # Off tmux there is no overseer pane to read, and with no workflow-state
@@ -2668,10 +2721,11 @@ check_overseer() {
   # replay. The reader is lib/watch-overseer-record.sh's, the one the start
   # names its `held=` line with, and it answers the record's own key too, so
   # a death no line is replayed for can say which record stood in the way.
-  overseer_record_read "${identity%% *}" "$pane" 2>"$errf" \
+  overseer_record_read "${identity%% *}" "$OV_START" "$pane" 2>"$errf" \
     || { overseer_note overseer-unwatched "state=oversee"; return 0; }
   OVERSEER_LINE="$OVERSEER_RECORD_LINE"
   record="$OVERSEER_RECORD_KEY"
+  record_mine="$OVERSEER_RECORD_MINE"
 
   overseer_judge "$pane"
   # An account the mark judgement reads at zero headroom is a wall whether or
@@ -2797,7 +2851,7 @@ check_overseer() {
       banner_payload "$below" "$banner" || die limit-banner-missing "" "pane=$pane"
     fi
     PASS_EVENT=1
-    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan" "$record" "$identity"
+    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan" "$record" "$record_mine"
   fi
   if [[ "$plan" != relaunch ]]; then
     OVERSEER_STOP=1
@@ -3252,11 +3306,13 @@ check_report() {
 # read; with none, every open pull request in the item repository, the first
 # --repo, whose head is a GitHub item's branch, issue-N, read whole by a
 # listing of its own. A listing that reaches OWED_PR_LIMIT refuses rather than
-# pass a short set as the whole one. An item is owed nothing while a record
-# holds it (running or preparing, LANE_RUNNING_JQ's `held`) or while it is
-# parked, since the merged check carries a parked lane's pull request. The
-# queue and the records are the turn's own fleet_merge read, FLEET_STATE, so
-# the heartbeat judges the fleet the pass carried and reads no file again.
+# pass a short set as the whole one. An item is owed nothing while its record
+# is in flight (running, preparing or parked, LANE_RUNNING_JQ's `in_flight`):
+# the merged check carries a parked lane's pull request, and
+# parked_merged_owed names the record again at each heartbeat once it
+# merged. The queue and the records are the turn's own fleet_merge read,
+# FLEET_STATE, so the heartbeat judges the fleet the pass carried and reads no
+# file again.
 #
 # The verdict, in this order: `merged` where the record carries the `cycle`
 # oversee-cycle writes at a merge, which a later launch keeps, so the tracker
@@ -3327,7 +3383,7 @@ owed_read() {
     | . as $item
     | select(any($queue[]; . == $item.id) | not)
     | ([$lanes[] | objects | select(.item == $item.id)] | last) as $rec
-    | select($rec == null or ((($rec | held) or $rec.status == "parked") | not))
+    | select($rec == null or ($rec | in_flight | not))
     | [$item.id, $item.state, ($item.priority | tostring),
        (if $rec == null then "none" else ($rec.status | token("status")) end),
        ($rec.host // null | if . == null or . == "" then "local" elif type == "string" then . else error("lane-field field=host value=\(tojson)") end),
@@ -3432,9 +3488,10 @@ owed_wall() { # HOST HARNESS MODEL
 # are, and all of them read before the event line goes out: a repo that
 # cannot be listed is a failed pass, not a heartbeat missing a repo. The
 # account roster follows, as the last long pass read it, then the owed items,
-# read before the event line for the same reason.
+# read before the event line for the same reason. A parked record still
+# standing over its merged pull request is handed on again ahead of it.
 heartbeat() {
-  local errf="$WORK_DIR/open.err" repo open open_all="" failing baseline="" file
+  local errf="$WORK_DIR/open.err" repo open open_all="" failing baseline="" file hands
   github_ready
   # The standing lane failures, each reported once and quiet since: a quiet
   # run still names every channel that stays broken. The long pass's are in
@@ -3448,6 +3505,7 @@ heartbeat() {
     [[ -z "$open" ]] || open_all+="$(pw_prefix "$repo" "$open")"$'\n'
   done
   owed_read
+  hands="$(parked_merged_owed "$baseline")" || die state-read-failed "" "path=$file" "row=merged"
   # The current fleet's alone: a row clears on the item's next good read,
   # and an item that left the fleet is read no more.
   if ! failing="$(ow_items="$(printf '%s\n' overseer ${ITEMS[@]+"${ITEMS[@]}"})" awk -F'\t' '
@@ -3456,6 +3514,7 @@ heartbeat() {
     <<<"$MAIL_SEEN"$'\n'"$baseline")"; then
     die state-read-failed "" "path=$MAIL_STATE_FILE" "row=lane-failed"
   fi
+  [[ -z "$hands" ]] || printf '%s\n' "$hands"
   echo "EVENT heartbeat loops=$MAX_LOOPS interval=${INTERVAL}s since=${SINCE:-none}"
   [[ -z "$failing" ]] || printf '%s\n' "$failing"
   [[ -z "$open_all" ]] || printf '%s' "$open_all"
@@ -3471,11 +3530,11 @@ heartbeat() {
 }
 
 # The long pass: the overseer's own pane, one lane snapshot, pr-watch, merged
-# items, triage, lane preparation, the lane checks and the accounts, in a
-# forked process. Mail passes go on while it runs, so it spools its stdout and
-# stderr and this process prints them whole once it ends, staying the one
-# writer of the event protocol. The
-# fork has its own copy of every global: the ones the loop below needs back
+# items, triage, outside contributions, lane preparation, the lane checks and
+# the accounts, in a forked process. Mail passes go on while it runs, so it
+# spools its stdout and stderr and this process prints them whole once it
+# ends, staying the one writer of the event protocol. The fork has its own
+# copy of every global: the ones the loop below needs back
 # are LONG_RETURNS, written to LONG_STATUS, and a global a long-pass check
 # sets for this process belongs there. The baselines it committed are what the
 # next long pass reads, never this process's copy of them.
@@ -3501,6 +3560,7 @@ long_pass() {
     check_pr_watch
     check_merged
     check_triage
+    check_outside_contribution
     check_prepare
     check_start_stall
     check_lanes

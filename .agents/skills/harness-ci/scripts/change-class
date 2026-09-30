@@ -21,7 +21,20 @@
 # `standard` because something could not be read. Only `standard` is ever
 # measured=false, and only this script can tell the two apart: the cause alone
 # does not, so a consumer that must not treat a fallback as a class reads the
-# marker rather than a list of causes of its own. The render proof runs `kendex verify --scope
+# marker rather than a list of causes of its own. Every verdict also prints
+# one `queue-only: queue_only=true|false cause=<name> [path=<p> glob=<g>]`
+# line on stderr, ahead of the `class:` line: true where a changed path
+# matches a `queue` line of orch's narrow-change.conf, which is the list of
+# paths a change must run in a merge group for; where a changed path is one
+# git quoted (cause=path-quoted), where the diff is empty
+# (cause=no-changed-paths), and where the paths were not read
+# (cause=paths-unread) or the list was not (cause=queue-list-unreadable,
+# cause=queue-list-missing). It is judged on every changed path harness-only
+# read, before any refusal or rule below, and no class changes it. A wiring
+# error prints no such line, and a reader takes its absence as
+# queue_only=true. This paragraph is the one statement of when the line
+# reads true; other docs point here.
+# The render proof runs `kendex verify --scope
 # project --json` in that private checkout, with `--base` set to the base-rev:
 # line harness-only printed and `--at-record` beside it, and reads its
 # document. The classes, first match winning:
@@ -107,6 +120,19 @@
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
 #
+# The render proof runs the `kendex` on PATH, save for one diff: where the only
+# changed path is `.kendex-lock.json`, the install record, and this process's
+# environment sets HARNESS_CI_LOCK_KENDEX, it runs the executable that names.
+# The record is written by a kendex built from the recording tree, so a
+# registration shape newer than the release on PATH reads to that release as
+# drift. review-gate's writer installs kendex's rolling main build there
+# where REVIEW_GATE_LOCK_KENDEX asks for it. The variable is read from the
+# environment alone, never from a settings file: it names a binary on the
+# machine running this script. A path that is not executable answers standard
+# with cause=no-verifier. The `render-verifier:` line names the verifier that
+# ran, `path` or `lock`, and the version its `--version` printed, and a
+# verify-refused cause carries both, so a refusal reads as the verifier's age.
+#
 # Only the render class reads kendex state, and it is reached only where
 # harness-only answers harness_only=true for the range. review-gate's
 # review-predicate.sh (resolve_class_policy) prepares the judged checkout's
@@ -129,7 +155,8 @@ NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
 # it reads or runs whose edit changes the range measured, the settings the
 # measurement reads, or the ceilings it compares against. orch's
 # narrow-change.conf refuses the narrow classes on each, and
-# tests/narrow-boundary.test.sh holds that file's boundary group to this list,
+# https://github.com/vanillagreencom/kendex/blob/main/skills/harness-ci/tests/narrow-boundary.test.sh
+# holds that file's boundary group to this list,
 # to branch-size-check's, and to the `source` lines of every file they name.
 # measures-with: skills/harness-ci/scripts/change-class
 # measures-with: skills/harness-ci/scripts/harness-only
@@ -158,6 +185,10 @@ head="HEAD"
 repo="."
 output="${GITHUB_OUTPUT:-}"
 changed=""
+# The queue-only class. Until the changed paths are read, the diff is
+# unreadable, and an unreadable diff reads queue-only.
+QUEUE_ONLY=true
+QUEUE_CAUSE="cause=paths-unread"
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -220,6 +251,7 @@ answer() { # CLASS FIELDS [measured]
         "could not append the verdict to '$output'"
     fi
   fi
+  printf 'queue-only: queue_only=%s %s\n' "$QUEUE_ONLY" "$QUEUE_CAUSE" >&2
   printf 'class: class=%s measured=%s %s\n' "$1" "$measured" "$2" >&2
   printf 'change_class=%s\n' "$1"
   exit 0
@@ -266,35 +298,6 @@ if ! inventory_change="$(sed -n 's/^inventory-change: //p' "$harness_err" | tail
   inventory_change=""
 fi
 
-# The committed inventory is the file every rule below is judged by: generated
-# ownership is read from it, so the render branch and the size rules both
-# stand on that read. A `false` verdict from harness-only means "run every
-# lane", never "this is a product diff whose size may be measured". Only two
-# of its causes are raised AFTER it has read every changed path against an
-# inventory it could read: a path that inventory does not carry, and an
-# ownership gain. Those two are the readable product diffs, and the list below
-# is what may be measured — they keep the `harness-note:` line they have always
-# had and the class then comes from the size rules. Every other cause is a
-# refusal to read something: the inventory at an endpoint, the inventory's
-# shape, a changed path, a path lookup, the diff, the endpoints, the event.
-# A refusal is not a product diff, so it answers standard here with the cause
-# as it stands, ahead of every path and size rule. A cause harness-only adds
-# later is refused by that default rather than measured until someone names
-# it, which is the way round that cannot hand a narrow class to a diff whose
-# ownership was never read.
-case "$harness_note" in
-  '') ;;
-  cause=product-source-or-unreadable-ownership | \
-    cause=product-source-or-unreadable-ownership\ * | \
-    cause=generated-ownership-gain | cause=generated-ownership-gain\ *) ;;
-  *) answer standard "$harness_note" ;;
-esac
-
-if [ ! -s "$paths_file" ]; then
-  answer standard "${harness_note:-cause=no-changed-paths}"
-fi
-changed="$(cat -- "$paths_file")"
-
 # Splitting a blank-separated list leaves each word open to pathname
 # expansion, and a glob naming a real directory would be replaced by the files
 # under the caller's working directory. Expansion is off for the split alone.
@@ -328,6 +331,90 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
   done <<<"$changed"
   [ "$1" = every ]
 }
+
+# orch's list, as `KEYWORD GLOB` lines. A `superseded` line names a `path`
+# line kept for a reader from before the list's extglob grammar, which reads
+# an extglob as literal text; this reader drops that line and reads the
+# narrower lines beside it.
+list_globs() { # KEYWORD
+  awk -v kind="$1" '
+    $1 == "superseded" { drop[$2] = 1 }
+    $1 == kind { glob[++n] = $2 }
+    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
+  ' "$NARROW_CONF"
+}
+
+# The queue-only class, from the whole changed-path set before any rule below
+# trims it, so every verdict from here on carries it. A list this script
+# cannot read, or one from before the `queue` group, keeps the unreadable
+# default: queue_only=true. git C-quotes a path holding a double quote or a
+# newline, whatever core.quotePath says, and no anchored glob matches that
+# spelling, so a quoted path is queue-only before any glob is read.
+queue_only_of_paths() {
+  local globs path
+  while IFS= read -r path; do
+    case "$path" in
+      \"*) QUEUE_CAUSE="cause=path-quoted path=$path"; return ;;
+    esac
+  done <<<"$changed"
+  if [ ! -r "$NARROW_CONF" ] || ! globs="$(list_globs queue)"; then
+    QUEUE_CAUSE="cause=queue-list-unreadable"
+    return
+  fi
+  if [ -z "$globs" ]; then
+    QUEUE_CAUSE="cause=queue-list-missing"
+    return
+  fi
+  set_globs "$globs"
+  if path_matches any; then
+    QUEUE_CAUSE="cause=queue-path $PATH_MATCH_HIT"
+    return
+  fi
+  QUEUE_ONLY=false
+  QUEUE_CAUSE="cause=no-queue-path"
+}
+
+# The changed paths harness-only read, and the queue-only class judged on
+# them, ahead of every refusal below: a refusal raised after the paths were
+# read carries the class those paths earn. An empty diff is its own cause and
+# stays queue-only; any other empty set is a refusal that read no path, and
+# keeps cause=paths-unread.
+if [ -s "$paths_file" ]; then
+  changed="$(cat -- "$paths_file")"
+  queue_only_of_paths
+else
+  case "$harness_note" in
+    '' | cause=empty-diff | cause=empty-diff\ *) QUEUE_CAUSE="cause=no-changed-paths" ;;
+  esac
+fi
+
+# The committed inventory is the file every rule below is judged by: generated
+# ownership is read from it, so the render branch and the size rules both
+# stand on that read. A `false` verdict from harness-only means "run every
+# lane", never "this is a product diff whose size may be measured". Only two
+# of its causes are raised AFTER it has read every changed path against an
+# inventory it could read: a path that inventory does not carry, and an
+# ownership gain. Those two are the readable product diffs, and the list below
+# is what may be measured — they keep the `harness-note:` line they have always
+# had and the class then comes from the size rules. Every other cause is a
+# refusal to read something: the inventory at an endpoint, the inventory's
+# shape, a changed path, a path lookup, the diff, the endpoints, the event.
+# A refusal is not a product diff, so it answers standard here with the cause
+# as it stands, ahead of every path and size rule. A cause harness-only adds
+# later is refused by that default rather than measured until someone names
+# it, which is the way round that cannot hand a narrow class to a diff whose
+# ownership was never read.
+case "$harness_note" in
+  '') ;;
+  cause=product-source-or-unreadable-ownership | \
+    cause=product-source-or-unreadable-ownership\ * | \
+    cause=generated-ownership-gain | cause=generated-ownership-gain\ *) ;;
+  *) answer standard "$harness_note" ;;
+esac
+
+if [ ! -s "$paths_file" ]; then
+  answer standard "${harness_note:-cause=no-changed-paths}"
+fi
 
 # Two groups, refused at two places. First, ahead of everything, kendex's own
 # configuration, with .gemini/settings.json beside it: the shim row kendex
@@ -410,11 +497,27 @@ checkout_head() {
 RENDER_REFUSAL=""
 VERIFY_JSON=""
 renders_match() {
-  local verify_args counts checked failed version
-  if ! command -v kendex >/dev/null 2>&1; then
-    RENDER_REFUSAL="cause=no-verifier"
+  local verify_args counts checked failed version verifier=kendex kind=path verifier_version
+  if [ "$changed" = .kendex-lock.json ] && [ -n "${HARNESS_CI_LOCK_KENDEX:-}" ]; then
+    verifier="$HARNESS_CI_LOCK_KENDEX"
+    kind=lock
+  fi
+  if ! command -v "$verifier" >/dev/null 2>&1; then
+    RENDER_REFUSAL="cause=no-verifier verifier=$kind"
     return 1
   fi
+  # The version names the verifier on the log and in a refusal, and decides
+  # nothing: one that cannot be read is named as such.
+  if ! verifier_version="$("$verifier" --version 2>/dev/null </dev/null)"; then
+    verifier_version=""
+  fi
+  verifier_version="${verifier_version%%$'\n'*}"
+  verifier_version="${verifier_version##* }"
+  case "$verifier_version" in
+    '' | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.+_-]*)
+      verifier_version=unreadable ;;
+  esac
+  printf 'render-verifier: verifier=%s version=%s\n' "$kind" "$verifier_version" >&2
   # harness-only prints head-rev: on every verdict it reaches after resolving
   # both ends, harness_only=true included, so an absent line is a
   # harness-only that broke that promise.
@@ -435,9 +538,9 @@ renders_match() {
     # commit.
     verify_args=("${verify_args[@]}" --base "$base_rev" --at-record)
   fi
-  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
+  if ! VERIFY_JSON="$( (cd -- "$proof_tree" && "$verifier" "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
     cat "$work/verify-stderr" >&2
-    RENDER_REFUSAL="cause=verify-refused"
+    RENDER_REFUSAL="cause=verify-refused verifier=$kind version=$verifier_version"
     return 1
   fi
   # The document is the contract, its version first: a kendex printing
@@ -698,17 +801,6 @@ case "$inventory_change" in
     fi ;;
 esac
 
-# orch's list, as `KEYWORD GLOB` lines. A `superseded` line names a `path`
-# line kept for a reader from before the list's extglob grammar, which reads
-# an extglob as literal text; this reader drops that line and reads the
-# narrower lines beside it.
-list_globs() { # KEYWORD
-  awk -v kind="$1" '
-    $1 == "superseded" { drop[$2] = 1 }
-    $1 == kind { glob[++n] = $2 }
-    END { for (i = 1; i <= n; i++) if (!(glob[i] in drop)) print glob[i] }
-  ' "$NARROW_CONF"
-}
 [ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
 if ! excluded="$(list_globs path)" ||
   ! instruction_globs="$(list_globs instruction)"; then

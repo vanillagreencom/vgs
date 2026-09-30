@@ -29,6 +29,8 @@ The push check is there because Git runs no hook when it replays a commit. A reb
 
 Every key, its default and its meaning: [SKILL.md](SKILL.md) § Configuration. Each resolves environment > `.env.local` > `.kendex/settings.toml` > committed `kendex.settings.toml` (flat `KEY = "value"` under `[env]`) > default; a `.env` file is never read. Per-check flags (`--excludes`, `--baseline`) override every source; relative paths are repo-root-relative.
 
+A settings file is read whole. Each `[env]` value is a single-line double-quoted string with no `"` and no `\` inside. One value in another shape, or one key assigned twice, fails every read from that file, on any key, because every kendex settings reader refuses the same file. The error for a value in another shape names the file, the line and the key: `settings-string=kendex.settings.toml:3:OTHER`.
+
 ```toml
 [env]
 COMMIT_GUARDS_BYTE_CEILING_KB = "500"
@@ -39,4 +41,4 @@ COMMIT_GUARDS_CHECKS = "todo-ban suppression-ban"
 
 The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. The harness pre-commit hook requires these Git hooks before it allows a commit.
 
-Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](DEVELOPMENT.md).
+Check definitions: [CHECKS.md](CHECKS.md). Hook setup and execution: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md).

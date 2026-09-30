@@ -1,0 +1,46 @@
+[env]
+
+# SLACK — the relay between an overseer's mailbox and a private Slack channel.
+# Nothing below is marked `# required`, so installing this skill writes
+# nothing into <project>/kendex.settings.toml. The defaults are what the
+# owner runs. Full key reference: slack README.md § Settings.
+
+# The email addresses of the people whose messages steer, comma-separated.
+# Anyone else in a channel can read but not steer. After a change, run
+# `slack setup` for each bound checkout: it invites an added address to the
+# channel and restarts the relay unit. A plain restart drops a removed address
+# but never invites an added one. Empty uses KENDEX_USER_EMAIL; with that
+# unset too, setup and the relay refuse and name the key.
+SLACK_OWNERS = ""
+
+# How often the relay reads each mailbox for questions, notices and reports
+# to post, in seconds. Owner messages do not wait for it: Slack sends each
+# one over the relay's Socket Mode connection as it is posted.
+SLACK_POLL_SECONDS = "15"
+
+# How many days a thread stays open for replies. A reply under an older
+# topic is not routed; the owner writes top-level instead.
+SLACK_THREAD_DAYS = "7"
+
+# A file a master session touches while it answers the overseer, such as
+# "~/.fleet/master-live". While it is younger than SLACK_MASTER_MAX_AGE the
+# relay holds its mailbox posts and `slack listen --status` shows
+# held-by=master; owner messages in the channel still reach the overseer.
+# README.md says what posts on resume. Empty means no hold.
+SLACK_MASTER_FILE = ""
+
+# Seconds after its last touch that SLACK_MASTER_FILE still holds the relay.
+SLACK_MASTER_MAX_AGE = "600"
+
+[secrets]
+
+# The bot token of your Slack app. It lives in the private env file or the
+# process environment only, never in this file. Unset, Slack is off: setup
+# and the relay refuse and name the key.
+SLACK_BOT_TOKEN = ""
+
+# The app-level token of the same Slack app, scope connections:write, which
+# opens the relay's Socket Mode connection. It lives where SLACK_BOT_TOKEN
+# lives. Unset, `slack listen` refuses and names the key; `listen --once` and
+# the other verbs do not read it.
+SLACK_APP_TOKEN = ""

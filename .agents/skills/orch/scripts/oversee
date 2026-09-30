@@ -37,25 +37,34 @@
 #        naming a tmux session the adapter's `inspect` still finds on this
 #        server is a live overseer, and a second one is never opened beside
 #        it: `overseer-live` names
-#        it and its generation. Two overseers never act at once; a live one
+#        it and its generation. A live pane whose server start cannot be read
+#        refuses `launch-failed step=server-start`: whether it is the
+#        recorded overseer cannot be judged. A record carrying no server
+#        start names no session, yet its pane live on the recorded server
+#        pid refuses `overseer-live` too. Two overseers never act at once; a live one
 #        is replaced as the --predecessor this launch names, or through
 #        `oversee-succeed`, never launched over. --predecessor naming any
 #        session but that live one refuses `predecessor-not-live`, its `live`
 #        field the live overseer or `none` where none is recorded: a
-#        succession stops the recorded overseer and no other pane.
+#        succession stops the recorded overseer and no other pane. A record
+#        carrying no server start names no predecessor, so --predecessor
+#        over it refuses the same way until `oversee register` in its pane
+#        binds it.
 #     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:model:effort`
 #        entries, in order, and open on the first whose harness has a lane
-#        above ORCH_OVERSEER_HEADROOM_PCT: the entry names its model, or a
-#        rank `kendex tier-model` names it for, and unset the setting is
+#        above ORCH_OVERSEER_HEADROOM_PCT: the entry names its model in the
+#        characters kendex.settings.toml.example § Fleet states, an entry
+#        naming none refusing `invalid-preference`, and unset the setting is
 #        lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE; the walk is that
 #        file's ol_walk, and `lanes pick` names
 #        the lane, judged on the bucket that
 #        walls that model and held to the reading the session will take of
-#        itself (lib/overseer-launch.sh § ol_pick_lane). A rank the tier
-#        ladder cannot answer refuses `model-failed`; an entry with no
+#        itself (lib/overseer-launch.sh § ol_pick_lane). An entry with no
 #        qualifying lane is skipped, and so is one whose harness row names no
 #        full-bypass word to launch it under, pi's, before its pick, with
-#        `entry-permission-unwritable` on stderr; a preference set to empty
+#        `entry-permission-unwritable` on stderr, and a copilot entry whose
+#        picked account runs no copilot-statusline status line, with
+#        `successor-status-line` on stderr; a preference set to empty
 #        refuses `preference-empty`, because a first launch has no caller
 #        whose own harness and lane could stand in; a walk that ends empty
 #        refuses `no-lane-qualifies` at exit 3 with the counts each sweep found.
@@ -99,10 +108,24 @@
 #        point, so HUP, INT and TERM are ignored across it; a stop that fails
 #        closes the successor, puts the record back and refuses
 #        `close-failed`, the predecessor still running. Run from inside the
-#        predecessor's own window, the stop ends this command with it. The
-#        fleet watch is not handed over here: the successor's own watch start
-#        stops a watch whose pane is gone and takes its place
-#        (`oversee-watch` § watch_claim).
+#        predecessor's own window, the stop ends this command with it.
+#     9. With --predecessor, hand the fleet watch to the successor pane,
+#        arranged before step 8 because nothing after the stop can be counted
+#        on to run: lib/watch-handover.sh's watch_handover, the step 6
+#        `oversee-succeed` runs, so a successor that dies or walls is judged
+#        by the watch from its first pass. `watch-absent` where no watch runs
+#        on the fleet state, otherwise `watch-handover pid=<N> pane=<pane>
+#        log=<path>` and the runner line of `oversee-succeed`'s restart
+#        helper, which restarts the watch from the successor pane once the
+#        predecessor's session is gone and writes how that went to the log
+#        field's file (`oversee-succeed --help`, step 6). Run from outside
+#        tmux, the launch hands the helper the $TMUX tmux sets in the
+#        successor's pane, which the restarted watch reads that pane under. A
+#        helper the job runner refused is the notice `watch-restart-failed
+#        step=helper`, a fleet state with no path `step=state-path`, and a
+#        $TMUX tmux would not state `step=tmux`, each on stderr; the
+#        succession stands, and the successor's own watch start takes over
+#        the watch of the gone pane (`oversee-watch` § watch_claim).
 #     On success `overseer-launched` names the session, window, generation
 #     and lane, and the predecessor where one was stopped, at exit 0.
 #   register writes the session record for the session this command runs in,
@@ -122,6 +145,8 @@
 #            recorded as unknown. The generation is one past the record's,
 #            or the record's own where it already names this pane, so
 #            registering twice launches nothing and counts nothing twice.
+#            A server start that cannot be read refuses `record-unwritten`
+#            and writes nothing.
 #            Prints `registered` naming the session and generation.
 #
 # Options:
@@ -148,8 +173,9 @@
 # explanation and any failing dependency's own stderr under it. A refusal is
 # on stderr at exit 1, except `no-lane-qualifies` at exit 3, the status
 # `lanes pick` itself answers "no lane clears the bound" with. `overseer-launch`,
-# `overseer-launched` and `registered` are on stdout; `overseer-lane-unobserved`
-# is a notice on stderr the run continues past.
+# `overseer-launched`, `registered`, `watch-handover` and `watch-absent` are on
+# stdout; `overseer-lane-unobserved` and `watch-restart-failed` are notices on
+# stderr the run continues past.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -173,20 +199,20 @@ message() { # KEY FIELD=VALUE...
     tmux-session-missing) text='The tmux session named does not exist on the server this run reaches. Nothing was opened; the server field names the socket.' ;;
     tmux-failed) text='The tmux call the operation field names failed on the server the server field names, for another reason than an absent session: no server may be running at that socket. Nothing was opened; tmux says why below.' ;;
     state-unwritable) text='The oversee workflow state could not be created or read, so no session record can be kept. Nothing was launched.' ;;
-    overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee launch --predecessor naming it, or oversee-succeed, or stop it and clear the record.' ;;
-    predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A succession only ever stops the recorded overseer; nothing was opened.' ;;
+    overseer-live) text='The fleet state names an overseer session this tmux server still lists, so a second one is not opened beside it. Two overseers never act at once: replace a live one through oversee launch --predecessor naming it, or oversee-succeed, or stop it and clear the record. A record carrying no server start takes oversee register in that pane before --predecessor accepts it.' ;;
+    predecessor-not-live) text='The session --predecessor names is not the live overseer the fleet state records on this server. The live field names that overseer, or none where no live one is recorded. A record carrying no server start names none: run oversee register in its pane first. A succession only ever stops the recorded overseer; nothing was opened.' ;;
     option-conflict) text='--predecessor is a launch option, and a successor opens beside its predecessor rather than in the tmux session --session names, so the two are never given together.' ;;
     close-failed) text='The predecessor could not be stopped, so the successor was closed and the record put back; the predecessor keeps running.' ;;
-    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex or pi and model a model name or a tier ladder rank, or on pi a lowercase provider/id. A first launch skips pi entries.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:model:effort with harness claude, codex, copilot or pi, model the model that harness launches, on pi a provider/id, and effort the level as that harness spells it, each in the characters kendex.settings.toml.example § Fleet in the orch skill states. An entry naming no model is refused. A first launch skips pi entries.' ;;
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
-    model-failed) text='kendex tier-model named no model for this entry: its rank is past the tier ladder, or its model name is none the ladder names for its harness. Either is a setting to fix, not an entry to pass over.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     entry-permission-unwritable) text='The launch flag table names no full-bypass permission word for this entry'\''s harness, so a first launch there would stop at its first approval prompt with nobody at the pane. The entry is skipped and the walk goes on; oversee-succeed takes such an entry for a caller of the same harness.' ;;
+    successor-status-line) text='The pick named a Copilot account whose settings.json does not run copilot-statusline as its status line often enough for its session record to stay fresh, so an overseer opened there would run with its context unmeasured. cause names what failed (lib/adapters/copilot.sh). The entry is skipped and the walk goes on to the next one.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
-    model-window-unknown) text='The claude adapter names no context window for the model this entry resolves to, and an overseer runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a model, or a rank whose model, the window table in lib/adapters/claude.sh names.' ;;
+    model-window-unknown) text='The claude adapter names no context window for the model this entry names, and an overseer runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a claude model the window table in lib/adapters/claude.sh names.' ;;
     launch-trust-missing) text='The folder-trust entry for the launch directory could not be made in the config this session would read, so nothing was launched; the reason field is lib/lane-launch.sh'\''s.' ;;
     launch-failed) text='The session could not be opened or read; the step field names the call that failed.' ;;
     record-unwritten) text='The session record could not be written to the fleet state, so the session was closed again, or at step=pending never opened, and a predecessor keeps running: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;
@@ -197,6 +223,9 @@ message() { # KEY FIELD=VALUE...
     overseer-lane-unobserved) text='The account the session runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
     overseer-lane-unknown) text='The account check returned an outcome this script does not know; the session was closed rather than trusted.' ;;
     overseer-launched) text='The overseer is running and recorded.' ;;
+    watch-handover) text='The fleet watch serving the predecessor pane is restarted from the successor pane once the predecessor is stopped, by a helper the orch job runner started outside this run, as the runner fields say. How the restart went is written to the log field, which the next watch start prints.' ;;
+    watch-absent) text='No watch runs on the fleet state, so none is restarted. The successor starts its own.' ;;
+    watch-restart-failed) text='The fleet watch was not handed to the successor pane; the succession goes on and the step field names what failed, with the orch job runner error where it refused a launch. The old watch serves a pane about to close until the successor starts its own watch, which takes it over.' ;;
     interrupted) text='A signal stopped the launch; the session was closed and the record put back.' ;;
     pane-unreadable) text='This session'\''s own pane could not be read; tmux says why below.' ;;
     registered) text='The session record names this session.' ;;
@@ -287,6 +316,13 @@ source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
 # shellcheck source=lib/tmux-server.sh
 source "$SCRIPT_DIR/lib/tmux-server.sh"
+# The watch handover a succession arranges, `oversee-succeed`'s own.
+# shellcheck source=lib/watch-pid.sh
+source "$SCRIPT_DIR/lib/watch-pid.sh"
+# shellcheck source=lib/job-unit.sh
+source "$SCRIPT_DIR/lib/job-unit.sh"
+# shellcheck source=lib/watch-handover.sh
+source "$SCRIPT_DIR/lib/watch-handover.sh"
 
 # The runtime, held to tmux by the library both launchers share: this
 # launcher reads the new session's account off its pane.
@@ -413,24 +449,48 @@ fi
 
 state_ready
 # A live overseer: the record names a tmux session, and the runtime's
-# `inspect` of it answers a live state under that server pid. A record naming
-# a session the runtime no longer lists is a stopped fleet's, and the launch
-# takes the next generation over it. A live one is launched over only as the
-# predecessor --predecessor names, and a predecessor is only ever that one:
-# the session a succession stops is the one the fleet records as its
-# overseer, never another pane.
+# `inspect` of it answers a live state on a server the record names it on by
+# `ol_names`: that server pid, started when the record says. A record naming
+# a session the runtime no longer lists, or one an earlier server handed the
+# same pid and pane held, is a stopped fleet's, and the launch takes the next
+# generation over it. A record carrying no server start names no session, but
+# a pane it records live on that server pid may be the running overseer, so
+# nothing is opened beside it: live_pane is the pane that blocks a launch,
+# named_pane the one the record names. A live one is launched over only as
+# the predecessor --predecessor names, and a predecessor is only ever the
+# named one: the session a succession stops is the one the fleet records as
+# its overseer on this very server, never another pane, and never a pane a
+# startless record names, which a later server may have handed the same pid
+# and pane id.
 if ! live="$(jq -r 'if type == "object" and (.runtime // "tmux") == "tmux" and (.pane // "") != ""
-    then ((.server // "") + " " + .pane + " " + ((.generation // 0) | tostring)) else "" end' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
+    then (.pane + " " + ((.generation // 0) | tostring)) else "" end' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
   die state-unwritable field=overseer
 fi
-live_pane=""
+live_pane="" named_pane=""
 if [[ -n "$live" ]]; then
-  read -r live_server live_pane live_generation <<<"$live"
+  read -r live_pane live_generation <<<"$live"
   ol_session_inspect "$live_pane" || die launch-failed step=inspect
-  if [[ "$OL_INSPECT_STATE" == gone || "$OL_INSPECT_SERVER" != "$live_server" ]]; then live_pane=""; fi
+  if [[ "$OL_INSPECT_STATE" == gone ]]; then
+    live_pane=""
+  else
+    # A start that cannot be read cannot tell the recorded overseer from a
+    # session an earlier server's pid and pane id left, so nothing is opened
+    # beside a pane that may be it.
+    live_start="$(ol_session_start "$OL_INSPECT_SERVER" "$live_pane")" \
+      || die launch-failed step=server-start "session=$live_pane" "server=$SERVER_SOCKET"
+    if ! live_named="$(jq -r --arg server "$OL_INSPECT_SERVER" --arg start "$live_start" --arg pane "$live_pane" \
+      "$OL_JQ_DEFS"' [ol_names($server; $start; $pane),
+        (if .server_start == null then .server_start = $start else . end
+          | ol_names($server; $start; $pane))] | map(tostring) | join(" ")' <<<"$OL_PRIOR" 2>"$DEP_ERR")"; then
+      die state-unwritable field=overseer
+    fi
+    read -r live_named live_blocks <<<"$live_named"
+    [[ "$live_named" != true ]] || named_pane="$live_pane"
+    [[ "$live_blocks" == true ]] || live_pane=""
+  fi
 fi
-[[ -z "$PREDECESSOR" || "$live_pane" == "$PREDECESSOR" ]] \
-  || die predecessor-not-live "session=$PREDECESSOR" "live=${live_pane:-none}" "server=$SERVER_SOCKET"
+[[ -z "$PREDECESSOR" || "$named_pane" == "$PREDECESSOR" ]] \
+  || die predecessor-not-live "session=$PREDECESSOR" "live=${named_pane:-none}" "server=$SERVER_SOCKET"
 [[ -z "$live_pane" || -n "$PREDECESSOR" ]] \
   || die overseer-live "session=$live_pane" "server=$SERVER_SOCKET" "generation=$live_generation"
 
@@ -498,8 +558,31 @@ ol_succession_hook() { # STEP
       SESSION="$OL_SESSION"
       message overseer-launch "form=$OL_FORM" "lane=$lane_dir" "trust=$OL_TRUST_ROUTE" \
         "session=$SESSION" "window=$OL_WINDOW" "server=$SERVER_SOCKET" ;;
-    verified) [[ -z "$OL_UNOBSERVED" ]] || message overseer-lane-unobserved "reason=$OL_UNOBSERVED" >&2 ;;
+    verified)
+      [[ -z "$OL_UNOBSERVED" ]] || message overseer-lane-unobserved "reason=$OL_UNOBSERVED" >&2
+      [[ -z "$PREDECESSOR" ]] || hand_over_watch ;;
   esac
+}
+# Step 9 of the header: lib/watch-handover.sh's watch_handover, the one
+# `oversee-succeed` runs, in this script's words. The restarted watch reads
+# the successor's pane only under a $TMUX (`oversee-watch` § check_overseer),
+# which a launch from outside tmux has none of: the helper is then handed the
+# one tmux sets in the successor's own pane.
+hand_over_watch() {
+  local tmux_env="${TMUX:-}"
+  if [[ -z "$tmux_env" ]] \
+     && ! tmux_env="$(tmux display-message -p -t "$SESSION" '#{socket_path},#{pid},#{session_id}' 2>"$DEP_ERR")"; then
+    message watch-restart-failed step=tmux "session=$SESSION" >&2
+    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+    return 0
+  fi
+  if TMUX="${tmux_env/,\$/,}" watch_handover "$PREDECESSOR" "$SESSION" "$OL_LANE_VAR" "$OL_LAUNCH_HOME" \
+      "$OL_HARNESS" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"}; then
+    message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}"
+  else
+    message "$WATCH_HANDOVER_KEY" "${WATCH_HANDOVER_FIELDS[@]}" >&2
+    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  fi
 }
 # ol_session_verify's refusals, each closing the session and putting the
 # record back.
