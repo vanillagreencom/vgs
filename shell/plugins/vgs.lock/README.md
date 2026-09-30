@@ -13,7 +13,7 @@ The plugin ships with VGS and is enabled by default. Its password check needs no
 - The session locks before the machine suspends, and the suspend waits for the lock, for at most logind's delay.
 - Every screen shows the time, the date and the password field; typing on any screen fills every field.
 - Ten wrong passwords pause the check for two minutes, and the lock screen tells you to wait.
-- If another lock screen already holds the session, `vgsh lock` says so, and the Settings page shows it.
+- If another lock screen already holds the session, the lock takes it over, as Hyprland allows under VGS's settings. If that other lock screen then unlocks the session, the Settings page warns, and the next lock works again.
 - If a suspend goes ahead before the lock is confirmed, a warning toast tells you once you are back at the desktop.
 - A shell started after a crash while locked locks the session again with its own lock screen.
 

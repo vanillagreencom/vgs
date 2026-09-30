@@ -222,31 +222,59 @@ build_helper click pointer "$repo/scripts/smoke/pointer/click.c" "$repo/scripts/
 build_helper toplevel toplevel "$repo/scripts/smoke/toplevel/toplevel.c" "$repo/scripts/smoke/toplevel/xdg-shell.xml"
 build_helper lock-client lock-client "$repo/scripts/smoke/lock/lock-client.c" "$repo/scripts/smoke/lock/ext-session-lock-v1.xml"
 
-# The authentication helpers running under PID, one `name pid` per line,
-# `none` when there is none: pam_unix's unix_chkpwd, polkit's
-# polkit-agent-helper-1 (its name cut to 15 bytes in /proc), sudo and
-# faillock. The lock and polkit rows read none beside their plugins' own
-# counts, since no row may authenticate the host's user.
-auth_helpers() { # PID
-  python3 - "$1" <<'PY'
-import os, sys
+# The authentication helpers under a process tree: pam_unix's unix_chkpwd,
+# polkit's polkit-agent-helper-1 (its name cut to 15 bytes in /proc), sudo
+# and faillock. No row may authenticate the host's user, so the lock and
+# polkit rows read none. `auth_helpers PID` prints the ones running under
+# PID now, one `name pid` per line, `none` for none. `auth_watch_start LOG`
+# spawns a watcher that scans the harness's own tree, which holds every
+# shell it starts, every 50 ms and appends each helper it sees once to LOG,
+# so a helper that ran and exited between two reads of a row is on record;
+# one shorter than a scan can slip past, which the plugins' own counts
+# cover. The watcher's pid is in auth_watch_pid.
+auth_scan_program='import os, sys, time
 names = {"unix_chkpwd", "polkit-agent-he", "sudo", "faillock"}
-children = {}
-for pid in filter(str.isdigit, os.listdir("/proc")):
-    try:
-        stat = open(f"/proc/{pid}/stat").read()
-    except OSError:
-        continue
-    comm, rest = stat[stat.index("(") + 1:stat.rindex(")")], stat[stat.rindex(")") + 2:].split()
-    children.setdefault(rest[1], []).append((pid, comm))
-found, todo = [], [sys.argv[1]]
-while todo:
-    for pid, comm in children.get(todo.pop(), []):
-        if comm in names:
-            found.append(f"{comm} {pid}")
-        todo.append(pid)
-print("\n".join(found) if found else "none")
-PY
+def scan(root):
+    children = {}
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            stat = open(f"/proc/{pid}/stat").read()
+        except OSError:
+            continue
+        comm, rest = stat[stat.index("(") + 1:stat.rindex(")")], stat[stat.rindex(")") + 2:].split()
+        children.setdefault(rest[1], []).append((pid, comm))
+    found, todo = [], [root]
+    while todo:
+        for pid, comm in children.get(todo.pop(), []):
+            if comm in names:
+                found.append(f"{comm} {pid}")
+            todo.append(pid)
+    return found
+if sys.argv[2] == "once":
+    found = scan(sys.argv[1])
+    print("\n".join(found) if found else "none")
+else:
+    seen = set()
+    while True:
+        for line in scan(sys.argv[1]):
+            if line not in seen:
+                seen.add(line)
+                print(line, flush=True)
+        time.sleep(0.05)'
+auth_helpers() { python3 -c "$auth_scan_program" "$1" once; }
+auth_watch_pid=""
+auth_watch_start() { # LOG
+  spawn "$1" python3 -c "$auth_scan_program" "$$" watch
+  auth_watch_pid="$spawn_pid"
+}
+# Whether PID is in the harness's own tree, which the watcher scans.
+in_harness_tree() { # PID
+  local pid="$1"
+  while [[ $pid =~ ^[0-9]+$ && $pid -gt 1 ]]; do
+    [[ $pid == "$$" ]] && { echo yes; return; }
+    pid="$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null | cut -d' ' -f2)" || break
+  done
+  echo no
 }
 
 # Start a command in its own session and process group; the pid doubles as

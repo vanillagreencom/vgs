@@ -27,6 +27,6 @@
 
 **Revisit When**: Quickshell keeps a session lock across a reload, or the runner supervises and restarts a crashed shell; or a lock needs a fingerprint; or Hyprland tells a replaced lock client that it was replaced.
 
-**Verification**: `scripts/smoke/rows/lock.sh`, whose second lock client reads the refusal, `scripts/smoke/rows/polkit.sh`, the `idle` rows in `scripts/smoke/rows/capabilities.sh`, `scripts/test-lock-model.js`, `scripts/test-lock-sleep-watch.sh`, `scripts/test-vgsh-lock.sh`, `scripts/test-polkit-model.js`, `scripts/test-session-lock.sh`, `scripts/qml-tests/tst_dialog.qml` for the identity choice's keys and `scripts/test-hyprland-layer.js`, each with its controls. [lock-polkit.md](../architecture/lock-polkit.md) names what each proves.
+**Verification**: `scripts/smoke/rows/lock.sh`, whose second lock client reads the takeover and the end of the shell's lock, `scripts/smoke/rows/polkit.sh`, the `idle` rows in `scripts/smoke/rows/capabilities.sh`, `scripts/test-lock-model.js`, `scripts/test-lock-sleep-watch.sh`, `scripts/test-vgsh-lock.sh`, `scripts/test-polkit-model.js`, `scripts/test-session-lock.sh`, `scripts/qml-tests/tst_dialog.qml` for the identity choice's keys and `scripts/test-hyprland-layer.js`, each with its controls. [lock-polkit.md](../architecture/lock-polkit.md) names what each proves.
 
 **References**: [D012](D012-core-owns-lent-objects.md), [D056](D056-read-only-session-state.md), [D028](D028-one-generated-hyprland-layer.md), [D035](D035-manifest-requirements.md), [lock-polkit.md](../architecture/lock-polkit.md)

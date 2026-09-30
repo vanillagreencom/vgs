@@ -29,7 +29,8 @@ import "LockModel.js" as LockModel
 //
 // The password lives in `password` while it is typed and in PAM's answer
 // while it is checked, and is never logged, published or answered over IPC.
-// `checks` counts the checks started, for the status reply.
+// `checks` counts the checks started, for the status reply, and each start
+// logs `lock: check=started`, which outlives the instance and the shell.
 Item {
     id: root
 
@@ -162,6 +163,7 @@ Item {
         failure = "";
         checking = true;
         checks += 1;
+        console.info("lock: check=started");
         if (!pam.start()) fail();
     }
 

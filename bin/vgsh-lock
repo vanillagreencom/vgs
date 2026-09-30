@@ -10,8 +10,9 @@
 # answers `ok` once it asked the core for the lock; the compositor answers
 # after that, so the command reads the plugin's `status` reply every 100 ms
 # for up to 2 s. It prints `ok` once the lock is confirmed (`secure`), and
-# refuses when the compositor refused the lock, as it does while another
-# lock screen holds the session (`refusals` grew), or never confirmed it:
+# refuses when the compositor refused the lock (`refusals` grew), as
+# Hyprland does while another lock screen holds the session with
+# misc:allow_session_lock_restore off, or never confirmed it:
 # docs/architecture/lock-polkit.md.
 #
 # Refusals, each one keyed first line on stderr:
@@ -64,7 +65,7 @@ for _ in $(seq 1 20); do
   now="$(call status)" || now=""
   if [[ $now == *'"secure":true'* ]]; then echo ok; exit 0; fi
   if (( refusals >= 0 )) && (( $(refusals_of "$now") > refusals )); then
-    refuse 1 "lock=refused-by-compositor" "Hyprland refused the lock: another lock screen, such as hyprlock, holds the session"
+    refuse 1 "lock=refused-by-compositor" "Hyprland refused the lock: another lock screen, such as hyprlock, holds the session, and misc:allow_session_lock_restore is off"
   fi
   sleep 0.1
 done

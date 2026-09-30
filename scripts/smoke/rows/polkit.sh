@@ -10,9 +10,11 @@
 # A live flow cannot run here: it needs polkitd and the setuid
 # polkit-agent-helper-1, which would run PAM against the real account and
 # could trip pam_faillock. The sandbox's system bus has no polkitd, so the
-# agent stays unregistered. The row reads that no flow ever went live and
-# that no polkit-agent-helper-1 or other authentication helper ran under
-# the shell. What the prompt draws from a flow is
+# agent stays unregistered. The row reads that no flow ever went live, from
+# the core's count over the shell's whole life, which the row never
+# restarts, and that the harness's helper watcher saw no
+# polkit-agent-helper-1 or other authentication helper over the whole row;
+# the lock row's stand-in is the watcher's control. What the prompt draws from a flow is
 # scripts/test-polkit-model.js's.
 #
 # The control installs a copy of the plugin in the user directory, whose id
@@ -28,6 +30,8 @@ polkit_status() { ipc smoke statusValues vgs.polkit | py_reply 'import json,sys;
 flowless_summon() { ipc shell summon overlay vgs.polkit '{}'; }
 unregistered='["warning", "Not registered with polkitd: another polkit agent holds this session, or polkitd is not running"]'
 
+auth_watch_start "$sandbox/polkit-auth-helpers.log"
+expect "the helper watcher scans the tree that holds the shell" yes in_harness_tree "$shell_qs_pid"
 expect "the polkit plugin starts disabled in the sandbox" False plugin_enabled vgs.polkit
 probe_enabled="$(plugin_enabled acme.probe)" || probe_enabled=unreadable
 case "$probe_enabled" in
@@ -77,6 +81,8 @@ expect_poll "no prompt surface is left" 0 layer_count vgs:overlay
 
 expect "no authentication request went live in this shell" 0 polkit_lent polkitFlows
 expect "no authentication helper runs under the shell at the row's end" none auth_helpers "$shell_qs_pid"
+kill "$auth_watch_pid" 2>/dev/null || fail "stopping the helper watcher pid $auth_watch_pid failed"
+expect "over the whole row, the watcher saw no authentication helper" "" cat -- "$sandbox/polkit-auth-helpers.log"
 expect "disabling the polkit plugin is allowed" ok ipc shell setPluginEnabled vgs.polkit false
 expect_poll "disable destroyed the agent" false polkit_lent polkitAgent
 expect "disable released polkit" null polkit_lent holders.polkit

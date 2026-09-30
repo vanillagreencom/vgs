@@ -20,9 +20,16 @@
 # No row types a password: PAM would check it against the real account,
 # whose pam_faillock counts each failure. The sandbox's own probe releases
 # the core's lock with no password, test code that never ships
-# (docs/architecture/lock-polkit.md § Validation). The plugin's status
-# shows it never started a PAM check, and no authentication helper ever
-# runs under the shell.
+# (docs/architecture/lock-polkit.md § Validation). The evidence that no
+# check ran spans the whole row, every plugin rebuild and both shell
+# restarts: each shell's log, kept before its kill, holds a
+# `lock: check=started` line for every check started, and the harness's
+# watcher records every authentication helper it sees under the sandbox.
+# A control copy of the plugin starts one stand-in check, which runs no
+# PAM, before the restarts, and a stand-in named unix_chkpwd, a copy of
+# sleep, runs early too: at the row's end the whole-row readings must hold
+# exactly those two, so a reading of the last instance or the last shell
+# alone would fail.
 #
 # The before-sleep hook runs under stand-ins in the shell's stand-in
 # directory: a systemd-inhibit that runs its command with no inhibitor and
@@ -61,6 +68,11 @@ client_said() { if grep -q -x -- "$2" "$1" 2>/dev/null; then echo "$2"; else ech
 lock_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs.lock"))))'; }
 lock_lent() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.lock")], [t for t in d["ipcTargets"] if t == "vgs.lock"], [[w["id"], w["timeout"]] for w in d["idle"] if w["id"] == "vgs.lock"]]))'; }
 restore_option() { hypr -j getoption misc:allow_session_lock_restore | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps({k: v[k] for k in v if k not in ("option", "set")}))'; }
+# The `lock: check=started` lines in every shell log of the row: the kept
+# logs of the killed shells and the running shell's.
+kept_logs=()
+check_starts() { cat -- "${kept_logs[@]}" "$instance_log" | grep -c -F 'lock: check=started' || :; }
+no_checks() { expect "$1: no PAM check started and no attempt failed" '[false, 0, 0]' lock_status checking checks failures; }
 alive() { if [[ $1 =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null; then echo alive; else echo gone; fi; }
 # Release the core's lock with the probe and read the session unlocked.
 release() { # LABEL
@@ -93,8 +105,11 @@ restore_lock_hypr_lua() { { printf '%s\n' "pcall(dofile, \"$home/.local/state/vg
 # and start the next shell. The killed shell's log is checked first: the
 # rows after this one read the next shell's.
 kill_and_restart() { # LABEL LOG
-  local killed="$shell_qs_pid"
+  local killed="$shell_qs_pid" kept="$sandbox/lock-shell-${#kept_logs[@]}.log"
   check_unexpected_log "$1: the shell's log before the kill" "$instance_log"
+  no_checks "$1: before the kill"
+  cp -- "$instance_log" "$kept" || fail "$1: keeping the shell's log failed"
+  kept_logs+=("$kept")
   kill -KILL "$killed" || fail "$1: SIGKILL to the shell pid $killed failed"
   expect_poll "$1: the killed shell is gone" gone alive "$killed"
   stop_shell || :
@@ -122,6 +137,17 @@ chmod 755 "$shim/systemd-inhibit" "$shim/busctl" "$shim/dbus-monitor"
 rm -f -- "${sleep_log:?}" "${sleep_trigger:?}"
 
 expect "the session is unlocked before the row" unlocked session_lock
+auth_watch_start "$sandbox/lock-auth-helpers.log"
+expect "the helper watcher scans the tree that holds the shell" yes in_harness_tree "$shell_qs_pid"
+# The watcher's stand-in: a copy of sleep named unix_chkpwd, run by the
+# harness, never PAM's.
+mkdir -p -- "$sandbox/stand-in"
+cp -- "$(command -v sleep)" "$sandbox/stand-in/unix_chkpwd"
+sleep 0.2
+"$sandbox/stand-in/unix_chkpwd" 0.3 &
+standin_pid=$!
+wait "$standin_pid" || fail "the stand-in unix_chkpwd failed"
+expect_poll "control: the watcher recorded the stand-in unix_chkpwd" "unix_chkpwd $standin_pid" cat -- "$sandbox/lock-auth-helpers.log"
 expect "the Hyprland layer lets a new client take over a dead lock" '{"bool": true}' restore_option
 expect "the lock plugin starts disabled in the sandbox" False plugin_enabled vgs.lock
 probe_enabled="$(plugin_enabled acme.probe)" || probe_enabled=unreadable
@@ -256,6 +282,7 @@ release "the idle lock"
 
 # Disabling the plugin while locked keeps the session locked; the rebuilt
 # plugin hands its lock screen over again.
+no_checks "before the disable"
 expect "the IPC lock answers ok before the disable" ok ipc vgs.lock invoke lock ''
 expect_poll "the session is locked before the disable" '[true, true, true]' core_lock
 expect "disabling the lock plugin while locked is allowed" ok ipc shell setPluginEnabled vgs.lock false
@@ -265,9 +292,42 @@ expect "enabling the lock plugin again is allowed" ok ipc shell setPluginEnabled
 expect_poll "the rebuilt plugin hands its lock screen over again" '[true, true, true]' core_lock
 release "the lock across a disable"
 
+# Control: a copy whose IPC lock starts one stand-in check, with PAM's
+# start taken out so no PAM runs. Its log line is in the first shell's log,
+# which the two restarts below leave behind, and the row's last reading
+# must still count it.
+no_checks "before the stand-in check"
+control_dir="$home/.config/vgs/plugins/vgs.lock"
+mkdir -p -- "$control_dir"
+cp -R -- "$repo/shell/plugins/vgs.lock/." "$control_dir/"
+python3 - "$control_dir/Service.qml" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+edits = [
+    ('shell.ipc.handle("lock", () => root.lock());', 'shell.ipc.handle("lock", () => { const reply = root.lock(); root.submit("stand-in"); return reply; });'),
+    ("        if (!pam.start()) fail();", "        fail();"),
+]
+for needle, replacement in edits:
+    assert text.count(needle) == 1, "stand-in control: must match once: " + needle
+    text = text.replace(needle, replacement)
+open(path, "w").write(text)
+PY
+expected_errors+=('plugins: .*vgs\.lock')
+lock_dir_of() { ipc shell listPlugins | py_reply 'import json,sys; print([p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.lock"][0])'; }
+expect "rescan over the stand-in copy answers ok" ok ipc shell rescanPlugins
+expect_poll "the stand-in copy is the plugin the shell runs" "$control_dir" lock_dir_of
+expect "the stand-in copy's IPC lock answers ok" ok ipc vgs.lock invoke lock ''
+expect_poll "control: the stand-in copy started one check" '[1, 1]' lock_status checks failures
+expect_poll "control: the shell's log holds the stand-in check" 1 check_starts
+release "the stand-in check"
+rm -r -- "${control_dir:?}"
+expect "rescan after removing the stand-in copy answers ok" ok ipc shell rescanPlugins
+expect_poll "the shipped plugin runs again after the stand-in" "$repo/shell/plugins/vgs.lock" lock_dir_of
+expect_poll "the rebuilt shipped plugin holds its sleep hook again" ok sleep_status
+
 # Control: a copy that never locks a stranded session. After the kill and
 # the restart the session is still locked, and the core holds no lock.
-control_dir="$home/.config/vgs/plugins/vgs.lock"
 mkdir -p -- "$control_dir"
 cp -R -- "$repo/shell/plugins/vgs.lock/." "$control_dir/"
 python3 - "$control_dir/Service.qml" <<'PY'
@@ -278,9 +338,7 @@ needle = '                root.lock();\n            }\n        }\n    }\n\n    T
 assert text.count(needle) == 1, "lock control: the stranded lock call must match once"
 open(path, "w").write(text.replace(needle, '            }\n        }\n    }\n\n    Timer {\n        id: strandedRetry', 1))
 PY
-expected_errors+=('plugins: .*vgs\.lock')
 expect "rescan over the control copy answers ok" ok ipc shell rescanPlugins
-lock_dir_of() { ipc shell listPlugins | py_reply 'import json,sys; print([p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.lock"][0])'; }
 expect_poll "the control copy is the plugin the shell runs" "$control_dir" lock_dir_of
 expect "the control's IPC lock answers ok" ok ipc vgs.lock invoke lock ''
 expect_poll "the control's session is locked" '[true, true, true]' core_lock
@@ -304,12 +362,15 @@ expect_poll "the restarted shell took the stranded lock over" '[true, true, true
 expect "the session is still locked" locked session_lock
 release "the taken-over lock"
 
-expect "no PAM check started and no attempt failed" '[false, 0, 0]' lock_status checking checks failures
+no_checks "the row's end"
 expect "no authentication helper runs under the shell" none auth_helpers "$shell_qs_pid"
+expect "over the whole row, every shell log holds the stand-in check alone" 1 check_starts
+kill "$auth_watch_pid" 2>/dev/null || fail "stopping the helper watcher pid $auth_watch_pid failed"
+expect "over the whole row, the watcher saw the stand-in unix_chkpwd alone" "unix_chkpwd $standin_pid" cat -- "$sandbox/lock-auth-helpers.log"
 expect "disabling the lock plugin is allowed" ok ipc shell setPluginEnabled vgs.lock false
 expect_poll "disable released the lock's shortcut, IPC target and idle watch" '[[], [], []]' lock_lent
 expect_poll "the nested instance drops the lock's bind" '[]' lock_binds
-rm -f -- "$shim/systemd-inhibit" "$shim/busctl" "$shim/dbus-monitor"
+rm -f -- "$shim/systemd-inhibit" "$shim/busctl" "$shim/dbus-monitor" "$sandbox/stand-in/unix_chkpwd"
 expect "hyprland.lua is as the first run left it" same bash -c 'cmp -s <(sed 1d "$1") "$2" && echo same || echo differs' _ "$lock_hypr_lua" "$sandbox/hyprland-harness.lua"
 if [[ $probe_enabled == True ]]; then
   expect "re-enabling the capability fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
