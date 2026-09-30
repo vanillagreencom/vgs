@@ -168,9 +168,16 @@ fi
 # The Jarvis child always uses J09, including default-set startup. Only the
 # disposable Service copy names test infrastructure.
 "$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" "$source_repo" "$repo" "$sandbox/jarvis-world"
-if ! bash "$source_repo/scripts/lib/jarvis-env.sh" "$sandbox/jarvis-world/standins" -- true; then
-  printf 'qml-smoke: status=not-measured reason=jarvis-isolation\n'
-  exit 77
+if bash "$source_repo/scripts/lib/jarvis-env.sh" "$sandbox/jarvis-world/standins" -- true; then
+  :
+else
+  jarvis_isolation_status=$?
+  if [[ $jarvis_isolation_status == 77 ]]; then
+    printf 'qml-smoke: status=not-measured reason=jarvis-isolation\n'
+  else
+    printf 'qml-smoke: jarvis-isolation=failed exit=%s\n' "$jarvis_isolation_status"
+  fi
+  exit "$jarvis_isolation_status"
 fi
 sandbox_env=(env -i
   HOME="$home" PATH="$(dirname -- "$node_bin"):$PATH" USER="${USER:-$(id -un)}" TERM=dumb LANG=C.UTF-8

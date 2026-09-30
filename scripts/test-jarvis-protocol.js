@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { load } = require("../bin/lib/qml-library.js");
+const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const file = path.join(__dirname, "../shell/plugins/vgs.jarvis/JarvisProtocol.js");
 const Protocol = load(file);
 const hello = { v: 1, type: "hello", gen: 0, settings: {}, directories: {
@@ -56,10 +57,13 @@ assert.throws(() => Protocol.feed("a".repeat(262144), "a"), { message: "jarvis: 
 assert.throws(() => Protocol.feed("", "é".repeat(131073)), { message: "jarvis: protocol=line-too-long" });
 assert.equal(JSON.stringify(Protocol.feed("one", "\ntwo\nthree")), '{"lines":["one","two"],"tail":"three"}');
 
-const root = fs.mkdtempSync(path.join(__dirname, "../tmp/jarvis-protocol-"));
+const parent = path.resolve(__dirname, "../tmp");
+fs.mkdirSync(parent, { recursive: true });
+const root = fs.mkdtempSync(path.join(parent, "jp-"));
 const source = fs.readFileSync(file, "utf8");
 let controls = 0;
 try {
+    if (process.argv[2] !== "--fresh") freshSuite(path.resolve(__dirname, ".."), "protocol", root);
     function control(name, needle, replacement, check) {
         assert.equal(source.split(needle).length - 1, 1, name + " mutation match");
         const mutated = source.replace(needle, replacement);

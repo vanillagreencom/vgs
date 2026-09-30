@@ -18,9 +18,9 @@ Item {
     onShellChanged: {
         if (shell === null) return;
         if (lifetime.kind === "new") start();
-        else if (child.running && lifetime.kind === "ready") hello();
+        else hello();
     }
-    onLockedChanged: if (child.running && lifetime.kind === "ready") hello()
+    onLockedChanged: hello()
 
     function publish(tone, text) {
         const reply = shell.status.set("daemon", { tone: tone, text: text });
@@ -32,12 +32,15 @@ Item {
         outputTail = "";
         errorTail = "";
         cause = "";
+        child.completion = null;
         child.stdinEnabled = true;
         publish("info", "Starting");
         child.running = true;
     }
 
     function hello() {
+        if (shell === null || !child.running || cause !== ""
+                || (lifetime.kind !== "starting" && lifetime.kind !== "ready")) return;
         const home = Quickshell.env("HOME");
         const message = {
             v: 1, type: "hello", gen: 0,
@@ -48,7 +51,7 @@ Item {
                 runtime: Quickshell.env("XDG_RUNTIME_DIR") + "/vgs/jarvis"
             },
             revision: shell.manifest.__revision,
-            locked: root.locked,
+            locked: shell.session.locked,
             keys: {}
         };
         const wire = JSON.stringify(message);
@@ -74,6 +77,9 @@ Item {
                 const message = Protocol.accept(line, "daemon");
                 if (message.gen !== 0 || message.revision !== shell.manifest.__revision)
                     throw new Error("jarvis: protocol=identity");
+                // An earlier snapshot can answer after the observed lock
+                // changed. Wait for the current snapshot's ordered reply.
+                if (message.daemon !== (shell.session.locked ? "locked" : "ready")) continue;
                 lifetime = { kind: "ready" };
                 helloDeadline.stop();
                 publish("info", message.daemon === "locked" ? "Locked; no capture" : "Ready; no capture");
@@ -81,13 +87,14 @@ Item {
         } catch (error) { broken(error.message); }
     }
 
-    function ended() {
+    function ended(completion) {
         helloDeadline.stop();
         if (lifetime.kind === "stopped") return;
         if (outputTail !== "") cause = "jarvis: protocol=unterminated-line";
         if (errorTail !== "") cause = errorTail;
         if (cause === "") cause = "jarvis: daemon=ended";
-        if (retries === 5) {
+        const permanent = completion !== null && completion.status === 0 && completion.code === 78;
+        if (permanent || retries === 5) {
             lifetime = { kind: "problem" };
             publish("danger", "Problem: " + cause.slice(0, 180));
             shell.toasts.show({ title: "Jarvis daemon stopped", message: cause.slice(0, 180), tone: "danger", icon: "mic" });
@@ -111,6 +118,7 @@ Item {
 
     Process {
         id: child
+        property var completion: null
         command: ["node", root.daemon, "--tree", Quickshell.shellDir + "/.."]
         stdinEnabled: true
         clearEnvironment: true
@@ -139,9 +147,15 @@ Item {
             if (root.cause === "") helloDeadline.start();
         }
         onExited: (code, status) => {
+            completion = { code: code, status: status };
             if (root.cause === "") root.cause = "jarvis: daemon=exit code=" + code + " status=" + status;
         }
-        onRunningChanged: if (!running) root.ended()
+        onRunningChanged: {
+            if (running) return;
+            const done = completion;
+            completion = null;
+            root.ended(done);
+        }
     }
     Timer { id: retry; onTriggered: root.start() }
     Timer { id: helloDeadline; interval: 5000; onTriggered: root.broken("jarvis: hello=timeout") }

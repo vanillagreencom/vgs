@@ -2,6 +2,8 @@
 # The real child runs inside J09, with no account, audio or desktop endpoint.
 set -euo pipefail
 expected_errors+=('WARN qml: jarvis: stderr=.*Killed.*')
+expected_errors+=('WARN qml: jarvis: stderr=jarvis: node=21[.]0[.]0 need=22')
+expected_errors+=('WARN qml: jarvis: hello=timeout')
 
 jarvis_wait_ready() {
   local answer kind
@@ -130,8 +132,102 @@ print("problem" if ok else "not-problem")
 ' <<<"$answer"
 }
 
+jarvis_lock_answer() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+d=json.load(sys.stdin)
+if d["retries"] != 0:
+    print("stale")
+elif d["lifetime"]["kind"] == "ready":
+    print(d["status"]["daemon"]["text"])
+else:
+    print("pending")
+'
+}
+
+jarvis_seen_hello() {
+  [[ -s $jarvis_seen ]] && echo seen || echo pending
+}
+
+jarvis_permanent() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+d=json.load(sys.stdin)
+if d["retries"] != 0:
+    print("retried")
+elif d["lifetime"]["kind"] == "problem" and d["pid"] is None and d["status"]["daemon"]["text"] == "Problem: jarvis: node=21.0.0 need=22":
+    print("permanent")
+else:
+    print("pending")
+'
+}
+
+jarvis_lock_case() { # EXPECTED
+  rm -f -- "$jarvis_gate" "$jarvis_seen"
+  expect "the test-only holder unlocks before startup" ok probe unlock
+  expect "the gated Jarvis service enables" ok ipc shell setPluginEnabled vgs.jarvis true
+  expect_poll "the daemon has consumed its first hello" seen jarvis_seen_hello
+  expect "the real test-only holder locks during startup" ok probe lock
+  expect_poll "the compositor confirms the fixture lock" true read_service lockSecure
+  : >"$jarvis_gate"
+  expect_poll "startup keeps the current lock snapshot without restarting" "$1" jarvis_lock_answer
+  expect "the fixture unlocks without authentication" ok probe unlock
+  if [[ $1 == "Locked; no capture" ]]; then
+    expect_poll "the running daemon observes unlock" "Ready; no capture" jarvis_lock_answer
+  fi
+  expect "the gated service disables" ok ipc shell setPluginEnabled vgs.jarvis false
+}
+
 jarvis_enable
 jarvis_disable
+
+jarvis_service="$repo/shell/plugins/vgs.jarvis/Service.qml"
+jarvis_backend="$repo/shell/plugins/vgs.jarvis/backend/jarvisd.js"
+cp -- "$jarvis_service" "$sandbox/jarvis-service-original"
+cp -- "$jarvis_backend" "$sandbox/jarvis-backend-original"
+jarvis_gate="$sandbox/jarvis-first-reply-gate"
+jarvis_seen="$sandbox/jarvis-first-hello"
+expect "the test-only session holder enables" ok ipc shell setPluginEnabled acme.probe true
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --gate-daemon "$jarvis_backend" "$jarvis_gate" "$jarvis_seen"
+jarvis_rescan
+jarvis_lock_case "Locked; no capture"
+python3 - "$jarvis_service" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+needle="onLockedChanged: hello()"
+assert s.count(needle)==1
+p.write_text(s.replace(needle, 'onLockedChanged: if (lifetime.kind === "ready") hello()'))
+PY
+jarvis_rescan
+jarvis_lock_case stale
+cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+cp -- "$sandbox/jarvis-backend-original" "$jarvis_backend"
+jarvis_rescan
+
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --floor-daemon "$jarvis_backend"
+jarvis_rescan
+expect "the unsupported Node fixture enables" ok ipc shell setPluginEnabled vgs.jarvis true
+expect_poll "Node exit 78 is a permanent problem without retries" permanent jarvis_permanent
+expect "the unsupported Node service disables" ok ipc shell setPluginEnabled vgs.jarvis false
+python3 - "$jarvis_service" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+needle="completion.code === 78"
+assert s.count(needle)==1
+p.write_text(s.replace(needle, "completion.code === 79"))
+PY
+jarvis_rescan
+expect "the Node-floor recovery control enables" ok ipc shell setPluginEnabled vgs.jarvis true
+expect_poll "the missing permanent-exit rule wrongly retries" retried jarvis_permanent
+expect "the recovery control disables" ok ipc shell setPluginEnabled vgs.jarvis false
+cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+cp -- "$sandbox/jarvis-backend-original" "$jarvis_backend"
+jarvis_rescan
+
 jarvis_enable
 expect "five retries end in problem status" problem jarvis_exhaust
 expect "retry exhaustion raises one Jarvis toast" 1 jarvis_toasts
@@ -139,15 +235,13 @@ expect "the exhausted service disables" ok ipc shell setPluginEnabled vgs.jarvis
 
 # The control changes the live retry rule in a disposable plugin copy.
 # Its six-crash observation must not satisfy the five-retry assertion.
-jarvis_service="$repo/shell/plugins/vgs.jarvis/Service.qml"
-cp -- "$jarvis_service" "$sandbox/jarvis-service-original"
 python3 - "$jarvis_service" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
-needle = "if (retries === 5)"
+needle = "if (permanent || retries === 5)"
 assert s.count(needle) == 1
-p.write_text(s.replace(needle, "if (retries === 6)"))
+p.write_text(s.replace(needle, "if (permanent || retries === 6)"))
 PY
 jarvis_rescan
 jarvis_enable

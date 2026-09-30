@@ -165,6 +165,29 @@ async function main() {
         assert.equal(result.stdout, "");
         assert.equal(result.stderr.trim(), key);
     }
+    function socketRefusal(file) {
+        const parent = path.join(root, "long-" + "x".repeat(107));
+        const result = run("/bin/bash", [file, standins, "--", "true"],
+            { ...env, JARVIS_TEST_SCRATCH_ROOT: parent });
+        assert.equal(result.status, 1, result.stderr);
+        assert.equal(result.stdout, "");
+        assert.match(result.stderr, /^jarvis-env: scratch=socket-path-too-long bytes=\d+ max=107 path=.+\/run\/session\.bus\n$/);
+        assert.deepEqual(fs.readdirSync(parent), [], "refusal removes only the fresh allocated world");
+    }
+    function harnessIsolation(fragment, parent, expected, sourceTree = path.resolve(__dirname, "..")) {
+        const sandbox = path.join(root, "harness");
+        fs.mkdirSync(path.join(sandbox, "jarvis-world/standins"), { recursive: true });
+        const script = 'source_repo="$1"; sandbox="$2"\n' + fragment;
+        const result = cp.spawnSync("/bin/bash", ["-c", script, "probe", sourceTree, sandbox],
+            { env: { ...env, JARVIS_TEST_SCRATCH_ROOT: parent }, cwd: env.HOME,
+                encoding: "utf8", timeout: 60000 });
+        assert.equal(result.error, undefined);
+        assert.equal(result.signal, null);
+        assert.equal(result.status, expected, result.stdout + result.stderr);
+        assert.equal(result.stdout.trim(), expected === 77
+            ? "qml-smoke: status=not-measured reason=jarvis-isolation"
+            : "qml-smoke: jarvis-isolation=failed exit=1");
+    }
 
     async function cancellation(file, signal) {
         const lock = path.join(root, "cancel.lock");
@@ -246,6 +269,25 @@ async function main() {
 
     try {
         const standinResult = cli(helper, standins, "jarvis-standin");
+        socketRefusal(helper);
+        mutation("socket-limit", "if size > 107:", "if False:", socketRefusal);
+        const harness = fs.readFileSync(path.join(__dirname, "smoke/harness.sh"), "utf8");
+        const start = 'if bash "$source_repo/scripts/lib/jarvis-env.sh" "$sandbox/jarvis-world/standins" -- true; then';
+        assert.equal(harness.split(start).length - 1, 1);
+        const fragment = harness.slice(harness.indexOf(start), harness.indexOf("\nsandbox_env=(", harness.indexOf(start)));
+        const parent = path.join(root, "long-" + "x".repeat(107));
+        harnessIsolation(fragment, parent, 1);
+        const exit = 'exit "$jarvis_isolation_status"';
+        assert.equal(fragment.split(exit).length - 1, 1);
+        assert.throws(() => harnessIsolation(fragment.replace(exit, "exit 77"), parent, 1), assert.AssertionError);
+        controls++;
+        const unavailableTree = path.join(root, "unavailable-tree");
+        fs.mkdirSync(path.join(unavailableTree, "scripts/lib"), { recursive: true });
+        const probeNeedle = '"${clean_env[@]}" "$root/bootstrap/unshare" -rn --pid --fork --mount-proc --kill-child -- \\\n    "$root/tools/true"';
+        assert.equal(source.split(probeNeedle).length - 1, 1);
+        fs.writeFileSync(path.join(unavailableTree, "scripts/lib/jarvis-env.sh"),
+            source.replace(probeNeedle, '"${clean_env[@]}" "$root/tools/false"'));
+        harnessIsolation(fragment, root, 77, unavailableTree);
         scratchLocation(helper, root);
         const defaultEnv = { ...env };
         delete defaultEnv.JARVIS_TEST_SCRATCH_ROOT;

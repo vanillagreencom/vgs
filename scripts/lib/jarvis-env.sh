@@ -12,6 +12,8 @@
 # JARVIS_TEST_SCRATCH_ROOT selects the parent directory for fresh worlds.
 # Default: this helper's worktree tmp/. The launcher resolves it physically;
 # this parent setting and the caller's TMPDIR never enter the child.
+# Private Unix socket paths must fit the host limit; an overlong world
+# refuses with scratch=socket-path-too-long and exit 1 before services start.
 
 _jarvis_env_error() {
   printf 'jarvis-env: %s\n' "$*" >&2
@@ -74,6 +76,15 @@ PY
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
+  # AF_UNIX bind probe on Linux, 2026-09-30:
+  # 107 bytes bind; 108 refuse. Session bus is this world's longest socket.
+  "$allocator" -I - "$root/run/session.bus" <<'PY' || exit 1
+import os, sys
+size = len(os.fsencode(sys.argv[1]))
+if size > 107:
+    print(f"jarvis-env: scratch=socket-path-too-long bytes={size} max=107 path={sys.argv[1]}", file=sys.stderr)
+    sys.exit(1)
+PY
   umask 077
   mkdir -p "$root"/{standins,tools,bootstrap,home,config,data,state,cache,run,tmp} || exit 1
   for tool in "${_jarvis_env_tools[@]}" unshare ip dbus-daemon tmux; do
