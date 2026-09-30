@@ -549,7 +549,7 @@ slack_section() {
 # status fixture's Set up token and Install the tool, Automations' Enable
 # while logged out, Themes' Install browser theming once the chromium
 # target ships, and Settings' own page with its command revealed.
-automations_offers() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; print(str(any(s["action"] and s["action"]["offered"] for p in json.load(sys.stdin) if p["id"] == "vgs.automations" for s in p["status"])).lower())'; }
+automations_offers() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | py_reply 'import json,sys; print(str(any(s["action"] and s["action"]["offered"] for p in json.load(sys.stdin) if p["id"] == "vgs.automations" for s in p["status"])).lower())'; }
 scene_setup_steps() { # MODE
   local section start end height
   if section="$(slack_section)"; then
