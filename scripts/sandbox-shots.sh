@@ -205,8 +205,10 @@ done
 # shellcheck disable=SC2034 # the harness sourced below reads it
 shell_output_scale="$scale"
 source "$checkout/scripts/smoke/harness.sh"
-# The harness copied the tree into the sandbox; the export is no longer read.
+# The harness copied the tree into the sandbox; the export is no longer
+# read, and every later read of the tree reads the sandbox's copy.
 [[ -z $source_tree ]] || rm -rf -- "$source_tree"
+tree="$repo"
 # The plugin fixtures a scene installs: this checkout's, or with --rev that
 # revision's, since its manifest judge is the one that reads them.
 fixtures="$checkout/scripts/smoke/fixtures/plugins"
