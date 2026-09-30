@@ -128,6 +128,11 @@ expect "the empty string stays in the file" '""' user_device
 # A disposable SettingField keeps the same editor and observes apply.
 # Each mutation keeps the code it tests and removes one guarantee.
 choice_controls="$repo/shell/plugins/vgs.settings"
+choice_source_revision() {
+  "$repo/bin/vgsh-scan" --require-base "$repo/shell/plugins" |
+    python3 -c 'import json,sys; print(next(entry["revision"] for entry in json.load(sys.stdin) if entry["dir"] == sys.argv[1]))' "$choice_controls"
+}
+choice_revision_before="$(choice_source_revision)" || fail "the Settings source revision is unreadable before the controls"
 python3 - "$choice_controls" <<'PYEDIT'
 import pathlib, sys
 root = pathlib.Path(sys.argv[1])
@@ -168,9 +173,17 @@ expect "the label-writing control chooses the same item" ok ipc smoke popupCall 
 expect "the label-writing control breaks stable-value readback" '"Alpha"' ipc smoke popupRead ChoicesWriteLabel smokeApplied
 expect "the no-binding control chooses the same item" ok ipc smoke popupCall ChoicesNoBinding smokeChoose
 expect "the no-binding control leaves an unsaved index selected" 1 ipc smoke popupRead ChoicesNoBinding smokeIndex
+choice_revision_with_controls="$(choice_source_revision)" || fail "the Settings source revision is unreadable with the controls"
+if [[ $choice_revision_with_controls != "$choice_revision_before" ]]; then
+  ok "control: leaving generated copies changes the Settings source revision"
+else
+  fail "control: generated copies did not change the Settings source revision"
+fi
 for control in ChoicesGood ChoicesNoModel ChoicesWriteLabel ChoicesNoBinding; do
   expect "the probe drops $control" ok ipc smoke popupDrop "$control"
+  rm -- "$choice_controls/$control.qml" || fail "removing the $control source copy failed"
 done
+expect "dropping the controls restores the Settings source revision" "$choice_revision_before" choice_source_revision
 expect "disabling the status fixture from its page is allowed" ok ipc smoke invokeInstance window vgs.settings toggle acme.status
 expect_poll "a disabled plugin's dynamic Select is read-only and has no offered choices" '[0, "First offered (none available)", "", false]' device_state
 expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "'"$fixture_command"'"], ["Pending", "Not reported"]]' drawn_status
