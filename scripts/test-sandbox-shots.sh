@@ -198,32 +198,42 @@ scene_cases=(
 # Each case is label, status, line, then its arguments up to the next case,
 # counted by the arguments each row above carries.
 scene_arity=(1 3 3 1 3 3)
+# Where each case starts in scene_cases and how many arguments it takes, by
+# label, for the controls below.
+declare -A scene_at scene_argc
 at=0
 for n in "${!scene_arity[@]}"; do
   label="${scene_cases[at]}"; status="${scene_cases[at + 1]}"; line="${scene_cases[at + 2]}"
+  scene_at[$label]=$at; scene_argc[$label]=${scene_arity[n]}
   args=("${scene_cases[@]:at + 3:${scene_arity[n]}}")
   at=$((at + 3 + ${scene_arity[n]}))
   if scene_case "$repo/scripts/sandbox-shots.sh" "$label" "$status" "$line" "${args[@]}"; then ok "$label"; else fail "$label"; fi
 done
-# Controls: a copy with one refusal planted away sends the refused case on
-# to the harness. Rows: label | the refusal's text, which must match once |
-# its replacement | the refusal line the case wants | the case's arguments,
-# split on spaces. A field holds no `|`, the separator.
+# Controls, four fields each: label, the refusal's text, which must match
+# once, its replacement, and the refused case. A copy with that refusal
+# planted away must send the case's arguments on to the harness, which
+# exits 77 here, as the scenes the tree ships do; a copy that still refuses
+# them, or fails for another reason, leaves the control red.
 shots_controls=(
-  "an unshipped scene is not refused|if [[ (\$scene == settings || \$scene == manager) && \$scene != \"\$manager_scene\" ]]; then|if false; then|sandbox-shots: refused: scene=manager tree=checkout|manager"
-  "a refused scale goes on to the harness|refused: scale=%s\\n' \"\$scale\" >&2; exit 2; }|refused: scale=%s\\n' \"\$scale\" >&2; }|sandbox-shots: refused: scale=3|--scale 3 settings"
+  "an unshipped scene is not refused"
+  "if [[ (\$scene == settings || \$scene == manager) && \$scene != \"\$manager_scene\" ]]; then" "if false; then"
+  "a checkout with the Settings plugin refuses the manager scene"
+  "a refused scale goes on to the harness"
+  "refused: scale=%s\\n' \"\$scale\" >&2; exit 2; }" "refused: scale=%s\\n' \"\$scale\" >&2; }"
+  "a scale other than 1 or 2 is refused"
 )
 shots_mutant="$tmp/sandbox-shots-mutant.sh"
-for row in "${shots_controls[@]}"; do
-  IFS='|' read -r label needle replacement line case_args <<<"$row"
-  read -r -a args <<<"$case_args"
+for (( i = 0; i < ${#shots_controls[@]}; i += 4 )); do
+  label="${shots_controls[i]}"; target="${shots_controls[i + 3]}"
+  if [[ -z ${scene_at[$target]+set} ]]; then fail "control: $label names no case: $target"; continue; fi
+  args=("${scene_cases[@]:${scene_at[$target]} + 3:${scene_argc[$target]}}")
   if python3 -c '
 import sys
 src, dst, needle, replacement = sys.argv[1:]
 text = open(src).read()
 assert text.count(needle) == 1, "the refusal must match once"
-open(dst, "w").write(text.replace(needle, replacement))' "$repo/scripts/sandbox-shots.sh" "$shots_mutant" "$needle" "$replacement"; then
-    if scene_case "$shots_mutant" "control" 2 "$line" "${args[@]}" >/dev/null; then fail "control: $label left the refusal case green"; else ok "control: $label"; fi
+open(dst, "w").write(text.replace(needle, replacement))' "$repo/scripts/sandbox-shots.sh" "$shots_mutant" "${shots_controls[i + 1]}" "${shots_controls[i + 2]}"; then
+    if scene_case "$shots_mutant" "control: $label" 77 "qml-smoke: status=not-measured" "${args[@]}"; then ok "control: $label"; else fail "control: $label did not take '$target' on to the harness"; fi
   else
     fail "control: $label could not be planted"
   fi
