@@ -21,6 +21,7 @@ Item {
     Badge { id: badgeIcon; text: "Verified"; tone: "success"; iconName: "check"; y: 100 }
     Badge { id: badgeMd; text: "Verified"; tone: "success"; size: "md"; y: 130 }
     Kbd { id: kbd; text: "Ctrl"; y: 160 }
+    Kbd { id: key; text: "K"; y: 190; x: 100 }
 
     TestCase {
         name: "feedback"
@@ -96,15 +97,19 @@ Item {
             verify(kbd.width > 2 * Theme.kbd.paddingX, "the cap is wider than its padding");
             compare(kbd.border.width, Theme.kbd.border);
             const label = kbdLabel(kbd);
-            compare(kbd.height, label.lineBox + 2 * Theme.kbd.paddingY);
-            compare(kbd.height, 19);
-            fuzzyCompare(label.x, Theme.kbd.paddingX, 0.1);
-            fuzzyCompare(kbd.width - (label.x + label.opticalWidth), Theme.kbd.paddingX, 0.1);
+            compare(kbd.height, Theme.kbd.height);
+            compare(kbd.height, 20);
+            verify(kbd.width >= kbd.height, "the cap is never narrower than it is tall");
+            compare(key.width, key.height, "a one-letter cap is square");
+            fuzzyCompare(kbdLabel(key).x + kbdLabel(key).opticalWidth / 2, key.width / 2, 0.5);
+            compare(kbd.width, Math.round(kbd.width));
+            fuzzyCompare(label.x, Theme.kbd.paddingX, 0.5);
+            fuzzyCompare(kbd.width - (label.x + label.opticalWidth), Theme.kbd.paddingX, 0.5);
             fuzzyCompare(label.y + label.capCentre, kbd.height / 2, 0.5);
-            compare(UnitTheme.override({ kbd: { paddingX: 12, paddingY: 2, background: "#00ff00" } }), "ok");
+            compare(UnitTheme.override({ kbd: { paddingX: 12, height: 24, background: "#00ff00" } }), "ok");
             compare(String(kbd.color), "#00ff00");
             verify(kbd.width > 24, "wider padding widens the cap");
-            compare(kbd.height, 19);
+            compare(kbd.height, 24);
         }
 
         function test_kbd_draws_the_kbd_role() {

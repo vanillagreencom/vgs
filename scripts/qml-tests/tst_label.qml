@@ -69,13 +69,13 @@ Item {
             const sans = "Inter Variable";
             const mono = "JetBrains Mono";
             return [
-                { tag: "display", family: sans, size: 34, weight: 700, spacing: -0.02, uppercase: false, lineHeight: 1.15 },
-                { tag: "h1", family: sans, size: 24, weight: 700, spacing: -0.01, uppercase: false, lineHeight: 1.2 },
-                { tag: "h2", family: sans, size: 20, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.25 },
-                { tag: "h3", family: sans, size: 16, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.3 },
+                { tag: "display", family: sans, size: 34, weight: 700, spacing: -0.02, uppercase: false, lineHeight: 1.3 },
+                { tag: "h1", family: sans, size: 24, weight: 700, spacing: -0.01, uppercase: false, lineHeight: 1.333 },
+                { tag: "h2", family: sans, size: 20, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.4 },
+                { tag: "h3", family: sans, size: 16, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.5 },
                 { tag: "subheading", family: sans, size: 16, weight: 400, spacing: 0, uppercase: false, lineHeight: 1.75 },
-                { tag: "body", family: sans, size: 15, weight: 400, spacing: 0, uppercase: false, lineHeight: 1.55 },
-                { tag: "bodyStrong", family: sans, size: 15, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.55 },
+                { tag: "body", family: sans, size: 15, weight: 400, spacing: 0, uppercase: false, lineHeight: 1.6 },
+                { tag: "bodyStrong", family: sans, size: 15, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.6 },
                 { tag: "item", family: sans, size: 15, weight: 400, spacing: 0, uppercase: false, lineHeight: 1 },
                 { tag: "itemHint", family: sans, size: 13, weight: 400, spacing: 0, uppercase: false, lineHeight: 1 },
                 { tag: "itemCode", family: mono, size: 13, weight: 500, spacing: 0, uppercase: false, lineHeight: 1 },
@@ -85,7 +85,7 @@ Item {
                 { tag: "button", family: mono, size: 11, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 },
                 { tag: "kbd", family: mono, size: 11, weight: 600, spacing: 0.02, uppercase: false, lineHeight: 1 },
                 { tag: "code", family: mono, size: 13, weight: 500, spacing: 0, uppercase: false, lineHeight: 1.5 },
-                { tag: "tooltip", family: mono, size: 11, weight: 600, spacing: 0, uppercase: false, lineHeight: 1.3 },
+                { tag: "tooltip", family: sans, size: 12, weight: 500, spacing: 0, uppercase: false, lineHeight: 1.333 },
                 { tag: "bar", family: mono, size: 12, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 }
             ];
         }
@@ -125,8 +125,21 @@ Item {
             }
         }
 
+        // A role that wraps sets its line box on the 4 px grid at the
+        // default font size, so wrapped text keeps the layout's rhythm.
+        function test_multi_line_roles_sit_on_the_grid() {
+            let checked = 0;
+            for (let i = 0; i < roles.count; i++) {
+                const label = roles.itemAt(i);
+                if (label.typography.lineHeight <= 1) continue;
+                compare(label.lineBox % 4, 0, label.role + " line box " + label.lineBox);
+                checked += 1;
+            }
+            verify(checked >= 9, "the role walk found " + checked + " multi-line roles; the walk is broken");
+        }
+
         function test_body_line_height_uses_font_size_multiple() {
-            const lineBox = Math.round(15 * 1.55);
+            const lineBox = Math.round(15 * 1.6);
             compare(bodyTwo.lineHeightMode, Text.FixedHeight);
             compare(bodyTwo.lineHeight, lineBox);
             fuzzyCompare(bodyTwo.implicitHeight, 2 * lineBox, 1);

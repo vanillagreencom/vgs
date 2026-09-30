@@ -16,6 +16,10 @@
     },
     "color": {
       "textFaint": "mix({palette.foreground}, {palette.background}, 0.36)"
+    },
+    "toggle": {
+      "off": "mix({palette.background}, {palette.foreground}, 0.56)",
+      "knobOff": "{palette.background}"
     }
   }
 }

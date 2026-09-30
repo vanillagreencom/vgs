@@ -67,7 +67,12 @@ const DEFAULTS = [
     ["text.h2.size", 20],
     ["text.h3.size", 16],
     ["text.body.size", 15],
-    ["text.body.lineHeight", 1.55],
+    // Line boxes on the 4 px grid: 15 * 1.6 = 24, 16 * 1.5 = 24, 20 * 1.4 = 28.
+    ["text.body.lineHeight", 1.6],
+    ["text.h3.lineHeight", 1.5],
+    ["text.h2.lineHeight", 1.4],
+    ["text.tooltip.size", 12],
+    ["text.tooltip.family", "Inter Variable"],
     ["text.hint.size", 13],
     ["text.code.size", 13],
     ["text.code.lineHeight", 1.5],
@@ -82,33 +87,57 @@ const DEFAULTS = [
     ["text.label.family", "JetBrains Mono"],
     ["text.bar.family", "JetBrains Mono"],
     ["font.family.sans", "Inter Variable"],
-    ["bar.height", 26],
+    ["bar.height", 28],
+    ["bar.item.height", 24],
+    ["bar.item.icon", 16],
     ["bar.onActive", "#000000ff"],
     ["bar.item.paddingX", 6],
     ["bar.item.gap", 4],
-    // The control and row rhythm: the reference's 30 px control with 9 px
-    // a side and a 7 px icon gap; mul(4, 3) = 12 for a row's padding and
-    // its label gap, 130 px labels, mul(4, 1) = 4 between lines.
-    ["control.paddingX", 9],
-    ["control.gap", 7],
+    // The control and row rhythm, Radix Themes' button sizes on the 4 px
+    // unit: 24, 32 and 40 px controls with mul(4, 2) = 8, mul(4, 3) = 12
+    // and mul(4, 4) = 16 a side and mul(4, 1) = 4, 8 and mul(4, 3) = 12
+    // icon gaps; mul(4, 3) = 12 for a row's padding and its label gap,
+    // 128 px labels, mul(4, 1) = 4 between lines. Rows keep their own
+    // 36, 56 and 28 px heights.
+    ["size.control.sm", 24],
+    ["size.control.md", 32],
+    ["size.control.lg", 40],
+    ["control.paddingX", 12],
+    ["control.gap", 8],
+    ["control.sm.paddingX", 8],
+    ["control.sm.gap", 4],
+    ["control.lg.paddingX", 16],
+    ["control.lg.gap", 12],
     ["row.paddingX", 12],
     ["row.gap", 12],
     ["row.height", 36],
-    ["row.labelWidth", 130],
+    ["row.twoLineHeight", 56],
+    ["row.compactHeight", 28],
+    ["row.labelWidth", 128],
     ["row.lineGap", 4],
     ["stack.row", 4],
     ["stack.group", 12],
     ["stack.section", 24],
-    ["button.paddingX", 9],
-    ["textField.paddingX", 9],
-    ["textField.height", 30],
-    ["segmented.height", 30],
-    ["segmented.paddingX", 9],
+    ["button.paddingX", 12],
+    ["textField.paddingX", 12],
+    ["textField.height", 32],
+    ["segmented.height", 32],
+    ["segmented.paddingX", 12],
+    ["tabs.paddingX", 12],
     ["listItem.paddingX", 12],
     ["menu.item.paddingX", 12],
     ["field.paddingX", 0],
-    ["field.labelWidth", 130],
+    ["field.labelWidth", 128],
     ["field.labelGap", 12],
+    // An input boundary: the raised surface's colour, mix(#000000,
+    // #d7d7d9, 0.075) = 16.125, moved halfway toward white,
+    // contrast(#000000): 16.125 + 0.5 * 238.875 = 135.56. The off track
+    // moves it 0.46 instead, 125.99, then 0.08 toward black: 115.91; the
+    // knob on it is the white that contrasts with it best.
+    ["color.borderControl", "#888888ff"],
+    ["checkbox.borderColor", "#888888ff"],
+    ["toggle.off", "#747474ff"],
+    ["toggle.knobOff", "#ffffffff"],
     ["toggle.size.sm.width", 28],
     ["toggle.size.sm.height", 16],
     ["toggle.size.md.width", 36],
@@ -116,10 +145,21 @@ const DEFAULTS = [
     ["badge.size.sm.height", 20],
     ["badge.size.sm.paddingX", 6],
     ["badge.size.md.height", 24],
+    ["badge.gap", 4],
     ["badge.size.md.paddingX", 8],
     ["codeLine.padding", 8],
-    ["kbd.paddingX", 4],
-    ["kbd.paddingY", 2],
+    ["kbd.paddingX", 6],
+    ["kbd.height", 20],
+    ["tooltip.paddingX", 8],
+    ["tooltip.paddingY", 4],
+    ["tooltip.maxWidth", 280],
+    ["inset.window", 16],
+    ["inset.dialog", 16],
+    ["inset.popover", 12],
+    ["popover.padding", 12],
+    ["menu.padding", 4],
+    ["menu.maxWidth", 360],
+    ["toast.gap", 8],
     ["iconButton.restOpacity", 0.6],
     ["voiceOrb.size", 96],
     ["voiceOrb.radius", 0.28],
@@ -139,14 +179,14 @@ const DEFAULTS = [
     ["voiceOrb.tone.warning", "#ffb000ff"],
     ["voiceOrb.tone.danger", "#f43f5eff"],
     ["voiceOrb.tone.muted", "#aaaaabff"],
-    ["bar.item.iconGap", 7],
+    ["bar.item.iconGap", 8],
     // A window-like panel: 600 px wide, half its monitor tall, mul(4, 3) =
     // 12 from a narrower monitor's sides.
     ["size.window.width", 600],
     ["size.window.heightShare", 0.5],
     ["size.window.gutter", 12],
-    // Nine 30 px entries before a menu scrolls: mul(30, 9) = 270.
-    ["menu.maxHeight", 270],
+    // Nine 32 px entries before a menu scrolls: mul(32, 9) = 288.
+    ["menu.maxHeight", 288],
     ["menu.typeahead", 1000],
     ["menu.item.check", "#ff5a36ff"],
     // The scroll bar: 4 px thick, 2 px in, inside an 8 px gutter, a thumb
@@ -158,22 +198,22 @@ const DEFAULTS = [
     ["scrollArea.idleOpacity", 0],
     ["scrollArea.fadeDelay", 800],
     ["scrollArea.fade", 250],
-    // A list row with a secondary line: mul(36, 1.5) = 54.
-    ["listItem.twoLineHeight", 54],
+    // A list row with a secondary line takes the row group's 56.
+    ["listItem.twoLineHeight", 56],
     ["titleButton.gap", 4],
     ["titleButton.underline", 1],
     ["titleButton.underlineGap", 2],
     ["titleButton.hover", "#ff5a36ff"],
-    // The dialog: 360 px wide, mul(4, 3) = 12 padding and 12 from the
-    // free area's edges, mul(4, 2) = 8 between its blocks and mul(4, 1.5) =
-    // 6 between its actions; its card is the raised surface,
+    // The dialog: 360 px wide, mul(4, 4) = 16 padding and mul(4, 3) = 12
+    // from the free area's edges, stack.group = 12 between its blocks and
+    // mul(4, 2) = 8 between its actions; its card is the raised surface,
     // mix(#000000, #d7d7d9, 0.075): 215 * 0.075 = 16.125, 217 * 0.075 =
     // 16.275.
     ["dialog.width", 360],
     ["dialog.margin", 12],
-    ["dialog.padding", 12],
-    ["dialog.gap", 8],
-    ["dialog.actionGap", 6],
+    ["dialog.padding", 16],
+    ["dialog.gap", 12],
+    ["dialog.actionGap", 8],
     ["dialog.background", "#101010ff"],
     ["dialog.titleRole", "h3"],
     ["dialog.bodyRole", "body"],
@@ -230,11 +270,13 @@ const ACCEPTED = [
     { tokens: { bar: { active: "#ff5a3680", onActive: "#ffffff" } }, want: [["bar.active", "#ff5a3680"], ["bar.onActive", "#ffffffff"]] },
     // One component value changes, and the values derived from it.
     { tokens: { bar: { active: "#ffffff" } }, want: [["bar.active", "#ffffffff"], ["bar.onActive", "#000000ff"], ["color.accent", "#ff5a36ff"]] },
-    { tokens: { space: { unit: 5 } }, want: [["space.xs", 5], ["space.sm", 8], ["space.xl", 20], ["bar.gap", 10], ["row.paddingX", 15], ["listItem.paddingX", 15], ["field.paddingX", 0], ["stack.row", 5], ["badge.size.sm.paddingX", 8], ["codeLine.padding", 10], ["kbd.paddingX", 5], ["kbd.paddingY", 3]] },
+    { tokens: { space: { unit: 5 } }, want: [["space.xs", 5], ["space.sm", 8], ["space.xl", 20], ["bar.gap", 10], ["row.paddingX", 15], ["listItem.paddingX", 15], ["field.paddingX", 0], ["stack.row", 5], ["badge.size.sm.paddingX", 8], ["codeLine.padding", 10], ["kbd.paddingX", 8], ["control.paddingX", 15], ["control.sm.gap", 5]] },
     // One shared token moves every control that follows the rhythm.
     { tokens: { control: { paddingX: 12, gap: 5 } }, want: [["button.paddingX", 12], ["textField.paddingX", 12], ["segmented.paddingX", 12], ["button.gap", 5], ["textField.gap", 5], ["listItem.gap", 5], ["menu.item.gap", 5], ["toast.contentGap", 5], ["bar.item.iconGap", 5], ["bar.item.paddingX", 6]] },
-    { tokens: { size: { control: { md: 34, lg: 44 } } }, want: [["textField.height", 34], ["segmented.height", 34], ["menu.item.height", 34], ["row.height", 44], ["listItem.height", 44], ["listItem.twoLineHeight", 66]] },
-    { tokens: { row: { paddingX: 16 } }, want: [["listItem.paddingX", 16], ["menu.item.paddingX", 16], ["field.paddingX", 0], ["button.paddingX", 9]] },
+    // Control sizes move the controls and never the rows' density.
+    { tokens: { size: { control: { md: 34, lg: 44 } } }, want: [["textField.height", 34], ["segmented.height", 34], ["menu.item.height", 34], ["menu.maxHeight", 306], ["row.height", 36], ["listItem.height", 36], ["listItem.twoLineHeight", 56]] },
+    { tokens: { row: { height: 40, twoLineHeight: 60 } }, want: [["listItem.height", 40], ["listItem.twoLineHeight", 60], ["textField.height", 32]] },
+    { tokens: { row: { paddingX: 16 } }, want: [["listItem.paddingX", 16], ["menu.item.paddingX", 16], ["field.paddingX", 0], ["button.paddingX", 12]] },
     { tokens: { field: { paddingX: 6 } }, want: [["field.paddingX", 6], ["listItem.paddingX", 12]] },
     { tokens: { font: { size: 16 } }, want: [["text.body.size", 16], ["text.hint.size", 14]] },
     { tokens: { motion: { scale: 0 } }, want: [["motion.duration.fast", 0], ["motion.duration.slow", 0], ["motion.list.travel.duration", 0], ["motion.list.enter.duration", 0], ["motion.list.stagger", 0], ["motion.list.rise", 6]] },
@@ -466,6 +508,8 @@ const CATALOG_REFUSED = [
 const catalogTheme = (name, mode, accent) => JSON.stringify({ schemaVersion: 1, name, tokens: { scheme: { mode }, palette: Object.assign({}, CATALOG_PALETTE, { accent }) } });
 const READABILITY_ROLES = ["color.text", "color.textHeading", "color.textMuted", "color.textFaint", "color.accent", "color.success", "color.warning", "color.danger", "color.info"];
 const READABILITY_SURFACES = ["color.background", "color.surface", "color.surfaceRaised", "color.surfaceSunken"];
+const BOUNDARY_ROLES = ["checkbox.borderColor", "radio.borderColor", "textField.borderColor", "toggle.off", "checkbox.checked", "radio.checked", "toggle.on"];
+const BOUNDARY_PAIRS = [["toggle.knobOff", "toggle.off"], ["toggle.knobOn", "toggle.on"], ["checkbox.mark", "checkbox.checked"]];
 const truncateRatio = value => Math.floor(value * 100) / 100;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -483,6 +527,9 @@ function verify(judge) {
     assert.deepEqual(plain(judge.READABILITY_TEXT_ROLES), READABILITY_ROLES);
     assert.deepEqual(plain(judge.READABILITY_SURFACES), READABILITY_SURFACES);
     assert.equal(judge.READABILITY_FLOOR, 4.5);
+    assert.deepEqual(plain(judge.BOUNDARY_ROLES), BOUNDARY_ROLES);
+    assert.deepEqual(plain(judge.BOUNDARY_PAIRS), BOUNDARY_PAIRS);
+    assert.equal(judge.BOUNDARY_FLOOR, 3);
     assert.equal(judge.contrastRatio(judge.parseColor("#000000"), judge.parseColor("#ffffff")), 21);
     assert.deepEqual(plain(judge.readabilityShortfalls(defaults.values)), [], "default vgs readability");
     const lightText = fs.readFileSync(path.join(repo, "themes", "light", "theme.json"), "utf8");
@@ -505,6 +552,16 @@ function verify(judge) {
     const translucentFailure = judge.accept(TOKENS, document({ color: { textFaint: "alpha({palette.foreground}, 0.5)" } }));
     assert.equal(translucentFailure.ok, true, translucentFailure.ok ? "" : judge.refusalLine(translucentFailure));
     assert.deepEqual(plain(judge.readabilityShortfalls(translucentFailure.values)[0]), { text: "color.textFaint", surface: "color.background", ratio: null, floor: 4.5 });
+    // An input boundary as faint as the surface it sits on, and a switch
+    // knob the colour of its track, each fall under the 3:1 floor; a 3.63
+    // boundary holds.
+    const boundaryFailure = judge.accept(TOKENS, document({ checkbox: { borderColor: "{color.surface}" } }));
+    assert.equal(boundaryFailure.ok, true, boundaryFailure.ok ? "" : judge.refusalLine(boundaryFailure));
+    const boundaryRows = judge.readabilityShortfalls(boundaryFailure.values);
+    assert.deepEqual(plain(boundaryRows.map(row => [row.text, row.surface, row.floor])), READABILITY_SURFACES.map(surface => ["checkbox.borderColor", surface, 3]));
+    const knobFailure = judge.accept(TOKENS, document({ toggle: { knobOff: "{toggle.off}" } }));
+    assert.equal(knobFailure.ok, true, knobFailure.ok ? "" : judge.refusalLine(knobFailure));
+    assert.deepEqual(plain(judge.readabilityShortfalls(knobFailure.values)), [{ text: "toggle.knobOff", surface: "toggle.off", ratio: 1, floor: 3 }]);
 
     // The resolved tree holds exactly the table's tokens, each with a value
     // of its type's portable form.
@@ -801,7 +858,10 @@ const CONTROLS = [
     ["readability text roles", "    \"color.success\",\n", ""],
     ["readability surfaces", "    \"color.surfaceRaised\",\n", ""],
     ["readability floor", "var READABILITY_FLOOR = 4.5;", "var READABILITY_FLOOR = 1;"],
-    ["readability translucency", "var ratio = text === null || surface === null || text.a < 1 || surface.a < 1\n                ? null\n                : contrastRatio(text, surface);", "var ratio = contrastRatio(text, surface);"]
+    ["readability translucency", "var ratio = text === null || surface === null || text.a < 1 || surface.a < 1\n            ? null\n            : contrastRatio(text, surface);", "var ratio = contrastRatio(text, surface);"],
+    ["boundary roles", "    \"checkbox.borderColor\",\n", ""],
+    ["boundary pairs", "    [\"toggle.knobOff\", \"toggle.off\"],\n", ""],
+    ["boundary floor", "var BOUNDARY_FLOOR = 3;", "var BOUNDARY_FLOOR = 1;"]
 ];
 
 const source = fs.readFileSync(judgeFile, "utf8");

@@ -12,8 +12,8 @@ Item {
     property string container: "panel"
     property bool fitToContent: false
     property real maximumHeight: 0
-    property real gap: Theme.pane.gap
-    property real bodySpacing: Theme.pane.gap
+    property real gap: Theme.stack.group
+    property real bodySpacing: Theme.stack.group
     property alias header: headerSlot.data
     default property alias body: bodyColumn.data
     property alias footer: footerSlot.data

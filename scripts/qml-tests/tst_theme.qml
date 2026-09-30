@@ -33,7 +33,7 @@ Item {
             compare(Theme.color.accent, "#ffff5a36");
             compare(Theme.text.body.family, "Inter Variable");
             compare(Theme.text.label.family, "JetBrains Mono");
-            compare(Theme.bar.height, 26);
+            compare(Theme.bar.height, 28);
             compare(Theme.motion.duration.fast, 100);
         }
 

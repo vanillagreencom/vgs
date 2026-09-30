@@ -224,6 +224,24 @@ var READABILITY_SURFACES = [
     "color.surfaceSunken"
 ];
 var READABILITY_FLOOR = 4.5;
+// An input that shows its state by its outline or indicator must meet WCAG
+// 2.2 SC 1.4.11 non-text contrast, 3:1: each boundary and selected
+// indicator on each resting surface, and each switch knob on its track.
+var BOUNDARY_ROLES = [
+    "checkbox.borderColor",
+    "radio.borderColor",
+    "textField.borderColor",
+    "toggle.off",
+    "checkbox.checked",
+    "radio.checked",
+    "toggle.on"
+];
+var BOUNDARY_PAIRS = [
+    ["toggle.knobOff", "toggle.off"],
+    ["toggle.knobOn", "toggle.on"],
+    ["checkbox.mark", "checkbox.checked"]
+];
+var BOUNDARY_FLOOR = 3;
 
 function valueAt(values, path) {
     var node = values;
@@ -233,20 +251,29 @@ function valueAt(values, path) {
     return node;
 }
 
+// Every pair of the readability table below its floor, as { text,
+// surface, ratio, floor }: text roles on resting surfaces at 4.5, then
+// input boundaries, selected indicators and knobs at 3. A translucent
+// colour has no ratio and is a shortfall.
 function readabilityShortfalls(values) {
+    var pairs = [];
+    for (var i = 0; i < READABILITY_TEXT_ROLES.length; i++)
+        for (var j = 0; j < READABILITY_SURFACES.length; j++)
+            pairs.push([READABILITY_TEXT_ROLES[i], READABILITY_SURFACES[j], READABILITY_FLOOR]);
+    for (var k = 0; k < BOUNDARY_ROLES.length; k++)
+        for (var m = 0; m < READABILITY_SURFACES.length; m++)
+            pairs.push([BOUNDARY_ROLES[k], READABILITY_SURFACES[m], BOUNDARY_FLOOR]);
+    for (var n = 0; n < BOUNDARY_PAIRS.length; n++)
+        pairs.push([BOUNDARY_PAIRS[n][0], BOUNDARY_PAIRS[n][1], BOUNDARY_FLOOR]);
     var out = [];
-    for (var i = 0; i < READABILITY_TEXT_ROLES.length; i++) {
-        var textPath = READABILITY_TEXT_ROLES[i];
-        var text = parseColor(valueAt(values, textPath));
-        for (var j = 0; j < READABILITY_SURFACES.length; j++) {
-            var surfacePath = READABILITY_SURFACES[j];
-            var surface = parseColor(valueAt(values, surfacePath));
-            var ratio = text === null || surface === null || text.a < 1 || surface.a < 1
-                ? null
-                : contrastRatio(text, surface);
-            if (ratio === null || ratio < READABILITY_FLOOR)
-                out.push({ text: textPath, surface: surfacePath, ratio: ratio, floor: READABILITY_FLOOR });
-        }
+    for (var q = 0; q < pairs.length; q++) {
+        var text = parseColor(valueAt(values, pairs[q][0]));
+        var surface = parseColor(valueAt(values, pairs[q][1]));
+        var ratio = text === null || surface === null || text.a < 1 || surface.a < 1
+            ? null
+            : contrastRatio(text, surface);
+        if (ratio === null || ratio < pairs[q][2])
+            out.push({ text: pairs[q][0], surface: pairs[q][1], ratio: ratio, floor: pairs[q][2] });
     }
     return out;
 }

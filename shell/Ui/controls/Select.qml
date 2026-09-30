@@ -12,7 +12,7 @@ import qs.Ui
 // and travels between entries, and a hover moves it once the pointer moves
 // (ListCursor). With the list closed, Up and Down on the focused control
 // move the choice. A list taller than
-// `select.maxHeight` scrolls under the module's embedded bar, which its
+// `menu.maxHeight` scrolls under the module's embedded bar, which its
 // entries leave a gutter for. The control draws like a text field; the
 // template owns its click, hover and focus.
 T.AbstractButton {
@@ -122,7 +122,7 @@ T.AbstractButton {
         visible: false
         color: "transparent"
         implicitWidth: Math.max(1, root.width)
-        implicitHeight: Math.max(1, Math.min(Theme.select.maxHeight, entries.contentHeight + 2 * Theme.menu.padding))
+        implicitHeight: Math.max(1, Math.min(Theme.menu.maxHeight, entries.contentHeight) + 2 * Theme.menu.padding)
         onVisibleChanged: root.share(visible)
 
         Rectangle {

@@ -8,8 +8,8 @@ import qs.Unit
 // Select and SegmentedControl stand `size.control.md` tall with their text
 // `control.paddingX` from the edge; ListItem and MenuItem start their
 // content `row.paddingX` in; Field starts at `field.paddingX`, zero by
-// default so a container owns its edge. Controls share `control.gap`, and
-// ListItem owns its larger icon gap. A theme that moves the shared token
+// default so a container owns its edge. Controls share `control.gap`;
+// ListItem owns its larger icon gap and Badge its smaller chip gap. A theme that moves the shared token
 // moves every component that follows it.
 Item {
     id: root
@@ -92,14 +92,15 @@ Item {
             same(() => iconed.leftPadding, pad + Theme.icon.size.sm + gap, "text field icon gap");
             same(() => gapOf(item.contentItem), Theme.listItem.iconGap, "list item icon gap");
             same(() => gapOf(entry.contentItem), gap, "menu item icon gap");
-            same(() => badgeGap(badge), gap, "badge icon gap");
+            same(() => badgeGap(badge), Theme.badge.gap, "badge icon gap");
             same(() => gapOf(toast.children[0]), gap, "toast icon gap");
             same(() => check.contentItem.leftPadding - check.indicator.width, gap, "checkbox gap");
         }
 
         function test_components_share_the_rhythm() {
-            compare(Theme.control.paddingX, 9);
-            compare(Theme.control.gap, 7);
+            compare(Theme.control.paddingX, 12);
+            compare(Theme.control.gap, 8);
+            compare(Theme.badge.gap, 4);
             compare(Theme.row.paddingX, 12);
             compare(Theme.field.paddingX, 0);
             compare(Theme.listItem.iconGap, 12);
