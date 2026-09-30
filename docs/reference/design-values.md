@@ -1,6 +1,6 @@
 # Design reference values
 
-The rule of the reference stylesheet each typography role and each component's spacing is read from, and where the shell departs from it. The stylesheet is plugins.omarchy.org `assets/css/style.css?v=20260923-01`, fetched with curl on 2026-09-29. Radix Themes 3.3.0 component sources supply switch and badge sizes. Omarchy default branch commit b421b1b adds no smaller content-row rule than the plugin stylesheet. The rules these values follow are [design-layout.md § Text stack](../architecture/design-layout.md#text-stack) and [§ Component spacing](../architecture/design-layout.md#component-spacing).
+The rule of the reference stylesheet each typography role and each component's spacing is read from, and where the shell departs from it. The stylesheet is plugins.omarchy.org `assets/css/style.css?v=20260923-01`, fetched with curl on 2026-09-29. Radix Themes 3.3.0 component sources supply switch and badge sizes. Omarchy default branch commit b421b1b adds no smaller content-row rule than the plugin stylesheet. The rules these values follow are [design-system.md § Text stack](../architecture/design-system.md#text-stack) and [design-layout.md § Component spacing](../architecture/design-layout.md#component-spacing).
 
 ## Text roles
 
