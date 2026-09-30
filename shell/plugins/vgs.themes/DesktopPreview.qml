@@ -104,6 +104,10 @@ Item {
         scale: root.scale
         transformOrigin: Item.TopLeft
 
+        // Where the terminal and the notification end: `safeInset` above
+        // the desktop's bottom, which the card's lean does not reach.
+        readonly property real windowBottom: height - root.safeInset
+
         Rectangle {
             id: bar
             anchors.left: parent.left
@@ -170,7 +174,7 @@ Item {
             x: root.safeLeft
             y: bar.height + Theme.desktopPreview.gap
             width: (parent.width - root.safeLeft - root.safeRight - Theme.desktopPreview.gap) * Theme.desktopPreview.terminalWidthShare
-            height: parent.height - y - root.safeInset
+            height: desktop.windowBottom - y
             radius: root.windowRadius
             color: root.surfaceColor
             border.color: root.activeBorderColor
@@ -250,7 +254,7 @@ Item {
             x: editor.x
             y: editor.y + editor.height + Theme.desktopPreview.gap
             width: editor.width
-            height: parent.height - y - root.safeInset
+            height: desktop.windowBottom - y
             radius: root.windowRadius
             color: root.surfaceColor
             border.color: root.inactiveBorderColor

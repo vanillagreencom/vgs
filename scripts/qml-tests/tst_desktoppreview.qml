@@ -97,6 +97,47 @@ Item {
             compare(images()[0].sourceSize, Qt.size(800, 500));
         }
 
+        // The three windows, each a Rectangle holding its content Column,
+        // in x then y order: the terminal, the editor, the notification.
+        function windows() {
+            return descendants(preview).filter(child => String(child).startsWith("QQuickRectangle(") && child.children.some(c => String(c).startsWith("QQuickColumn(")))
+                .sort((a, b) => a.x - b.x || a.y - b.y);
+        }
+        function content(box) { return box.children.find(c => String(c).startsWith("QQuickColumn(")); }
+        function withRadius(radius) {
+            preview.tokens = Object.assign({}, preview.tokens, { hyprland: { border: { size: 4 }, window: { radius: radius }, shadow: { color: "#00000080" } } });
+        }
+
+        // A 32 px window corner with the content's top 12 in: dy = 32 - 12
+        // = 20, reach = 32 - 4 = 28, 32 - sqrt(28^2 - 20^2) = 12.40, so
+        // each window's content stands 13 in; an 8 px corner keeps the
+        // 12 px padding.
+        function test_window_content_clears_the_theme_window_corner() {
+            preview.width = 400;
+            preview.height = 250;
+            withRadius(32);
+            const boxes = windows();
+            compare(boxes.length, 3);
+            for (const box of boxes) compare([content(box).x, content(box).y], [13, 13]);
+            withRadius(8);
+            for (const box of windows()) compare([content(box).x, content(box).y], [12, 12]);
+        }
+
+        // 400 by 250: scale = max(400 / 1600, 250 / 900) = 250 / 900, so the
+        // card's 28 px lean is 28 * 900 / 250 = 100.8 reference px and the
+        // safe inset 24 + 100.8 = 124.8. The terminal and the notification
+        // end at 900 - 124.8 = 775.2; the right side's overhang would put
+        // them at 695.2.
+        function test_the_windows_end_at_the_safe_inset() {
+            preview.width = 400;
+            preview.height = 250;
+            withRadius(8);
+            const [terminal, editor, notification] = windows();
+            fuzzyCompare(terminal.y + terminal.height, 775.2, 1e-6);
+            fuzzyCompare(notification.y + notification.height, 775.2, 1e-6);
+            verify(notification.y > editor.y, "the notification sits under the editor");
+        }
+
         function test_mock_desktop_covers_different_card_aspects() {
             const aspects = [[400, 250], [520, 250]];
             for (const size of aspects) {
