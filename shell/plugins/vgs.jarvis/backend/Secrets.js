@@ -160,24 +160,65 @@ class Secrets {
         return key;
     }
 
-    presence(ref) {
-        const attrs = this.attributes(ref);
+    // SearchItems exposes paths, not secrets. Both presence and the explicit
+    // accounts picker use this one reply judge, without activation or unlock.
+    #search(attributes) {
+        const attrs = Object.entries(attributes).flat();
         let output;
         try {
             output = this.run("busctl", ["--user", "--auto-start=no",
                 "--allow-interactive-authorization=no", "--timeout=5", "--json=short", "call",
                 "org.freedesktop.secrets", "/org/freedesktop/secrets",
                 "org.freedesktop.Secret.Service", "SearchItems", "a{ss}", String(attrs.length / 2), ...attrs]);
-            const reply = JSON.parse(output);
+            let reply;
+            try { reply = JSON.parse(output); } catch { fail("busctl=reply"); }
             if (reply.type !== "aoao" || !Array.isArray(reply.data) || reply.data.length !== 2
                 || reply.data.some(items => !Array.isArray(items)
                     || items.some(item => typeof item !== "string" || !/^\/[a-zA-Z0-9_/]+$/.test(item))))
                 fail("busctl=reply");
-            return { value: reply.data[0].length ? "present" : reply.data[1].length ? "locked" : "absent" };
+            return reply.data;
+        } finally { if (output) output.fill(0); }
+    }
+
+    presence(ref) {
+        try {
+            const paths = this.#search(reference(ref).attributes);
+            return { value: paths[0].length ? "present" : paths[1].length ? "locked" : "absent" };
         } catch (error) {
             return { value: "unavailable", hint: error.message.startsWith("jarvis-keys:")
                 ? error.message : "jarvis-keys: busctl=reply" };
-        } finally { if (output) output.fill(0); }
+        }
+    }
+
+    // Only the user's accounts picker enumerates public item metadata.
+    // Discovery of remembered references continues to use presence().
+    items() {
+        const groups = this.#search({});
+        const paths = [...groups[0], ...groups[1]];
+        if (paths.length > MAX_REFERENCES || new Set(paths).size !== paths.length) fail("items=limit-or-duplicate");
+        return paths.map(item => {
+            const read = (name, type) => {
+                let bytes;
+                try {
+                    bytes = this.run("busctl", ["--user", "--auto-start=no",
+                        "--allow-interactive-authorization=no", "--timeout=5", "--json=short", "get-property",
+                        "org.freedesktop.secrets", item, "org.freedesktop.Secret.Item", name]);
+                    let reply;
+                    try { reply = JSON.parse(bytes); } catch { fail("items=reply"); }
+                    if (reply.type !== type || !Array.isArray(reply.data) || reply.data.length !== 1) fail("items=reply");
+                    return reply.data[0];
+                } finally { if (bytes) bytes.fill(0); }
+            };
+            const label = read("Label", "s");
+            const attributes = read("Attributes", "a{ss}");
+            if (typeof label !== "string" || label.length === 0 || label.length > 80 || /[\x00-\x1f\x7f]/.test(label))
+                fail("items=label");
+            // Reuse the reference judge for attribute syntax, not identity.
+            const checked = reference({ provider: "metadata", account: "metadata",
+                origin: "https://metadata.invalid", attributes });
+            return { path: item, label, attributes: checked.attributes,
+                presence: groups[1].includes(item) ? "locked" : "present" };
+        });
     }
 
     rows() {

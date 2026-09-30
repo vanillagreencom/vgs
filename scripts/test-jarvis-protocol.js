@@ -8,7 +8,7 @@ const { load } = require("../bin/lib/qml-library.js");
 const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const file = path.join(__dirname, "../shell/plugins/vgs.jarvis/JarvisProtocol.js");
 const Protocol = load(file);
-const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "" }, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
@@ -17,7 +17,7 @@ const status = { v: 1, type: "status", gen: 0, revision: hello.revision, daemon:
 const state = { v: 1, type: "state", gen: 0, revision: hello.revision, seq: 1,
     state: JSON.parse(JSON.stringify(Protocol.Session.initial())), phase: "down" };
 const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(file), "manifest.json"), "utf8"));
-assert.deepEqual(manifest.settings, { mode: "hold", microphone: "", speaker: "" });
+assert.deepEqual(manifest.settings, { mode: "hold", microphone: "", speaker: "", brain: "" });
 assert.deepEqual(manifest.schema.mode.options, ["hold", "toggle"]);
 assert.deepEqual(manifest.hyprland.binds, [
     { shortcut: "talk", key: "SUPER+code:108", hold: true },
@@ -55,6 +55,9 @@ const cases = [
     ["status-shape", changed(status, { surprise: true }), "daemon", "shape-status"],
     ["settings", changed(hello, { settings: {} }), "shell", "shape-settings"],
     ["mode", changed(hello, { settings: { ...hello.settings, mode: "always" } }), "shell", "mode"],
+    ["extra-setting", changed(hello, { settings: { ...hello.settings, extra: "" } }), "shell", "shape-settings"],
+    ["missing-brain", changed(hello, { settings: { mode: "hold", microphone: "", speaker: "" } }), "shell", "shape-settings"],
+    ["brain-setting", changed(hello, { settings: { ...hello.settings, brain: 1 } }), "shell", "shape-settings"],
     ["keys", changed(hello, { keys: { talk: "SUPER+A" } }), "shell", "shape-keys"],
     ["key-type", changed(hello, { keys: { ...hello.keys, talk: false } }), "shell", "key-talk"],
     ["key-empty", changed(hello, { keys: { ...hello.keys, talk: "" } }), "shell", "key-talk"],
@@ -83,6 +86,8 @@ for (const locked of [false, true]) {
     const message = { ...hello, locked };
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
 }
+for (const brain of ["", "cli:saved-unavailable-id"])
+    assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, brain } }), "shell").settings.brain, brain);
 for (const daemon of ["ready", "locked"])
     assert.equal(Protocol.accept(changed(status, { daemon }), "daemon").daemon, daemon);
 assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(state), "daemon")), JSON.stringify(state));
@@ -151,6 +156,9 @@ try {
         ["hello-direction", 'if (direction !== "shell") fail("direction-hello");', 'if (false) fail("direction-hello");', "hello-direction"],
         ["status-direction", 'if (direction !== "daemon") fail("direction-status");', 'if (false) fail("direction-status");', "status-direction"],
         ["shape", 'fail("shape-" + name);', ';', "hello-shape"],
+        ["settings-name", 'keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");',
+            'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");', "extra-setting"],
+        ["brain-type", 'typeof message.settings.brain !== "string"', 'false', "brain-setting"],
         ["directory", 'if (!directory(message.directories[name])) fail("directory-" + name);', 'if (false) fail("directory-" + name);', "directory"],
         ["lock", 'if (typeof message.locked !== "boolean") fail("lock");', 'if (false) fail("lock");', "lock"],
         ["revision", 'if (typeof message.revision !== "string" || !/^[0-9a-f]{64}$/.test(message.revision)) fail("revision");', 'if (false) fail("revision");', "revision"],

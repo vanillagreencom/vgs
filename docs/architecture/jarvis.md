@@ -4,7 +4,7 @@ Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarv
 
 The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon installs the [audio owner](jarvis-audio.md) and its real reducer ports and persists privacy mute. It captures no audio until speech and indicator prerequisites exist. It opens no provider account and runs no policy tool or coding task. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
 
-The service also owns a metadata-only key presence probe. Settings opens the masked Add key terminal. Storage, lookup and the reference contract for future adapters and the accounts picker are in [jarvis-secrets.md](jarvis-secrets.md). The daemon still opens no provider account.
+The service owns metadata-only key and [account discovery](jarvis-accounts.md) readers. Settings opens the masked Add key and Accounts terminals. [Jarvis secrets](jarvis-secrets.md) owns key storage and references. The daemon still opens no provider connection.
 
 The [voice text contract](jarvis-voice.md) defines the shipped guidance and speech-text APIs for future engines. These modules do not start an engine or change the service's current behavior.
 
@@ -62,7 +62,7 @@ The wire contract is in [jarvis-controls.md § Wire](jarvis-controls.md#wire).
 
 ## Boundaries still owned by later rows
 
-[The audio owner](jarvis-audio.md) implements audio process lifetime and capture teardown. J14 owns playback accounting and J15 owns echo verification. J16 owns the mapped indicator handshake. J19 owns the policy-approved tool router and confirmation authority. J42 owns local toggle turn detection; J43 owns always runtime; J57 owns the console. Their settings and actions enter only with their consumers. The reducer's ports do not implement those owners. Engines, adapters, accounts and user interfaces stay with their assigned issues. [The action policy](jarvis-policy.md) names the separate routing, approval, audit, release and confinement owners.
+[The audio owner](jarvis-audio.md) implements audio process lifetime and capture teardown. J14 owns playback accounting and J15 owns echo verification. J16 owns the mapped indicator handshake. J19 owns the policy-approved tool router and confirmation authority. J42 owns local toggle turn detection; J43 owns always runtime; J57 owns the console. Their settings and actions enter only with their consumers. The reducer's ports do not implement those owners. Engines and adapter integrations stay with their assigned issues. [Account discovery](jarvis-accounts.md) implements explicit API and local Verify through the outbound door. Subscription and speech-only verification remain with their separate owners. [The action policy](jarvis-policy.md) names the routing, approval, audit, release and confinement owners.
 
 ## Evidence
 

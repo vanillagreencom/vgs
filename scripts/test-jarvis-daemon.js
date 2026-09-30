@@ -13,7 +13,7 @@ const { standins } = require("./fixtures/jarvis/audio.js");
 const tree = path.resolve(__dirname, "..");
 const daemon = path.join(tree, "shell/plugins/vgs.jarvis/backend/jarvisd.js");
 const source = fs.readFileSync(daemon, "utf8");
-const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "" }, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
@@ -58,7 +58,7 @@ async function inside() {
             lines.push(reply(locked, seq === 0 ? 0 : 1));
             lines.push({ v: 1, type: "state", gen: 1, revision: hello.revision,
                 seq: ++seq, state: {
-                    gen: 1, nextOp: 1, stale: 0, settings: { mode: "hold", microphone: "", speaker: "" },
+                    gen: 1, nextOp: 1, stale: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "" },
                     gate: { kind: "down", reason: locked ? "locked" : "unconfigured" },
                     mute: { kind: "off" }, capture: { kind: "closed" }, turn: { kind: "none" }, brain: { kind: "closed" },
                     playback: { kind: "idle" }, action: { kind: "none" }, approval: { kind: "none" }, fault: { kind: "none" },

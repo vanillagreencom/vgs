@@ -132,6 +132,7 @@ function audioFaultThenDevices(file) {
 function service(sourceTree, tree, root) {
     require("./keys-world.js").standins(path.join(root, "standins"));
     standins(path.join(root, "standins"));
+    require("./accounts-world.js").standins(path.join(root, "standins"));
     const launcher = path.join(sourceTree, "scripts/lib/jarvis-env.sh");
     const lease = path.join(root, "lease.sh");
     // Bash gives an asynchronous command /dev/null on stdin. J09 starts
@@ -160,7 +161,6 @@ function service(sourceTree, tree, root) {
         fs.writeFileSync(path.join(root, "key-mode"), "present\n");
     fs.writeFileSync(keys, keysSource.replace(keysNeedle, keysCommand));
     const local = path.join(tree, "shell/plugins/vgs.jarvis/LocalRuntime.qml");
-    if (!fs.existsSync(local)) return;
     const localSource = fs.readFileSync(local, "utf8");
     const localNeedle = 'command: ["python3", "-I", root.program, "status"]';
     assert.equal(localSource.split(localNeedle).length - 1, 1, "local status instrumentation match");
@@ -171,6 +171,16 @@ function service(sourceTree, tree, root) {
     if (!fs.existsSync(path.join(root, "local-mode")))
         fs.writeFileSync(path.join(root, "local-mode"), "absent\n");
     fs.writeFileSync(local, localSource.replace(localNeedle, localCommand));
+    const accounts = path.join(tree, "shell/plugins/vgs.jarvis/Accounts.qml");
+    const accountsSource = fs.readFileSync(accounts, "utf8");
+    const accountsNeedle = 'probe.command = ["node", program, "presence", JSON.stringify(Providers.keyPresence(name => Quickshell.env(name)))];';
+    assert.equal(accountsSource.split(accountsNeedle).length - 1, 1, "account discovery instrumentation match");
+    const accountsCommand = 'probe.command = ["bash", ' + JSON.stringify(launcher) + ', ' +
+        JSON.stringify(path.join(root, "standins")) + ', "--", "node", ' +
+        JSON.stringify(path.join(sourceTree, "scripts/fixtures/jarvis/accounts-world.js")) + ', program, ' +
+        JSON.stringify(path.join(root, "account-mode")) + ', JSON.stringify(Providers.keyPresence(name => Quickshell.env(name)))];';
+    if (!fs.existsSync(path.join(root, "account-mode"))) fs.writeFileSync(path.join(root, "account-mode"), "signed-in\n");
+    fs.writeFileSync(accounts, accountsSource.replace(accountsNeedle, accountsCommand));
 }
 
 module.exports = { freshSuite, seedTaskEvents };

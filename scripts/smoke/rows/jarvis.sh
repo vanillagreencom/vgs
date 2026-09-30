@@ -529,4 +529,136 @@ cp -- "$sandbox/jarvis-add-key-original" "$repo/shell/plugins/vgs.jarvis/tui/add
 printf 'present\n' >"$sandbox/jarvis-world/key-mode"
 jarvis_rescan
 expect_poll "restored key status contains no secret" matched jarvis_key_value present
+
+# The account probe also runs through J09. The core terminal runs only a
+# no-auth fixture; the actual accounts script has its own private TTY suite.
+jarvis_accounts="$repo/shell/plugins/vgs.jarvis/Accounts.qml"
+cp -- "$jarvis_accounts" "$sandbox/jarvis-accounts-original"
+cp -- "$repo/shell/plugins/vgs.jarvis/tui/accounts.sh" "$sandbox/jarvis-accounts-tui-original"
+cp -- "$repo/scripts/smoke/fixtures/tui/vgs.jarvis/tui/accounts.sh" "$repo/shell/plugins/vgs.jarvis/tui/accounts.sh"
+jarvis_rescan
+jarvis_account_hint() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+rows=json.load(sys.stdin)["status"].get("accounts", [])
+row=next((item for item in rows if item["label"] == "Claude Code / team"), None)
+ok=row is not None and row["value"] == "present" and row["hint"].split(";")[0] == sys.argv[1]
+print("matched" if ok else "pending")
+' "$1"
+}
+jarvis_account_failed() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+status=json.load(sys.stdin)["status"]
+want=[{"label":"Account discovery", "value":"unavailable", "hint":"jarvis-accounts: discovery=failed"}]
+print("matched" if status.get("accounts") == want and status.get("brains") == [] else "pending")
+'
+}
+jarvis_open_accounts() {
+  local revision snapshot
+  revision="$(jarvis_revision)" || return 1
+  snapshot="$rt_dir/vgsh-sources-$shell_qs_pid/$revision"
+  forget_record
+  expect "Accounts opens through its core TUI key" ok ipc shell openTui vgs.jarvis/accounts
+  expect_poll "Accounts hands the terminal only its declared fixture script" \
+    "$(words --app-id=org.vgs.tui "--title=VGS · Jarvis accounts" -- "$tui_self" present --presentation full \
+      --plugin vgs.jarvis --dir "$snapshot" --record vgs.jarvis/accounts --run RUN --record-dir "$rt_dir/vgs/tui" \
+      --app-id org.vgs.tui --window-title "VGS · Jarvis accounts" -- tui/accounts.sh)" recorded
+  expect_run_end "the no-auth Accounts terminal ends" vgs.jarvis/accounts
+}
+expect_poll "account status shows a login hint, not verification" matched jarvis_account_hint signed-in
+printf 'found\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_open_accounts
+expect_poll "Accounts end refreshes account metadata" matched jarvis_account_hint found
+printf 'failed\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_open_accounts
+expect_poll "failed discovery clears both stale accounts and choices" matched jarvis_account_failed
+printf 'signed-in\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_open_accounts
+expect_poll "restored discovery reports login hints" matched jarvis_account_hint signed-in
+python3 - "$jarvis_accounts" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+assert not p.is_symlink()
+s=p.read_text()
+needle='if (code !== 0) throw new Error("probe");'
+assert s.count(needle)==1
+changed=s.replace(needle, 'if (code !== 0) return;')
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+expect_poll "the stale-account control first sees signed in" matched jarvis_account_hint signed-in
+printf 'failed\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_open_accounts
+jarvis_account_failure_control() {
+  (failures=0 behaviour_failures=0
+   expect_poll "failed discovery must clear accounts and choices" matched jarvis_account_failed >"$sandbox/jarvis-account-failure-control.log"
+   echo "$failures")
+}
+expect "retaining stale accounts breaks the failed-discovery assertion" 1 jarvis_account_failure_control
+cp -- "$sandbox/jarvis-accounts-original" "$jarvis_accounts"
+printf 'signed-in\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_rescan
+expect_poll "restored failed-discovery handling reports current accounts" matched jarvis_account_hint signed-in
+python3 - "$jarvis_accounts" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+assert not p.is_symlink()
+s=p.read_text()
+needle="onEndedAtChanged: if (endedAt !== null) refresh()"
+assert s.count(needle)==1
+changed=s.replace(needle, "onEndedAtChanged: {}")
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+expect_poll "the account refresh control first sees signed in" matched jarvis_account_hint signed-in
+printf 'found\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_open_accounts
+jarvis_account_refresh_control() {
+  (failures=0 behaviour_failures=0
+   expect_poll "Accounts must refresh discovery after its terminal ends" matched jarvis_account_hint found >"$sandbox/jarvis-account-refresh-control.log"
+   echo "$failures")
+}
+expect "removing Accounts end refresh breaks its consumer assertion" 1 jarvis_account_refresh_control
+cp -- "$sandbox/jarvis-accounts-original" "$jarvis_accounts"
+printf 'signed-in\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_rescan
+expect_poll "restored account status never claims verified access" matched jarvis_account_hint signed-in
+printf 'locked\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_accounts
+expect_poll "Accounts end also refreshes remembered-key presence" matched jarvis_key_value locked
+printf 'present\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_accounts
+expect_poll "key presence is restored before its Accounts-end control" matched jarvis_key_value present
+python3 - "$jarvis_keys" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+assert not p.is_symlink()
+s=p.read_text()
+needle="onAccountsEndedAtChanged: if (accountsEndedAt !== null) refresh()"
+assert s.count(needle)==1
+changed=s.replace(needle, "onAccountsEndedAtChanged: {}")
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+expect_poll "the key Accounts-end control first sees present" matched jarvis_key_value present
+printf 'locked\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_open_accounts
+jarvis_account_keys_control() {
+  (failures=0 behaviour_failures=0
+   expect_poll "Accounts end must refresh remembered-key presence" matched jarvis_key_value locked >"$sandbox/jarvis-account-keys-control.log"
+   echo "$failures")
+}
+expect "removing the Keys Accounts-end refresh breaks its assertion" 1 jarvis_account_keys_control
+cp -- "$sandbox/jarvis-keys-original" "$jarvis_keys"
+cp -- "$sandbox/jarvis-accounts-tui-original" "$repo/shell/plugins/vgs.jarvis/tui/accounts.sh"
+printf 'present\n' >"$sandbox/jarvis-world/key-mode"
+jarvis_rescan
+expect_poll "restored Keys account refresh shows present" matched jarvis_key_value present
 jarvis_disable

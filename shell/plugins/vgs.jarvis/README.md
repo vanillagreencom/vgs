@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state. Jarvis stores provider keys in your desktop keyring. The installed service has no audio engine, provider connection or desktop actions.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state. Jarvis stores provider keys in your desktop keyring and finds account login hints. The installed service has no audio engine, provider connection or desktop actions.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -18,6 +18,9 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
 - Settings and the launcher open local voice setup in a floating terminal.
 - Local setup verifies downloaded models and runs a bundled test clip without opening audio devices.
+- Accounts finds nested account directories and lets you add another directory.
+- Accounts can remember a key another tool stored without copying its value.
+- Login hints and local-server presence are not verified inference access.
 
 ## Requirements
 
@@ -38,3 +41,7 @@ The Keys section changes Talk, Mute and Stop. Talk defaults to Super with Right 
 Open Jarvis in Settings and select Add key. Use the provider's origin, such as `https://api.openai.com`, without a path. Add key can ask the desktop keyring to unlock because you started storage. The background presence check never unlocks it.
 
 Select Set up local voice in Settings or the launcher's Jarvis group. Choose a tier in the terminal. Setup downloads its models and a private runtime. Settings reports Ready only after file verification and the bundled probe succeed. This prepares local voice files; voice control is not active in this skeleton.
+
+Brain account keeps the account you select. This skeleton does not start a brain. Settings retains a saved selection when discovery no longer offers it.
+
+Select Accounts to add a directory, choose an existing keyring item by label or inspect login hints. Verify asks for consent because a real inference request may cost money. Verification is currently unavailable and sends no request.

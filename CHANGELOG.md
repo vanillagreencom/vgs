@@ -9,4 +9,5 @@
 - A key/value label and its value read as one pair: labels, section headings, buttons, badges and key caps draw at 12 px, a read-only value draws in the new 13 px `text.value` role, and the label column is 140 px wide.
 - Jarvis adds one-click local voice setup with pinned Python packages, model verification and a real bundled-clip probe. Failed setup clears readiness. Settings rechecks after the setup terminal closes.
 
+- Jarvis adds bounded account discovery, user-added directories, existing keyring references and a floating Accounts terminal. Settings offers discovered brain accounts. Login hints never mean Verified; real verification remains unavailable until the outbound network owner is connected.
 - Jarvis adds a masked Add key floating terminal, libsecret storage and metadata-only key presence in Settings. Provider keys stay out of files, command arguments, logs and status. The reference API supports future provider adapters and the accounts picker.

@@ -23,18 +23,19 @@ The manifest names each external command and its package. Settings can install m
 | `ownReference(provider, account, origin)` | Add key: returns `{ provider, account, origin, attributes }`, with attributes `service vgs-jarvis`, `provider`, `account`, `origin`. |
 | `reference(value)` | Every caller: judges the exact metadata shape and returns a copy. Unknown fields fail. Origin is a canonical HTTP or HTTPS origin, not a path, login URL or query. This is storage syntax, not permission to send. |
 | `new Secrets(directory, env)` | The daemon's future adapters and the CLI: one explicit state root and scrubbed child environment. No inherited credential variable reaches a helper. |
-| `references()` | J27's accounts picker and future adapters: returns the stored references. It opens no vendor CLI credential file and reads no key. |
-| `remember(reference)` | J27's accounts picker: persists the attributes of an existing Secret Service item the user selected. It looks up no secret and copies no token. Provider, account and origin identify the row. |
+| `references()` | The accounts picker and future adapters: returns the stored references. It opens no vendor CLI credential file and reads no key. |
+| `remember(reference)` | The accounts picker: persists the attributes of an existing Secret Service item the user selected. It looks up no secret and copies no token. Provider, account and origin identify the row. |
+| `items()` | The explicit accounts picker: returns public item paths, labels, attributes and presence. It calls SearchItems and reads Item properties, never a secret. |
 | `lookup(reference)` | Future in-process wire/speech adapters: reads `secret-tool lookup` only at first need and returns a Buffer directly. There is no lookup CLI verb or secret wire message. The caller clears the Buffer after use. |
 | `rows()` | The service's `Keys.qml`: returns labels, presence and safe failure keys only. |
 
-J27 owns item discovery and its accounts TUI. An existing item's attributes can differ from Jarvis's own storage attributes. The reference still records its intended origin. J22's network door must enforce that origin before it attaches a key. A retrieved key must never enter a child, argv, file, log, status or shell wire. No provider request or origin enforcement is implemented here.
+The [account judge](jarvis-accounts.md) owns eligible-item discovery and the accounts TUI. An existing item's attributes can differ from Jarvis's own storage attributes. The reference still records its intended origin. J22's network door must enforce that origin before it attaches a key. A retrieved key must never enter a child, argv, file, log, status or shell wire. No provider request or origin enforcement is implemented here.
 
 Bounds live in `Secrets.js`: references follow the core's presence-list ceiling; files, helper replies and lookup buffers are bounded. Attribute names cannot become helper flags. Helper failures report a fixed keyed cause, never raw stdout or stderr.
 
 ## Presence
 
-`Keys.qml` owns one probe at service start and after the core reports an ended Add key run. Overlapping refreshes collapse into one pending refresh. It publishes the manifest's `keys` presence list through `shell.status.set`. A failed process or invalid result publishes Unavailable with a safe keyed diagnosis. It never forwards helper stderr.
+`Keys.qml` owns one probe at service start and after the core reports an ended Add key or Accounts run. Overlapping refreshes collapse into one pending refresh. It publishes the manifest's `keys` presence list through `shell.status.set`. A failed process or invalid result publishes Unavailable with a safe keyed diagnosis. It never forwards helper stderr.
 
 Presence calls [Secret Service `SearchItems`](https://specifications.freedesktop.org/secret-service/0.2/org.freedesktop.Secret.Service.html) through [busctl](https://www.freedesktop.org/software/systemd/man/latest/busctl.html). Only item paths return: unlocked matches mean Present, locked matches mean Locked, no match means Absent. A missing helper, failed service or malformed reply means Unavailable. The probe disables activation and interactive authorization. It never calls Unlock, GetSecrets, `secret-tool search` or lookup.
 

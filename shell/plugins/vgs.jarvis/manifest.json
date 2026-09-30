@@ -10,13 +10,15 @@
   "kinds": ["service"],
   "entryPoints": { "service": "Service.qml" },
   "capabilities": ["session", "status", "toasts", "tui", "shortcut"],
-  "settings": { "mode": "hold", "microphone": "", "speaker": "" },
+  "settings": { "mode": "hold", "microphone": "", "speaker": "", "brain": "" },
   "schema": {
     "mode": { "type": "enum", "label": "Talk mode", "group": "Listening",
       "options": ["hold", "toggle"],
       "description": "Hold commits on release. Toggle keeps a conversation open. Audio engines are not configured yet." },
     "microphone": { "type": "string", "label": "Microphone", "group": "Audio", "optionsFrom": "microphones" },
-    "speaker": { "type": "string", "label": "Speaker", "group": "Audio", "optionsFrom": "speakers" }
+    "speaker": { "type": "string", "label": "Speaker", "group": "Audio", "optionsFrom": "speakers" },
+    "brain": { "type": "string", "label": "Brain account", "group": "Brain", "optionsFrom": "brains",
+      "description": "Found accounts are not proof of inference access. An unavailable saved selection is retained." }
   },
   "hyprland": {
     "binds": [
@@ -41,7 +43,10 @@
     { "command": "python3", "packages": { "pacman": "python", "apt": "python3", "dnf": "python3" }, "optional": false, "purpose": "Owns audio pipe leases and verifies the private local voice runtime" },
     { "command": "uv", "packages": { "pacman": "uv", "dnf": "uv", "mise": "uv" }, "optional": true, "purpose": "Installs the locked local voice runtime when setup is selected" },
     { "command": "curl", "packages": { "pacman": "curl", "apt": "curl", "dnf": "curl" }, "optional": true, "purpose": "Downloads pinned local voice models when setup is selected" },
-    { "command": "nvidia-smi", "packages": { "pacman": "nvidia-utils", "apt": "nvidia-smi" }, "optional": true, "purpose": "Verifies CUDA execution only when a CUDA local tier is selected" }
+    { "command": "nvidia-smi", "packages": { "pacman": "nvidia-utils", "apt": "nvidia-smi" }, "optional": true, "purpose": "Verifies CUDA execution only when a CUDA local tier is selected" },
+    { "command": "ss", "packages": { "pacman": "iproute2", "apt": "iproute2", "dnf": "iproute" }, "optional": true, "purpose": "Finds local model-server ports without making an inference request" },
+    { "command": "claude", "packages": {}, "optional": true, "purpose": "Checks Claude Code login hints in each account directory" },
+    { "command": "codex", "packages": {}, "optional": true, "purpose": "Checks Codex login hints in each account directory" }
   ],
   "status": {
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },
@@ -52,12 +57,16 @@
     "level": { "type": "data", "label": "Audio levels" },
     "audio": { "type": "state", "label": "Audio" },
     "localRuntime": { "type": "state", "label": "Local voice", "hint": "Setup downloads models and verifies the selected runtime without opening audio devices.",
-      "action": { "label": "Set up local voice", "tui": "setup-local" } }
+      "action": { "label": "Set up local voice", "tui": "setup-local" } },
+    "accounts": { "type": "presenceList", "label": "Accounts", "hint": "Login hints are not inference proof. Verification is currently unavailable." },
+    "brains": { "type": "choices", "label": "Brain accounts", "hidden": true }
   },
   "tui": {
     "add-key": { "script": "tui/add-key.sh", "title": "Add Jarvis key",
       "entry": { "label": "Add key", "icon": "key-round", "group": "Jarvis" } },
     "setup-local": { "script": "tui/setup-local.sh", "title": "Set up Jarvis local voice",
-      "entry": { "label": "Set up local voice", "icon": "mic", "group": "Jarvis" } }
+      "entry": { "label": "Set up local voice", "icon": "mic", "group": "Jarvis" } },
+    "accounts": { "script": "tui/accounts.sh", "title": "Jarvis accounts",
+      "entry": { "label": "Accounts", "icon": "users", "group": "Jarvis" } }
   }
 }

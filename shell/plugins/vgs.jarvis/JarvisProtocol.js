@@ -64,7 +64,8 @@ function accept(line, direction) {
     case "hello":
         if (direction !== "shell") fail("direction-hello");
         keys(message, ["v", "type", "gen", "settings", "directories", "revision", "locked", "keys"], "hello");
-        keys(message.settings, ["mode", "microphone", "speaker"], "settings");
+        keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");
+        if (typeof message.settings.brain !== "string") fail("shape-settings");
         if (message.settings.mode !== "hold" && message.settings.mode !== "toggle") fail("mode");
         for (var setting of ["microphone", "speaker"])
             if (typeof message.settings[setting] !== "string"

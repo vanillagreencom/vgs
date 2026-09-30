@@ -318,7 +318,8 @@ jarvis_helper_plan=$'node scripts/test-jarvis-env.js\npython3 scripts/test-jarvi
 jarvis_policy_rows=$'node scripts/test-jarvis-tools.js\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js\nnode scripts/test-jarvis-release.js\nnode scripts/test-jarvis-net.js\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-denied.js\nnode scripts/test-jarvis-audit.js\nnode scripts/test-jarvis-sandbox.js\n'
 jarvis_secrets_plan=$'node scripts/test-jarvis-net.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
 jarvis_audio_rows=$'node scripts/test-jarvis-audio.js\nnode scripts/test-jarvis-audio-daemon.js\nnode scripts/test-jarvis-playback.js\nnode scripts/test-jarvis-playback-pipewire.js\n'
-jarvis_owner_plan="$jarvis_policy_rows"$'node scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'node scripts/test-task-event.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-install-tree.sh\n'"$jarvis_helper_plan"
+jarvis_accounts_rows=$'node scripts/test-jarvis-accounts.js\nnode scripts/test-jarvis-accounts-tui.js\n'
+jarvis_owner_plan="$jarvis_policy_rows"$'node scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'node scripts/test-task-event.js\nnode scripts/test-jarvis-secrets.js\n'"$jarvis_accounts_rows"$'scripts/test-install-tree.sh\n'"$jarvis_helper_plan"
 jarvis_daemon_plan=$'node scripts/test-jarvis-daemon.js\n'"$repo_plan"
 jarvis_fixture_plan=$'node scripts/test-jarvis-protocol.js\nnode scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-task-event.js\n'"$repo_plan"
 jarvis_guidance_plan=$'node scripts/test-jarvis-guidance.js\n'"$repo_plan"
@@ -393,6 +394,10 @@ cases=(
   "jarvis-playback-fixture|scripts/fixtures/jarvis/playback.js|offline|node scripts/test-jarvis-daemon.js"$'\nnode scripts/test-jarvis-playback.js\nnode scripts/test-jarvis-playback-pipewire.js\n'"$repo_plan"
   "jarvis-playback-config|scripts/fixtures/jarvis/playback.conf|offline|node scripts/test-jarvis-daemon.js"$'\nnode scripts/test-jarvis-playback-pipewire.js\n'"$repo_plan"
   "jarvis-audio-fixture|scripts/fixtures/jarvis/audio-tool.py|offline|node scripts/test-jarvis-daemon.js"$'\n'"$jarvis_audio_rows$repo_plan"
+  "jarvis-accounts-suite|scripts/test-jarvis-accounts.js|offline|node scripts/test-jarvis-accounts.js"$'\n'"$repo_plan"
+  "jarvis-accounts-tui-suite|scripts/test-jarvis-accounts-tui.js|offline|node scripts/test-jarvis-accounts-tui.js"$'\n'"$repo_plan"
+  "jarvis-accounts-fixture|scripts/fixtures/jarvis/accounts-world.js|offline|node scripts/test-jarvis-daemon.js"$'\n'"$jarvis_accounts_rows$repo_plan"
+  "jarvis-accounts-terminal-fixture|scripts/fixtures/jarvis/accounts-tui.py|offline|node scripts/test-jarvis-daemon.js"$'\nnode scripts/test-jarvis-accounts-tui.js\n'"$repo_plan"
   "jarvis-fixture|scripts/fixtures/jarvis/prepare.js|offline|$jarvis_fixture_plan"
   "jarvis-scripted-fixture|scripts/fixtures/jarvis/scripted.js|offline|node scripts/test-jarvis-protocol.js"$'\n'"$jarvis_daemon_plan"
   "jarvis-fixture-all|scripts/fixtures/jarvis/prepare.js|all|$jarvis_fixture_plan"$'\nscripts/qml-smoke.sh'

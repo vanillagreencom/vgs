@@ -207,12 +207,15 @@ f share/vgs/shell/plugins/vgs.devtools/tui/update.sh
 f share/vgs/shell/plugins/vgs.gallery/Gallery.qml
 f share/vgs/shell/plugins/vgs.gallery/manifest.json
 f share/vgs/shell/plugins/vgs.gallery/sample-emoji.png
+f share/vgs/shell/plugins/vgs.jarvis/AccountProviders.js
+f share/vgs/shell/plugins/vgs.jarvis/Accounts.qml
 f share/vgs/shell/plugins/vgs.jarvis/JarvisProtocol.js
 f share/vgs/shell/plugins/vgs.jarvis/Keys.qml
 f share/vgs/shell/plugins/vgs.jarvis/LocalRuntime.qml
 f share/vgs/shell/plugins/vgs.jarvis/Service.qml
 f share/vgs/shell/plugins/vgs.jarvis/Session.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
+f share/vgs/shell/plugins/vgs.jarvis/backend/Accounts.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/AnthropicMessages.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audio.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
@@ -230,6 +233,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Sse.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tasks.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/WireBrain.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/accounts.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/audio-child.py
 f share/vgs/shell/plugins/vgs.jarvis/backend/jarvisd.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/keys.js
@@ -253,6 +257,7 @@ f share/vgs/shell/plugins/vgs.jarvis/measure-local
 f share/vgs/shell/plugins/vgs.jarvis/requirements-local-cpu.lock
 f share/vgs/shell/plugins/vgs.jarvis/requirements-local.lock
 f share/vgs/shell/plugins/vgs.jarvis/setup-local
+f share/vgs/shell/plugins/vgs.jarvis/tui/accounts.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/add-key.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/setup-local.sh
 f share/vgs/shell/plugins/vgs.launcher/Anim.qml

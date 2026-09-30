@@ -277,4 +277,5 @@ Item {
     Timer { id: helloDeadline; interval: 5000; onTriggered: root.broken("jarvis: hello=timeout") }
     Jarvis.Keys { shell: root.shell }
     Jarvis.LocalRuntime { shell: root.shell }
+    Jarvis.Accounts { shell: root.shell }
 }
