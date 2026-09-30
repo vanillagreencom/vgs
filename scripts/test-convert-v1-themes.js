@@ -3,7 +3,9 @@
 // themes, compares the output with checked-in expected packages and
 // thumbnails, runs the catalog judge, and plants one defect for each
 // converter guard. Mutant controls edit a copy of the converter and assert
-// their substitution matched.
+// their substitution matched. The HTTPS redirect row needs openssl to make
+// its throwaway key and certificate; without it that row is not measured and
+// the suite exits 77.
 "use strict";
 
 const assert = require("node:assert/strict");
@@ -22,6 +24,7 @@ const CONTRAST = path.join(repo, "scripts", "check-theme-contrast.js");
 const NODE = process.execPath;
 const MAGICK = findOnPath("magick");
 const FLOCK = findOnPath("flock");
+const OPENSSL = findOptional("openssl");
 const TEST_PATH = Array.from(new Set([path.dirname(NODE), path.dirname(MAGICK), path.dirname(FLOCK)])).join(path.delimiter);
 // The text fixture's palette.foreground after the smallest passing lift,
 // 0.27. The lift lightens the surfaces enough that the fixture's info,
@@ -30,64 +33,32 @@ const TEXT_LIFTED = "#7f9cdd";
 // Converter text the text-family controls edit.
 const TEXT_SEARCH = "for (let step = 1; step / 100 < headingAmount; step++)";
 const HEADING_RETURN = "reason=heading-shape value=${JSON.stringify(value)}`);\n    return parsed.args[2].value;";
-const TLS_KEY = `-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDP29gb/Ka2HUVG
-XsVeQGSQxtfEF94aWUGszUgb/GIEZL/luPXGYbbrBR0iAH0HHh8E7Muik6OpsfXT
-E5oO4OYey9aOlMajEuQ9JnssKz16R3fNImhI9kdcyB/0adp+4dV11ISB4xfBQpqj
-1bS5UTEFBz7zc9nM2vZNYYm/e6sHl3LPiJIOFYPZ85iwBoODrKHElSgSJLHmwyDL
-ExZyEHpC3SXdPTQEuZw1riRzhGTjUFGR2eENfqonBYIhGKyqCCTqYxuqb/f4iuRq
-23ltV8WmEyk/TkC4nDQRWNXW0Mq3tX2aKELcNgbzbRFma/v6NJPsSnV/JaOK/NyZ
-j+uKX6TPAgMBAAECggEAYE+m6ozeOEsGwsz92aavkk+4QUGn5YCPCEEUFPeT+SIv
-soNJylKTfYFgltUwGYCw8cjAsEOFlYcCdvvBqfw2VHWxpF42TfBediEi+HvOoB6G
-WbQEKy6GMWz/NXJozdrZXCANB9wQMTmpypkmhKmks4ZAenCnLh8U+hTkTSfBvyFt
-LkmyNnaEHEKBAQpkfjc1VesmiNYpt3dbb4jnpsb0cMRg3P+jNuQh0P5dJCfuXWfZ
-BeXEJlWIf6Y/Vjr6xe+c1HDNh0mVWsI4qAc35tcwUoXzV98kpLxxQSCCuJkafHKp
-WgObHg3E3lUThUxj+6gS+2O+LXdkjef/cimtr6S6cQKBgQDuDlhoSBiIFLoirCk/
-hwk7saS0dAQWYKv0MmCm7giaPTW8hg5FR3y1Bpb7mIjp68RqpUrP7zsMJJsoBmGb
-R1E7ZdvWNJN4N2bD+7LkJV9zxOwjOAywV/O7BVFew84p5TKl6qW3BndGEhURNCN0
-OXZGdY1Spu4DHNntlD/1MyFonwKBgQDfhsvhSbgEuJpv7ZI204FDis9340Rk1LLZ
-iIDwgtdYD1M4hGuopALq28fB3JrFgEJy9m68cWk7CSHhcfzQ+n7Parnpo/uX2YZ2
-kJ6fBIbIZ3Q0V4i+1YB99QMYZGThAZw090G5ZkwFduYD7YsFsYJewCPRLqyQVHhH
-jPbFQJ3l0QKBgGw4R0Z45/YM/iU/AK1plO/3LPn/98+4eNNVh4y7j1uW0fP3OUuT
-WQTujvqneC5nSO52YBExHzXA+mvyorK1dB89iffSBOxUuzoDFWsT9lWpwvOrylDs
-Wte9biVXfESddi3pAxa2MMjA9aTRgACZEsSrMejODEuL9SJFD+JHMTvfAoGBANYi
-LSia1aX4L0LwpXTOc/P/g7dHShsKRHfutA80WRXsQH5RJU2+KWlSuO/35XE06PN3
-LyhpwTSkEAgIifitMFSF2qp/xKN46L6m1r5huLk9mm4WOVMP93MzCA8TBi0jvMBk
-6lqxLDzD5aB3rQn8PneEvAtGGlx9/2gUG8dlmp4xAoGAfP5K+xXPf/G8C0l34ISm
-pm1fwh2wURg1DltiCpY0EZ8aQOutvjNvE20P2aydggGA8RUi3cDYHquzNJJ0X+TM
-tqgCmtp26cLRvY1MM6mQLn4aWSUhVwWcDnNrivkuoSUZp9FAVo28b3G0GU2hPa8F
-GamDm52bnMxZTC1D+Te7q4A=
------END PRIVATE KEY-----`;
-const TLS_CERT = `-----BEGIN CERTIFICATE-----
-MIIDCTCCAfGgAwIBAgIUNSNpUVl/G66DQ7y1tCPfug1TjgUwDQYJKoZIhvcNAQEL
-BQAwFDESMBAGA1UEAwwJMTI3LjAuMC4xMB4XDTI2MDkyOTA0MzMxNloXDTI2MDkz
-MDA0MzMxNlowFDESMBAGA1UEAwwJMTI3LjAuMC4xMIIBIjANBgkqhkiG9w0BAQEF
-AAOCAQ8AMIIBCgKCAQEAz9vYG/ymth1FRl7FXkBkkMbXxBfeGllBrM1IG/xiBGS/
-5bj1xmG26wUdIgB9Bx4fBOzLopOjqbH10xOaDuDmHsvWjpTGoxLkPSZ7LCs9ekd3
-zSJoSPZHXMgf9GnafuHVddSEgeMXwUKao9W0uVExBQc+83PZzNr2TWGJv3urB5dy
-z4iSDhWD2fOYsAaDg6yhxJUoEiSx5sMgyxMWchB6Qt0l3T00BLmcNa4kc4Rk41BR
-kdnhDX6qJwWCIRisqggk6mMbqm/3+Irkatt5bVfFphMpP05AuJw0EVjV1tDKt7V9
-mihC3DYG820RZmv7+jST7Ep1fyWjivzcmY/ril+kzwIDAQABo1MwUTAdBgNVHQ4E
-FgQUr47aaXjNFb1Dzl4E+rb9qTRLoWMwHwYDVR0jBBgwFoAUr47aaXjNFb1Dzl4E
-+rb9qTRLoWMwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAd6hR
-EfOzVMxdyx/XaiU66H6otK83Ppm8W34tdTC53P88imByUxO0hzQgoGGoBNKiBb1E
-t0CMZsRuTivobxB3mmYr93WM3aHjjotThwSX4akMTL9CJt/od3kniEm+u0Kx3RG6
-PrpzcZhDcF1UGPwFLBvyeALgwCrJ/kzU6J4l/VVcMPrNd6IXd/jhzivhYYSKwWaW
-rrhqYONzwMruH6oeGzouEQEthMuCl6KLOaov6fb7CWf5Vk13cmvk4RFkE1UkIBDm
-TOpsuYdxogB6TtSx0ruDVj30ymi+bM3qaOqw3oUEizPVsiTMwiPkp5lG94WbXlBJ
-AewtjlpODDh4IvOZQQ==
------END CERTIFICATE-----`;
 
 function rmTree(dir) {
     fs.rmSync(dir, { recursive: true, force: true });
 }
 
-function findOnPath(command) {
+function findOptional(command) {
     for (const dir of (process.env.PATH || "").split(path.delimiter)) {
         const file = path.join(dir, command);
         if (fs.existsSync(file)) return file;
     }
-    throw new Error(`${command} not found on PATH`);
+    return null;
+}
+
+function findOnPath(command) {
+    const file = findOptional(command);
+    if (file === null) throw new Error(`${command} not found on PATH`);
+    return file;
+}
+
+// A row that needs a command this host lacks throws this; row() reports it
+// as a skip, and a suite with a skip exits 77, never 0.
+class NotMeasured extends Error {
+    constructor(command) {
+        super(`reason=missing-command command=${command}`);
+        this.command = command;
+    }
 }
 
 function cpTree(from, to) {
@@ -247,14 +218,27 @@ function sampleImage() {
     return fs.readFileSync(path.join(FIXTURE, "expected", "catalog", "thumbnails", "alpha.jpg"));
 }
 
+// A self-signed key and certificate for 127.0.0.1, made for this run under
+// root, so no key is ever committed. node:crypto cannot sign an X.509
+// certificate, so openssl makes both.
+function makeTlsPair(root) {
+    if (OPENSSL === null) throw new NotMeasured("openssl");
+    const keyFile = path.join(root, "tls-key.pem");
+    const certFile = path.join(root, "tls-cert.pem");
+    const made = spawnSync(OPENSSL, ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-noenc", "-subj", "/CN=127.0.0.1", "-days", "1", "-keyout", keyFile, "-out", certFile], { encoding: "utf8", env: env(root) });
+    assert.equal(made.status, 0, "openssl req: " + made.stderr);
+    return { keyFile, certFile };
+}
+
 function startRedirectServer(root) {
+    const { keyFile, certFile } = makeTlsPair(root);
     const script = path.join(root, "redirect-server.js");
     const portFile = path.join(root, "redirect-port");
     fs.writeFileSync(script, `
 const fs = require('node:fs');
 const https = require('node:https');
-const key = ${JSON.stringify(TLS_KEY)};
-const cert = ${JSON.stringify(TLS_CERT)};
+const key = fs.readFileSync(${JSON.stringify(keyFile)});
+const cert = fs.readFileSync(${JSON.stringify(certFile)});
 const server = https.createServer({ key, cert }, (_req, res) => {
   res.writeHead(302, { Location: 'http://127.0.0.1/plain.tar.gz' });
   res.end();
@@ -278,11 +262,19 @@ function waitForPort(server) {
 fs.mkdirSync(path.join(repo, "tmp"), { recursive: true });
 const root = fs.mkdtempSync(path.join(repo, "tmp", "test-convert-v1-themes-"));
 let failures = 0;
+const skipped = [];
+const missing = new Set();
 function row(name, fn) {
     try {
         fn(path.join(root, name.replace(/[^A-Za-z0-9_.-]/g, "-")));
         console.log(`  ok    ${name}`);
     } catch (e) {
+        if (e instanceof NotMeasured) {
+            skipped.push(name);
+            missing.add(e.command);
+            console.log(`  skip  ${name} ${e.message}`);
+            return;
+        }
         failures += 1;
         console.error(`  FAIL  ${name}`);
         console.error(String(e.stack || e).split("\n").map(line => `        ${line}`).join("\n"));
@@ -625,4 +617,8 @@ try {
 }
 
 if (failures > 0) process.exit(1);
+if (skipped.length > 0) {
+    console.log(`test-convert-v1-themes: status=not-measured skipped=${skipped.length} missing=${Array.from(missing).join(",")}`);
+    process.exit(77);
+}
 console.log("test-convert-v1-themes: ok");

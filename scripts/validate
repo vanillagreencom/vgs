@@ -6,8 +6,9 @@
 #   unit, package, qml, nix, all (default: all). One area per call.
 #   repo holds the checks this file makes itself, the whitespace
 #   row, the self-check that every scripts/test-* file has a row, the
-#   check that nothing under bin/ or shell/ loads a file under scripts/ and
-#   the md-refs check of every markdown reference and source citation;
+#   check that nothing under bin/ or shell/ loads a file under scripts/, the
+#   check that no file holds a PEM private key and the md-refs check of
+#   every markdown reference and source citation;
 #   scripts/test-validate.sh, under tools, is their control. tools also
 #   holds the document byte ceiling check this file makes, selected, unlike
 #   a repo row, only when a Markdown file, a file under docs/ or the
@@ -210,6 +211,7 @@ rows=(
   "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"
   "repo|the runtime loads nothing under scripts/|runtime_reads_no_scripts|"
+  "repo|no committed private key|private_keys_check|"
   "repo|markdown references and source citations|md_refs_check|"
   "tools|document byte ceilings|doc_limits_check|*.md docs/* tools/doc-limits-excludes kendex.settings.toml .kendex/settings.toml .kendex-generated.json .agents/skills/doc-limits/scripts/* .agents/skills/commit-guards/scripts/lib/generated-paths.sh .agents/skills/commit-guards/scripts/lib/messages.sh"
   "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh bin/lib/check-manifests.js scripts/test-check-manifests.js bin/lib/qml-library.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/vgsh-scan scripts/smoke/fixtures/*"
@@ -462,6 +464,39 @@ runtime_reads_no_scripts() {
     return 1
   fi
   echo "validate: the runtime loads nothing under scripts/"
+}
+
+# No file in the tree holds a PEM private-key armor line: PRIVATE KEY with
+# or without a key type such as RSA, EC or OPENSSH, and the PGP PRIVATE KEY
+# BLOCK. Every tracked and untracked, non-ignored file is read. A committed
+# private key has no exemption: a test that needs a key generates it at run
+# time. Certificates and public keys pass. The pattern's own spelling below
+# is not a header line, so this file passes. git grep exits 1 both for no
+# match and after a file it could not open, so anything on its stderr is a
+# read error too. First lines, the refusal followed by each matching header
+# line as git grep prints it:
+#   validate: refused: private-key=<matching line count>
+#   validate: unreadable: private-key status=<n>
+private_keys_check() {
+  local pattern='-----BEGIN ([[:upper:][:digit:]]+ )*PRIVATE KEY( BLOCK)?-----'
+  local out err err_file status=0 lines=()
+  err_file="$(mktemp)" || return 1
+  out="$(git grep -n -I -E --untracked -e "$pattern" -- . 2>"$err_file")" || status=$?
+  err="$(cat -- "$err_file")" || status=2
+  rm -f -- "$err_file"
+  if [[ $status -gt 1 || ( $status -eq 1 && -n $err ) ]]; then
+    echo "validate: unreadable: private-key status=$status"
+    printf '%s\n' "$err"
+    return 1
+  fi
+  if [[ $status -eq 0 ]]; then
+    mapfile -t lines <<<"$out"
+    printf 'validate: refused: private-key=%s\n' "${#lines[@]}"
+    printf '%s\n' "$out"
+    [[ -z $err ]] || printf '%s\n' "$err"
+    return 1
+  fi
+  echo "validate: no committed private key"
 }
 
 # Match all rows before filtering by area, so runtime-only inputs do not

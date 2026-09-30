@@ -147,6 +147,46 @@ d="$tmp/runtime-unreadable"; fresh "$d"; mkdir -p "$d/bin"; printf 'x\n' >"$d/bi
 row "a file under bin/ the boundary check cannot read is an error, not a pass" "$d" 1 "" \
   "validate: unreadable: runtime-reads-scripts status=1"
 
+# The private-key check: one PEM block planted per row, header, body and
+# footer, untracked unless the row says committed. A private-key header of
+# any type is refused with the count and the header line; a certificate, a
+# public key and a line that spells the check's pattern pass. The armor is
+# assembled here and never written whole, so this file holds no header the
+# check or a secret scanner would match.
+pem_begin='-----BEGIN'
+pem_end='-----END'
+key_cases=(
+  'private key|keys/test.pem|untracked|1|PRIVATE KEY'
+  'committed private key|keys/committed.pem|committed|1|PRIVATE KEY'
+  'RSA private key|id_rsa|untracked|1|RSA PRIVATE KEY'
+  'OpenSSH private key|shell/plugins/acme.p/key|untracked|1|OPENSSH PRIVATE KEY'
+  'PGP private key block|docs/key.asc|untracked|1|PGP PRIVATE KEY BLOCK'
+  'certificate|keys/cert.pem|untracked|0|CERTIFICATE'
+  'public key|keys/key.pub|untracked|0|PUBLIC KEY'
+  'line naming the pattern|notes.txt|untracked|0|[A-Z ]*PRIVATE KEY( BLOCK)?'
+)
+for spec in "${key_cases[@]}"; do
+  IFS='|' read -r name file state want type <<<"$spec"
+  d="$tmp/key-${name// /-}"; fresh "$d"
+  mkdir -p -- "$d/$(dirname -- "$file")"
+  header="$pem_begin $type-----"
+  printf '%s\nMIIBdummy\n%s\n' "$header" "$pem_end $type-----" >"$d/$file"
+  if [[ $state == committed ]]; then
+    "${base_env[@]}" git -C "$d" add -- "$file"
+    "${base_env[@]}" git -C "$d" commit -q -m planted
+  fi
+  if [[ $want == 1 ]]; then
+    row "a $name in $file is refused" "$d" 1 "" \
+      "validate: refused: private-key=1" "$file:1:$header"
+  else
+    row "a $name in $file passes" "$d" 0 "" "validate: no committed private key"
+  fi
+done
+
+d="$tmp/key-unreadable"; fresh "$d"; printf 'x\n' >"$d/locked.pem"; chmod 000 "$d/locked.pem"
+row "a file the private-key check cannot read is an error, not a pass" "$d" 1 "" \
+  "validate: unreadable: private-key status=1"
+
 # Exercise the real manifest rows, including the static smoke fixtures. The
 # checker controls run unchanged; this control proves validate includes the
 # fixture tree, so removing that row makes the planted defect pass wrongly.
@@ -173,7 +213,7 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 
 # Selection is checked through the command the caller will run. Expected
 # plans name consumers independently of the dependency table under test.
-repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts\nmd_refs_check'
+repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts\nprivate_keys_check\nmd_refs_check'
 install_plan=$'scripts/test-install-tree.sh\n'"$repo_plan"
 installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\nscripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 # The README check reads VERSION, bin/vgsh, install.sh, the Arch recipes,
