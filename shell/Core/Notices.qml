@@ -178,24 +178,16 @@ Singleton {
         return answer === "satisfied" ? "refused: requirements=" + id + " reason=satisfied" : answer;
     }
 
-    // The `manager` capability's act on a status action that installs
-    // plugin ID's own COMMANDS (D061), a press on the Settings page: the
-    // user chose them, so no offer's rest holds it back. The plugin's value
-    // said they were missing at the last scan, so no new scan waits first;
-    // commands that scan found answer
-    // `refused: requirements=<id> reason=satisfied`.
-    function acted(id, commands) {
-        const answer = raise(id, "chosen", commands);
-        return answer === "satisfied" ? "refused: requirements=" + id + " reason=satisfied" : answer;
-    }
-
-    // The `doctor` capability's choice of OWNER's COMMANDS, the core's or
-    // an enabled plugin's. The owner and the commands are judged at once;
-    // the notice is raised after a scan this choice starts, since the view
-    // that asks read PATH later than the last scan did (a removal through
-    // mise rescans nothing), so a command that view lists missing is judged
-    // missing or present by the same PATH. Answers `ok` once that scan is
-    // asked for; the notice shows after it only while a command is missing.
+    // A user's choice of OWNER's COMMANDS, the core's or an enabled
+    // plugin's: the `doctor` capability's, and the `manager` capability's
+    // act on a status action that installs (D061). The owner and the
+    // commands are judged at once; the notice is raised after a scan this
+    // choice starts, since the value that offered it read PATH later than
+    // the last scan did (a removal through mise rescans nothing, and a
+    // plugin's own probe is its own), so a command that value lists missing
+    // is judged missing or present by the same PATH. Answers `ok` once that
+    // scan is asked for; the notice shows after it only while a command is
+    // missing, and no offer's rest holds it back.
     function chosen(owner, commands) {
         const refusal = choiceRefusal(owner, commands);
         if (refusal !== "") return refusal;

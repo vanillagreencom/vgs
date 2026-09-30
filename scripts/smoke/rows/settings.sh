@@ -128,6 +128,17 @@ expect_run_end "the setup TUI's run ends" acme.status/setup
 expect_poll "the setup TUI's terminal closes" 0 tui_windows
 expect "the check publishes that its tool is missing" ok ipc acme.status invoke set 'check={"tone":"warning","text":"Tool missing","action":true}'
 expect_poll "the check offers Install the tool" '[["token", "Set up token", true], ["check", "Install the tool", true]]' offered_actions acme.status
+# The press scans before it raises: the last scan found the command, from a
+# stand-in since removed with no rescan, so only a scan the press starts
+# finds it missing, as the plugin's value says. A notice raised from the
+# last scan would answer satisfied and show nothing.
+fixture_requirement() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[q["state"] for p in json.load(sys.stdin) if p["id"] == "acme.status" for q in p["requirements"] if q["command"] == "vgs-smoke-absent"]; print(r[0] if r else "unlisted")'; }
+printf '#!/bin/sh\nexit 0\n' >"$shim/vgs-smoke-absent"
+chmod 755 "$shim/vgs-smoke-absent"
+expect "a rescan with the fixture's command stood in starts" ok ipc shell rescanPlugins
+expect_poll "the scan finds the fixture's command present" present fixture_requirement
+rm -f -- "${shim:?}/vgs-smoke-absent"
+expect "with the stand-in gone and no rescan the last scan still reads it present" present fixture_requirement
 settings_press "Install the tool" || fail "the click on Install the tool failed"
 expect_poll "Install the tool shows the requirement notice for its own command" '["acme.status", ["vgs-smoke-absent"], ["vgs-smoke-absent"], false]' notice_shown
 expect "Install the tool leaves the Settings window open under the notice" 1 window_count Settings

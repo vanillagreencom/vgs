@@ -1066,9 +1066,10 @@ var NOTICE_OFFER_MAX = 16;
 // `vgsh plugin add` calls; `enabled`, setPluginEnabled turning a plugin on;
 // `offered`, the plugin's own `requirements` capability; `requested`, the
 // `manager` capability's installRequirements, the Settings window's
-// Install; `chosen`, the `doctor` capability, a view of every owner's
-// requirements, asking for the core's or an enabled plugin's commands on a
-// user's press.
+// Install; `chosen`, a user's press asking for the core's or an enabled
+// plugin's commands: the `doctor` capability, a view of every owner's
+// requirements, and the `manager` capability's act on a status action that
+// installs (D061).
 var NOTICE_TRIGGERS = ["installed", "enabled", "offered", "requested", "chosen"];
 // The owner a notice is raised for when it is the core's own requirements,
 // config/requirements.json, rather than a plugin's. A plugin id is dotted,

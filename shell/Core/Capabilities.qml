@@ -176,7 +176,7 @@ Singleton {
 
     // The manager's act on plugin ID's status entry KEY (D061): the
     // plugin's own declared TUI through TuiRunner.runFor, or its own
-    // requirement commands through the requirement notice, as
+    // requirement commands through the requirement notice after a scan, as
     // PluginLogic.statusActionRequest decides from its published values.
     function managerAct(id, key) {
         const known = typeof id === "string" && Registry.has(id);
@@ -184,7 +184,7 @@ Singleton {
         if (!request.ok) return request.answer;
         switch (request.kind) {
         case "tui": return tuis.runFor(id, request.name);
-        case "install": return Notices.acted(id, request.commands);
+        case "install": return Notices.chosen(id, request.commands);
         }
         throw new Error("manager: action kind " + JSON.stringify(request.kind) + " is not one of tui, install");
     }
