@@ -245,9 +245,19 @@ expect_poll "a disabled plugin's dynamic Select is read-only and has no offered 
 expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "Show command"], ["Pending", "Not reported"]]' drawn_status
 expect "the window opens the notifications' page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.notifications
 slack_tokens_hint="One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
+# The Slack tokens row belongs to the owner-only Slack photos extra,
+# off on a fresh profile: the page lists no row of it
+# (docs/decisions/D075-consumer-features-need-no-developer-setup.md).
+expect_poll "with the Slack photos extra off the notifications list no Slack tokens row" '[]' status_of vgs.notifications
+expect_poll "the page draws no Status row with the extra off" '[]' drawn_status
+# The control: the same readers find the row once the plugins row turns
+# the extra on.
+set_slack_photos on
 expect_poll "the disabled notifications list the Slack tokens row unreported" '[["Slack tokens", "unreported", null, "", ""]]' status_of vgs.notifications
 expect_poll "the page draws the Slack tokens row with its hint and no line per account" "$(python3 -c 'import json,sys; print(json.dumps([["Slack tokens", "Not reported", sys.argv[1]]]))' "$slack_tokens_hint")" drawn_status
 expect "no Slack tokens row takes an edit" '[[]]' ipc smoke statusRowInputs window vgs.settings
+set_slack_photos absent
+expect_poll "the extra off again takes the Slack tokens row away" '[]' status_of vgs.notifications
 
 expect "the gear closes the Settings window after the edit rows" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
 expect_poll "the Settings window is gone after the edit rows" 0 window_count Settings

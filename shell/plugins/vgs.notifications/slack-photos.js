@@ -579,12 +579,10 @@ function tokenFor(tokens, accounts, id) {
     return legacy !== undefined && (accounts[LEGACY] || {}).team === id ? legacy.token : "";
 }
 
-// One run: the photos, then the custom emoji when `emojiCache`, Slack's
-// Cache_Data, is given, or their removal when it is null; then the root
-// sweep and the one output line, with an `emoji` list when emoji are on.
-function refresh(root, ids, emojiCache) {
+// The tokens stored for the listed teams and the single-workspace account:
+// { account, token } each, and a line for each lookup that failed.
+function storedTokens(ids, lines) {
     assertTestSecretToolPath();
-    const lines = [];
     const tokens = [];
     for (const account of ids.map(id => "slack:" + id).concat([LEGACY])) {
         const found = lookupToken(account);
@@ -592,7 +590,21 @@ function refresh(root, ids, emojiCache) {
         if (found.state === "failed") lines.push(found.line);
         if (found.state === "token") tokens.push({ account, token: found.token });
     }
-    const photos = tokens.length === 0 ? { value: { status: "absent" }, kept: new Set(), accounts: null } : refreshPhotos(root, tokens, lines);
+    return tokens;
+}
+
+// One run: with `photos`, the Slack photos extra, each stored token's
+// photos; without it no token is looked up, no Slack API is called and the
+// photo cache is swept, `status: "off"`. Then the custom emoji when
+// `emojiCache`, Slack's Cache_Data, is given, from Slack's list only for a
+// team a token serves, or their removal when it is null; then the root
+// sweep and the one output line, with an `emoji` list when emoji are on.
+function refresh(root, ids, emojiCache, photos) {
+    const lines = [];
+    const tokens = photos ? storedTokens(ids, lines) : [];
+    const photoRun = !photos ? { value: { status: "off" }, kept: new Set(), accounts: null }
+        : tokens.length === 0 ? { value: { status: "absent" }, kept: new Set(), accounts: null }
+        : refreshPhotos(root, tokens, lines);
     let base = "";
     const deps = {
         readJson,
@@ -601,43 +613,54 @@ function refresh(root, ids, emojiCache) {
         listEmoji: token => apiCall(base !== "" ? base : (base = apiBase()), token, "emoji.list", {}).emoji,
         allowedUrl: allowedImageUrl,
         redact,
-        tokenFor: id => tokenFor(tokens, photos.accounts || {}, id),
+        tokenFor: id => tokenFor(tokens, photoRun.accounts || {}, id),
         now: Date.now,
         path: process.env.PATH
     };
     const emojiRun = emojiCache === null ? { kept: emoji.disable(root, deps), teams: null } : emoji.refresh(root, emojiCache, ids, deps, lines);
-    sweepRoot(root, photos.kept, emojiRun.kept);
+    sweepRoot(root, photoRun.kept, emojiRun.kept);
     const accountsFile = path.join(root, ACCOUNTS_FILE);
-    if (photos.accounts === null) {
+    if (photoRun.accounts === null) {
         remove(accountsFile);
     } else {
         mkdir(root);
-        writeJson(accountsFile, photos.accounts);
+        writeJson(accountsFile, photoRun.accounts);
     }
     for (const line of lines) console.error(line);
-    output(emojiRun.teams === null ? photos.value : Object.assign({}, photos.value, { emoji: emojiRun.teams }));
+    output(emojiRun.teams === null ? photoRun.value : Object.assign({}, photoRun.value, { emoji: emojiRun.teams }));
 }
 
-// refresh <root> [--emoji <Slack Cache_Data>] [<team id>...]
+// refresh <root> [--photos] [--emoji <Slack Cache_Data>] [<team id>...],
+// each option at most once, in either order, before the team ids.
 function main(argv) {
     if (argv.length < 4 || argv[2] !== "refresh") usage("usage");
     let rest = argv.slice(4);
     let emojiCache = null;
-    if (rest[0] === "--emoji") {
-        if (rest.length < 2 || !path.isAbsolute(rest[1])) usage("emoji want=<absolute cache dir>");
-        emojiCache = rest[1];
-        rest = rest.slice(2);
+    let photos = false;
+    for (;;) {
+        if (rest[0] === "--photos") {
+            if (photos) usage("photos repeated");
+            photos = true;
+            rest = rest.slice(1);
+        } else if (rest[0] === "--emoji") {
+            if (emojiCache !== null) usage("emoji repeated");
+            if (rest.length < 2 || !path.isAbsolute(rest[1])) usage("emoji want=<absolute cache dir>");
+            emojiCache = rest[1];
+            rest = rest.slice(2);
+        } else {
+            break;
+        }
     }
     const ids = rest;
     if (ids.length > TEAMS_MAX) usage("teams count=" + ids.length + " want<=" + TEAMS_MAX);
     for (const id of ids)
         if (safeSegment(id) === "") usage("team-id want=[A-Za-z0-9]{1,32}");
-    return { root: argv[3], ids: Array.from(new Set(ids)), emojiCache };
+    return { root: argv[3], ids: Array.from(new Set(ids)), emojiCache, photos };
 }
 
 const args = main(process.argv);
 try {
-    refresh(args.root, args.ids, args.emojiCache);
+    refresh(args.root, args.ids, args.emojiCache, args.photos);
 } catch (e) {
     fail(4, "notifications-slack-photos: error=io");
 }

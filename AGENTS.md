@@ -22,6 +22,7 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 - Never start a second shell against the live session and never kill Quickshell processes by name. Validation runs in the nested sandbox only.
 - A change that adds a surface, a service or a plugin adds its validation row under `scripts/smoke/rows/` in the same PR.
 - No manual commands: a user-facing setup step is automatic or one click, a step that asks or elevates runs in a floating TUI or the requirement notice that button starts, a secret goes into a masked field VGS stores in libsecret, and a command shows only behind "Show command". `scripts/check-user-commands.py` enforces the text: `docs/decisions/D061-no-manual-commands.md`.
+- Consumer features need no developer setup. A feature that needs an app, API key or token the user must create first is an owner-only extra: declared in the manifest's `extras`, off by default, absent from the Settings page and documented only under "Extras (not supported)" in its plugin's README: `docs/decisions/D075-consumer-features-need-no-developer-setup.md`.
 - Before writing or changing code, load the code-quality skill. Before writing a plugin, load the vgs-plugin skill.
 - Before designing a plugin, a theme target or any system integration, check how the latest Omarchy (`basecamp/omarchy`, its default branch) solves the same problem. Take its approach where it is simpler or more robust; where VGS differs, say why in the issue or decision record.
 
@@ -36,6 +37,7 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 - `docs/architecture/components.md`: before adding or changing a component of `qs.Ui`.
 - `docs/architecture/runtime.md`: before touching anything that starts, stops, measures or talks to the shell, and for every Quickshell fact the code rests on.
 - `docs/architecture/runtime-hyprland.md`: before touching a dispatch, `Compositor` or `Dispatch.js`, for every Hyprland fact the code rests on.
+- `docs/architecture/migrations.md`: before adding a one-time migration or touching `bin/vgsh-migrate`.
 - `docs/architecture/validation.md`: before touching `scripts/validate` or one of its rows.
 - `docs/architecture/validation-smoke.md`: before touching the nested sandbox, its harness or a smoke row's verdict.
 - `docs/architecture/validation-smoke-faults.md`: before touching a sandbox fault the smoke excuses, a mode a row holds on the nested output, or the smoke's closing verdict.

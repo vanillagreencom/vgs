@@ -47,9 +47,16 @@ Singleton {
     property var coreRequirements: []
     property var coreMissing: []
     // Whose requirements a notice can list, by owner id: every plugin's
-    // manifest and the core's owner, PluginLogic.coreOwner; and each
-    // owner's missing commands.
-    readonly property var requirementOwners: Object.assign(Object.create(null), manifests, { [Logic.CORE_OWNER]: Logic.coreOwner(coreRequirements) })
+    // manifest as its settings apply it (activeManifestOf) and the core's
+    // owner, PluginLogic.coreOwner; and each owner's missing commands.
+    readonly property var requirementOwners: {
+        const config = Config.effective;
+        const owners = Object.create(null);
+        for (const id of Object.keys(manifests))
+            owners[id] = Logic.activeManifest(manifests[id], Logic.managerSettings(config, manifests[id]));
+        owners[Logic.CORE_OWNER] = Logic.coreOwner(coreRequirements);
+        return owners;
+    }
     readonly property var ownerMissing: Object.assign(Object.create(null), missingCommands, { [Logic.CORE_OWNER]: coreMissing })
     // { dir, error } for every directory whose manifest was refused.
     property var errors: []
@@ -285,10 +292,17 @@ Singleton {
         return out;
     }
 
+    // Plugin `id`'s manifest as the settings it receives apply it: without
+    // the status entries and requirements of an extra that is off
+    // (PluginLogic.activeManifest). What the manager shows and acts on.
+    function activeManifestOf(id) {
+        return Logic.activeManifest(manifests[id], Logic.managerSettings(Config.effective, manifests[id]));
+    }
+
     // Plugin `id`'s requirement rows, each with its state from the last
-    // scan: PluginLogic.requirementRows.
+    // scan: PluginLogic.requirementRows over activeManifestOf.
     function requirementsOf(id) {
-        return Logic.requirementRows(manifests[id], Logic.hasOwn(missingCommands, id) ? missingCommands[id] : []);
+        return Logic.requirementRows(activeManifestOf(id), Logic.hasOwn(missingCommands, id) ? missingCommands[id] : []);
     }
 
     // Where a plugin was found: `bundled` under the shell's own plugins
@@ -301,8 +315,8 @@ Singleton {
     // metadata, its icon, capabilities and source, whether it is enabled,
     // its settings schema, the settings it currently receives (a bar
     // widget's from its first layout entry), its Keys rows, its Status rows
-    // (PluginLogic.statusRows over the values it published), the label of
-    // its `secrets`, "" without, its setting
+    // (PluginLogic.statusRows of activeManifestOf over the values it
+    // published), the label of its `secrets`, "" without, its setting
     // choices (PluginLogic.settingChoices over those same values), its
     // requirements with their state and its errors:
     // each failed build of one of its kinds, once per cause, then each
@@ -340,7 +354,7 @@ Singleton {
                 settings: settings,
                 settingChoices: Logic.settingChoices(m, values, settings),
                 binds: Logic.bindRows(config, m, descriptions),
-                status: Logic.statusRows(m, values),
+                status: Logic.statusRows(Logic.activeManifest(m, settings), values),
                 secretLabel: m.secrets === undefined ? "" : m.secrets.label,
                 requirements: requirementsOf(id),
                 errors: errors

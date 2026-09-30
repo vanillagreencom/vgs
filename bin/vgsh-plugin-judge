@@ -28,10 +28,22 @@
 //       when the configuration would enable the plugin, list it in the user
 //       file's disabledPlugins; print `written` or `unchanged`. Either file
 //       that PluginLogic.configError refuses is refused as `malformed`.
-//   vgsh-plugin-judge requirements text|json <id>
+//   vgsh-plugin-judge seed-setting <shipped-config> <user-config> <plugin-dir> <key> <json-value>
+//       for a one-time migration (bin/vgsh-migrate): when the plugins row
+//       of the plugin at <plugin-dir> under the configuration the two files
+//       make effective names no <key>, write <key> with the value into the
+//       user file's row, seeded from the effective row, where the file
+//       stands, a symlink kept; print `written`, or `unchanged` when the
+//       row already names the key, whatever its value. A key the manifest's
+//       `settings` do not declare, or a value of another JSON type than its
+//       default, is refused as `setting=<key> undeclared` or
+//       `setting=<key> want=<type>`; a schema key's value is judged as the
+//       plugin manager judges it.
+//   vgsh-plugin-judge requirements text|json <shipped-config> <user-config> <id>
 //       read `bin/vgsh-scan` JSON on stdin and print the requirements of
-//       plugin <id>, the one the shell's registry would hold under it:
-//       with text one line per requirement,
+//       plugin <id>, the one the shell's registry would hold under it, as
+//       its settings under the configuration the two files make effective
+//       apply them (activeManifest below): with text one line per requirement,
 //       `<state> <command>[ (<package>)][ optional]: <purpose>`, and with
 //       json one line, a list of rows (below). An id no accepted manifest
 //       names is refused as `unknown=<id>`.
@@ -51,7 +63,7 @@
 //       keyed, in id order, one with no requirements by an empty list. The
 //       core's commands are looked up on PATH here; a plugin's are the
 //       scan's `missing`.
-//   vgsh-plugin-judge unmet <id>
+//   vgsh-plugin-judge unmet <shipped-config> <user-config> <id>
 //       read `bin/vgsh-scan` JSON on stdin and print, for plugin <id>, one
 //       `requires <command>[ (<package>)][ optional]` line per requirement
 //       the scan did not find, then one `install <word>...` line per
@@ -62,6 +74,10 @@
 //       takes by default. A manager the table gives no install steps, nix,
 //       whose system changes through its own configuration, gets a
 //       `by-hand <manager> <package>...` line instead.
+//
+// Every report but the core's skips the requirements of an extra the
+// plugin's settings leave off: PluginLogic.activeManifest, the manifest the
+// Settings page and the requirement notice read.
 //
 // A requirement row is PluginLogic.requirementRows' row, `{ command,
 // packages, optional, purpose, state }`, with `package`, the
@@ -81,7 +97,7 @@ const path = require("path");
 
 const repo = path.join(__dirname, "..");
 const logic = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PluginLogic.js"));
-const { refuse, main, readJson, readConfig, replaceFile, onPath } = require(path.join(__dirname, "lib", "judge-files.js"));
+const { refuse, main, readJson, readConfig, replaceFile, editFile, onPath } = require(path.join(__dirname, "lib", "judge-files.js"));
 
 // What detection answers on a system where no manager is looked for.
 const NO_MANAGERS = { primary: null, overlays: [], sources: [] };
@@ -200,9 +216,9 @@ function doctorReport(plugins, shipped, user, core) {
     const effective = logic.effectiveConfig(shipped, user);
     const defaultBarId = logic.activeBarId(shipped, "");
     const enabled = Array.from(plugins.keys()).sort().filter(id => logic.isEnabled(effective, plugins.get(id).manifest, defaultBarId));
-    const found = managersFor([core.requirements].concat(enabled.map(id => plugins.get(id).manifest.requirements)));
+    const found = managersFor([core.requirements].concat(enabled.map(id => activeManifest(effective, plugins.get(id).manifest).requirements)));
     const report = { core: reportRows(core.requirements, core.missing, found), plugins: {} };
-    for (const id of enabled) report.plugins[id] = reportRows(plugins.get(id).manifest.requirements, plugins.get(id).missing, found);
+    for (const id of enabled) report.plugins[id] = reportRows(activeManifest(effective, plugins.get(id).manifest).requirements, plugins.get(id).missing, found);
     return report;
 }
 
@@ -213,11 +229,24 @@ function doctorLines(report) {
     return lines;
 }
 
-// `unmet`'s lines for PLUGIN: its missing requirements, then the commands
-// that install their packages, one per manager in detection order, or the
-// packages alone for a manager that installs nothing through vgsh.
-function unmetLines(plugin) {
-    const missing = logic.requirementRows(plugin.manifest, plugin.missing).filter(row => row.state === "missing");
+// MANIFEST as its settings under the effective configuration CONFIG
+// apply it.
+function activeManifest(config, manifest) {
+    return logic.activeManifest(manifest, logic.managerSettings(config, manifest));
+}
+
+// The configuration the shipped file at SHIPPEDPATH and the user file at
+// USERPATH, which may be absent, make effective.
+function effectiveOf(shippedPath, userPath) {
+    return logic.effectiveConfig(readConfig(logic, shippedPath, "shipped-config"), readConfig(logic, userPath, "user-config", true));
+}
+
+// `unmet`'s lines for PLUGIN under CONFIG: its missing requirements, then
+// the commands that install their packages, one per manager in detection
+// order, or the packages alone for a manager that installs nothing
+// through vgsh.
+function unmetLines(config, plugin) {
+    const missing = logic.requirementRows(activeManifest(config, plugin.manifest), plugin.missing).filter(row => row.state === "missing");
     const plan = logic.PackageManagers.installGroups(missing, managersFor([missing]));
     const lines = missing.map((row, i) => "requires " + requirementText(row.command, plan.picks[i], row.optional));
     for (const group of plan.groups)
@@ -318,11 +347,44 @@ main(() => {
         console.log("written");
         break;
     }
+    case "seed-setting": {
+        const [shippedPath, userPath, dir, key, text] = args;
+        const manifest = validated(dir);
+        let value;
+        try {
+            value = JSON.parse(text);
+        } catch (e) {
+            refuse("setting=" + key + " value=unparseable");
+        }
+        if (!logic.hasOwn(manifest.settings, key)) refuse("setting=" + key + " undeclared");
+        if (logic.hasOwn(manifest.schema, key)) {
+            const refusal = logic.settingRefusal(manifest, key, value);
+            if (refusal !== "") refuse(refusal.slice("refused: ".length));
+        } else if (value === null || typeof value !== typeof manifest.settings[key]) {
+            refuse("setting=" + key + " want=" + typeof manifest.settings[key]);
+        }
+        const shipped = readConfig(logic, shippedPath, "shipped-config");
+        let seeded = false;
+        const failure = editFile("user-config", userPath, true, current => {
+            const user = current === undefined ? null : readConfig(logic, userPath, "user-config");
+            const effective = logic.effectiveConfig(shipped, user);
+            const row = logic.pluginRow(effective, manifest.id);
+            if (row !== undefined && logic.hasOwn(row, key)) return null;
+            seeded = true;
+            // editFile writes one byte per character; the JSON is UTF-8.
+            return Buffer.from(JSON.stringify(logic.withSetting(user, manifest, key, value, effective, ["plugins"]), null, 2) + "\n", "utf8").toString("latin1");
+        });
+        if (failure !== null) refuse(failure.failure, failure.reason);
+        console.log(seeded ? "written" : "unchanged");
+        break;
+    }
     case "requirements": {
-        const [form, id] = args;
+        const [form, shippedPath, userPath, id] = args;
         const json = format(form) === "json";
+        const config = effectiveOf(shippedPath, userPath);
         const plugin = pluginOf(registryOf(readScan()), id);
-        const rows = reportRows(plugin.manifest.requirements, plugin.missing, managersFor([plugin.manifest.requirements]));
+        const requirements = activeManifest(config, plugin.manifest).requirements;
+        const rows = reportRows(requirements, plugin.missing, managersFor([requirements]));
         if (json) process.stdout.write(JSON.stringify(rows) + "\n");
         else print(rows.map(rowLine));
         break;
@@ -352,7 +414,9 @@ main(() => {
         break;
     }
     case "unmet": {
-        print(unmetLines(pluginOf(registryOf(readScan()), args[0])));
+        const [shippedPath, userPath, id] = args;
+        const config = effectiveOf(shippedPath, userPath);
+        print(unmetLines(config, pluginOf(registryOf(readScan()), id)));
         break;
     }
     default:

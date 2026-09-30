@@ -74,7 +74,9 @@
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #   vgsh self status [--json]      how this tree was installed, the newest version its channel offers, and whether it is behind
-#   vgsh self update               update a checkout or a curl install, then restart a running shell
+#   vgsh self update               update a checkout or a curl install, run its pending migrations, then restart
+#                                  a running shell
+#   vgsh migrate [--pending]       run each pending one-time migration once, or list them (bin/vgsh-migrate)
 #   vgsh tui present [--title <text>] [--size default|wide|tall] -- <argv...>
 #                                  run one command in a floating terminal under the VGS presentation
 #   vgsh tui list                  every floating TUI the running shell lists: the core's and every enabled plugin's
@@ -93,7 +95,10 @@
 # after the last delay. A shell that exits 0, a Hyprland that no longer
 # answers (`vgsh: shell=exited status=<n> hyprland=gone`) and HUP, INT or
 # TERM to this process, which stops the shell, end this process with the
-# shell's status. Before anything else it checks Quickshell, a running
+# shell's status. Once it holds the lock it runs the pending one-time
+# migrations, bin/vgsh-migrate with its notice, and starts the shell
+# whether they pass or not: a failed one runs again at the next start.
+# Before anything else it checks Quickshell, a running
 # Hyprland, node, python3 and git against the floor its preflight table
 # holds, and refuses
 # with `vgsh: refused: preflight=<tool> have=<version|none|unknown> need=<version|present>`
@@ -827,7 +832,7 @@ offer_requirements() { # ID
   local scan report line answer
   local -a installs=() words
   scan="$(plugin_scan)" || exit 1
-  report="$(node "$judge" unmet "$1" <<<"$scan")" || exit 1
+  report="$(node "$judge" unmet "$root/config/shell.json" "$config_home/vgs/shell.json" "$1" <<<"$scan")" || exit 1
   while IFS= read -r line; do
     case "$line" in
       "install "*) installs+=("${line#install }") ;;
@@ -1567,6 +1572,14 @@ self_restart() { # VGSH
   exec "$1" restart
 }
 
+# After an update, run the updated tree's pending migrations through
+# MIGRATE, its bin/vgsh-migrate, before the restart. A failed one is
+# reported and left for the next `vgsh run`, which runs it again; the
+# update itself stands.
+self_migrate() { # MIGRATE
+  "$1" run || printf 'vgsh: migrate=failed status=%s\n' "$?" >&2
+}
+
 # Updates this tree as its install method allows, as the header states.
 self_update() {
   local version checkout=false line method package manager out running
@@ -1579,6 +1592,7 @@ self_update() {
       fast_forward "$root" vgs trusted
       if [[ $ff_old == "$ff_new" ]]; then echo "ok up-to-date=vgs"; return 0; fi
       echo "ok updated=vgs from=${ff_old:0:12} to=${ff_new:0:12}"
+      self_migrate "$root/bin/vgsh-migrate"
       self_restart "$root/bin/vgsh"
       ;;
     curl)
@@ -1588,6 +1602,7 @@ self_update() {
       printf '%s\n' "$out"
       [[ $out == "ok updated="* ]] || return 0
       exec 8>&-
+      self_migrate "$data_home/vgs/current/bin/vgsh-migrate"
       self_restart "$data_home/vgs/current/bin/vgsh"
       ;;
     package)
@@ -1760,7 +1775,15 @@ case "$cmd" in
       printf 'vgsh: refused: lock=%s\nanother vgsh run holds the instance lock; one shell per session\n' "$lock" >&2
       exit 75
     fi
+    "$root/bin/vgsh-migrate" run --notice 9>&- || printf 'vgsh: migrate=failed status=%s\n' "$?" >&2
     shell_supervise
+    ;;
+  migrate)
+    case "${1:-}" in
+      "") exec "$root/bin/vgsh-migrate" run ;;
+      --pending) shift; exec "$root/bin/vgsh-migrate" pending "$@" ;;
+      *) refuse 2 "argument=$1" "migrate takes only --pending" ;;
+    esac
     ;;
   restart)
     if [[ $# -gt 0 ]]; then
@@ -1810,7 +1833,7 @@ case "$cmd" in
         if [[ -z $id ]]; then printf 'vgsh: refused: id=missing\n' >&2; usage; exit 2; fi
         if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
         scan="$(plugin_scan)" || exit 1
-        node "$judge" requirements "$format" "$id" <<<"$scan"
+        node "$judge" requirements "$format" "$root/config/shell.json" "$config_home/vgs/shell.json" "$id" <<<"$scan"
         ;;
       settings)
         id="${1:-}"

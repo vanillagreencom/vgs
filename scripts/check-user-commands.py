@@ -99,7 +99,7 @@ FIELDS = (
 # disclosure itself.
 EXEMPT = (
     ("schemaVersion",), ("id",), ("version",), ("license",), ("icon",), ("kinds",), ("entryPoints",),
-    ("capabilities",), ("settings",), ("defaultSection",), ("appearance",),
+    ("capabilities",), ("settings",), ("defaultSection",), ("appearance",), ("extras",),
     ("schema", "*", "type"), ("schema", "*", "optionsFrom"), ("schema", "*", "min"), ("schema", "*", "max"), ("schema", "*", "step"),
     ("status", "*", "type"), ("status", "*", "hidden"), ("status", "*", "command"),
     ("status", "*", "action", "tui"), ("status", "*", "action", "install"),

@@ -55,9 +55,15 @@ Any sender can add the VGS hints, a Lucide icon, a status tone and a file a clic
 
 ## Slack
 
-A per-application rule reads Slack's notifications: their senders as faces, their workspace as its icon, one card per message, optional sender photos from a token per workspace, and each workspace's custom emoji in the body. [slack.md](slack.md) holds what each shows, how to store a token and how to turn the custom emoji off.
+A per-application rule reads Slack's notifications: their senders as faces, their workspace as its icon, one card per message and each workspace's custom emoji in the body, all with no setup. [slack.md](slack.md) holds what each shows and how to turn the custom emoji off. Sender photos need a Slack app of your own, so they are an extra, below.
 
 The Slack features run commands the plugin declares as optional requirements. The plugin's Settings page lists each one under Requirements, whether it is installed and what it is for, with an Install button while one is missing. Toasts, the panel and Silence need none of them.
+
+## Extras (not supported)
+
+An extra needs developer setup, such as an app you create yourself, so it is off by default and the Settings page shows nothing of it ([D075](../../../docs/decisions/D075-consumer-features-need-no-developer-setup.md)). It is kept for the owner and is not supported.
+
+- **Slack photos**, `slackPhotos`: sender photos and cached workspace icons from a Slack app user token per workspace, and custom emoji from Slack's emoji list. Turn it on with `{ "id": "vgs.notifications", "slackPhotos": true }` in `plugins` in `~/.config/vgs/shell.json`. The Settings page then lists a Slack tokens row with Connect for each workspace, and `curl` and `secret-tool` under Requirements. With it off, the plugin reads no token, calls no Slack API, removes the photos it cached and shows no token row. An install that had Slack photos before they became an extra keeps them: a one-time migration turns the extra on when a Slack token is stored ([migrations.md](../../../docs/architecture/migrations.md)). [slack.md § Slack photos](slack.md#slack-photos) holds the rest.
 
 ## State
 

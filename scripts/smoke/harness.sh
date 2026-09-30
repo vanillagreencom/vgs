@@ -682,6 +682,34 @@ case "\${1:-}:\$state" in
 esac
 SH
 }
+# set_slack_photos on|absent: the vgs.notifications row of the user file
+# names the owner-only Slack photos extra, `slackPhotos: true`, or leaves
+# it out, as a fresh profile does, with a row left holding only its id
+# removed
+# (docs/decisions/D075-consumer-features-need-no-developer-setup.md).
+set_slack_photos() { # on|absent
+  python3 - "$home/.config/vgs/shell.json" "$1" <<'PY'
+import json, os, sys
+path, want = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+rows = doc.setdefault("plugins", [])
+row = next((r for r in rows if isinstance(r, dict) and r.get("id") == "vgs.notifications"), None)
+if row is None:
+    row = {"id": "vgs.notifications"}
+    rows.append(row)
+if want == "on":
+    row["slackPhotos"] = True
+elif want == "absent":
+    row.pop("slackPhotos", None)
+    if list(row) == ["id"]:
+        rows.remove(row)
+else:
+    sys.exit("set_slack_photos: want on or absent, got " + want)
+with open(path + ".tmp", "w") as out:
+    json.dump(doc, out)
+os.replace(path + ".tmp", path)
+PY
+}
 
 # default_set_prepare PLUGINS_JSON [DISABLED_JSON]: what a start over the
 # default set needs before the shell starts. The user file names no bar

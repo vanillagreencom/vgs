@@ -484,23 +484,38 @@ function slackTokenRows(workspaces, states, teams) {
     return { ok: true, items: items };
 }
 
-// How long the photo helper waits before its next run, in milliseconds:
+// How long the photo helper waits before its next run, in milliseconds,
+// or null for no further run. With PHOTOS, the Slack photos extra, on:
 // SLACK_PHOTO_RETRY while a token is missing, an account failed, a download
 // failed, or a listed workspace has no photos, so a token stored for it is
 // read within that; otherwise until the oldest team's day is over. With
-// custom emoji on, SLACK_EMOJI_PENDING while a team's emoji wait to be
-// converted, and at most SLACK_EMOJI_RESCAN, which reads Slack's cache again
-// for the emoji it has shown since; the photos of a run in between are
-// served from their cache while fresh.
+// custom emoji on, EMOJI: SLACK_EMOJI_PENDING while a team's emoji wait to
+// be converted, and at most SLACK_EMOJI_RESCAN, which reads Slack's cache
+// again for the emoji it has shown since; the photos of a run in between
+// are served from their cache while fresh. With both off, the run that
+// swept the caches is the last.
 var SLACK_PHOTO_RETRY = 15 * 60 * 1000;
 var SLACK_PHOTO_DAY = 24 * 60 * 60 * 1000;
 var SLACK_EMOJI_PENDING = 60 * 1000;
 var SLACK_EMOJI_RESCAN = 60 * 60 * 1000;
-function slackPhotoDelay(read, workspaces, now, emojiOn) {
-    var photos = slackPhotoOnlyDelay(read, workspaces, now);
-    if (!emojiOn) return photos;
-    var pending = read.ok && read.emoji !== null && read.emoji.some(function (t) { return t.pending > 0; });
-    return Math.min(photos, pending ? SLACK_EMOJI_PENDING : SLACK_EMOJI_RESCAN);
+function slackPhotoDelay(read, workspaces, now, emojiOn, photosOn) {
+    var photos = photosOn ? slackPhotoOnlyDelay(read, workspaces, now) : Infinity;
+    var emoji = Infinity;
+    if (emojiOn) {
+        var pending = read.ok && read.emoji !== null && read.emoji.some(function (t) { return t.pending > 0; });
+        emoji = !read.ok ? SLACK_PHOTO_RETRY : pending ? SLACK_EMOJI_PENDING : SLACK_EMOJI_RESCAN;
+    }
+    var delay = Math.min(photos, emoji);
+    return delay === Infinity ? null : delay;
+}
+
+// The photo helper's argv: slack-photos.js SCRIPT refreshing the cache DIR
+// for the team IDS, with `--photos` while the Slack photos extra, PHOTOS,
+// is on, so the helper reads no token and calls no Slack API while it is
+// off, and `--emoji` with Slack's disk cache EMOJICACHE while custom emoji
+// are on, EMOJI.
+function slackHelperCommand(script, dir, ids, photos, emoji, emojiCache) {
+    return ["node", script, "refresh", dir].concat(photos ? ["--photos"] : [], emoji ? ["--emoji", emojiCache] : [], ids);
 }
 
 function slackPhotoOnlyDelay(read, workspaces, now) {
@@ -513,8 +528,11 @@ function slackPhotoOnlyDelay(read, workspaces, now) {
 
 // Slack photos cache data, as slack-photos.js prints and stores it, reduced
 // to the fields the card needs. Names are matched case-folded the same way
-// initials and Slack sender parsing key them. `emoji` is slackEmojiTeams'
-// reading of the run's custom emoji, or null for a run with emoji off.
+// initials and Slack sender parsing key them. `status` is `loaded`,
+// `absent` for a run that found no token, or `off` for a run with the
+// Slack photos extra off, which looked none up. `emoji` is
+// slackEmojiTeams' reading of the run's custom emoji, or null for a run
+// with emoji off.
 function slackPhotos(text) {
     var parsed;
     try {
@@ -529,8 +547,8 @@ function slackPhotos(text) {
         if (!read.ok) return { ok: false, error: read.error };
         emoji = read.teams;
     }
-    if (parsed.status === "absent") return { ok: true, status: "absent", teams: [], generatedAt: 0, downloadFailed: 0, stale: false, emoji: emoji };
-    if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent" };
+    if (parsed.status === "absent" || parsed.status === "off") return { ok: true, status: parsed.status, teams: [], generatedAt: 0, downloadFailed: 0, stale: false, emoji: emoji };
+    if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent|off" };
     if (!Array.isArray(parsed.teams)) return { ok: false, error: "teams want=list" };
     var teams = [];
     for (var t = 0; t < parsed.teams.length; t++) {

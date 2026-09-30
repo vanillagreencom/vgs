@@ -10,8 +10,9 @@
 // `missing_scope` is quiet and asked daily, the previous index's files
 // survive one run, a second run converts nothing, a run converts at most
 // its budget and reports the rest as pending, a failed chunk is converted
-// one image at a time, no ImageMagick is one line and no emoji, and turning
-// emoji off empties the index before removing it. Exit 77 when ImageMagick
+// one image at a time, no ImageMagick is one line and no emoji, turning
+// emoji off empties the index before removing it, and with the Slack photos
+// extra off a stored token stays unread, so Slack's list is not asked. Exit 77 when ImageMagick
 // is not installed, since a conversion nothing runs proves nothing.
 "use strict";
 
@@ -130,9 +131,11 @@ function store(pairs) {
 }
 
 let env = null;
-function run(root, argv, runEnv) {
+// One helper run over ROOT with ARGV, with the Slack photos extra on, so
+// a stored token reaches emoji.list, unless PHOTOS is false.
+function run(root, argv, runEnv, photos = true) {
     return new Promise(resolve => {
-        const child = childProcess.spawn(process.execPath, [helper, "refresh", root].concat(argv), { cwd: repo, env: runEnv || env });
+        const child = childProcess.spawn(process.execPath, [helper, "refresh", root].concat(photos ? ["--photos"] : [], argv), { cwd: repo, env: runEnv || env });
         let stdout = "";
         let stderr = "";
         child.stdout.setEncoding("utf8");
@@ -143,8 +146,8 @@ function run(root, argv, runEnv) {
     });
 }
 
-async function runJson(root, argv, runEnv) {
-    const result = await run(root, argv, runEnv);
+async function runJson(root, argv, runEnv, photos = true) {
+    const result = await run(root, argv, runEnv, photos);
     assert.equal(result.status, 0, result.stderr);
     return Object.assign(JSON.parse(result.stdout), { stderr: result.stderr });
 }
@@ -254,9 +257,19 @@ exec "${magick}" "$@"
     assert.deepEqual(teamOf(again, "T1").map, t1.map, "a second run answers the same map");
     assert.equal(magickRuns(), before, "a second run converts nothing");
 
+    // With the Slack photos extra off, a stored token stays unread: the
+    // emoji come from the cache alone and Slack's list is not asked.
+    store({ "slack:T1": "xoxp-acme-4f2a", "slack:T2": "xoxp-globex-7c1d" });
+    fs.writeFileSync(secretLog, "");
+    const offSince = world.calls.length;
+    const photosOff = await runJson(root, ["--emoji", cache, "T1", "T2"], undefined, false);
+    assert.equal(photosOff.status, "off", "the photos extra off looks no token up");
+    assert.deepEqual(Object.keys(teamOf(photosOff, "T1").map).sort(), Object.keys(t1.map).sort(), "the photos extra off keeps the cached emoji");
+    assert.equal(fs.readFileSync(secretLog, "utf8"), "", "the photos extra off runs no secret-tool");
+    assert.deepEqual(world.calls.slice(offSince), [], "the photos extra off asks Slack nothing");
+
     // A token for T1: emoji.list adds an alias and an API-only emoji, and a
     // cached name the API lists at another URL takes the API's image.
-    store({ "slack:T1": "xoxp-acme-4f2a", "slack:T2": "xoxp-globex-7c1d" });
     world.list = {
         party: emojiUrl("T1", "party", "0000000000000002", "png"),
         yay: "alias:party",
@@ -375,6 +388,7 @@ function controls() {
         ["swap grace", "slack-emoji.js", "new Set(Array.from(map.values()).concat(Array.from(previous.map.values())))", "new Set(Array.from(map.values()))", /the previous index's file survives one run/],
         ["chunk fallback", "slack-emoji.js", "const alone = !magickRun(magick, chunk, CHUNK_TIMEOUT_MS);", "const alone = !magickRun(magick, chunk, CHUNK_TIMEOUT_MS) && false;", /every image converts after its chunk failed/],
         ["work budget", "slack-emoji.js", "if (work.remaining <= 0) {", "if (false) {", /a run converts at most its budget/],
+        ["the photos extra off reads no token for the list", "slack-photos.js", "const tokens = photos ? storedTokens(ids, lines) : [];", "const tokens = storedTokens(ids, lines);", /the photos extra off runs no secret-tool/],
         ["disabled grace", "slack-emoji.js", "writeState(root, id, { map: new Map(), sources: new Map(), list: null }, deps.atomicWrite);\n    sweepFiles(root, id, new Set(previous.map.values()));\n    return true;", "removeState(root, id);\n    return false;", /emoji off empties the index|survive the first run with emoji off/]
     ];
     let passed = 0;

@@ -26,7 +26,8 @@
   ],
   "settings": {
     "duration": 8,
-    "customEmoji": true
+    "customEmoji": true,
+    "slackPhotos": false
   },
   "schema": {
     "duration": {
@@ -40,7 +41,7 @@
     "customEmoji": {
       "type": "boolean",
       "label": "Slack custom emoji",
-      "description": "Draw each workspace's custom emoji in Slack notifications, read from Slack's own cache and, with a token that has emoji:read, from Slack's list; needs ImageMagick",
+      "description": "Draw each workspace's custom emoji in Slack notifications, read from Slack's own cache; needs ImageMagick",
       "group": "Slack"
     }
   },
@@ -55,6 +56,12 @@
   "secrets": {
     "service": "vgs-notifications",
     "label": "VGS notifications Slack token"
+  },
+  "extras": {
+    "slackPhotos": {
+      "status": ["slackTokens"],
+      "requirements": ["curl", "secret-tool"]
+    }
   },
   "tui": {
     "open": { "script": "tui/open.sh", "title": "Open a notification's file", "presentation": "plain" }
@@ -76,13 +83,13 @@
       "command": "curl",
       "packages": { "pacman": "curl", "apt": "curl", "dnf": "curl", "xbps": "curl", "emerge": "net-misc/curl", "nix": "curl" },
       "optional": true,
-      "purpose": "Calls the Slack Web API and downloads Slack profile photos and custom emoji"
+      "purpose": "Calls the Slack Web API for the Slack photos extra and downloads its photos and listed custom emoji"
     },
     {
       "command": "secret-tool",
       "packages": { "pacman": "libsecret", "apt": "libsecret-tools", "dnf": "libsecret", "xbps": "libsecret", "emerge": "app-crypt/libsecret", "nix": "libsecret" },
       "optional": true,
-      "purpose": "Reads each workspace's Slack token from the keyring"
+      "purpose": "Reads each workspace's Slack token from the keyring for the Slack photos extra"
     },
     {
       "command": "convert",

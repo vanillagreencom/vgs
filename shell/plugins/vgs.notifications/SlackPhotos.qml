@@ -3,16 +3,20 @@ import Quickshell
 import Quickshell.Io
 import "NotificationLogic.js" as Logic
 
-// Optional Slack Web API photos. The helper reads one Slack user token per
+// Optional Slack Web API photos, the owner-only Slack photos extra,
+// `photosEnabled`. With it on, the helper reads one Slack user token per
 // workspace, and the single-workspace token, from libsecret, then refreshes
 // each team's part of this plugin's cache under XDG cache at most once per
 // day. A missing token leaves that team out and prints nothing.
 // token-status.sh reports whether each token is stored, never reading it;
 // `tokenStates` holds its answer, account -> a `presence` status value,
-// and null before the first. Both run once `workspaces`, Slack's own list,
-// has been read, again when the list names other workspaces and after each
-// token write the core ends (`secretRevision`), the probe after each helper
-// run, and the helper at NotificationLogic.slackPhotoDelay.
+// and null before the first and while the extra is off. Both run once
+// `workspaces`, Slack's own list, has been read, again when the list names
+// other workspaces, when the extra changes and after each token write the
+// core ends (`secretRevision`), the probe after each helper run, and the
+// helper at NotificationLogic.slackPhotoDelay. With the extra off the probe
+// never runs and the helper reads no token and calls no Slack API: it only
+// sweeps the photo cache and builds the custom emoji.
 //
 // With `emojiEnabled`, the same run builds each listed team's custom emoji
 // from Slack's disk cache and emoji.list (slack-emoji.js), and the shell
@@ -45,6 +49,7 @@ Scope {
     // The team ids the running probe was asked about.
     property var probed: []
     property bool emojiEnabled: false
+    property bool photosEnabled: false
     // The count of token writes the core ended for this plugin, the
     // `secrets` capability's revision: a Connect or Disconnect on the
     // Settings page probes and loads again at once, rather than at the next
@@ -57,7 +62,7 @@ Scope {
     property string emojiKey: "[]"
     property int emojiSwaps: 0
     property int runs: 0
-    readonly property string generation: teamKey + "|" + emojiEnabled
+    readonly property string generation: teamKey + "|" + emojiEnabled + "|" + photosEnabled
 
     function teamIds() {
         return workspaces.map(w => w.id);
@@ -73,6 +78,11 @@ Scope {
     onListedChanged: Qt.callLater(start)
     onTeamKeyChanged: Qt.callLater(start)
     onSecretRevisionChanged: Qt.callLater(start)
+    // Off forgets the token states at once; the run then sweeps the photos.
+    onPhotosEnabledChanged: {
+        if (!photosEnabled) tokenStates = null;
+        Qt.callLater(start);
+    }
     // Off clears the cards' emoji at once; the run then empties the index.
     onEmojiEnabledChanged: {
         if (!emojiEnabled) swapEmoji([]);
@@ -95,6 +105,7 @@ Scope {
     }
 
     function checkToken() {
+        if (!photosEnabled) return;
         if (tokenProbe.running) { tokenCheckPending = true; return; }
         probed = teamIds();
         tokenProbe.command = ["bash", tokenScript].concat(probed);
@@ -107,7 +118,7 @@ Scope {
         loading = true;
         runs += 1;
         helper.generation = generation;
-        helper.command = ["node", script, "refresh", dir].concat(emojiEnabled ? ["--emoji", slackCache] : [], teamIds());
+        helper.command = Logic.slackHelperCommand(script, dir, teamIds(), photosEnabled, emojiEnabled, slackCache);
         helper.running = true;
     }
 
@@ -164,7 +175,8 @@ Scope {
                 if (done === null || done.code !== 0) photos.logProblem(lines !== "" ? lines : "notifications-slack-photos: " + (done === null ? "start=failed" : "exit=" + done.code));
                 else if (lines !== "") photos.logProblem(lines);
                 else photos.logRecovery(read);
-                photos.teams = read.teams;
+                // A run asked with the extra on may end after it went off.
+                photos.teams = photos.photosEnabled ? read.teams : [];
                 if (read.emoji !== null && helper.generation === photos.generation) photos.swapEmoji(read.emoji);
             }
             if (photos.loadPending) {
@@ -172,7 +184,8 @@ Scope {
                 photos.load();
                 return;
             }
-            photos.schedule(Logic.slackPhotoDelay(read, photos.workspaces, Date.now(), photos.emojiEnabled));
+            const delay = Logic.slackPhotoDelay(read, photos.workspaces, Date.now(), photos.emojiEnabled, photos.photosEnabled);
+            if (delay !== null) photos.schedule(delay);
         }
     }
 
@@ -189,6 +202,10 @@ Scope {
             if (running) return;
             const done = completion;
             completion = null;
+            if (!photos.photosEnabled) {
+                photos.tokenCheckPending = false;
+                return;
+            }
             const read = done !== null && done.code === 0 ? Logic.slackTokenStates(tokenOut.text) : { ok: false, error: "" };
             if (read.ok) photos.tokenStates = read.states;
             else {

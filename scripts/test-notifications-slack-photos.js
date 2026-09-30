@@ -7,8 +7,9 @@
 // serves the team team.info names unless that team's own token does, a
 // token for another team is refused, each team keeps its own freshness and
 // failure hold, the cache layout keeps users/ apart and sweeps an older
-// flat layout while leaving names it does not own, and no token reaches
-// argv, a file or a log line.
+// flat layout while leaving names it does not own, no token reaches argv,
+// a file or a log line, and without --photos, the Slack photos extra off,
+// no token is looked up, Slack is asked nothing and the photos are swept.
 "use strict";
 
 const assert = require("node:assert/strict");
@@ -106,13 +107,15 @@ function store(pairs) {
 }
 
 let env = null;
-function run(cache, ids, secretToolMode) {
+// One helper run over CACHE for the team IDS, with the Slack photos extra
+// on unless PHOTOS is false.
+function run(cache, ids, secretToolMode, photos = true) {
     const runEnv = secretToolMode === "absent" ? Object.assign({}, env, { PATH: path.join(scratch, "empty-bin") }) : env;
     const found = resolveCommand("secret-tool", runEnv);
     if (secretToolMode === "absent") assert.equal(found, "", "the missing-secret-tool case must not resolve a real secret-tool");
     else assert.equal(found, fs.realpathSync(secretToolPath), "tests must run only against the stub secret-tool");
     return new Promise(resolve => {
-        const child = childProcess.spawn(process.execPath, [helper, "refresh", cache].concat(ids), { cwd: repo, env: runEnv });
+        const child = childProcess.spawn(process.execPath, [helper, "refresh", cache].concat(photos ? ["--photos"] : [], ids), { cwd: repo, env: runEnv });
         let stdout = "";
         let stderr = "";
         child.stdout.setEncoding("utf8");
@@ -123,8 +126,8 @@ function run(cache, ids, secretToolMode) {
     });
 }
 
-async function runJson(cache, ids, secretToolMode) {
-    const result = await run(cache, ids, secretToolMode);
+async function runJson(cache, ids, secretToolMode, photos = true) {
+    const result = await run(cache, ids, secretToolMode, photos);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, "", "a clean refresh prints no stderr");
     return JSON.parse(result.stdout);
@@ -380,6 +383,22 @@ exit 1
     assert.deepEqual(fs.readdirSync(layoutCache).sort(), ["T1", "accounts.json"], "the old root index and failure file are gone");
     assert.deepEqual(fs.readdirSync(path.join(layoutCache, "T1")).sort(), ["notes", "notes.json", "team.json", "users", "users.json", "workspace.png"], "the old flat photos go and names the helper does not own stay");
     assert.deepEqual(fs.readdirSync(path.join(layoutCache, "T1", "notes")), ["party.png"]);
+
+    // The Slack photos extra off: with every token stored, no token is
+    // looked up and Slack is asked nothing, and the photos a run with the
+    // extra on left are swept.
+    store({ "slack:T1": "xoxp-acme-4f2a", "slack:T2": "xoxp-globex-7c1d", slack: "xoxp-legacy-9e3b" });
+    const offCache = path.join(scratch, "off-cache");
+    assert.equal((await runJson(offCache, ["T1", "T2"])).status, "loaded", "the extra on fetches the photos first");
+    assert.deepEqual(fs.readdirSync(offCache).sort(), ["T1", "T2", "accounts.json"], "the extra on caches both teams");
+    fs.writeFileSync(secretLog, "");
+    const offSince = world.calls.length;
+    assert.deepEqual(await runJson(offCache, ["T1", "T2"], undefined, false), { status: "off" }, "the photos extra off looks no token up");
+    assert.equal(fs.readFileSync(secretLog, "utf8"), "", "the photos extra off runs no secret-tool");
+    assert.deepEqual(callsSince(offSince), [], "the photos extra off asks Slack nothing");
+    assert.deepEqual(fs.readdirSync(offCache), [], "the photos extra off sweeps the photos a run with it on left");
+    const twice = await run(path.join(scratch, "twice"), ["--photos", "T1"]);
+    assert.deepEqual([twice.status, twice.stderr.trim()], [2, "notifications-slack-photos: refused: photos repeated"], "the photos option twice is refused");
 }
 
 function controls() {
@@ -398,7 +417,11 @@ function controls() {
         ["the legacy token is not fetched twice", "if (!served.has(id)) settle(LEGACY,", "if (true) settle(LEGACY,", /the workspace's own token wins|the legacy token asks only which team it serves/],
         ["the legacy token serves its team", "if (!served.has(id)) settle(LEGACY,", "if (false) settle(LEGACY,", /the legacy single token still works/],
         ["the old flat photos go", "(/\\.png$/.test(name) || TEMP_NAME.test(name))", "TEMP_NAME.test(name)", /the old flat photos go/],
-        ["foreign names stay", "TEAM_FILES.indexOf(name) !== -1 ? !keep.has(name) : (", "TEAM_FILES.indexOf(name) !== -1 ? !keep.has(name) : true || (", /names the helper does not own stay/]
+        ["foreign names stay", "TEAM_FILES.indexOf(name) !== -1 ? !keep.has(name) : (", "TEAM_FILES.indexOf(name) !== -1 ? !keep.has(name) : true || (", /names the helper does not own stay/],
+        ["the photos extra off reads no token", "const tokens = photos ? storedTokens(ids, lines) : [];", "const tokens = storedTokens(ids, lines);", /the photos extra off runs no secret-tool/],
+        ["the photos extra off fetches no photo", "const photoRun = !photos ? { value: { status: \"off\" }, kept: new Set(), accounts: null }\n        : tokens.length", "const photoRun = false ? null\n        : tokens.length", /the photos extra off looks no token up|the photos extra off asks Slack nothing/],
+        ["the photos option is read", "            photos = true;\n", "", /no token returns no cache/],
+        ["the photos option is taken once", "if (photos) usage(\"photos repeated\");", "", /the photos option twice is refused/]
     ];
     let passed = 0;
     for (let index = 0; index < table.length; index++) {

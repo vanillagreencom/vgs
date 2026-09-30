@@ -110,6 +110,7 @@ Item {
         workspaces: root.slackSource === null ? [] : root.slackSource.known
         listed: root.slackSource !== null && root.slackSource.listRead
         emojiEnabled: root.shell !== null && root.shell.settings.customEmoji === true
+        photosEnabled: root.shell !== null && root.shell.settings.slackPhotos === true
         secretRevision: root.shell === null ? 0 : root.shell.secrets.revision
         onTokenStatesChanged: root.publishTokens()
         onTeamsChanged: root.publishTokens()
@@ -120,8 +121,10 @@ Item {
     // listed workspace's token state, its libsecret account, which the
     // Settings page's Connect and Disconnect write through the core, and the
     // command that stores it, as the probe last found them
-    // (NotificationLogic.slackTokenRows). No token enters status. While the probe has not answered for the list as it
-    // now stands, the rows wait for its next answer.
+    // (NotificationLogic.slackTokenRows). No token enters status. While the
+    // probe has not answered for the list as it now stands, and while the
+    // Slack photos extra is off, the rows wait for its next answer; the
+    // core shows no row of an extra that is off.
     function publishTokens() {
         if (shell === null || slackPhotos.tokenStates === null) return;
         const rows = Logic.slackTokenRows(slackPhotos.workspaces, slackPhotos.tokenStates, slackPhotos.teams);
@@ -861,7 +864,7 @@ Item {
             held: Object.keys(held).length,
             readBefore: store.readBefore,
             duplicates: duplicates,
-            slack: { runs: slackPhotos.runs, idle: !slackPhotos.loading && !slackPhotos.loadPending, emoji: { on: slackPhotos.emojiEnabled, swaps: slackPhotos.emojiSwaps, teams: slackPhotos.emojiCounts() } }
+            slack: { photos: slackPhotos.photosEnabled, runs: slackPhotos.runs, idle: !slackPhotos.loading && !slackPhotos.loadPending, emoji: { on: slackPhotos.emojiEnabled, swaps: slackPhotos.emojiSwaps, teams: slackPhotos.emojiCounts() } }
         });
     }
 

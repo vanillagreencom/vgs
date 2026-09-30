@@ -76,6 +76,8 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D072 | VGS-665 | Coding-task records preserve four independent facts | Turn end and process exit do not report task success | Vendor task records, retention needs or control ownership change | Active | [Full](D072-coding-task-records-and-four-fact-state.md) |
 | 2026-09-30 | D073 | VGS-635 | Jarvis releases labelled content to the whole recipient set through one origin-bound network door | Brain answers reach speech; summaries and keys must not lose their consent boundary | A provider needs redirects, a new credential placement or another transport | Active | [Full](D073-jarvis-release-and-origin-bound-keys.md) |
 | 2026-09-30 | D074 | VGS-636 | Jarvis commands require kernel confinement and the same protected masks | Programs evade token scans; absent roots and aliases need kernel mounts | A command needs another host mount, endpoint or privilege | Active | [Full](D074-jarvis-kernel-sandbox.md) |
+| 2026-09-30 | D075 | VGS-683 | Consumer features need no developer setup; a feature that does is an owner-only `extras` entry the Settings page never shows | Most users cannot create a Slack app, and OAuth needs a server VGS lacks | Slack offers token-free photos, VGS gains a backend, or an extra gets a one-click setup | Active | [Full](D075-consumer-features-need-no-developer-setup.md) |
+| 2026-09-30 | D076 | VGS-683 | One-time migrations run once per user, in order, from `vgsh run` before the shell and from `vgsh self update` | A new version must change a user's file once; every install method reaches `vgsh run` | VGS ships a systemd unit or package hook, or a migration needs a privilege | Active | [Full](D076-one-time-migrations.md) |
 
 ---
 

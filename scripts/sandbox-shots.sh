@@ -1603,6 +1603,24 @@ case "\$state" in
 esac
 SH
       chmod 755 "$shim/secret-tool"
+      # The Slack token rows belong to the owner-only Slack photos extra
+      # (docs/decisions/D075-consumer-features-need-no-developer-setup.md),
+      # off by default: the plugins row turns it on, so the page shows the
+      # rows. A tree from before the extra passes the key on unread.
+      python3 - "$home/.config/vgs/shell.json" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+config = json.load(open(path))
+rows = config.setdefault("plugins", [])
+row = next((r for r in rows if r.get("id") == "vgs.notifications"), None)
+if row is None:
+    row = {"id": "vgs.notifications"}
+    rows.append(row)
+row["slackPhotos"] = True
+with open(path + ".tmp", "w") as out:
+    json.dump(config, out)
+os.replace(path + ".tmp", path)
+PY
       expect "the fixtures are scanned" ok ipc shell rescanPlugins
       expect_poll "the probe fixture is listed" True plugin_known acme.probe
       for id in acme.probe vgs.launcher vgs.notifications vgs.settings; do

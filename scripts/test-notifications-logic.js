@@ -432,7 +432,7 @@ function verify(logic) {
     same(logic.slackPhotos(JSON.stringify(photoCache)), { ok: true, status: "loaded", generatedAt: 0, downloadFailed: 0, stale: false, teams: photoCache.teams, emoji: null }, "a Slack photo cache is accepted");
     same(logic.slackPhotos(JSON.stringify({ status: "absent" })), { ok: true, status: "absent", generatedAt: 0, downloadFailed: 0, stale: false, teams: [], emoji: null }, "no token leaves no cache");
     same(logic.slackPhotos("{"), { ok: false, error: "not-json" });
-    same(logic.slackPhotos(JSON.stringify({ status: "stale" })), { ok: false, error: "status want=loaded|absent" });
+    same(logic.slackPhotos(JSON.stringify({ status: "stale" })), { ok: false, error: "status want=loaded|absent|off" });
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "../x", names: ["x"], users: [], account: "slack" }] })), { ok: false, error: "teams.0.id want=safe" });
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["x"], users: [] }] })), { ok: false, error: "teams.0.account want=slack|slack:<team id>" }, "a team names the account that served it");
     same(logic.slackPhotos(JSON.stringify({ status: "loaded", teams: [{ id: "T1", names: ["x"], users: [], account: "slack:../x" }] })), { ok: false, error: "teams.0.account want=slack|slack:<team id>" });
@@ -538,7 +538,7 @@ function verify(logic) {
         ["a refused answer", { ok: false, error: "not-json" }, [], RETRY],
         ["a day already over", loaded({ generatedAt: NOW - 2 * DAY }), listedTwo, 1000]
     ])
-        assert.equal(logic.slackPhotoDelay(read, listed, NOW), want, "next photo run with " + label);
+        assert.equal(logic.slackPhotoDelay(read, listed, NOW, false, true), want, "next photo run with " + label);
 
     // With custom emoji on: pending emoji bring the run within a minute,
     // and the cache is read again within the hour.
@@ -549,8 +549,32 @@ function verify(logic) {
         ["a photo retry sooner than the rescan", loaded({ stale: true, emoji: [] }), RETRY],
         ["a refused answer", { ok: false, error: "not-json" }, RETRY]
     ])
-        assert.equal(logic.slackPhotoDelay(read, listedTwo, NOW, true), want, "next run with emoji on and " + label);
-    assert.equal(logic.slackPhotoDelay(loaded({ emoji: [{ team: "T1", map: {}, pending: 3 }] }), listedTwo, NOW, false), DAY - 1000, "emoji off leave the photos' day");
+        assert.equal(logic.slackPhotoDelay(read, listedTwo, NOW, true, true), want, "next run with emoji on and " + label);
+    assert.equal(logic.slackPhotoDelay(loaded({ emoji: [{ team: "T1", map: {}, pending: 3 }] }), listedTwo, NOW, false, true), DAY - 1000, "emoji off leave the photos' day");
+
+    // With the Slack photos extra off no photo schedule runs: the emoji keep
+    // theirs, and with emoji off too the sweeping run is the last.
+    const offRead = extra => Object.assign({ ok: true, status: "off", teams: [], generatedAt: 0, downloadFailed: 0, stale: false, emoji: null }, extra);
+    for (const [label, read, emojiOn, want] of [
+        ["emoji waiting to be converted", offRead({ emoji: [{ team: "T1", map: {}, pending: 3 }] }), true, MINUTE],
+        ["every emoji converted", offRead({ emoji: [{ team: "T1", map: {}, pending: 0 }] }), true, HOUR],
+        ["a refused answer with emoji on", { ok: false, error: "not-json" }, true, RETRY],
+        ["emoji off", offRead({}), false, null],
+        ["a refused answer with emoji off", { ok: false, error: "not-json" }, false, null],
+        ["a workspace without photos", offRead({ emoji: [] }), true, HOUR]
+    ])
+        assert.equal(logic.slackPhotoDelay(read, listedTwo, NOW, emojiOn, false), want, "next run with the photos extra off and " + label);
+
+    // The helper's argv: --photos only with the extra on, --emoji with its
+    // cache only with emoji on, the team ids last.
+    for (const [label, photos, emoji, want] of [
+        ["both off", false, false, ["node", "/p/slack-photos.js", "refresh", "/c", "T1", "T2"]],
+        ["the photos extra on", true, false, ["node", "/p/slack-photos.js", "refresh", "/c", "--photos", "T1", "T2"]],
+        ["custom emoji on", false, true, ["node", "/p/slack-photos.js", "refresh", "/c", "--emoji", "/s/Cache_Data", "T1", "T2"]],
+        ["both on", true, true, ["node", "/p/slack-photos.js", "refresh", "/c", "--photos", "--emoji", "/s/Cache_Data", "T1", "T2"]]
+    ])
+        same(logic.slackHelperCommand("/p/slack-photos.js", "/c", ["T1", "T2"], photos, emoji, "/s/Cache_Data"), want, "the helper's argv with " + label);
+    same(logic.slackPhotos(JSON.stringify({ status: "off" })), { ok: true, status: "off", teams: [], generatedAt: 0, downloadFailed: 0, stale: false, emoji: null }, "a run with the photos extra off is read");
 
     // The helper's emoji list, and its refusals: [label, emoji, error].
     const HEX = "0123456789abcdef";
@@ -745,7 +769,11 @@ const CONTROLS = [
     ["reload gap", "return now - loadedAt >= WORKSPACE_RELOAD_GAP;", "return true;"],
     ["tint by the folded name", 'var key = fold(name || "");', 'var key = String(name || "");'],
     ["tint by the hash", "return FACE_TINTS[hash % FACE_TINTS.length];", "return FACE_TINTS[0];"],
-    ["Slack photo cache status", 'if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent" };', 'if (false) return { ok: false, error: "status want=loaded|absent" };'],
+    ["Slack photo cache status", 'if (parsed.status !== "loaded") return { ok: false, error: "status want=loaded|absent|off" };', 'if (false) return { ok: false, error: "status want=loaded|absent|off" };'],
+    ["a run with the photos extra off is read", 'if (parsed.status === "absent" || parsed.status === "off")', 'if (parsed.status === "absent")'],
+    ["the helper reads tokens only with the photos extra on", 'photos ? ["--photos"] : []', '["--photos"]'],
+    ["the photos extra off runs no photo schedule", "var photos = photosOn ? slackPhotoOnlyDelay(read, workspaces, now) : Infinity;", "var photos = slackPhotoOnlyDelay(read, workspaces, now);"],
+    ["with nothing on the sweeping run is the last", "return delay === Infinity ? null : delay;", "return delay === Infinity ? SLACK_PHOTO_RETRY : delay;"],
     ["Slack photo safe team id", 'if (typeof team.id !== "string" || !/^[A-Za-z0-9]{1,32}$/.test(team.id)) return { ok: false, error: "teams." + t + ".id want=safe" };', 'if (false) return { ok: false, error: "teams." + t + ".id want=safe" };'],
     ["Slack photo file URL only", 'return typeof value === "string" && /^file:\\/\\/\\/[^\\s?#]+\\.png\\?v=[0-9a-f]{16}$/.test(value) ? value : "";', 'return typeof value === "string" ? value : "";'],
     ["Slack photo workspace match", "if (fold(teams[t].names[n]) === wanted) return teams[t];", "if (false) return teams[t];"],
@@ -782,7 +810,7 @@ const CONTROLS = [
     ["a shortcode resolves by an own name alone", "if (count >= EMOJI_PER_BODY || !hasOwn(lookup, found[1])) {", "if (count >= EMOJI_PER_BODY || !lookup[found[1]]) {"],
     ["a body's substitutions are capped", "if (count >= EMOJI_PER_BODY || !hasOwn", "if (!hasOwn"],
     ["a card takes its own workspace's emoji alone", "return id !== \"\" && hasOwn(lookups, id) ? lookups[id] : null;", "return id !== \"\" ? Object.assign.apply(null, [{}].concat(Object.keys(lookups).map(function (k) { return lookups[k]; }))) : null;"],
-    ["pending emoji bring the run within a minute", "return Math.min(photos, pending ? SLACK_EMOJI_PENDING : SLACK_EMOJI_RESCAN);", "return Math.min(photos, SLACK_EMOJI_RESCAN);"],
+    ["pending emoji bring the run within a minute", "pending ? SLACK_EMOJI_PENDING : SLACK_EMOJI_RESCAN;", "SLACK_EMOJI_RESCAN;"],
     ["an emoji name is judged", "if (!EMOJI_NAME.test(names[n])) return", "if (false) return"],
     ["an emoji file is sixteen hex digits", "if (typeof hex !== \"string\" || !/^[0-9a-f]{16}$/.test(hex)) return", "if (false) return"],
     ["an emoji lookup has no prototype", "var lookup = Object.create(null);", "var lookup = {};"],

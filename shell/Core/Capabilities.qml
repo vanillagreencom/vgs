@@ -176,11 +176,12 @@ Singleton {
     }
 
     // What the manager's steps judge plugin ID by: { manifest, enabled,
-    // values }, its manifest or null for an id no plugin has, whether it
-    // is enabled and the status values it published.
+    // values }, its manifest as its settings apply it
+    // (Registry.activeManifestOf) or null for an id no plugin has, whether
+    // it is enabled and the status values it published.
     function managerSubject(id) {
         const known = typeof id === "string" && Registry.has(id);
-        return { manifest: known ? Registry.manifests[id] : null, enabled: known && Registry.isEnabled(id), values: known ? PluginStatus.valuesOf(id) : {} };
+        return { manifest: known ? Registry.activeManifestOf(id) : null, enabled: known && Registry.isEnabled(id), values: known ? PluginStatus.valuesOf(id) : {} };
     }
 
     // The manager's act on plugin ID's status entry KEY (D061): the

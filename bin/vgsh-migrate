@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# vgsh-migrate: VGS's one-time migrations (docs/architecture/migrations.md,
+# docs/decisions/D076-one-time-migrations.md).
+#
+#   vgsh-migrate run [--notice]    run each pending migration once, in name order
+#   vgsh-migrate pending           print each pending migration's name, one per line
+#
+# A migration is one bash script under bin/migrations/ of the tree this file
+# sits in, named <unix time, 10 digits>-<slug>.sh with a slug of lower-case
+# letters, digits and single hyphens; the names sort in the order they run.
+# A migration is pending until its marker exists: a file of the same name
+# under ${XDG_STATE_HOME:-~/.local/state}/vgs/migrations/, written once the
+# migration exits 0 and holding the time it ran. A marker whose migration
+# no longer ships is left alone.
+#
+# `run` runs each pending migration with bash -euo pipefail, stdin from
+# /dev/null, VGS_ROOT the tree's root and VGS_MIGRATION its own name in the
+# environment, under setpriv --no-new-privs, so no setuid program it starts
+# gains a privilege, and under timeout, migrate_timeout seconds below. It
+# prints `vgsh-migrate: ran=<name>` for each, then `vgsh-migrate: ok ran=<n>`.
+# A migration that fails or times out stops the run: no later one runs, it
+# gets no marker, so the next run tries it again, and the run prints
+# `vgsh-migrate: failed=<name> status=<n>` on stderr and exits 1. With
+# --notice it also shows a Hyprland warning notice, since the runner that
+# passes it has no terminal; the notice names no command to run
+# (docs/decisions/D061-no-manual-commands.md).
+#
+# Refusals, before any migration runs, one keyed line on stderr:
+#   vgsh-migrate: refused: migration=<name> want=<10 digits>-<slug>.sh   exit 2
+#   vgsh-migrate: refused: lock=busy path=<file>                         exit 75
+#   vgsh-migrate: refused: argument=<arg>                                exit 2
+# Only one run holds the state directory's lock at a time; a second run,
+# such as a self-update beside a starting runner, refuses at once and
+# leaves the migrations to the first.
+set -euo pipefail
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+root="$(cd -- "$(dirname -- "$self")/.." && pwd -P)"
+migrations="$root/bin/migrations"
+state="${XDG_STATE_HOME:-$HOME/.local/state}/vgs/migrations"
+name_pattern='^[0-9]{10}-[a-z0-9]+(-[a-z0-9]+)*\.sh$'
+# A migration edits a file or two; one still running after this long is
+# stuck, and the shell's start waits on it. Below the 30 s `vgsh restart`
+# waits for the shell the new runner starts.
+migrate_timeout=20
+# How long the notice of a failed migration stays, in milliseconds.
+notice_ms=600000
+notice_text='VGS could not finish updating your settings: migration %s failed. It runs again the next time VGS starts.'
+
+refuse() { # STATUS KEY
+  printf 'vgsh-migrate: refused: %s\n' "$2" >&2
+  exit "$1"
+}
+
+# Every shipped migration's name, in the order they run; refuses a name
+# outside the pattern, which would run in no defined order.
+shipped() {
+  local file name
+  [[ -d $migrations ]] || return 0
+  for file in "$migrations"/*; do
+    [[ -e $file ]] || continue
+    name="${file##*/}"
+    [[ $name =~ $name_pattern ]] || refuse 2 "migration=$name want=<10 digits>-<slug>.sh"
+    printf '%s\n' "$name"
+  done
+}
+
+pending() {
+  local name names
+  names="$(shipped)" || exit
+  while IFS= read -r name; do
+    [[ -n $name && ! -e $state/$name ]] && printf '%s\n' "$name"
+  done <<<"$names"
+  return 0
+}
+
+run() { # NOTICE
+  local names name status ran=0 reply notice
+  mkdir -p -- "$state"
+  exec 8>>"$state/.lock"
+  flock -n 8 || refuse 75 "lock=busy path=$state/.lock"
+  # Read under the lock, so no migration another run just finished runs
+  # again.
+  names="$(pending)" || exit
+  while IFS= read -r name; do
+    [[ -n $name ]] || continue
+    status=0
+    VGS_ROOT="$root" VGS_MIGRATION="$name" timeout "$migrate_timeout" \
+      setpriv --no-new-privs -- bash -euo pipefail "$migrations/$name" </dev/null 8>&- || status=$?
+    if [[ $status -ne 0 ]]; then
+      printf 'vgsh-migrate: failed=%s status=%s\n' "$name" "$status" >&2
+      if [[ $1 == true ]]; then
+        printf -v notice "$notice_text" "${name%.sh}"
+        reply="$(hyprctl notify 0 "$notice_ms" 0 "$notice" 2>&1 8>&-)" || :
+        [[ $reply == ok ]] || printf 'vgsh-migrate: notice=failed reply=%s\n' "${reply//$'\n'/\\n}" >&2
+      fi
+      exit 1
+    fi
+    date -u +%Y-%m-%dT%H:%M:%SZ >"$state/.$name.tmp"
+    mv -f -- "$state/.$name.tmp" "$state/$name"
+    printf 'vgsh-migrate: ran=%s\n' "$name"
+    ran=$((ran + 1))
+  done <<<"$names"
+  printf 'vgsh-migrate: ok ran=%s\n' "$ran"
+}
+
+case "${1:-}" in
+  run)
+    shift
+    notice=false
+    if [[ ${1:-} == --notice ]]; then notice=true; shift; fi
+    [[ $# -eq 0 ]] || refuse 2 "argument=$1"
+    run "$notice"
+    ;;
+  pending)
+    shift
+    [[ $# -eq 0 ]] || refuse 2 "argument=$1"
+    pending
+    ;;
+  *) refuse 2 "argument=${1:-missing}" ;;
+esac

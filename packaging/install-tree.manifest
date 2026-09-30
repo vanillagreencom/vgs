@@ -15,10 +15,12 @@ f share/vgs/bin/lib/theme-render.js
 f share/vgs/bin/lib/theme-select.js
 f share/vgs/bin/lib/tmpfiles.d/vgs-sudo-grant.conf
 f share/vgs/bin/lib/tui.sh
+f share/vgs/bin/migrations/1790801764-slack-photos-extra.sh
 f share/vgs/bin/vgsh
 f share/vgs/bin/vgsh-browser-policy
 f share/vgs/bin/vgsh-hypr-judge
 f share/vgs/bin/vgsh-lock
+f share/vgs/bin/vgsh-migrate
 f share/vgs/bin/vgsh-pkg
 f share/vgs/bin/vgsh-plugin-judge
 f share/vgs/bin/vgsh-scan
