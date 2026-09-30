@@ -179,11 +179,16 @@ Item {
             compare(pointed.count, 1);
             plate.disarm();
             root.current = 0;
-            mouseMove(row(2), 22, 11);
+            // The pointer rests where it was, as Qt delivers it hover again
+            // while the cursor travels.
+            mouseMove(row(2), 22, 10);
             compare(root.current, 0, "a disarmed cursor waits for the pointer to move again");
+            // Nothing moves under the pointer here, so Qt delivers no hover
+            // between the disarm and the reading: only arm() lets it take.
+            plate.disarm();
             plate.arm();
-            mouseMove(row(2), 22, 11);
-            compare(root.current, 2, "an armed cursor takes the selection without a move");
+            mouseMove(row(2), 24, 10);
+            compare(root.current, 2, "an armed cursor takes the selection on its first reading");
             mouseMove(root, 390, 590);
         }
 

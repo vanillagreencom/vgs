@@ -232,12 +232,15 @@ Item {
             compare(menu.currentIndex, 0, "the first reading after a key moves nothing");
             mouseMove(items[1], 12, 5);
             compare(menu.currentIndex, 1, "a moved pointer highlights the entry under it");
-            mouseMove(items[2], 12, 5);
-            compare(menu.currentIndex, 1, "a hover highlights no disabled entry");
             menu.move(-1);
             compare(menu.currentIndex, 0);
-            mouseMove(items[1], 14, 5);
+            // The pointer rests where it was: Qt delivers it hover again
+            // while the cursor travels, and a resting pointer must not take
+            // the highlight back from the key.
+            mouseMove(items[1], 12, 5);
             compare(menu.currentIndex, 0, "a key disarms the pointer");
+            mouseMove(items[2], 12, 5);
+            compare(menu.currentIndex, 0, "a hover highlights no disabled entry");
             menu.close();
         }
 
@@ -273,7 +276,10 @@ Item {
             keyClick(Qt.Key_Down);
             compare(list.currentIndex, 1);
             compare(String(second.background.color), "#00000000", "the highlighted entry draws no fill of its own");
-            mouseMove(first, 14, 5);
+            // The pointer rests where it was: Qt delivers it hover again
+            // while the cursor travels, and a resting pointer must not take
+            // the highlight back from the key.
+            mouseMove(first, 12, 5);
             compare(list.currentIndex, 1, "a key disarms the pointer");
             select.choose(0);
         }
