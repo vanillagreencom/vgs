@@ -25,11 +25,13 @@
 # lock, D053, with a planted process that outlives the shell and stands in
 # for a download: the shell holds no descriptor on the lock; `vgsh
 # restart` during that process brings a guarded shell back; after a
-# SIGKILL to the shell the lock is free and `vgsh run` starts; and
-# harness.sh's stop_shell returns with a relaunched runner's lock free.
+# SIGKILL to the shell the same runner starts a new shell, D069, and
+# holds the lock while the planted process holds none; and harness.sh's
+# stop_shell returns with a relaunched runner's lock free.
 # Its controls are a copy of the tree whose runner execs qs with the
-# lock's descriptor open, whose restart refuses stop=timeout and whose run
-# after a crash exits 75 while the planted process runs; a stop with no
+# lock's descriptor open, whose restart refuses stop=timeout and after
+# whose crash the planted process holds the lock and `vgsh run` exits 75;
+# a stop with no
 # lock wait, which returns with the lock held while the shell is stopped
 # with SIGSTOP; and a stop that times out on the lock, which fails and
 # names the runner among its holders. The row runs last and leaves the
@@ -116,42 +118,14 @@ if restart_over "$repo" "$sandbox/start-order-qs.log"; then
   check_unexpected_log "the default-set shell's log" "$instance_log"
 fi
 
-# copy_tree NAME: a copy of the tree at $sandbox/start-order-NAME, with its
-# own bin/ and shell/. edit_tree NAME FILE OLD NEW: in that copy, OLD in
-# FILE, a path under it, replaced by NEW; returns 1, with the row failed,
-# unless OLD occurs once and the file changed.
-copy_tree() { # NAME
-  local tree="$sandbox/start-order-$1" dir file
-  rm -rf -- "$tree"
-  mkdir -p -- "$tree"
-  cp -R -- "$repo/shell" "$tree/shell"
-  cp -R -- "$repo/bin" "$tree/bin"
-  for dir in config themes; do ln -s -- "$repo/$dir" "$tree/$dir"; done
-  for file in VERSION LICENSE README.md; do cp -- "$repo/$file" "$tree/$file"; done
-}
-edit_tree() { # NAME FILE OLD NEW
-  local path="$sandbox/start-order-$1/$2"
-  cp -- "$path" "$path.orig"
-  if python3 -c '
-import sys
-path, old, new = sys.argv[1:]
-text = open(path).read()
-if text.count(old) != 1:
-    sys.exit("occurs %d times" % text.count(old))
-open(path, "w").write(text.replace(old, new))' "$path" "$3" "$4" && ! cmp -s -- "$path" "$path.orig"; then
-    ok "the $1 copy's edit applies once to $2"
-  else
-    fail "the $1 copy could not edit $2"
-    return 1
-  fi
-}
+# harness.sh's copy_tree and edit_tree make the copies below.
 
 # The service host with no gate: services build in the scan's turn, before
 # any bar frame.
 if copy_tree ungated && edit_tree ungated shell/Hosts/ServiceHost.qml \
     'model: ServiceGate.release !== "" ? Registry.enabledOfKind("service") : []' \
     'model: Registry.enabledOfKind("service")' \
-  && restart_over "$sandbox/start-order-ungated" "$sandbox/start-order-ungated-qs.log"; then
+  && restart_over "$sandbox/tree-ungated" "$sandbox/start-order-ungated-qs.log"; then
   expect "control: with no gate a service is built before the first bar frame" services-first services_order
 fi
 
@@ -163,7 +137,7 @@ fi
 if copy_tree backgrounds-late && edit_tree backgrounds-late shell/Hosts/BackgroundHost.qml \
     'readonly property var ids: Registry.enabledOfKind("background").filter(id => {' \
     'readonly property var ids: (Plugins.built["service"] === undefined ? [] : Registry.enabledOfKind("background")).filter(id => {' \
-  && restart_over "$sandbox/start-order-backgrounds-late" "$sandbox/start-order-backgrounds-late-qs.log"; then
+  && restart_over "$sandbox/tree-backgrounds-late" "$sandbox/start-order-backgrounds-late-qs.log"; then
   expect_poll "control: a background built after the services leaves the lock with the service" '["acme.locker"]' lent holders.lock
 fi
 
@@ -171,7 +145,7 @@ fi
 if copy_tree follow-on-release && edit_tree follow-on-release shell/shell.qml \
     $'        target: root.guarded ? Registry : null\n        function onScanFinished() { Capabilities.themes.follow(); }' \
     $'        target: root.guarded ? ServiceGate : null\n        function onReleaseChanged() { Capabilities.themes.follow(); }' \
-  && restart_over "$sandbox/start-order-follow-on-release" "$sandbox/start-order-follow-on-release-qs.log"; then
+  && restart_over "$sandbox/tree-follow-on-release" "$sandbox/start-order-follow-on-release-qs.log"; then
   expect "control: a follow on the release is queued after its scan's turn" late follow_order
 fi
 
@@ -179,7 +153,7 @@ fi
 if copy_tree follow-held && edit_tree follow-held shell/shell.qml \
     'function onScanFinished() { Capabilities.themes.follow(); }' \
     'function onScanFinished() { if (ServiceGate.release === "") Capabilities.themes.follow(); }' \
-  && restart_over "$sandbox/start-order-follow-held" "$sandbox/start-order-follow-held-qs.log"; then
+  && restart_over "$sandbox/tree-follow-held" "$sandbox/start-order-follow-held-qs.log"; then
   expect "control: a follow held to the gate queues none for a rescan" 0 rescan_follows
 fi
 
@@ -218,6 +192,12 @@ plant() { # NAME
 }
 # How many lines of harness.sh's /proc scan of the lock's holders name PID.
 holders_named() { lock_holders "$rt_dir/vgsh.lock" | grep -c -F -- "holder pid=$1 comm=" || :; } # PID
+# Whether a process that waits for the gate plant made holds the lock.
+planted_holds() {
+  local holders
+  holders="$(lock_holders "$rt_dir/vgsh.lock")" || return
+  if grep -q -F -- "$gate" <<<"$holders"; then echo yes; else echo no; fi
+}
 
 # A stop whose TERM reaches a stand-in, never the runner, times out on the
 # lock the runner holds: the row fails once and names the runner among the
@@ -287,18 +267,18 @@ fi
 # and starts the copy through start_shell, whose runner's pid is its
 # shell's.
 IFS= read -r -d '' runner_now <<'VGSH' || :
-    (
-      printf '%s\n' "$BASHPID" >&9
-      exec 9>&-
-      VGSH_RUNNER_PID=$BASHPID QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec setpriv --pdeathsig TERM -- qs -p "$shell_dir"
-    ) &
+  (
+    printf '%s\n' "$BASHPID" >&9
+    exec 9>&-
+    VGSH_RUNNER_PID=$BASHPID QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec setpriv --pdeathsig TERM -- qs -p "$shell_dir"
+  ) &
 VGSH
 IFS= read -r -d '' runner_inherited <<'VGSH' || :
-    printf '%s\n' "$$" >&9
-    VGSH_RUNNER_PID=$$ QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec qs -p "$shell_dir"
+  printf '%s\n' "$$" >&9
+  VGSH_RUNNER_PID=$$ QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 exec qs -p "$shell_dir"
 VGSH
-inherited_bin="$sandbox/start-order-inherited/bin/vgsh"
-start_inherited() { stop_shell && start_shell "$sandbox/start-order-inherited" "$1"; } # LOG
+inherited_bin="$sandbox/tree-inherited/bin/vgsh"
+start_inherited() { stop_shell && start_shell "$sandbox/tree-inherited" "$1"; } # LOG
 restart_refusal() { printf '%s %s\n' "$restart_status" "$(head -n 1 -- "$restart_err")"; }
 # The status of `vgsh run` from BIN, its output in LOG, or `running` when
 # it did not end within 5 s; a run that started is stopped.
@@ -323,29 +303,35 @@ if copy_tree inherited && edit_tree inherited bin/vgsh "$runner_now" "$runner_in
     expect "control: the inherited-lock copy's restart refuses on the lock a live child keeps" "1 vgsh: refused: stop=timeout pid=$shell_qs_pid" restart_refusal
     : >"$gate"
   fi
-  # After a crash, the copy's run refuses while a live child keeps the lock.
+  # After a crash, the planted process keeps the lock the copy's runner
+  # handed it, so `vgsh run` refuses while it runs.
   if start_inherited "$sandbox/start-order-inherited-crash-qs.log"; then
     plant inherited-crash
     kill -KILL "$shell_qs_pid"
     wait "$shell_pid" 2>/dev/null || :
+    expect "control: after the inherited-lock copy's crash the planted process holds the lock" yes planted_holds
     expect "control: the inherited-lock copy's run after a crash refuses on the lock a live child keeps" 75 \
       run_status "$inherited_bin" "$sandbox/start-order-inherited-run.log"
     : >"$gate"
   fi
 fi
 
-# A crash with a live child: SIGKILL to the shell's qs, by pid, ends the
-# runner, the lock frees with the planted process still running, and the
-# next `vgsh run` starts.
+# A crash with a live child: SIGKILL to the shell's qs, by pid. The same
+# runner starts a new shell (D069) while the planted process still runs,
+# the runner holds the lock and the planted process holds none.
 crash_state() { printf '%s %s\n' "$(lock_state)" "$(holder_state "$gate")"; }
 if restart_over "$repo" "$sandbox/start-order-crash-qs.log"; then
   plant crash
-  kill -KILL "$shell_qs_pid"
-  expect_poll "the runner ends after the shell's crash" ended pid_state "$shell_pid"
-  expect "after the crash the lock is free while the planted process runs" "free running" crash_state
-  if restart_over "$repo" "$sandbox/start-order-after-crash-qs.log"; then
-    ok "vgsh run after a crash with a live child starts"
-    expect "the planted process still runs after the new start" running holder_state "$gate"
+  crashed="$shell_qs_pid"
+  crash_runner="$shell_pid"
+  kill -KILL "$crashed"
+  if adopt_shell "$crashed"; then
+    ok "the runner started a new shell after the crash of pid $crashed"
+    expect "the new shell is the same runner's child" "$crash_runner" awk '$1 == "PPid:" { print $2 }' "/proc/$shell_qs_pid/status"
+    expect "after the crash the lock is held while the planted process runs" "held running" crash_state
+    expect "the runner holds the lock" 1 holders_named "$crash_runner"
+    expect "the planted process holds no descriptor on the lock" no planted_holds
+    expect "the new shell answers as the guarded instance" true ipc shell guarded
   fi
   : >"$gate"
 fi
@@ -360,7 +346,7 @@ fi
 if copy_tree no-bar-held && edit_tree no-bar-held shell/Core/ServiceGate.qml \
     'if (built.length === 0) { open("no-bar", []); return; }' \
     'if (built.length === 0) return;' \
-  && restart_over "$sandbox/start-order-no-bar-held" "$sandbox/start-order-no-bar-held-qs.log" '["vgs.bar"]' no-bar; then
+  && restart_over "$sandbox/tree-no-bar-held" "$sandbox/start-order-no-bar-held-qs.log" '["vgs.bar"]' no-bar; then
   expect "control: a gate that waits when no bar is built never releases" unreleased release_reason
 fi
 
@@ -374,12 +360,12 @@ bar_hidden() { # NAME
     $'            WlrLayershell.layer: WlrLayer.Top\n            visible: false\n'
 }
 deadline_warnings() { log_lines 'WARN qml: plugins: services released reason=deadline waited_ms=[0-9]+ unpresented=bar:'; }
-if bar_hidden bar-hidden && restart_over "$sandbox/start-order-bar-hidden" "$sandbox/start-order-bar-hidden-qs.log" '[]' no-bar; then
+if bar_hidden bar-hidden && restart_over "$sandbox/tree-bar-hidden" "$sandbox/start-order-bar-hidden-qs.log" '[]' no-bar; then
   expect "a bar that never presents holds the services until the deadline" deadline release_reason
   expect "the deadline's one warning names the bar host" 1 deadline_warnings
   expect_poll "past the deadline the services are built" True record_exists vgs.themes
 fi
 if bar_hidden no-deadline && edit_tree no-deadline shell/Core/ServiceGate.qml $'            deadline.start();\n' '' \
-  && restart_over "$sandbox/start-order-no-deadline" "$sandbox/start-order-no-deadline-qs.log" '[]' no-bar; then
+  && restart_over "$sandbox/tree-no-deadline" "$sandbox/start-order-no-deadline-qs.log" '[]' no-bar; then
   expect "control: a gate with no deadline never releases past a bar that never presents" unreleased release_reason
 fi

@@ -206,6 +206,7 @@ smoke_row jarvis
 smoke_row hyprland
 smoke_row instance-guard
 smoke_row diagnostics
+smoke_row supervise
 smoke_row lock
 smoke_row read-only-prefix
 smoke_row notices-control

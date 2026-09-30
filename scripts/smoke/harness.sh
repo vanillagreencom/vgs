@@ -947,7 +947,8 @@ theme_idle() { # [IPC_FN]
 # go to env after the harness's own, so a row's PATH wins over
 # shell_start_path. Sets shell_pid, the runner's pid, which stop_shell
 # signals, the first-bar reading, shell_qs_pid, the shell's pid, which a
-# row addresses the shell by, and instance_log.
+# row addresses the shell by, and instance_log, and keeps TREE and LOG
+# as shell_tree and shell_log for adopt_shell.
 # It clears the last two first, so a failed start leaves no earlier
 # shell's pid or log in their place. BAR `no-bar` takes no first-bar
 # reading, for a start that maps no bar. Returns 1, with the row failed,
@@ -980,11 +981,13 @@ theme_idle() { # [IPC_FN]
 # spawn's setsid does not fork, as a background job is no process group
 # leader, so the runner is spawn_pid itself.
 start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
-  local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths pong up=false qs_pid comm="" instance_id
+  local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths
   shift $(( $# < 3 ? $# : 3 ))
   [[ $bar == bar || $bar == no-bar ]] || { fail "start_shell: refused: bar=$bar want=bar|no-bar"; return 1; }
   instance_log=""
   shell_qs_pid=""
+  shell_tree="$tree"
+  shell_log="$log"
   start_cpu_some_us="$(cpu_some_us)"
   start_ms="$(now_ms)"
   spawn "$log" "${shell_env[@]}" "${shell_start_words[@]}" "$@" "$tree/bin/vgsh" run
@@ -1008,6 +1011,15 @@ start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
       sleep 0.01
     done
   fi
+  shell_answers "$tree" "$log"
+}
+# shell_answers TREE LOG: the tail start_shell and adopt_shell share. It
+# waits, every 200 ms for up to timeout_s, for the shell to answer ping
+# through the ipc function while the runner shell_pid runs, then sets
+# shell_qs_pid from TREE's `vgsh pid` and instance_log from the sandbox's
+# instances. Returns 1, with the row failed, as start_shell describes.
+shell_answers() { # TREE LOG
+  local tree="$1" log="$2" pong up=false qs_pid comm="" instance_id
   for _ in $(seq 1 $((timeout_s * 5))); do
     if pong="$(ipc shell ping 2>/dev/null)" && [[ $pong == ok ]]; then up=true; break; fi
     kill -0 "$shell_pid" 2>/dev/null || break
@@ -1033,6 +1045,67 @@ start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
     sleep 0.2
   done
   if [[ -n $instance_log && -f $instance_log ]]; then ok "the shell's instance log is at $instance_log"; else fail "instance log not found for pid $shell_qs_pid"; instance_log=""; return 1; fi
+}
+# relaunched_within KILLED BOUND_MS: `back` once the lock file names a live
+# pid other than KILLED while the runner shell_pid runs, `runner-ended` once
+# that runner has ended, `none` when neither happened within BOUND_MS. It
+# reads every 50 ms. The runner empties the lock file before it waits to
+# start a shell again (docs/architecture/runtime.md § Process), so a pid
+# the file names after KILLED died is the new shell's.
+relaunched_within() { # KILLED BOUND_MS
+  local pid stat deadline=$(( $(now_ms) + $2 ))
+  while :; do
+    if ! stat="$(ps -o stat= -p "$shell_pid")" || [[ $stat == Z* ]]; then echo runner-ended; return; fi
+    if IFS= read -r pid 2>/dev/null <"$rt_dir/vgsh.lock" && [[ $pid =~ ^[0-9]+$ && $pid != "$1" && -d /proc/$pid ]]; then echo back; return; fi
+    (( $(now_ms) < deadline )) || { echo none; return; }
+    sleep 0.05
+  done
+}
+# adopt_shell KILLED: the shell the runner shell_pid started again after
+# its shell KILLED died, taken up as start_shell takes up a new one: once
+# relaunched_within reads it back within 20 s, shell_answers sets
+# shell_qs_pid and instance_log from the tree and the log start_shell
+# kept. adopt_ms is the time from the call to the shell answering ping.
+# Returns 1, with the row failed, when no shell came back.
+adopt_shell() { # KILLED
+  local start_ms back
+  start_ms="$(now_ms)"
+  instance_log=""
+  shell_qs_pid=""
+  adopt_ms=""
+  back="$(relaunched_within "$1" 20000)"
+  [[ $back == back ]] || { fail "adopt_shell: no shell replaced pid $1: $back"; return 1; }
+  shell_answers "$shell_tree" "$shell_log" || return 1
+  adopt_ms=$(( $(now_ms) - start_ms ))
+}
+# copy_tree NAME: a copy of the tree at $sandbox/tree-NAME, with its own
+# bin/ and shell/. edit_tree NAME FILE OLD NEW: in that copy, OLD in FILE,
+# a path under it, replaced by NEW; returns 1, with the row failed, unless
+# OLD occurs once and the file changed.
+copy_tree() { # NAME
+  local tree="$sandbox/tree-$1" dir file
+  rm -rf -- "${tree:?}"
+  mkdir -p -- "$tree"
+  cp -R -- "$repo/shell" "$tree/shell"
+  cp -R -- "$repo/bin" "$tree/bin"
+  for dir in config themes; do ln -s -- "$repo/$dir" "$tree/$dir"; done
+  for file in VERSION LICENSE README.md; do cp -- "$repo/$file" "$tree/$file"; done
+}
+edit_tree() { # NAME FILE OLD NEW
+  local path="$sandbox/tree-$1/$2"
+  cp -- "$path" "$path.orig"
+  if python3 -c '
+import sys
+path, old, new = sys.argv[1:]
+text = open(path).read()
+if text.count(old) != 1:
+    sys.exit("occurs %d times" % text.count(old))
+open(path, "w").write(text.replace(old, new))' "$path" "$3" "$4" && ! cmp -s -- "$path" "$path.orig"; then
+    ok "the $1 copy's edit applies once to $2"
+  else
+    fail "the $1 copy could not edit $2"
+    return 1
+  fi
 }
 # stop_shell: TERM to the runner start_shell started, which passes it to
 # the shell, then a wait on the instance lock the runner holds, before a

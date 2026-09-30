@@ -20,15 +20,21 @@
 # setting turns it back on. Disabling the plugin while locked keeps
 # the session locked, and the rebuilt plugin hands its lock screen over
 # again. The shell killed by its pid while locked leaves the session
-# locked, and the next shell's lock plugin reads the stranded lock and takes
-# it over through the layer's `misc.allow_session_lock_restore`.
+# locked, the runner starts the next shell (D069), and that shell's lock
+# plugin reads the stranded lock and takes it over through the layer's
+# `misc.allow_session_lock_restore`. A sampler reads the session lock from
+# the compositor every 100 ms from before the kill until the new shell's
+# lock is confirmed and must find it locked each time; its control runs it
+# across the second lock client's unlock, which unlocks the session. The
+# time from the kill to the confirmed lock with the lock screen is printed
+# as latency_lock_back_ms and held under lock_back_budget_ms, below.
 #
 # No row types a password: PAM would check it against the real account,
 # whose pam_faillock counts each failure. The sandbox's own probe releases
 # the core's lock with no password, test code that never ships
 # (docs/architecture/lock-polkit.md § Validation). The evidence that no
 # check ran spans the whole row, every plugin rebuild and both shell
-# restarts: each shell's log, kept before its kill, holds a
+# relaunches: each shell's log, kept before its kill, holds a
 # `lock: check=started` line for every check started, and the harness's
 # watcher records every authentication helper it sees under the sandbox.
 # A control copy of the plugin starts one stand-in check, which runs no
@@ -143,20 +149,65 @@ os.replace(path + ".tmp", path)
 PY
 }
 restore_lock_hypr_lua() { { printf '%s\n' "pcall(dofile, \"$home/.local/state/vgs/hypr/vgs.lua\")"; cat -- "$sandbox/hyprland-harness.lua"; } >"$lock_hypr_lua.next" && mv -T -- "$lock_hypr_lua.next" "$lock_hypr_lua"; }
-# Kill the shell by its pid while locked, check the session stays locked,
-# and start the next shell. The killed shell's log is checked first: the
-# rows after this one read the next shell's.
-kill_and_restart() { # LABEL LOG
+# The session lock sampler: session_lock appended to FILE every 100 ms
+# until FILE.stop exists, for 60 s at most, so a row that fails before it
+# stops the sampler leaves no reader behind. samples_read FILE:
+# `never-unlocked` when every sample, three at least, read locked; else
+# the first other reading and the count of samples.
+sampler_start() { # FILE
+  rm -f -- "$1" "$1.stop"
+  (
+    for _ in $(seq 1 600); do
+      [[ -e $1.stop ]] && break
+      session_lock >>"$1" 2>/dev/null || echo unreadable >>"$1"
+      sleep 0.1
+    done
+  ) &
+  sampler_pid=$!
+}
+sampler_stop() { : >"$1.stop"; wait "$sampler_pid" 2>/dev/null || :; } # FILE
+samples_read() { # FILE
+  local other count
+  count="$(wc -l <"$1")" || return
+  other="$(grep -v -x -m 1 locked -- "$1" || :)"
+  if [[ -n $other ]]; then echo "$other samples=$count"
+  elif ((count < 3)); then echo "too-few samples=$count"
+  else echo never-unlocked; fi
+}
+# The ceiling on the time from a SIGKILL to the shell while locked to the
+# relaunched shell's confirmed lock with its lock screen, read from the
+# core's lending record every 50 ms, so the reading carries at most one
+# poll. It holds the runner's first delay, 0.5 s, the new shell's start
+# and its stranded-lock reading. Twice the highest of six readings of this
+# row on host cachy on 2026-09-30, at load average 5 to 8: 1497 to
+# 1606 ms.
+lock_back_budget_ms=3212
+# Kill the shell by its pid while locked; the runner starts the next shell,
+# which the row takes up with harness.sh's adopt_shell, and the sampler
+# reads the session lock from before the kill until the caller stops it.
+# The killed shell's log is checked and kept first: the rows after this one
+# read the next shell's.
+kill_and_relaunch() { # LABEL
   local killed="$shell_qs_pid" kept="$sandbox/lock-shell-${#kept_logs[@]}.log"
   check_unexpected_log "$1: the shell's log before the kill" "$instance_log"
   no_checks "$1: before the kill"
   cp -- "$instance_log" "$kept" || fail "$1: keeping the shell's log failed"
   kept_logs+=("$kept")
+  sampler_start "$sandbox/lock-samples"
+  sleep 0.2
+  killed_ms="$(now_ms)"
   kill -KILL "$killed" || fail "$1: SIGKILL to the shell pid $killed failed"
   expect_poll "$1: the killed shell is gone" gone alive "$killed"
-  stop_shell || :
-  expect "$1: the session stays locked after the shell died" locked session_lock
-  start_shell "$repo" "$2"
+  if adopt_shell "$killed"; then ok "$1: the runner started the next shell"; fi
+}
+# The time from the kill to the core's confirmed lock with the plugin's
+# lock screen, polled every 50 ms for up to 20 s; `none` past that.
+lock_back_ms() {
+  for _ in $(seq 1 400); do
+    [[ $(core_lock 2>/dev/null) == '[true, true, true]' ]] && { echo $(( $(now_ms) - killed_ms )); return; }
+    sleep 0.05
+  done
+  echo none
 }
 
 # The before-sleep stand-ins, ahead of the host's commands on the shell's PATH.
@@ -271,8 +322,14 @@ stop_lock_client() { # LABEL
 start_lock_client "takeover"
 expect "takeover: vgsh lock takes the lock over" "ok exit=0" vgsh_lock
 expect_poll "takeover: the core holds the confirmed lock" '[true, true, true]' core_lock
+# Control for the sampler: across the other client's unlock it reads the
+# session unlocked.
+sampler_start "$sandbox/lock-samples-control"
 stop_lock_client "takeover"
 settle '[false, false, true]' core_lock
+sampler_stop "$sandbox/lock-samples-control"
+got="$(samples_read "$sandbox/lock-samples-control")" || got=unreadable
+if [[ $got == unlocked\ samples=* ]]; then ok "control: the sampler reads the unlock the other client made ($got)"; else fail "control: the sampler across the other client's unlock read $got"; fi
 expect "takeover: the core ended the lock the other client's unlock released" '[false, false, true]' core_lock
 expect "takeover: the session is unlocked" unlocked session_lock
 expect_poll "takeover: the plugin counted the end" '[1, false, false]' lock_status refusals locked secure
@@ -394,8 +451,10 @@ expect "rescan over the control copy answers ok" ok ipc shell rescanPlugins
 expect_poll "the control copy is the plugin the shell runs" "$control_dir" lock_dir_of
 expect "the control's IPC lock answers ok" ok ipc vgs.lock invoke lock ''
 expect_poll "the control's session is locked" '[true, true, true]' core_lock
-kill_and_restart "the control" "$sandbox/lock-control-qs.log"
-expect_poll "the control's restarted lock read the stranded lock" '[false, true]' lock_status locked strandedDone
+kill_and_relaunch "the control"
+expect_poll "the control's relaunched lock read the stranded lock" '[false, true]' lock_status locked strandedDone
+sampler_stop "$sandbox/lock-samples"
+expect "the control's session never read unlocked across the kill" never-unlocked samples_read "$sandbox/lock-samples"
 got="$(core_lock)" || got=unreadable
 if [[ $got == '[false, false, false]' && $(session_lock) == locked ]]; then ok "control: a copy that never takes a stranded lock over leaves the core without it"; else fail "control: the takeover reading got core=$got over a copy that never takes the lock over"; fi
 expect "the probe takes the stranded lock over" ok ipc smoke sessionLockBare
@@ -409,8 +468,13 @@ expect_poll "the shipped plugin runs again" "$repo/shell/plugins/vgs.lock" lock_
 # shell's lock plugin takes the stranded lock over with its lock screen.
 expect "the IPC lock answers ok before the kill" ok ipc vgs.lock invoke lock ''
 expect_poll "the session is locked before the kill" '[true, true, true]' core_lock
-kill_and_restart "the kill" "$sandbox/after-lock-qs.log"
-expect_poll "the restarted shell took the stranded lock over" '[true, true, true]' core_lock
+kill_and_relaunch "the kill"
+lock_back="$(lock_back_ms)"
+sampler_stop "$sandbox/lock-samples"
+echo "  latency_lock_back_ms=$lock_back budget_ms=$lock_back_budget_ms"
+if [[ $lock_back =~ ^[0-9]+$ && $lock_back -le $lock_back_budget_ms ]]; then ok "the relaunched shell took the stranded lock over within its budget"; else fail "lock back after the kill: $lock_back ms, budget $lock_back_budget_ms ms"; fi
+echo "  lock samples=$(wc -l <"$sandbox/lock-samples")"
+expect "the session never read unlocked from before the kill to the relaunched lock" never-unlocked samples_read "$sandbox/lock-samples"
 expect "the session is still locked" locked session_lock
 release "the taken-over lock"
 
