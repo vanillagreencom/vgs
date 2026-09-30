@@ -296,6 +296,33 @@ class Setup(unittest.TestCase):
         self.load_module().probe(Judge(), self.spec, "large", self.data)
         self.assertEqual(calls, [], "probe control must break delegation")
 
+    def test_installed_probe_keeps_selected_roots(self):
+        self.config["entry_probe"] = str(REPO / "scripts/fixtures/jarvis-setup/installed-probe.py")
+        self.write_config()
+        expected = {"models": str(self.data / "models"), "data": str(self.data),
+                    "state": str(self.state), "provider": "cpu",
+                    "artifacts": self.spec["tiers"]["small"]["artifacts"]}
+        (self.data / "probe-expected.json").write_text(json.dumps(expected))
+        # The child must retain the physical roots, even when the parent's
+        # configured roots use private aliases.
+        data_alias, state_alias = self.root / "data-alias", self.root / "state-alias"
+        (self.root / "state").mkdir(exist_ok=True)
+        data_alias.symlink_to(self.root / "data", target_is_directory=True)
+        state_alias.symlink_to(self.root / "state", target_is_directory=True)
+        self.env.update(XDG_DATA_HOME=str(data_alias), XDG_STATE_HOME=str(state_alias))
+        # These sentinel values are never credentials or live endpoints.
+        self.env.update(API_KEY="must-not-forward", DBUS_SESSION_BUS_ADDRESS="must-not-forward",
+                        PULSE_SERVER="must-not-forward")
+        self.install()
+        self.ready()
+        observed = json.loads((self.data / "probe-observed.json").read_text())
+        self.assertEqual(observed, {key: expected[key] for key in ("models", "data", "state")})
+        self.mutant("return env", 'env.pop("XDG_DATA_HOME", None)\n    return env')
+        result = self.install(77)
+        self.assertIn(str(self.home / ".local/share/vgs/jarvis/local/models"), result.stderr)
+        self.assertFalse((self.state / "local-ready.json").exists())
+        self.not_ready()
+
     def test_lock_install_flags_control(self):
         self.install()
         self.ready()
@@ -356,6 +383,101 @@ class Setup(unittest.TestCase):
         (self.state / "local-ready.json").unlink()
         self.assertEqual(run().returncode, 0)
         self.not_ready()
+
+    def test_missing_gum_with_real_tui_library(self):
+        script = self.plugin / "tui/setup-local.sh"
+        env = dict(self.env, VGS_TUI_LIB=str(REPO / "bin/lib/tui.sh"),
+                   VGS_PLUGIN_DIR=str(self.plugin))
+        (self.commands / "gum").unlink()
+        run = lambda: subprocess.run(["bash", str(script)], env=env,
+            capture_output=True, text=True, check=False, timeout=30)
+        result = run()
+        self.assertEqual(result.returncode, 77, result.stderr)
+        self.assertEqual(result.stderr.strip(), "jarvis-setup: command=missing name=gum")
+        self.assertEqual(result.stdout, "")
+        self.assertFalse((self.data / "calls.jsonl").exists())
+        source = script.read_text()
+        header = next(line for line in source.splitlines() if line.startswith("vgs_tui_header "))
+        self.assertEqual(source.count(header), 1)
+        self.assertEqual(source.count("for tool in gum"), 1)
+        changed = source.replace(header + "\n", "").replace("for tool in gum", header + "\nfor tool in gum")
+        self.assertNotEqual(changed, source)
+        self.assertFalse(script.is_symlink())
+        script.write_text(changed)
+        result = run()
+        self.assertEqual(result.returncode, 127, result.stderr)
+        self.assertNotIn("jarvis-setup: command=missing name=gum", result.stderr)
+
+    def test_install_tree_namespace_result_controls(self):
+        # Copy the real installation assertions, namespace consumer and closing
+        # verdict into a private script. Omit unrelated package/control rows.
+        # Both effectful producers are explicit local doubles inside J09.
+        tree = self.root / "install-source"
+        (tree / "scripts/lib").mkdir(parents=True)
+        (tree / "packaging").mkdir()
+        helper = tree / "scripts/lib/jarvis-env.sh"
+        helper.write_text('#!/usr/bin/env bash\nprintf "jarvis-env: status=not-measured reason=namespaces-unavailable\\n" >&2\nexit 77\n')
+        helper.chmod(0o700)
+        installer = tree / "packaging/install-system.sh"
+        source = (REPO / "scripts/test-install-tree.sh").read_text()
+
+        def section(text, start, end=None):
+            self.assertEqual(text.count(start), 1, start)
+            result = text.split(start, 1)[1]
+            if end is not None:
+                self.assertEqual(result.count(end), 1, end)
+                result = result.split(end, 1)[0]
+            return start + result
+
+        functions = section(source, "ok() {", "voice_command=")
+        install = section(source, 'run_capture "$tmp/install.out"', 'run_capture "$tmp/check.out"')
+        readiness = section(source, 'setup_standins="$tmp/setup-standins"', 'private_node=')
+        ending = section(source, 'if [[ $failures -gt 0 ]]; then')
+        program = self.root / "install-check.sh"
+        env = dict(self.env, FIXTURE_TREE=str(tree), FIXTURE_SCRATCH=str(self.root))
+
+        def run(changed=None, broken_install=False):
+            installer.write_text('#!/usr/bin/env bash\n' + ('exit 1\n' if broken_install else
+                'printf "install-system: ok prefix=/usr root=%s/usr\\n" "$DESTDIR"\n'))
+            installer.chmod(0o700)
+            program.write_text('set -euo pipefail\nrepo="$FIXTURE_TREE"\ntmp="$FIXTURE_SCRATCH"\n'
+                               'dest="$tmp/install"\nfailures=0\nunavailable=false\n' +
+                               functions + install + (readiness if changed is None else changed[0]) +
+                               (ending if changed is None else changed[1]))
+            return subprocess.run(["bash", str(program)], env=env, capture_output=True,
+                                  text=True, check=False, timeout=30)
+
+        result = run()
+        self.assertEqual(result.returncode, 77, result.stdout + result.stderr)
+        self.assertIn("test-install-tree: status=not-measured reason=jarvis-isolation", result.stdout)
+        self.assertNotIn("test-install-tree: ok", result.stdout)
+        self.assertNotIn("  FAIL", result.stdout)
+        needle = "if [[ $unavailable == true ]]; then"
+        self.assertEqual(ending.count(needle), 1)
+        changed = ending.replace(needle, "if false && [[ $unavailable == true ]]; then")
+        self.assertNotEqual(changed, ending)
+        result = run((readiness, changed))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("test-install-tree: ok", result.stdout)
+        needle = "if [[ $status == 77 ]]; then"
+        self.assertEqual(readiness.count(needle), 1)
+        changed = readiness.replace(needle, "if false && [[ $status == 77 ]]; then")
+        self.assertNotEqual(changed, readiness)
+        result = run((changed, ending))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("installed local readiness reads without source-tree files", result.stdout)
+        # The suite's real installation assertion, not a planted counter.
+        result = run(broken_install=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("  FAIL  the installer succeeds into a staged /usr prefix", result.stdout)
+        self.assertNotIn("test-install-tree: status=not-measured reason=jarvis-isolation", result.stdout)
+        needle = "if [[ $failures -gt 0 ]]; then"
+        self.assertEqual(ending.count(needle), 1)
+        changed = ending.replace(needle, "if false && [[ $failures -gt 0 ]]; then")
+        self.assertNotEqual(changed, ending)
+        result = run((readiness, changed), broken_install=True)
+        self.assertEqual(result.returncode, 77, result.stdout + result.stderr)
+        self.assertIn("  FAIL  the installer succeeds into a staged /usr prefix", result.stdout)
 
     def test_shipped_lock_runtime_pins(self):
         lines = (PLUGIN / "requirements-local.lock").read_text().splitlines()

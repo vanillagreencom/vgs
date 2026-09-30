@@ -15,6 +15,7 @@ fi
 repo="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd -P)"
 tmp="$repo/tmp/test-install-tree.$$"
 failures=0
+unavailable=false
 cleanup() { chmod -R u+rwx -- "$tmp" 2>/dev/null || true; rm -rf -- "$tmp"; }
 trap cleanup EXIT
 rm -rf -- "$tmp"
@@ -59,8 +60,13 @@ run_capture "$tmp/setup.out" "$tmp/setup.err" status env -i PATH=/usr/bin:/bin \
   "$repo/scripts/lib/jarvis-env.sh" "$setup_standins" -- python3 \
   "$repo/scripts/fixtures/jarvis-setup/installed.py" "$dest/usr/share/vgs"
 if [[ $status != 0 ]]; then cat -- "$tmp/setup.err" >&2; fi
-check "installed local readiness reads without source-tree files" test "$status" = 0
-check "installed local readiness is not inferred from packaged inputs" grep_out "jarvis-setup-installed=ok" "$tmp/setup.out"
+if [[ $status == 77 ]]; then
+  unavailable=true
+  echo "test-install-tree: local-readiness=unavailable exit=77"
+else
+  check "installed local readiness reads without source-tree files" test "$status" = 0
+  check "installed local readiness is not inferred from packaged inputs" grep_out "jarvis-setup-installed=ok" "$tmp/setup.out"
+fi
 private_node="$tmp/private node/bin/node"
 empty_path="$tmp/no-node-on-path"
 mkdir -p -- "$(dirname -- "$private_node")" "$empty_path"
@@ -292,4 +298,8 @@ read_only_prefix_check_installed_log "$bad_log"
 check "the installed log checker fails on an unexpected error" test "$log_failures" -gt 0
 
 if [[ $failures -gt 0 ]]; then echo "test-install-tree: failed=$failures"; exit 1; fi
+if [[ $unavailable == true ]]; then
+  echo "test-install-tree: status=not-measured reason=jarvis-isolation"
+  exit 77
+fi
 echo "test-install-tree: ok"

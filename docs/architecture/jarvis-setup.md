@@ -16,13 +16,15 @@ curl ignores its user configuration and permits HTTPS downloads and redirects on
 
 Setup opens no microphone, speaker, account or authentication endpoint. The real inference probe runs without network access. VGS ships no Python environment, model, CUDA library or espeak runtime. The core requirement notice installs the plugin's declared missing commands under [D035](../decisions/D035-manifest-requirements.md); setup never runs a system package manager.
 
-The Debian package index has no uv package. The declaration offers the existing mise source route where mise is available instead of inventing an apt package. A system with neither a native uv package nor mise has no declared uv install route. Fedora's optional NVIDIA command package needs its NVIDIA package source. These are requirement-source limits, not successful setup.
+The Debian package index has no uv package. The declaration offers the existing mise source route where mise is available instead of inventing an apt package. A system with neither a native uv package nor mise has no declared uv install route. Fedora has no declared automatic install route for the NVIDIA command. Installing VGS does not recommend an NVIDIA driver package. A CUDA tier on Fedora needs an already available NVIDIA command and working CUDA libraries. These are requirement-source limits, not successful setup.
 
 ## Readiness
 
 `setup-local::install` holds one exclusive state lock from marker removal through publication. A competing setup cannot remove the active run's marker or change its files. Readers take a non-blocking shared lock and report setup in progress while the exclusive owner runs.
 
 The success marker lives in the state root. Runtime and model files live in the data root defined by [the Jarvis service](jarvis.md#wire). Every attempt removes an earlier marker before installation effects. Download, install, verification and probe failures preserve their nonzero status. Exit `77` is unavailable, never ready. Cancellation cannot continue to marker publication.
+
+The scrubbed probe environment retains the resolved XDG state and data roots. The installed interpreter executes the same `setup-local::roots` entry as the parent, not a default HOME model directory or a path inferred from uv's cache.
 
 `setup-local::identity` binds the tier, physical data root, artifact declaration, package locks, setup and measurement sources, fixture bytes, venv configuration, resolved interpreter and installed runtime bytes. Derived Python bytecode does not enter that identity. Setup checks identity before and after inference. It atomically publishes the pre-probe identity only when those inputs still agree.
 
@@ -33,9 +35,11 @@ The success marker lives in the state root. Runtime and model files live in the 
 ## Evidence
 
 - `scripts/test-jarvis-setup.py` executes the shipped installer and TUI inside [J09's private world](validation-jarvis.md). Local curl, uv, namespace-command and selected-interpreter doubles record actual argv. Every tier uses the producer's membership. These tests prove installation sequencing, not real model feasibility.
+- The installed-probe fixture executes the shipped `main`, `roots` and `probe` entry with synthetic inference. It keeps the shared input verification active and observes the configured XDG roots. Its disposable control drops data-root forwarding. The missing-gum case uses the real TUI library and rejects a copy that draws the header before checking commands.
 - Disposable behavior-preserving-text mutants cover download hashes, child failures, marker invalidation, identity, changed-during-probe inputs, serialization, archive containment, probe delegation, hash-required installation and TUI execution. The existing artifact suite owns its verifier and inference-oracle controls.
 - `scripts/smoke/rows/jarvis-setup.sh` uses J09's status-process double and an allow-listed TUI fixture. It reads the Settings action and launcher entry, copied-snapshot argv, completion refresh and failure replacement. Its consumer assertions reject copies without refresh or failure replacement.
 - The install-tree check packages every runtime file. The nested read-only-prefix row loads the new service-owned reader from the installed tree and checks that startup changes no prefix file.
+- The install-tree suite retains namespace unavailability as `77` only after all independent checks pass. Private copies of its installation assertions, namespace consumer and closing verdict prove both that result and failure precedence. Controls turn unavailability into a failure or let it hide a failed installer double.
 - `scripts/check-jarvis-local.sh` remains the real prepared-model execution row. An unavailable prepared environment returns `77`. Synthetic installer doubles are not evidence that real installation or native CPU inference succeeded.
 
 ## Omarchy comparison

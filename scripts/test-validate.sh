@@ -393,6 +393,8 @@ cases=(
   "jarvis-protocol-suite|scripts/test-jarvis-protocol.js|offline|node scripts/test-jarvis-protocol.js"$'\n'"$repo_plan"
   "jarvis-local-suite|scripts/test-jarvis-local.py|all|python3 scripts/test-jarvis-local.py"$'\n'"$repo_plan"
   "jarvis-setup-suite|scripts/test-jarvis-setup.py|all|python3 scripts/test-jarvis-setup.py"$'\n'"$repo_plan"
+  "jarvis-setup-probe-fixture|scripts/fixtures/jarvis-setup/installed-probe.py|all|python3 scripts/test-jarvis-setup.py"$'\n'"$repo_plan"
+  "install-tree-suite|scripts/test-install-tree.sh|all|scripts/test-install-tree.sh"$'\npython3 scripts/test-jarvis-setup.py\n'"$repo_plan"
   "jarvis-setup-fixture|scripts/fixtures/jarvis-setup/installer.py|all|python3 scripts/test-jarvis-setup.py"$'\n'"$repo_plan"
   "jarvis-setup-status-fixture|scripts/fixtures/jarvis-setup/status.py|all|python3 scripts/test-jarvis-setup.py"$'\n'"$repo_plan"$'\nscripts/qml-smoke.sh'
   "jarvis-setup-installed-fixture|scripts/fixtures/jarvis-setup/installed.py|all|scripts/test-install-tree.sh"$'\npython3 scripts/test-jarvis-setup.py\n'"$repo_plan"$'\nscripts/qml-smoke.sh'

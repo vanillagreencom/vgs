@@ -58,7 +58,10 @@ def environment(data, offline=False):
     env.update(LC_ALL="C.UTF-8", UV_NO_CONFIG="1",
                UV_CACHE_DIR=str(data / "cache"), UV_PYTHON_INSTALL_DIR=str(data / "python"))
     if offline:
-        env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
+        state, _ = roots()
+        env.update(XDG_STATE_HOME=str(state.resolve().parents[1]),
+                   XDG_DATA_HOME=str(data.resolve().parents[2]),
+                   HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
     return env
 
 

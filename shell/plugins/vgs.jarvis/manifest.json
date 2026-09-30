@@ -41,7 +41,7 @@
     { "command": "python3", "packages": { "pacman": "python", "apt": "python3", "dnf": "python3" }, "optional": false, "purpose": "Owns audio pipe leases and verifies the private local voice runtime" },
     { "command": "uv", "packages": { "pacman": "uv", "dnf": "uv", "mise": "uv" }, "optional": true, "purpose": "Installs the locked local voice runtime when setup is selected" },
     { "command": "curl", "packages": { "pacman": "curl", "apt": "curl", "dnf": "curl" }, "optional": true, "purpose": "Downloads pinned local voice models when setup is selected" },
-    { "command": "nvidia-smi", "packages": { "pacman": "nvidia-utils", "apt": "nvidia-smi", "dnf": "xorg-x11-drv-nvidia-cuda" }, "optional": true, "purpose": "Verifies CUDA execution only when a CUDA local tier is selected" }
+    { "command": "nvidia-smi", "packages": { "pacman": "nvidia-utils", "apt": "nvidia-smi" }, "optional": true, "purpose": "Verifies CUDA execution only when a CUDA local tier is selected" }
   ],
   "status": {
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },

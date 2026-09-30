@@ -51,6 +51,9 @@ elif name == "unshare":
 elif name == "python":
     assert args[:1] == ["-I"] and args[2:] == ["probe", config["tier"]]
     assert Path(sys.argv[0]) == data / "venv/bin/python"
+    if config.get("entry_probe"):
+        os.execve(sys.executable, [sys.executable, "-I", config["entry_probe"],
+                  args[1], args[3], str(data / "probe-expected.json")], dict(os.environ))
     if config.get("change_runtime"):
         (data / "venv/installed").write_text("changed during probe\n")
     # Records distinguish calling the chosen venv from a host interpreter.
