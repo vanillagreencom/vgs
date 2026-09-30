@@ -547,7 +547,7 @@ expect_poll "a group message reads four people, its sender first, and the rest a
 expect "the group message's card draws its faces" true card_value "[acme] in ada, grace, alan, edsger, barbara" showsFaces
 # The group draws three faces and a chip past four people: alan, ada and
 # grace, whose photos acme's cache holds.
-token_faces_loaded() { card_value "[acme] in ada, grace, alan, edsger, barbara" faceImages | python3 -c 'import json,sys
+token_faces_loaded() { card_value "[acme] in ada, grace, alan, edsger, barbara" faceImages | py_reply 'import json,sys
 t = sys.stdin.read()
 images = json.loads(t)[:3] if t.startswith("[") else []
 print(len(images) == 3 and all(str(i).startswith("file://") and "?v=" in str(i) for i in images) and len(set(images)) == 3)'; }

@@ -348,7 +348,7 @@ expect "control: the failed poll names the reader's traceback" 1 grep -c -F -- "
 expect "control: the failed poll prints the traceback under its row" 1 grep -c -x -F -- "        Traceback (most recent call last):" "$sandbox/reader-traceback-control.log"
 
 # Controls for smoke_row's traceback rule (harness.sh), over rows planted
-# in the sandbox: a status reader run outside every expect that raises
+# in the sandbox: a reader of a planted reply run outside every expect that raises
 # fails its row once, naming it; the same reader answering a state word
 # fails nothing; a row that sends its own output elsewhere hides the end
 # marker, and the bound fails it. Each runs in a subshell whose failure
@@ -357,10 +357,10 @@ expect "control: the failed poll prints the traceback under its row" 1 grep -c -
 row_plants="$sandbox/row-plants"
 mkdir -p -- "$row_plants"
 cat >"$row_plants/updates-traceback-plant.sh" <<'SH'
-updates_values | py_reply 'import json,sys; print(json.load(sys.stdin)["no-such-field"])' || true
+printf '{}\n' | py_reply 'import json,sys; print(json.load(sys.stdin)["no-such-field"])' || true
 SH
 cat >"$row_plants/updates-traceback-clean.sh" <<'SH'
-updates_values | py_reply 'import json,sys; print(json.load(sys.stdin).get("no-such-field", "absent"))' || true
+printf '{}\n' | py_reply 'import json,sys; print(json.load(sys.stdin).get("no-such-field", "absent"))' || true
 SH
 cat >"$row_plants/updates-undrained.sh" <<'SH'
 exec >/dev/null 2>&1

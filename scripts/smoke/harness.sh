@@ -634,7 +634,7 @@ ipc() {
 # ipc call prints, is a failed read that answers the word `empty`, so a
 # poll's last reading names it. Every row reader that parses JSON from its
 # stdin runs through this: scripts/check-smoke-readers.py refuses one that
-# runs python3 itself.
+# python3 runs itself, in the forms its header names.
 py_reply() { # PROGRAM [ARG...]
   local reply
   reply="$(cat)" || return

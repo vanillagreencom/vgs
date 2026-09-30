@@ -25,11 +25,15 @@ CASES = [
     ("json.loads over the whole stdin", "r() { ipc smoke a | py_reply 'import json,sys; print(json.loads(sys.stdin.read()))'; }\n", None, None),
     ("a shell comment naming the read", "# never json.load(sys.stdin) outside py_reply\nr() { :; }\n", None, None),
     ("a program that reads a file", "r() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])))' f; }\n", None, None),
+    ("python3 counting text lines on stdin", "r() { ps -e | python3 -c 'import sys; print(sum(1 for l in sys.stdin if sys.argv[1] in l))' x; }\n", None, None),
+    ("py_reply reading stdin as text, then parsing it", "r() { ipc smoke a | py_reply 'import json,sys; t=sys.stdin.read(); print(json.loads(t))'; }\n", None, None),
     ("python3 parses a probe reply", f"# a reader\nr() {{ ipc smoke a | python3 -c '{READ}'; }}\n", "inline-reader", 2),
     ("python3 parses a compositor reply", f"r() {{ hypr -j clients | python3 -c '{READ}'; }}\n", "inline-reader", 1),
     ("python3 parses a here-string", f"r() {{ python3 -c '{READ}' <<<\"$x\"; }}\n", "inline-reader", 1),
     ("a multi-line python3 program", "r() { ipc smoke a | python3 -c '\nimport json, sys\nd = json.load(sys.stdin)\nprint(d)'; }\n", "inline-reader", 3),
     ("python3 after a py_reply on the same line", f"r() {{ ipc smoke a | py_reply 'print(1)' | python3 -c '{READ}'; }}\n", "inline-reader", 1),
+    ("python3 reading stdin as text, then parsing it", "r() { ipc smoke a | python3 -c '\nimport json, sys\ntext = sys.stdin.read()\nprint(json.loads(text))'; }\n", "inline-reader", 3),
+    ("python3 decoding a stream of replies", "r() { { ipc smoke a; ipc smoke b; } | python3 -c 'import json,sys; t=sys.stdin.read(); print(json.JSONDecoder().raw_decode(t))'; }\n", "inline-reader", 1),
     ("a python3 heredoc", "python3 - <<'PY'\nimport json, sys\nprint(json.load(sys.stdin))\nPY\n", "inline-reader", 3),
     ("a program held in a variable", f"prog='{READ}'\nr() {{ ipc smoke a | py_reply \"$prog\"; }}\n", "unowned-reader", 1),
     ("a read after py_reply's program closes", f"r() {{ ipc smoke a | py_reply 'print(1)' '{READ}'; }}\n", "unowned-reader", 1),
@@ -81,7 +85,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a second directory is refused", result.returncode == 2 and result.stdout.startswith("check-smoke-readers: refused: argument="), result)
 
     # The repository's rows pass, above a floor of the files and readers
-    # they held when the rule landed, 39 rows and 246 reads, less a margin
+    # they held when the rule landed, 39 rows and 259 reads, less a margin
     # for rows that go; a walk below it is a broken extractor, not a clean
     # tree.
     result = run([])

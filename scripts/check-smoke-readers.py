@@ -13,11 +13,14 @@ program in a row that parses JSON from its stdin is `py_reply`'s program:
   unowned-reader  the read is not inside the literal that opens py_reply's
                   program, `py_reply '...'` or `py_reply "$VAR"'...'`, or
                   no command precedes it.
-A read is `json.load(sys.stdin` or `json.loads(sys.stdin`; its command is
-the nearest `py_reply` or `python3` word before it, and a program literal
-holds no single quote, so the read sits in py_reply's program exactly when
-the text between the two is that opening. A read on a line whose text
-before it is a `#` comment is no read.
+A read is `json.load(sys.stdin` or `json.loads(sys.stdin`, or any
+`sys.stdin` in a program literal that also parses JSON with `json.load`,
+`json.loads` or `raw_decode`. Its command is the nearest `py_reply` or
+`python3` word before it, and a program literal holds no single quote, so
+the read sits in the command's program exactly when the text between the
+two is the program's opening. A `sys.stdin` outside a literal, such as in
+a heredoc, is a read only in the direct form. A `sys.stdin` on a line whose
+text before it is a `#` comment is no read.
 
 Usage: check-smoke-readers.py [DIR]
 DIR defaults to the repository's scripts/smoke/rows. Every finding is one
@@ -32,12 +35,17 @@ import re
 import sys
 
 ROWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smoke", "rows")
-READ = re.compile(r"json\.loads?\(\s*sys\.stdin\b")
+STDIN = re.compile(r"\bsys\.stdin\b")
+DIRECT = re.compile(r"json\.loads?\(\s*$")
+PARSES_JSON = re.compile(r"\bjson\.loads?\(|\braw_decode\(")
 COMMAND = re.compile(r"\b(py_reply|python3)\b")
-# The text between `py_reply` and a read inside the literal that opens its
-# program: an optional quoted variable the literal extends, then the
-# literal's opening quote and no closing one.
-PROGRAM_OPENING = re.compile(r"[ \t]+(?:\"\$[A-Za-z_][A-Za-z0-9_]*\")?'[^']*")
+# The text between a command and a stdin use inside the literal that opens
+# its program: python3's `-c`, an optional quoted variable the literal
+# extends, then the literal's opening quote and no closing one.
+PROGRAM_OPENING = {
+    "py_reply": re.compile(r"[ \t]+(?:\"\$[A-Za-z_][A-Za-z0-9_]*\")?'([^']*)"),
+    "python3": re.compile(r"[ \t]+-c[ \t]+(?:\"\$[A-Za-z_][A-Za-z0-9_]*\")?'([^']*)"),
+}
 
 
 class Unreadable(Exception):
@@ -58,20 +66,29 @@ def check_file(path, findings):
     except (OSError, UnicodeDecodeError) as exc:
         raise Unreadable(path, getattr(exc, "strerror", None) or str(exc)) from exc
     readers = 0
-    for read in READ.finditer(text):
+    for read in STDIN.finditer(text):
         line_start = text.rfind("\n", 0, read.start()) + 1
         if text[line_start:read.start()].lstrip().startswith("#"):
             continue
-        readers += 1
-        number = line_of(text, read.start())
+        direct = DIRECT.search(text, line_start, read.start()) is not None
         command = None
         for command in COMMAND.finditer(text, 0, read.start()):
             pass
+        opening = command and PROGRAM_OPENING[command.group(1)].fullmatch(text, command.end(), read.start())
+        if opening:
+            close = text.find("'", read.end())
+            program = text[opening.start(1):len(text) if close < 0 else close]
+            if not (direct or PARSES_JSON.search(program)):
+                continue
+        elif not direct:
+            continue
+        readers += 1
+        number = line_of(text, read.start())
         if command is None:
             findings.append(f"unowned-reader {path}:{number} no py_reply before the read")
         elif command.group(1) == "python3":
             findings.append(f"inline-reader {path}:{number} python3 on line {line_of(text, command.start())} parses JSON from stdin; read it through py_reply")
-        elif not PROGRAM_OPENING.fullmatch(text, command.end(), read.start()):
+        elif not opening:
             findings.append(f"unowned-reader {path}:{number} the read is outside the program py_reply on line {line_of(text, command.start())} opens")
     return readers
 

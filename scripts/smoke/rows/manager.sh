@@ -45,7 +45,7 @@ window_fits() {
   width="$(ipc smoke themeValue size.window.width)" || return
   share="$(ipc smoke themeValue size.window.heightShare)" || return
   gutter="$(ipc smoke themeValue size.window.gutter)" || return
-  hypr --batch 'j/monitors; j/clients; j/getoption general:float_gaps' | python3 -c '
+  hypr --batch 'j/monitors; j/clients; j/getoption general:float_gaps' | py_reply '
 import json, math, sys
 text = sys.stdin.read()
 decoder, at, parts = json.JSONDecoder(), 0, []
@@ -124,12 +124,11 @@ listed_names() { ipc smoke itemTexts window vgs.settings ListItem | py_reply 'im
 type_keys probe || fail "typing into the Settings search failed"
 expect_poll "typing filters the list to the matching plugin" '["Probe"]' listed_names
 type_keys -k BackSpace -k BackSpace -k BackSpace -k BackSpace -k BackSpace || fail "clearing the Settings search failed"
-list_complete() { { ipc shell listPlugins; listed_names; } | python3 -c '
-import json, sys
-text = sys.stdin.read()
-listing, at = json.JSONDecoder().raw_decode(text)
-names = json.loads(text[at:])
-print(len(names) == len(listing["plugins"]))'; }
+list_complete() {
+  local plugins
+  plugins="$(ipc shell listPlugins | py_reply 'import json,sys; print(len(json.load(sys.stdin)["plugins"]))')" && [[ $plugins =~ ^[0-9]+$ ]] || { echo "$plugins"; return 1; }
+  listed_names | py_reply 'import json,sys; print(len(json.load(sys.stdin)) == int(sys.argv[1]))' "$plugins"
+}
 expect_poll "the cleared search lists every plugin again" True list_complete
 # The list page: the content box's left and right insets match
 # `inset.window`; the search field, every row and the heading span that
@@ -216,12 +215,11 @@ expect_poll "Shift+Tab from the search field stays on the list" '["ListPage"]' f
 
 # The list: one row per discovered plugin, the Settings plugin itself
 # included, with its icon, source, capabilities, keys and errors.
-rows_match() { { ipc shell listPlugins; settings_rows; } | python3 -c '
-import json, sys
-text = sys.stdin.read()
-listing, at = json.JSONDecoder().raw_decode(text)
-rows = json.loads(text[at:])
-print(sorted(p["id"] for p in listing["plugins"]) == [r["id"] for r in rows] and all(r["enabled"] == p["enabled"] for r in rows for p in listing["plugins"] if p["id"] == r["id"]))'; }
+rows_match() {
+  local enabled
+  enabled="$(ipc shell listPlugins | py_reply 'import json,sys; print(json.dumps({p["id"]: p["enabled"] for p in json.load(sys.stdin)["plugins"]}))')" && [[ $enabled == \{* ]] || { echo "$enabled"; return 1; }
+  settings_rows | py_reply 'import json,sys; enabled, rows = json.loads(sys.argv[1]), json.load(sys.stdin); print(sorted(enabled) == [r["id"] for r in rows] and all(r["enabled"] == enabled[r["id"]] for r in rows))' "$enabled"
+}
 expect "the window lists every plugin listPlugins lists, with its state" True rows_match
 row_of() { settings_rows | py_reply 'import json,sys; r=[r for r in json.load(sys.stdin) if r["id"] == sys.argv[1]][0]; print(json.dumps([r[k] for k in sys.argv[2:]]))' "$@"; }
 expect "the Settings plugin lists itself, bundled, with its icon, capabilities and key" '["Settings", "settings", "bundled", ["ipc", "manager", "screens", "shortcut", "surfaces"], [{"shortcut": "toggle", "key": "SUPER+M", "default": "SUPER+M", "description": "Open or close Settings"}], []]' row_of vgs.settings name icon source capabilities binds errors
@@ -459,11 +457,11 @@ title_menu() { ipc smoke menus window vgs.settings | py_reply 'import json,sys; 
 settings_click TitleButton Probe || fail "the click on the page's title failed"
 expect_poll "a click on the title opens its menu on the current plugin" '[true, ["Probe"], "Probe"]' title_menu opened checked current
 expect "the title's menu anchors to the title button" '["TitleButton"]' title_menu anchorType
-menu_lists_all() { { settings_rows; title_menu entries; } | python3 -c '
-import json, sys
-text = sys.stdin.read()
-rows, at = json.JSONDecoder().raw_decode(text)
-print(json.loads(text[at:])[0] == [r["name"] for r in rows])'; }
+menu_lists_all() {
+  local names
+  names="$(settings_rows | py_reply 'import json,sys; print(json.dumps([r["name"] for r in json.load(sys.stdin)]))')" && [[ $names == \[* ]] || { echo "$names"; return 1; }
+  title_menu entries | py_reply 'import json,sys; print(json.load(sys.stdin)[0] == json.loads(sys.argv[1]))' "$names"
+}
 expect "the title's menu lists every plugin by name" True menu_lists_all
 expect "the long menu scrolls under its own bar" '[true, true]' title_menu overflowing barVisible
 type_keys set || fail "typing into the title's menu failed"
