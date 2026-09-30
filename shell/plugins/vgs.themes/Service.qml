@@ -12,7 +12,7 @@ import "SetupLogic.js" as SetupLogic
 // of the `browser-policy` TUI, whoever opened it, the one step that changes
 // its answer from the shell, and publishes SetupLogic.browserTheming's
 // answer; the Settings page offers Install browser theming, that TUI,
-// while it says so (D056). A browser installed while the shell runs is
+// while it says so (D058). A browser installed while the shell runs is
 // read at its next start.
 //   shortcut vgs.themes:themes              SUPER+T from the manifest's
 //                                            `hyprland` binds (README)

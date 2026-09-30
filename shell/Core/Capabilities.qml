@@ -174,7 +174,7 @@ Singleton {
         return request.ok ? root.managerCoreTui(request.name, request.args) : request.answer;
     }
 
-    // The manager's act on plugin ID's status entry KEY (D056): the
+    // The manager's act on plugin ID's status entry KEY (D058): the
     // plugin's own declared TUI through TuiRunner.runFor, or its own
     // requirement commands through the requirement notice, as
     // PluginLogic.statusActionRequest decides from its published values.
@@ -190,7 +190,7 @@ Singleton {
     }
 
     // The manager's store or clear (VERB) of plugin ID's ACCOUNT, listed in
-    // its status entry KEY (D056), through the one SecretWriter, as
+    // its status entry KEY (D058), through the one SecretWriter, as
     // PluginLogic.secretRequest decides; `done` belongs to CTX, the asking
     // instance. SECRET never enters a log line or an answer.
     function managerSecret(ctx, verb, id, key, account, secret, done) {

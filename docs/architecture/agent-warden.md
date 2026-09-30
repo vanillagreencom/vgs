@@ -22,7 +22,7 @@ The state is also derived again, with no file change, at the moment `WardenLogic
 
 ## Published status
 
-The service publishes these values through the core `status` capability ([status.md](status.md)). The first four are the plugin's rows on its Settings page, where the warden and vsys rows offer their setup step as a button ([D056](../decisions/D056-no-manual-commands.md)).
+The service publishes these values through the core `status` capability ([status.md](status.md)). The first four are the plugin's rows on its Settings page, where the warden and vsys rows offer their setup step as a button ([D058](../decisions/D058-no-manual-commands.md)).
 
 | Key | Type | Value |
 |---|---|---|

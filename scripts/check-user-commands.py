@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the no-manual-commands rule of D056 on the text a user reads.
+"""Enforce the no-manual-commands rule of D058 on the text a user reads.
 
 A setup step is automatic or one click; a command the user could run by
 hand is only a secondary "Show command" disclosure beside that click. This

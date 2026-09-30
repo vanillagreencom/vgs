@@ -762,7 +762,7 @@ expect "a later write clears the refusal" ok ipc smoke invokeInstance window vgs
 # takes its gear away; setPluginEnabled brings both back.
 expect "the window opens its own page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.settings
 # No window is left to turn Settings on again once it is off, so its own
-# page keeps the command that does behind Show command (D056).
+# page keeps the command that does behind Show command (D058).
 code_line() { ipc smoke windowGeometry window vgs.settings CodeLine "vgsh plugin enable vgs.settings" | py_reply 'import sys; print("absent" if sys.stdin.read().strip() == "absent" else "drawn")'; }
 expect_poll "its own page draws Show command" drawn settings_button "Show command"
 settings_press "Show command" || fail "the click on the own page's Show command failed"

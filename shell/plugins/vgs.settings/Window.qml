@@ -39,7 +39,7 @@ FocusScope {
     // plugin id -> the last refusal the manager answered for it, shown on
     // its page until a later call for that plugin succeeds.
     property var replies: ({})
-    // The last refusal or failure of a status step (D056), by
+    // The last refusal or failure of a status step (D058), by
     // `<id>/<key>` for an action and `<id>/<key>/<account>` for a secret,
     // shown under that line until a later step there succeeds.
     property var stepReplies: ({})
@@ -162,7 +162,7 @@ FocusScope {
 
     // Run the action of plugin `id`'s status entry `key` through the
     // manager: its floating TUI, which Hyprland focuses over this window,
-    // or the requirement notice; answers the manager's reply (D056).
+    // or the requirement notice; answers the manager's reply (D058).
     function act(id, key) {
         return keepStep(id + "/" + key, shell.manager.act(id, key));
     }

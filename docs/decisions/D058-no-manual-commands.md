@@ -1,4 +1,4 @@
-# D056: No manual commands: a setup step is automatic or one click, and a command only a "Show command" disclosure
+# D058: No manual commands: a setup step is automatic or one click, and a command only a "Show command" disclosure
 
 [← Decision Index](INDEX.md)
 

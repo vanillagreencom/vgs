@@ -2,7 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// The "Show command" disclosure (D056): the command behind a one-click
+// The "Show command" disclosure (D058): the command behind a one-click
 // setup step, shown on request so a reader who wants to run it by hand can
 // copy it. A ghost `Button` reading "Show command", or "Hide command" while
 // `expanded`, toggles a `CodeLine` of `command` under it; hidden, the line

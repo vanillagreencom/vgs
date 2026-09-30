@@ -19,7 +19,7 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 - Hyprland is the only compositor. No compositor abstraction and no second compositor: `docs/decisions/D001-hyprland-only.md`.
 - Never start a second shell against the live session and never kill Quickshell processes by name. Validation runs in the nested sandbox only.
 - A change that adds a surface, a service or a plugin adds its validation row under `scripts/smoke/rows/` in the same PR.
-- No manual commands: a user-facing setup step is automatic or one click, a step that asks or elevates runs in a floating TUI or the requirement notice that button starts, a secret goes into a masked field VGS stores in libsecret, and a command shows only behind "Show command". `scripts/check-user-commands.py` enforces the text: `docs/decisions/D056-no-manual-commands.md`.
+- No manual commands: a user-facing setup step is automatic or one click, a step that asks or elevates runs in a floating TUI or the requirement notice that button starts, a secret goes into a masked field VGS stores in libsecret, and a command shows only behind "Show command". `scripts/check-user-commands.py` enforces the text: `docs/decisions/D058-no-manual-commands.md`.
 - Before writing or changing code, load the code-quality skill. Before writing a plugin, load the vgs-plugin skill.
 - Before designing a plugin, a theme target or any system integration, check how the latest Omarchy (`basecamp/omarchy`, its default branch) solves the same problem. Take its approach where it is simpler or more robust; where VGS differs, say why in the issue or decision record.
 

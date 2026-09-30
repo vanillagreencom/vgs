@@ -1526,7 +1526,7 @@ for flip in "${flips[@]}"; do
   expect_poll "the page draws the tokens $label with their steps" "$(want_rows drawn "$items")" drawn_token_row
 done
 
-# Connect and Disconnect, D056: an absent token's Connect opens one masked
+# Connect and Disconnect, D058: an absent token's Connect opens one masked
 # field on its line, and Enter hands what was typed to the core, which
 # runs `secret-tool store` with the account on its argv and the token on
 # stdin alone, whole and with no newline. The write's end probes again, so

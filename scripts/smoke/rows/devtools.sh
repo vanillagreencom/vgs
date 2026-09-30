@@ -223,7 +223,7 @@ if dev_installed="$(installed_count)" && dev_missing="$(missing_count)"; then
   expect_poll "the page draws each status row, the catalog data not" \
     "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools window lists", "Show command"], ["Checks", sys.argv[3], "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH; the VGS section of the Dev Tools window installs each"]]))' "$dev_installed" "$dev_missing" "$checks_text")" drawn_status
   expect "no Dev Tools status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs window vgs.settings
-  # Install mise, D056: the entry declares the action, which a present
+  # Install mise, D058: the entry declares the action, which a present
   # mise does not call for, so the page draws no button and the manager
   # refuses the act, the control. The absent case's button is the shared
   # install action rows/settings.sh presses on the status fixture.
