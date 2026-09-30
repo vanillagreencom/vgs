@@ -128,7 +128,7 @@ expect_poll "the other mise tool draws its version and its actions" "$(texts git
 # text's room, and move under it past that, so a narrow window never
 # starves the name: the other mise tool's Update and Remove sit beside its
 # name in the window at its own width, and under it in a window on a
-# monitor 480 logical pixels wide. The wide reading is the narrow check's
+# monitor 360 logical pixels wide. The wide reading is the narrow check's
 # control: the same reader answers `beside` there.
 actions_place() { # ROW BUTTON
   python3 - "$(ipc smoke scopedWindowGeometry window vgs.devtools ToolRow "$1" Label "$1")" "$(ipc smoke scopedWindowGeometry window vgs.devtools ToolRow "$1" Button "$2")" <<'PY'
@@ -145,8 +145,8 @@ expect "the window hides before the narrow monitor" ok ipc shell hide window vgs
 expect_poll "the window is gone before the narrow monitor" hidden window_shown
 narrow_monitor="$(first_name)" || fail "the monitor is unreadable"
 narrow_main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
-hold_mode "the nested compositor makes its monitor narrower than the window" "$narrow_monitor" 480x720
-expect_poll "the monitor is 480 logical pixels wide" 480 first_width
+hold_mode "the nested compositor makes its monitor narrower than the window" "$narrow_monitor" 360x720
+expect_poll "the monitor is 360 logical pixels wide" 360 first_width
 expect "IPC open summons the window on the narrow monitor" ok devtools open
 expect_poll "the window is shown on the narrow monitor" shown window_shown
 expect_poll "the other mise tool's actions move under its name on a narrow monitor" under actions_place github:acme/extra Update

@@ -874,6 +874,19 @@ Scope {
         // surface the keyboard.
         // PROPERTY of the first item named TYPE under an instance, in tree
         // order, as JSON: a view a Loader holds inside an overlay.
+        // Every item named `type` under an instance, in tree order, as the
+        // values of its comma-separated `properties`, a colour as its
+        // #aarrggbb name, as layerItems reads a layer's.
+        function itemValues(hostKey: string, id: string, type: string, properties: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const names = properties === "" ? [] : properties.split(",");
+            return JSON.stringify(root.descendants(item).filter(child => root.typeName(child) === type).map(child => {
+                const values = {};
+                for (const name of names) values[name] = child[name] !== null && typeof child[name] === "object" && "hslHue" in child[name] ? child[name].toString() : child[name];
+                return values;
+            }));
+        }
         function readDescendant(hostKey: string, id: string, type: string, property: string): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";

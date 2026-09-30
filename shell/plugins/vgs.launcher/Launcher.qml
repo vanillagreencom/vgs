@@ -1091,7 +1091,7 @@ Item {
                 }
 
                 // A slim scrollbar that widens under the pointer and drags.
-                SlimScrollBar {
+                Ui.SlimScrollBar {
                     id: scrollbar
                     flickable: resultList
                     anchors.right: parent.right

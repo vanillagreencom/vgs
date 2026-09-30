@@ -36,9 +36,10 @@ Item {
     readonly property bool hasCursor: live && launcher.cursorActive && index === launcher.selectedIndex
     readonly property bool imageIcon: kind === "app" || kind === "file" || kind === "folder" || (kind === "openwith" && appIcon.length > 0)
     readonly property bool hasIcon: icon.length > 0 || imageIcon
-    // An image icon the theme cannot resolve falls back to a glyph tile, so
-    // the title never keeps an empty tile's indentation.
-    readonly property bool imageShown: imageIcon && image.status !== Image.Error && image.source.toString().length > 0
+    // An image icon the theme cannot resolve, or resolves to an empty
+    // image, falls back to a glyph tile, so the title never keeps an
+    // empty tile's indentation.
+    readonly property bool imageShown: imageIcon && image.source.toString().length > 0 && image.status !== Image.Error && !(image.status === Image.Ready && image.implicitWidth === 0)
     readonly property string fallbackGlyph: kind === "folder" ? "folder" : kind === "file" ? "file" : "app-window"
     readonly property bool isMenu: kind === "menu" || kind === "link"
     readonly property bool showsDetail: live && (launcher.filterText.length > 0 || kind === "option" || kind === "notice" || kind === "unavailable") && detail.length > 0

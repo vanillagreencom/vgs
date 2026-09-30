@@ -36,7 +36,7 @@ focused() { expect_poll "${1:-the launcher holds the keyboard}" true ipc smoke a
 
 # An application the apps menu lists, whose launch leaves a file behind.
 mkdir -p -- "$home/.local/share/applications"
-printf '[Desktop Entry]\nType=Application\nName=Smoke Launch Probe\nGenericName=Probe\nExec=touch %s\n' "$home/launched-app" >"$home/.local/share/applications/smoke-launch-probe.desktop"
+printf '[Desktop Entry]\nType=Application\nName=Smoke Launch Probe\nGenericName=Probe\nIcon=vgssmokeunknownicon\nExec=touch %s\n' "$home/launched-app" >"$home/.local/share/applications/smoke-launch-probe.desktop"
 # Files the file search finds, one name twice.
 mkdir -p -- "$home/launcher-files/older"
 touch -- "$home/launcher-files/smoke-report.txt"
@@ -64,6 +64,12 @@ render expect_poll "the edge light's shader compiled from the published revision
 type_keys "smoke launch" || fail "typing into the launcher failed"
 expect_poll "typing reaches the search" '"smoke launch"' read_launcher filterText
 expect_poll "the search ranks the planted application first" '["app", "Smoke Launch Probe"]' first_row
+# The planted application names an icon no theme has, one word, since an
+# icon theme lookup drops a dashed name's last part and tries again: its
+# row shows the application glyph on a tile, so its title never keeps an empty tile's
+# indentation. The control is at the end of the file search block.
+glyph_tiles() { ipc smoke itemValues overlay vgs.launcher IconTile iconName,visible | py_reply 'import json,sys; print("app-window" in [v["iconName"] for v in json.load(sys.stdin) if v["visible"]])'; }
+expect_poll "an application whose icon no theme has shows the glyph tile" True glyph_tiles
 type_keys -k Return || fail "sending Return failed"
 expect_poll "Enter launched the application" True bash -c '[[ -f $1 ]] && echo True' _ "$home/launched-app"
 expect_poll "a launch closes the launcher" 0 layer_count vgs:overlay
@@ -369,11 +375,6 @@ expect_poll "the hidden select holds no surface" 0 layer_count vgs:overlay
 # folders; a helper that cannot build its index says why in the list.
 expect "the launcher summons for files" ok ipc shell summon overlay vgs.launcher '{"query":"f:smoke-report"}'
 expect_poll "f: lists both files of one name, newest first" '[["smoke-report.txt", "~/launcher-files"], ["smoke-report.txt", "~/launcher-files/older"]]' rows_of file
-# A file hit whose icon the sandbox's icon theme cannot draw shows the
-# file glyph on its tile, so its title never keeps an empty tile's
-# indentation. The control is at the end of the file search block.
-file_tiles() { ipc smoke layerItems vgs.launcher IconTile iconName,visible | py_reply 'import json,sys; print(json.dumps(sorted(set(v["iconName"] for s, r, v in json.load(sys.stdin) if v["visible"]))))'; }
-expect_poll "a file hit with no drawable icon shows the file glyph tile" '["file"]' file_tiles
 expect "the file index lives in the launcher's cache" True bash -c '[[ -s $1 ]] && echo True' _ "$home/.cache/vgs/launcher/f.idx"
 expect "F: searches folders" ok ipc shell summon overlay vgs.launcher '{"query":"F:launcher-files"}'
 expect_poll "F: lists the folder" '[["launcher-files", "~"]]' rows_of folder
@@ -391,24 +392,24 @@ expect_poll "the failed file search closed" 0 layer_count vgs:overlay
 rm -f -- "${home:?}/.cache/vgs/launcher"
 expect_poll "no file search helper outlives the launcher" 0 file_search_children
 # Control: a copy of the row that shows its image slot whatever the image
-# loaded draws no glyph tile for the same file hits.
+# loaded draws no glyph tile for the same application.
 row_qml="$repo/shell/plugins/vgs.launcher/LauncherRow.qml"
 cp -- "$row_qml" "$sandbox/LauncherRow.qml.kept"
 python3 - "$row_qml" <<'PY'
 import sys
 path = sys.argv[1]
 text = open(path).read()
-needle = 'readonly property bool imageShown: imageIcon && image.status !== Image.Error && image.source.toString().length > 0'
+needle = 'readonly property bool imageShown: imageIcon && image.source.toString().length > 0 && image.status !== Image.Error && !(image.status === Image.Ready && image.implicitWidth === 0)'
 assert text.count(needle) == 1, "the image rule to plant occurs once"
 open(path, "w").write(text.replace(needle, "readonly property bool imageShown: imageIcon"))
 PY
 expect "a rescan builds the row copy that always shows its image slot" ok ipc shell rescanPlugins
-expect "the launcher summons the row copy for files" ok ipc shell summon overlay vgs.launcher '{"query":"f:smoke-report"}'
-expect_poll "the row copy lists the files" '[["smoke-report.txt", "~/launcher-files"], ["smoke-report.txt", "~/launcher-files/older"]]' rows_of file
-expect_poll "control: the row copy draws no glyph tile for a file hit" '[]' file_tiles
+expect "the launcher summons the row copy for the application" ok ipc shell summon overlay vgs.launcher '{"query":"smoke launch"}'
+expect_poll "the row copy ranks the planted application first" '["app", "Smoke Launch Probe"]' first_row
+expect_poll "control: the row copy draws no glyph tile for the application" False glyph_tiles
 focused
 type_keys -k Escape -k Escape || fail "sending Escape failed"
-expect_poll "the row copy's file search closed" 0 layer_count vgs:overlay
+expect_poll "the row copy's search closed" 0 layer_count vgs:overlay
 cp -- "$sandbox/LauncherRow.qml.kept" "$row_qml"
 expect "a rescan restores the row" ok ipc shell rescanPlugins
 
