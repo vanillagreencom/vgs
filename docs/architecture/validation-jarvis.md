@@ -2,7 +2,7 @@
 
 Covers: scripts/lib/jarvis-env.sh, scripts/test-jarvis-env.js, scripts/fixtures/jarvis-env/
 
-The shared test world implements the isolation boundary in [the Jarvis plan § Testing strategy](../plans/v2-jarvis-plan.md#9-testing-strategy). It ships no Jarvis plugin, daemon, protocol or audio runtime. [Validation](validation.md) owns its row and input selection.
+The shared test world implements the isolation boundary in [the Jarvis plan § Testing strategy](../plans/v2-jarvis-plan.md#9-testing-strategy). It contains no installed runtime code. The [Jarvis service](jarvis.md) and its tests consume this owner. [Validation](validation.md) owns row selection.
 
 ## Ownership
 

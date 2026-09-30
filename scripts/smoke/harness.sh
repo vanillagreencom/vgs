@@ -165,6 +165,13 @@ if ! node_bin="$(node -e 'process.stdout.write(process.execPath)')"; then
   printf 'qml-smoke: status=not-measured missing=node-binary\n'
   exit 77
 fi
+# The Jarvis child always uses J09, including default-set startup. Only the
+# disposable Service copy names test infrastructure.
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" "$source_repo" "$repo" "$sandbox/jarvis-world"
+if ! bash "$sandbox/jarvis-world/jarvis-env.sh" "$sandbox/jarvis-world/standins" -- true; then
+  printf 'qml-smoke: status=not-measured reason=jarvis-isolation\n'
+  exit 77
+fi
 sandbox_env=(env -i
   HOME="$home" PATH="$(dirname -- "$node_bin"):$PATH" USER="${USER:-$(id -un)}" TERM=dumb LANG=C.UTF-8
   XDG_RUNTIME_DIR="$rt_dir" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
@@ -521,7 +528,7 @@ case "$plugin_set" in
     mkdir -p "$tick"
     cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
     cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools", "vgs.automations", "vgs.polkit", "vgs.lock"] }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools", "vgs.automations", "vgs.polkit", "vgs.lock", "vgs.jarvis"] }
 JSON
     ;;
   default) default_set_prepare '[]' ;;

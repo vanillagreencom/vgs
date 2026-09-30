@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.jarvis",
+  "name": "Jarvis",
+  "version": "0.1.0",
+  "author": "VGS",
+  "description": "Owns the Jarvis child daemon. This service does not capture audio or connect to a provider.",
+  "license": "MIT",
+  "icon": "mic",
+  "kinds": ["service"],
+  "entryPoints": { "service": "Service.qml" },
+  "capabilities": ["session", "status", "toasts"],
+  "requirements": [
+    { "command": "node", "packages": { "pacman": "nodejs", "apt": "nodejs", "dnf": "nodejs" }, "optional": false, "purpose": "Runs the Jarvis daemon, which requires Node 22 or later" }
+  ],
+  "status": {
+    "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." }
+  }
+}

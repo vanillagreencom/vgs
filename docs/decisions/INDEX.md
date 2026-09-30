@@ -65,6 +65,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D062 | VGS-611 | Native `vgs.lock` on the core session lock, a core `idle` capability, native `vgs.polkit` | Fails closed through crashes and disables; Omarchy's approach without writing /etc | Quickshell keeps a lock across a reload, or the runner restarts a crashed shell | Active | [Full](D062-native-lock-and-polkit-plugins.md) |
 | 2026-09-30 | D063 | VGS-580 | The design scale sits on a 4 px grid, with row heights as their own tokens | One step removes the pixel mismatches between neighbours; each value has a Radix, Geist or Linear reference | The owner picks another density, or a theme needs another grid | Active | [Full](D063-design-scale-on-the-4-px-grid.md) |
 | 2026-09-29 | D067 | VGS-596 | Full-screen overlays capture keyboard through a Hyprland submap | Hyprland runs binds before focused layers | Hyprland exposes Lua dispatcher details | Active | [Full](D067-overlay-keyboard-capture.md) |
+| 2026-09-30 | D058 | VGS-623 | Jarvis owns one leased child and one shared wire judge | The daemon must end when its service or shell disappears | Quickshell provides a stronger child lease or capture changes ownership | Active | [Full](D058-jarvis-child-lease.md) |
 
 ---
 

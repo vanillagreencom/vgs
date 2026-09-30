@@ -202,6 +202,7 @@ smoke_row list-motion
 smoke_row notifications
 smoke_row automations
 smoke_row polkit
+smoke_row jarvis
 smoke_row hyprland
 smoke_row instance-guard
 smoke_row diagnostics

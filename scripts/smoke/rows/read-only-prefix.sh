@@ -53,6 +53,7 @@ tree_smoke_observer "$source_repo" "$readonly_dest/usr/share/vgs"
 signal_shim="$sandbox/read-only-signal-shim"
 signal_log="$sandbox/read-only-signal-calls.log"
 read_only_prefix_prepare_tree "$readonly_dest/usr" "$repo" "$signal_shim"
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" "$source_repo" "$readonly_dest/usr/share/vgs" "$sandbox/jarvis-installed-world"
 chmod -R a-w -- "$readonly_dest/usr"
 
 tree_snapshot() { # ROOT
@@ -89,6 +90,8 @@ ipc() { ipc_via "$installed_bin" "$@"; }
 if stop_shell && start_shell "$readonly_dest/usr" "$sandbox/read-only-qs.log" bar PATH="$signal_shim:$shell_start_path" VGS_READ_ONLY_SIGNAL_LOG="$signal_log"; then
   ok "the shell starts from a non-writable installed prefix"
 fi
+expect "Jarvis enables from the non-writable installed prefix" ok ipc shell setPluginEnabled vgs.jarvis true
+expect "Jarvis answers hello from the non-writable installed prefix" ready jarvis_wait_ready
 
 installed_apply_vgs() {
   local err status=0

@@ -51,6 +51,7 @@ A bar never creates, destroys or reads a plugin widget. It may draw built-in wid
 | Member | Present | Value |
 |---|---|---|
 | `shell.manifest` | always | this plugin's validated manifest |
+| `shell.manifest.__revision` | always | source revision assigned by the registry, the scanner's hash of the plugin snapshot; settings changes keep it, a source rescan replaces the instance at a new revision |
 | `shell.settings` | always | the manifest's `settings` under the plugin's configuration entry |
 | `shell.compositor.focusWorkspace(workspace)`, `.focusWindow(address)`, `.moveWindowToWorkspace(address, workspace)`, `.toggleSpecialWorkspace(name)`, `.closeWindow(address)` | capability `compositor` | one function per dispatcher in `Dispatch.PLUGIN_DISPATCHERS`, each one dispatch through the core's argument check and reply judge; a moved window's workspace does not take focus; returns `ok` or `refused: ...` |
 | `shell.compositor.fullscreenWindow(mode, action)` | capability `compositor` | acts on the focused window, not an address, in both dialects; `mode` is `fullscreen` or `maximized`; `action` is `set`, `unset` or `toggle`. Focus a target first and read the active window back before calling. `set` and `unset` keep an already matching state |

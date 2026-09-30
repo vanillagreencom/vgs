@@ -713,6 +713,14 @@ Scope {
         }
         // A plugin's published status values, as each of its instances reads them.
         function statusValues(id: string): string { return JSON.stringify(PluginStatus.valuesOf(id)); }
+        function jarvisProcess(): string {
+            const service = root.instance("service", "vgs.jarvis");
+            if (service === null) return "absent";
+            const process = Array.from(service.resources).find(resource => resource.processId !== undefined);
+            if (process === undefined) return "missing";
+            return JSON.stringify({ pid: process.processId, lifetime: service.lifetime, retries: service.retries,
+                status: service.shell.status.values });
+        }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
         // Every item under an instance, the instance first, breadth first:
         // its type name as typeName writes it, its box in screen
