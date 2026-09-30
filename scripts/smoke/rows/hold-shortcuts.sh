@@ -20,7 +20,9 @@ expect_poll "the hold fixture builds" True record_exists acme.hold
 expect_poll "both physical hold keys reach the provider" '"{\"talk\":\"SUPER+code:108\",\"other\":\"CTRL+code:108\"}"' ipc smoke readInstance service acme.hold keys
 
 # wtype's symbol-resolution setting does not model physical keycodes.
-printf '%s\n' 'hl.config({ input = { resolve_binds_by_sym = false } })' >>"$hold_lua"
+printf '%s\n' \
+  'hl.config({ input = { resolve_binds_by_sym = false } })' \
+  'hl.bind("code:67", hl.dsp.global("smoke:hold-marker"), { description = "smoke:hold-marker" })' >>"$hold_lua"
 expect "physical keycodes use the virtual keyboard's evdev map" ok hypr reload config-only
 expect "the hold layer has no configuration errors" '[]' config_errors
 hold_client_log="$sandbox/hold-client.log"
@@ -31,7 +33,7 @@ expect_poll "the hold client has keyboard focus" '["smoke.hold-client", "Hold cl
 hold_read() { ipc smoke readInstance service acme.hold edges; }
 hold_reset() { expect "clear the hold fixture's edge record" ok ipc acme.hold invoke reset ""; }
 hold_client_events() { log_lines "$1" "$hold_client_log"; }
-hold_native() { hypr globalshortcuts | py_reply 'import sys; print(sum("acme.hold:" in line for line in sys.stdin))'; }
+hold_native() { hypr globalshortcuts | count_lines "${1:-acme.hold:}"; }
 hold_start_keyboard() { # LABEL EXECUTABLE LAYOUT OPTIONS
   hold_keyboard_log="$sandbox/hold-keyboard-$1.log"
   hold_fifo="$sandbox/hold-keyboard-$1.fifo"
@@ -43,6 +45,21 @@ hold_start_keyboard() { # LABEL EXECUTABLE LAYOUT OPTIONS
   grep -qxF ready "$hold_keyboard_log" || return 1
 }
 hold_send() { printf '%s\n' "$@" >&"$hold_fd"; }
+expect "the guarded observer creates its ordering marker for this row" ok ipc smoke holdMarkerStart
+expect_poll "the observer's native ordering marker is registered" 1 hold_native smoke:hold-marker
+hold_markers="$(ipc smoke holdMarkerCount)"
+hold_delayed_keyboard=""
+hold_marker_count() {
+  # A delayed healthy control resumes only when the marker reader runs.
+  if [[ -n $hold_delayed_keyboard ]]; then kill -CONT -- "$hold_delayed_keyboard" || return; fi
+  ipc smoke holdMarkerCount
+}
+hold_barrier() {
+  hold_markers=$((hold_markers + 1))
+  hold_send "down 67" "up 67"
+  expect_poll "the shell processes the marker after the checked keys" "$hold_markers" hold_marker_count
+}
+hold_acceptance() { local got; got="$(hold_read)" || return; [[ $got == '["talk-down","talk-up"]' ]] && echo ok || echo violation; }
 hold_stop_keyboard() {
   hold_send quit
   exec {hold_fd}>&-
@@ -78,6 +95,7 @@ for mode in us altgr swapped; do
   expect_poll "$mode: the client processes the key after plain Right Alt" "$((marker_up + 1))" hold_client_events '^key 30 released$'
   expect "$mode: plain Right Alt down reaches the client" "$((client_down + 1))" hold_client_events '^key 100 pressed$'
   expect "$mode: plain Right Alt up reaches the client" "$((client_up + 1))" hold_client_events '^key 100 released$'
+  hold_barrier
   expect "$mode: plain Right Alt calls no hold handler" '[]' hold_read
   hold_stop_keyboard
 done
@@ -93,6 +111,26 @@ hold_send "down 37" "down 108"
 expect_poll "the other chord starts only its own hold" '["other-down"]' hold_read
 hold_send "up 37" "up 108"
 expect_poll "the shared terminal key calls no unrelated release" '["other-down","other-up"]' hold_read
+
+# The keyboard is stopped before the queued healthy input. Only a marker
+# poll resumes it, so skipping the barrier makes each healthy case fail.
+for delayed in release delivery; do
+  hold_reset
+  if [[ $delayed == release ]]; then
+    hold_send "down 133" "down 108"
+    expect_poll "healthy delayed release starts with a delivered down" '["talk-down"]' hold_read
+  fi
+  kill -STOP -- "$hold_keyboard_pid"
+  expect_poll "the healthy $delayed sender is stopped before queuing input" T \
+    "${shell_env[@]}" python3 -c 'import pathlib,sys; print(pathlib.Path("/proc/" + sys.argv[1] + "/stat").read_text().rsplit(") ",1)[1].split()[0])' "$hold_keyboard_pid"
+  if [[ $delayed == delivery ]]; then hold_send "down 133" "down 108"; fi
+  hold_send "up 133" "up 108"
+  hold_delayed_keyboard="$hold_keyboard_pid"
+  hold_barrier
+  expect "healthy delayed $delayed does not satisfy the negative control" ok hold_acceptance
+  hold_delayed_keyboard=""
+  kill -CONT -- "$hold_keyboard_pid"
+done
 
 # Remove only modifier-independent release behavior from the generated copy.
 # The same acceptance assertion must reject the result.
@@ -112,7 +150,7 @@ hold_reset
 hold_send "down 133" "down 108"
 expect_poll "control: the press still reaches the real registry" '["talk-down"]' hold_read
 hold_send "up 133" "up 108"
-hold_acceptance() { local got; got="$(hold_read)" || return; [[ $got == '["talk-down","talk-up"]' ]] && echo ok || echo violation; }
+hold_barrier
 expect "control: losing modifier-independent release breaks acceptance" violation hold_acceptance
 cp -- "$sandbox/hold-layer-good.lua" "$hold_layer"
 expect "restore the generated release bind" ok hypr reload config-only
@@ -123,6 +161,7 @@ expect_poll "unbinding completes the pending hold" '["talk-down","talk-up"]' hol
 expect_poll "the effective talk key is unbound" '"{\"talk\":null,\"other\":\"CTRL+code:108\"}"' ipc smoke readInstance service acme.hold keys
 hold_reset
 hold_send "down 133" "down 108" "up 133" "up 108"
+hold_barrier
 expect "an unbound hold calls no handler" '[]' hold_read
 set_keys '{"acme.hold":{}}'
 expect "restore the hold's default key" ok ipc shell reloadConfig
@@ -134,6 +173,7 @@ set_keys '{"acme.hold":{"talk":null}}'
 expect "unbind while the physical key is still down" ok ipc shell reloadConfig
 expect_poll "a live unbind completes the held registration" '["talk-down","talk-up"]' hold_read
 hold_send "up 133" "up 108"
+hold_barrier
 expect "the old physical up cannot complete the hold twice" '["talk-down","talk-up"]' hold_read
 set_keys '{"acme.hold":{}}'
 expect "restore the key after the live unbind" ok ipc shell reloadConfig
@@ -155,6 +195,9 @@ hold_start_keyboard silent "$sandbox/keyboard-silent" us ""
 hold_reset
 hold_send "down 133" "down 108" "up 108" "up 133" sync
 expect_poll "control: the silent sender still acknowledges commands" 1 log_lines '^sync$' "$hold_keyboard_log"
+hold_stop_keyboard
+hold_start_keyboard delivery-marker "$sandbox/keyboard" us ""
+hold_barrier
 expect "control: dropped physical delivery breaks acceptance" violation hold_acceptance
 hold_stop_keyboard
 hold_start_keyboard dispose "$sandbox/keyboard" us ""
@@ -165,6 +208,7 @@ expect "early disposal releases the hold" ok ipc acme.hold invoke release-other 
 expect_poll "early disposal delivers the matching up once" '["other-down","other-up"]' hold_read
 expect_poll "early disposal releases both native registrations" 2 hold_native
 hold_send "up 37" "up 108"
+hold_barrier
 expect "late key-up cannot call the disposed registration" '["other-down","other-up"]' hold_read
 hold_reset
 hold_send "down 133" "down 108"
@@ -174,8 +218,11 @@ expect "disable the fixture while its key is held" ok ipc shell setPluginEnabled
 expect_poll "disable completes the hold before destroying the instance" "$((up_before + 1))" log_lines 'hold-fixture: edge=talk-up$'
 expect_poll "disable releases every native hold registration" 0 hold_native
 hold_send "up 133" "up 108"
+hold_barrier
 hold_stop_keyboard
 expect "late key-up after disable calls no release handler" "$((up_before + 1))" log_lines 'hold-fixture: edge=talk-up$'
+expect "the observer releases this row's ordering marker" ok ipc smoke holdMarkerStop
+expect_poll "the ordering marker leaves no native registration" 0 hold_native smoke:hold-marker
 close_toplevel "$hold_client_pid" "the hold client exits"
 cp -- "$sandbox/hold-before.json" "$hold_config"
 cp -- "$sandbox/hold-before.lua" "$hold_lua"

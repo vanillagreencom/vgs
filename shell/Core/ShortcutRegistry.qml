@@ -94,7 +94,10 @@ Scope {
                 if (stroke.kind === "disposed") return;
                 if (releaseHandler === null) { handler(); return; }
                 if (stroke.kind === "held") return;
-                stroke = { kind: "held", key: effectiveKey };
+                // Registry can change before Hyprland replaces its old binds.
+                const key = Layer.shortcutKeys(Registry.hyprlandSections, appid)[name];
+                if (key === null || key === undefined) return;
+                stroke = { kind: "held", key: key };
                 handler();
             }
             // Lua global dispatch can lose this object's native release

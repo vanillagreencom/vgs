@@ -25,7 +25,10 @@ trap 'chmod -R u+rwx -- "${tmp:?}" 2>/dev/null; rm -rf -- "${tmp:?}"' EXIT
 # Resolve node before replacing HOME: a version-manager shim may need the
 # developer's configuration, which does not belong in the test environment.
 node_bin="$(node -e 'process.stdout.write(process.execPath)')"
+mkdir -p "$tmp/home/.config" "$tmp/home/.cache" "$tmp/home/.local/share" "$tmp/home/.local/state" "$tmp/runtime"
+chmod 700 "$tmp/runtime"
 base_env=(env -i PATH="$(dirname -- "$node_bin"):$PATH" HOME="$tmp/home" LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+  XDG_CONFIG_HOME="$tmp/home/.config" XDG_CACHE_HOME="$tmp/home/.cache" XDG_DATA_HOME="$tmp/home/.local/share" XDG_STATE_HOME="$tmp/home/.local/state" XDG_RUNTIME_DIR="$tmp/runtime"
   GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
   GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z)
 
@@ -263,6 +266,7 @@ smoke_plan=$'python3 scripts/check-smoke-readers.py\npython3 scripts/test-check-
 orb_shader_plan=$'scripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-voiceorb-shader.py\npython3 scripts/test-check-voiceorb-shader.py\npython3 scripts/test-measure-shader.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\npython3 scripts/test-check-user-commands.py\n'"$repo_plan"$'\nscripts/qml-unit.sh\nscripts/test-qml-unit.sh\nscripts/test-flake.sh\nscripts/qml-smoke.sh\nscripts/measure-shader.sh'
 orb_check_plan=$'python3 scripts/check-voiceorb-shader.py\npython3 scripts/test-check-voiceorb-shader.py\npython3 scripts/test-measure-shader.py\n'"$repo_plan"
 shader_measure_plan=$'python3 scripts/test-measure-shader.py\n'"$repo_plan"$'\nscripts/measure-shader.sh'
+keyboard_plan="$repo_plan"$'\nscripts/qml-smoke.sh\nscripts/measure-shader.sh'
 fedora_plan=$'scripts/test-fedora-srpm.sh\n'
 version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan"$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-release.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
 # A recipe change runs the recipe check and its controls, never the product
@@ -281,6 +285,8 @@ cases=(
   "shader-ceilings|scripts/shader/ceilings.json|all|$shader_measure_plan"
   "shader-scene|scripts/shader/Scene.qml|all|$shader_measure_plan"
   "shader-tests|scripts/test-measure-shader.py|offline|python3 scripts/test-measure-shader.py"$'\n'"$repo_plan"
+  "keyboard-source|scripts/smoke/keyboard/keyboard.c|all|$keyboard_plan"
+  "keyboard-protocol|scripts/smoke/keyboard/virtual-keyboard-unstable-v1.xml|all|$keyboard_plan"
   "docs|docs/architecture/overview.md|offline|$repo_plan"$'\ndoc_limits_check'
   "runtime-doc|docs/architecture/runtime.md|offline|$readme_plan"$'\ndoc_limits_check'
   "docs-html|docs/guide.html|offline|$repo_plan"$'\ndoc_limits_check'
@@ -468,6 +474,38 @@ PY
 "${base_env[@]}" git -C "$d" add scripts/validate
 "${base_env[@]}" git -C "$d" commit -q -m known-input
 row "control: losing the Jarvis helper edge skips its failing row" "$d" 0 "" "validate: ok"
+test_area=offline
+test_args=()
+
+# The shader consumer builds the shared keyboard helper too. A stand-in
+# consumer fails on a planted source defect, without starting a compositor.
+d="$tmp/plan-keyboard-edge"; fresh "$d"
+mkdir -p "$d/scripts/smoke/keyboard"
+printf '#!/bin/sh\nexit 0\n' >"$d/scripts/qml-smoke.sh"
+printf '#!/bin/sh\ngrep -qx clean scripts/smoke/keyboard/keyboard.c\n' >"$d/scripts/measure-shader.sh"
+chmod +x "$d/scripts/qml-smoke.sh" "$d/scripts/measure-shader.sh"
+printf 'clean\n' >"$d/scripts/smoke/keyboard/keyboard.c"
+"${base_env[@]}" git -C "$d" add -A
+"${base_env[@]}" git -C "$d" commit -q -m keyboard-consumers
+printf 'defect\n' >"$d/scripts/smoke/keyboard/keyboard.c"
+test_area=qml
+test_args=(--changed HEAD)
+row "a keyboard helper defect selects and fails the shader consumer" "$d" 1 "" \
+  "validate: failed=shader GPU cost (exit 1)"
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+edge = ' scripts/smoke/keyboard/*'
+assert s.count(edge) == 1
+changed = s.replace(edge, '')
+assert changed != s
+p.write_text(changed)
+PY
+"${base_env[@]}" git -C "$d" add scripts/validate
+"${base_env[@]}" git -C "$d" commit -q -m control
+row "control: removing the keyboard edge hides the shader failure" "$d" 0 "" "validate: ok"
 test_area=offline
 test_args=()
 

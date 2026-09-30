@@ -75,14 +75,29 @@ Item {
         }
 
         function test_key_changes_cancel_hold() {
-            for (const key of [null, "SUPER+SHIFT+code:108"]) {
+            for (const row of [
+                { sections: sections(null), key: null },
+                { sections: sections("SUPER+SHIFT+code:108"), key: "SUPER+SHIFT+code:108" },
+                { sections: sections("SUPER+code:108").concat([{ id: "acme.first", binds: [{ shortcut: "claim", key: "SUPER+code:108" }] }]), key: null },
+                { sections: [], key: undefined }
+            ]) {
                 Registry.hyprlandSections = sections("SUPER+code:108");
                 const talk = hold("talk");
                 talk.object.pressed();
-                Registry.hyprlandSections = sections(key);
+                Registry.hyprlandSections = row.sections;
                 tryVerify(() => talk.object.stroke.kind === "idle");
+                compare(talk.object.effectiveKey, row.key);
+                if (row.key === null || row.key === undefined) {
+                    talk.object.pressed(); // An old bind or a queued press reaches the owner after cancellation.
+                    talk.object.pressed();
+                    compare(talk.object.stroke.kind, "idle");
+                }
                 talk.object.companion.released();
                 compare(JSON.stringify(root.edges), '["talk-down","talk-up"]');
+                Registry.hyprlandSections = sections("SUPER+code:108");
+                talk.object.pressed();
+                talk.object.companion.released();
+                compare(JSON.stringify(root.edges), '["talk-down","talk-up","talk-down","talk-up"]');
                 talk.dispose();
                 root.edges = [];
             }
@@ -107,15 +122,15 @@ Item {
 
         function test_throwing_release_still_destroys_objects() {
             const provider = registry.provider(context("acme.keys"));
-            const dispose = provider.register("throwing", "", () => {}, () => { throw new Error("planted release"); });
-            const shortcut = registry.shortcuts["acme.keys:throwing"];
+            const dispose = provider.register("talk", "", () => {}, () => { throw new Error("planted release"); });
+            const shortcut = registry.shortcuts["acme.keys:talk"];
             root.heldObject = shortcut;
             root.releaseObject = shortcut.companion;
             shortcut.pressed();
             let error = "";
             try { dispose(); } catch (e) { error = e.message; }
             compare(error, "planted release");
-            compare(registry.shortcuts["acme.keys:throwing"], undefined);
+            compare(registry.shortcuts["acme.keys:talk"], undefined);
             wait(0);
             compare(root.heldObject, null);
             compare(root.releaseObject, null);

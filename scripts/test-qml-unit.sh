@@ -76,6 +76,8 @@ mutations=(
   "hold press repeats run again|../Core/ShortcutRegistry.qml|if (stroke.kind === \"held\") return;|if (false) return;|tst_shortcutregistry.qml"
   "unrelated release completes a hold|../Core/ShortcutRegistry.qml|if (owner.stroke.kind === \"held\") owner.finish(\"idle\");|owner.releaseHandler();|tst_shortcutregistry.qml"
   "hold key changes leave it active|../Core/ShortcutRegistry.qml|stroke.key !== effectiveKey|false|tst_shortcutregistry.qml"
+  "late hold press accepts an unbound or conflicting key|../Core/ShortcutRegistry.qml|key === null|false|tst_shortcutregistry.qml"
+  "late hold press accepts a missing key|../Core/ShortcutRegistry.qml|key === undefined|false|tst_shortcutregistry.qml"
   "hold disposal loses its release|../Core/ShortcutRegistry.qml|shortcut.finish(\"disposed\");|shortcut.stroke = { kind: \"disposed\" };|tst_shortcutregistry.qml"
   "hold disposal keeps native objects|../Core/ShortcutRegistry.qml|finally { shortcut.destroy(); }|finally {}|tst_shortcutregistry.qml"
   "hold release callback is unchecked|../Core/ShortcutRegistry.qml|if (onReleased !== undefined && typeof onReleased !== \"function\")|if (false)|tst_shortcutregistry.qml"

@@ -259,7 +259,7 @@ rows=(
   "nix|nix flake package|scripts/test-flake.sh|flake.nix flake.lock config/requirements.json packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
   "package|Arch package build|scripts/arch-packages.sh|scripts/lib/release-tarball.sh packaging/arch/* packaging/install-system.sh"
   "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION LICENSE README.md scripts/smoke/* scripts/sample-shell-memory.sh scripts/lib/jarvis-env.sh scripts/fixtures/jarvis/* scripts/fixtures/jarvis-voice/installed.js"
-  "qml|shader GPU cost|scripts/measure-shader.sh|scripts/measure-shader.sh scripts/shader/* scripts/check-voiceorb-shader.py shell/Ui/feedback/VoiceOrb.qml shell/Ui/feedback/shaders/* shell/Commons/* config/shell.json bin/lib/qml-library.js shell/Core/HyprlandLayer.js scripts/smoke/harness.sh scripts/smoke/mode-hold.sh scripts/smoke/teardown.sh scripts/smoke/verdict.sh scripts/smoke/tree.sh scripts/smoke/shot.sh scripts/smoke/app-window.sh scripts/smoke/pointer/* scripts/smoke/toplevel/*"
+  "qml|shader GPU cost|scripts/measure-shader.sh|scripts/measure-shader.sh scripts/shader/* scripts/check-voiceorb-shader.py shell/Ui/feedback/VoiceOrb.qml shell/Ui/feedback/shaders/* shell/Commons/* config/shell.json bin/lib/qml-library.js shell/Core/HyprlandLayer.js scripts/smoke/harness.sh scripts/smoke/mode-hold.sh scripts/smoke/teardown.sh scripts/smoke/verdict.sh scripts/smoke/tree.sh scripts/smoke/shot.sh scripts/smoke/app-window.sh scripts/smoke/pointer/* scripts/smoke/toplevel/* scripts/smoke/keyboard/*"
 )
 
 # The branch point, printed on stdout: the merge base of HEAD with the

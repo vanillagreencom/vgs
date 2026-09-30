@@ -3,6 +3,7 @@ import QtQuick.Window
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import qs.Core
 import qs.Commons
 import "Commons/Tokens.js" as Tokens
@@ -14,6 +15,17 @@ Scope {
     id: root
     property int builds: 0
     property int frames: 0
+    property int holdMarkers: 0
+    property var holdMarker: null
+    Component {
+        id: holdMarkerComponent
+        GlobalShortcut {
+            appid: "smoke"
+            name: "hold-marker"
+            description: "Order hold shortcut observations"
+            onPressed: root.holdMarkers += 1
+        }
+    }
     property var layerFrameSurface: null
     readonly property var layerFrameWindow: layerFrameSurface === null ? null : layerFrameSurface.contentItem.Window.window
     property int layerFrames: 0
@@ -729,6 +741,19 @@ Scope {
         function fontAvailable(family: string): bool { return Qt.fontFamilies().indexOf(family) !== -1; }
         function buildCount(): int { return root.builds; }
         function frames(): int { return root.frames; }
+        function holdMarkerCount(): int { return root.holdMarkers; }
+        function holdMarkerStart(): string {
+            if (root.holdMarker !== null) return "held";
+            root.holdMarkers = 0;
+            root.holdMarker = holdMarkerComponent.createObject(root);
+            return root.holdMarker === null ? "error: marker-create" : "ok";
+        }
+        function holdMarkerStop(): string {
+            if (root.holdMarker === null) return "absent";
+            root.holdMarker.destroy();
+            root.holdMarker = null;
+            return "ok";
+        }
         // Observe only the selected layer's own QQuickWindow, not any bar.
         function watchLayerFrames(id: string): string {
             const entry = Layers.entries.find(e => e.pluginId === id);
