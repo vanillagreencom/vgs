@@ -269,7 +269,37 @@ shell_resolves() { PATH="$shell_start_path" command -v -- "$1" || echo none; }
 # then node's, then the host's. A row that stands in more commands puts
 # its own directory ahead of it. shell_start_words are the environment
 # words start_shell gives every shell over shell_env's.
-shell_start_path="$shim:$(dirname -- "$node_bin"):$PATH"
+# A caller may set shell_hidden_commands, as scripts/sandbox-shots.sh does
+# for the setup steps' shots, to commands every shell must find absent
+# whatever the host holds: the host part of that PATH is then one
+# directory of links to the first file of every other command on the
+# harness's own PATH, in its order, and to node itself, whose directory,
+# such as /usr/bin, would hold the hidden commands too. A command a row
+# stands in the shell's own directory still resolves. Unset, as in every
+# smoke run, the host part is node's directory, then the harness's PATH.
+shell_host_path="$(dirname -- "$node_bin"):$PATH"
+if [[ -n ${shell_hidden_commands[*]:-} ]]; then
+  python3 - "$sandbox/host-path" "$PATH" "$node_bin" "${shell_hidden_commands[@]}" <<'PY'
+import os, sys
+links, path, node, taken = sys.argv[1], sys.argv[2], sys.argv[3], set(sys.argv[4:])
+os.mkdir(links)
+os.symlink(node, os.path.join(links, "node"))
+taken.add("node")
+for directory in path.split(":"):
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        continue
+    for name in names:
+        file = os.path.join(directory, name)
+        if name in taken or not os.path.isfile(file) or not os.access(file, os.X_OK):
+            continue
+        taken.add(name)
+        os.symlink(file, os.path.join(links, name))
+PY
+  shell_host_path="$sandbox/host-path"
+fi
+shell_start_path="$shim:$shell_host_path"
 shell_start_words=(PATH="$shell_start_path" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_TOOL_DIR="$shim")
 
 # The test helpers, built from the repository into the sandbox, each with

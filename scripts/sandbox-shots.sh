@@ -239,6 +239,16 @@ done
 
 # shellcheck disable=SC2034 # the harness sourced below reads it
 shell_output_scale="$scale"
+# The setup steps' shots draw each install button, which a Settings page
+# offers only while its command is absent; on a host that has vsys, mise or
+# the browser-policy writer they would draw none. The shell finds those
+# three absent (harness.sh's shell_hidden_commands); a scene that stands
+# its own stand-in for one, as panels does for vsys and devtools for mise,
+# still finds it, and the shot of that button is then skipped.
+if [[ " ${scenes[*]} " == *" settings "* && -f $tree/shell/Ui/feedback/CommandDisclosure.qml ]]; then
+  # shellcheck disable=SC2034 # the harness sourced below reads it
+  shell_hidden_commands=(vsys mise vgs-browser-policy)
+fi
 source "$checkout/scripts/smoke/harness.sh"
 # The harness copied the tree into the sandbox; the export is no longer
 # read, and every later read of the tree reads the sandbox's copy.
@@ -547,9 +557,35 @@ slack_section() {
 # The setup steps of D061 on the open Settings window: Globex's Connect with
 # its masked field typed into, Acme's command behind Show command, the
 # status fixture's Set up token and Install the tool, Automations' Enable
-# while logged out, Themes' Install browser theming once the chromium
-# target ships, and Settings' own page with its command revealed.
+# while logged out, Agent Warden's Install vsys and then Set up, Dev Tools'
+# Install mise, Themes' Install browser theming once the chromium target
+# ships, and Settings' own page with its command revealed.
 automations_offers() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | py_reply 'import json,sys; print(str(any(s["action"] and s["action"]["offered"] for p in json.load(sys.stdin) if p["id"] == "vgs.automations" for s in p["status"])).lower())'; }
+# step_offered ID KEY: whether plugin ID's Settings page offers the step of
+# its status entry KEY.
+step_offered() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | py_reply 'import json,sys; print(str(any(s["key"] == sys.argv[2] and s["action"] and s["action"]["offered"] for p in json.load(sys.stdin) if p["id"] == sys.argv[1] for s in p["status"])).lower())' "$1" "$2"; }
+# step_shot MODE ID KEY LABEL NAME: plugin ID's page with the button LABEL
+# of its entry KEY scrolled into view, as setup-MODE-NAME. A host where the
+# step is not offered, such as one whose scene stood in the command the
+# button installs, skips the shot and says so.
+step_shot() {
+  local shown offered=false _
+  expect "the window opens the $2 page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin "$2"
+  expect_poll "the $2 page is shown" "\"$2\"" settings_page
+  # expect_poll's own window, 5 s at 0.2 s.
+  for _ in $(seq 1 25); do
+    [[ $(step_offered "$2" "$3") == true ]] && { offered=true; break; }
+    sleep 0.2
+  done
+  if ! "$offered"; then
+    ok "skipped setup-$1-$5: $2 offers no $4 here"
+    return 0
+  fi
+  shown="$(ipc smoke revealText "$settings_kind" vgs.settings Button "$4")" || shown=unread
+  [[ $shown =~ ^[0-9.]+$ ]] || { fail "the $4 button was not revealed: $shown"; return 0; }
+  park_pointer
+  take "setup-$1-$5"
+}
 scene_setup_steps() { # MODE
   local section start end height
   if section="$(slack_section)"; then
@@ -578,12 +614,24 @@ scene_setup_steps() { # MODE
   expect_poll "the Automations page is at its top" True settings_at_top
   park_pointer
   take "setup-$1-automations"
-  expect "the window opens the Themes page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.themes
-  expect_poll "the Themes page is shown" '"vgs.themes"' settings_page
-  settings_scroll_to 0 >/dev/null || fail "the Themes page did not scroll to the top"
-  expect_poll "the Themes page is at its top" True settings_at_top
-  park_pointer
-  take "setup-$1-browser-theming"
+  step_shot "$1" vgs.agent-warden vsys "Install vsys" warden-install-vsys
+  # Set up is offered while vsys is present: a stand-in that runs nothing
+  # stands for it, and goes again after the shot, so the next mode offers
+  # Install vsys too.
+  local vsys_stood=false
+  if [[ ! -e $shim/vsys ]]; then
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$shim/vsys"
+    chmod 755 "$shim/vsys"
+    vsys_stood=true
+    expect "a rescan after the stand-in vsys arrives starts" ok ipc shell rescanPlugins
+  fi
+  step_shot "$1" vgs.agent-warden warden "Set up" warden-set-up
+  if "$vsys_stood"; then
+    rm -f -- "${shim:?}/vsys"
+    expect "a rescan after the stand-in vsys goes starts" ok ipc shell rescanPlugins
+  fi
+  step_shot "$1" vgs.devtools mise "Install mise" devtools-install-mise
+  step_shot "$1" vgs.themes browserTheming "Install browser theming" browser-theming
   expect "the window opens its own page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.settings
   expect_poll "its own page is shown" '"vgs.settings"' settings_page
   settings_press "Show command" || fail "the click on the own page's Show command failed"
@@ -1485,10 +1533,18 @@ SH
         cp -R -- "$checkout/themes/targets/chromium" "$repo/themes/targets/chromium"
         expect "the status fixture is scanned" ok ipc shell rescanPlugins
         expect_poll "the status fixture is listed" True plugin_known acme.status
-        for id in acme.status vgs.automations; do
+        for id in acme.status vgs.automations vgs.agent-warden vgs.devtools; do
           expect "enabling $id is allowed" ok ipc shell setPluginEnabled "$id" true
           expect_poll "$id is built" True record_exists "$id"
         done
+        # Dev Tools requires mise, which the shell finds absent, so enabling
+        # it raises the core's requirement notice; Escape closes it before
+        # any shot.
+        for _ in $(seq 1 25); do [[ $(notice_shown) != null ]] && break; sleep 0.2; done
+        if [[ $(notice_shown) != null ]]; then
+          type_keys -k Escape || fail "sending Escape to the requirement notice failed"
+          expect_poll "Escape closes the requirement notice" null notice_shown
+        fi
         expect "the themes plugin is disabled to read the shipped target" ok ipc shell setPluginEnabled vgs.themes false
         expect_poll "the themes service is gone" False record_exists vgs.themes
         expect "the themes plugin is enabled with the target shipped" ok ipc shell setPluginEnabled vgs.themes true
