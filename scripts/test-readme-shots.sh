@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Drive scripts/readme-shots.sh --from over synthetic shots, with no
-# sandbox. A scratch checkout holds a copy of the script, of the table's
-# judge scripts/check-readme-images.py and of scripts/smoke/shot.sh, a
-# table of its own, and under its tmp/ a run as scripts/sandbox-shots.sh
-# writes one: shots.tsv and 2560x1600 PNGs made with ImageMagick over a
-# flat desktop with a 56-row bar band, a clock in the band and a parked
-# pointer in the bottom-right corner. Each case pins the exit status and
-# the first stderr line; the pass case pins every image's size and WebP
-# magic. The controls plant one defect per crop rule in a copy of the
-# script and require the case that rule owns to go red.
+# Drive scripts/readme-shots.sh over synthetic shots, with no sandbox. A
+# scratch checkout holds a copy of the script, of the table's judge
+# scripts/check-readme-images.py and of scripts/smoke/shot.sh, a table of
+# its own, and under its tmp/ a run as scripts/sandbox-shots.sh writes one:
+# shots.tsv and 2560x1600 PNGs made with ImageMagick over a flat desktop
+# with a 56-row bar band, a clock in the band and a parked pointer in the
+# bottom-right corner. Its scripts/sandbox-shots.sh is a stand-in that
+# starts no compositor: it records its arguments, copies that run into its
+# --out directory, as a real run leaves its shots there whether it passes
+# or fails, and exits with the status its case sets. The --from cases pin
+# the exit status and the first stderr line; the pass case pins every
+# image's size and WebP magic. The cases without --from pin the stand-in's
+# arguments, the exit status passed through, and images written only on a
+# 0. The controls plant one defect per rule in a copy of the script and
+# require the case that rule owns to go red.
 #
 # Exit 0 when every case and control holds, 1 otherwise, 77 without
 # ImageMagick.
@@ -63,12 +68,12 @@ magick -size 2560x1600 xc:'#111111' "$flat_dir/00-desktop.png"
 cp -- "$run_dir/centre.png" "$flat_dir/"
 printf '00-desktop\ts\tp\tsettled\thidden\ncentre\ts\tp\tsettled\thidden\n' >"$flat_dir/shots.tsv"
 
-# The table each case runs over: image, shot and crop per row, the scene
-# being no concern of --from.
+# The table each case runs over: image, shot, crop and scene per row, the
+# scene `scene` when the row names none, as it is no concern of --from.
 table() { # ROW...
-  local row
+  local row image shot crop scene
   printf 'image\tscene\tshot\tcrop\n'
-  for row; do IFS=' ' read -r image shot crop <<<"$row"; printf '%s\tscene\t%s\t%s\n' "$image" "$shot" "$crop"; done
+  for row; do IFS=' ' read -r image shot crop scene <<<"$row"; printf '%s\t%s\t%s\t%s\n' "$image" "${scene:-scene}" "$shot" "$crop"; done
 }
 pass_rows=(
   "p.full.webp centre full"
@@ -145,9 +150,81 @@ for (( i = 0; i < ${#cases[@]}; i += 5 )); do
   if [[ $status -eq ${cases[i + 3]} && $err_line == "${cases[i + 4]}" ]]; then ok "$label"; else fail "$label: exit=$status first stderr line: $err_line"; fi
 done
 
+# The stand-in scripts/sandbox-shots.sh: it writes its arguments one per
+# line to stand_in_argv, copies the run into its --out directory and exits
+# with the status in stand_in_status.
+stand_in_argv="$TMP_ROOT/stand-in.argv"
+stand_in_status="$TMP_ROOT/stand-in.status"
+cat >"$checkout/scripts/sandbox-shots.sh" <<STAND_IN
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$@" >"$stand_in_argv"
+out=""
+while [[ \$# -gt 0 ]]; do
+  if [[ \$1 == --out && \$# -ge 2 ]]; then out="\$2"; shift 2; else shift; fi
+done
+[[ -n \$out ]] || { echo "sandbox-shots stand-in: no --out" >&2; exit 3; }
+mkdir -p -- "\$out"
+cp -- "$run_dir"/* "\$out"/
+exit "\$(cat -- "$stand_in_status")"
+STAND_IN
+chmod +x "$checkout/scripts/sandbox-shots.sh"
+# The table without --from: two rows share each of the scenes panels and
+# bar, so each scene must reach the sandbox once, in the table's order.
+sandbox_rows=(
+  "p.full.webp centre full panels"
+  "p.bar.webp clock bar bar"
+  "p.panel.webp panel content panels"
+  "p.centre.webp centre content settings"
+  "p.edge.webp edge content bar"
+)
+sandbox_scenes="panels
+bar
+settings"
+sandbox_head="--hidden
+--scale
+2
+--modes
+dark
+--size
+1280x800
+--out"
+
+# sandbox_case SCRIPT STATUS: whether SCRIPT, without --from and over a
+# stand-in that exits STATUS, hands the sandbox exactly its capture
+# arguments, an --out under tmp/readme-shots/ named for the UTC time and
+# each table scene once; exits STATUS; and writes the pass rows at their
+# sizes on 0 and no image otherwise.
+sandbox_case() {
+  local script="$1" want="$2" out_dir="$checkout/tmp/out-$RANDOM$RANDOM" argv="" images=""
+  printf '%s\n' "$want" >"$stand_in_status"
+  rm -f -- "${stand_in_argv:?}"
+  run_tool "$script" "$(table "${sandbox_rows[@]}")" --out "$out_dir"
+  [[ ! -f $stand_in_argv ]] || argv="$(cat -- "$stand_in_argv")"
+  [[ ! -d $out_dir ]] || images="$(find "$out_dir" -type f -name '*.webp')"
+  [[ $want -eq 0 || -z $images ]] || { echo "        sandbox $want: images written: $images"; return 1; }
+  [[ $want -ne 0 || $(sizes_in "$out_dir") == "$pass_sizes" ]] || { echo "        sandbox $want: sizes: $(sizes_in "$out_dir" | tr '\n' ' ')"; return 1; }
+  if [[ $status -eq $want && $(head -n 8 <<<"$argv") == "$sandbox_head" \
+    && $(sed -n '9p' <<<"$argv") =~ ^"$checkout"/tmp/readme-shots/[0-9]{8}T[0-9]{6}Z$ \
+    && $(tail -n +10 <<<"$argv") == "$sandbox_scenes" ]]; then
+    return 0
+  fi
+  echo "        sandbox $want: exit=$status first stderr line: $err_line argv: $(tr '\n' ' ' <<<"$argv")"
+  return 1
+}
+declare -A sandbox_labels=(
+  [0]="without --from, a sandbox run that passes is cut into every image"
+  [1]="without --from, a sandbox run that fails ends with 1 and no image"
+  [77]="without --from, a sandbox run that could not run ends with 77 and no image"
+)
+for want in 1 77 0; do
+  if sandbox_case "$repo/scripts/readme-shots.sh" "$want"; then ok "${sandbox_labels[$want]}"; else fail "${sandbox_labels[$want]}"; fi
+done
+
 # Controls, four fields each: label, the text, which must match once, its
-# replacement, and the case that goes red: `pass` for the pass case, else a
-# refusal case's label, whose status and line must then differ.
+# replacement, and the case that goes red: `pass` for the pass case,
+# `sandbox-N` for the case whose stand-in exits N, else a refusal case's
+# label, whose status and line must then differ.
 controls=(
   "a box near the band is not taken from the top edge"
   'top=$(( y - MARGIN_PX <= band ? 0 : y - MARGIN_PX ))' 'top=$(( y - MARGIN_PX < 0 ? 0 : y - MARGIN_PX ))'
@@ -161,6 +238,12 @@ controls=(
   "an empty content crop falls back to the whole output"
   '[[ $box != none ]] || stop crop-empty "$shot"' '[[ $box != none ]] || box="0 0 $width $height"'
   "a content crop with nothing below the band is refused"
+  "a failed sandbox run does not end the command"
+  '[[ $status -eq 0 ]] || exit "$status"' '[[ $status -eq 0 ]] || true "$status"'
+  sandbox-1
+  "a scene two rows share reaches the sandbox twice"
+  '[[ " ${scenes[*]} " == *" $scene "* ]] || scenes+=("$scene")' '[[ " ${scenes[*]} " == *" $scene "* ]] || true; scenes+=("$scene")'
+  sandbox-0
 )
 mutant="$TMP_ROOT/readme-shots-mutant.sh"
 for (( i = 0; i < ${#controls[@]}; i += 4 )); do
@@ -172,6 +255,10 @@ text = open(src).read()
 assert text.count(needle) == 1, "the planted text must match once"
 open(dst, "w").write(text.replace(needle, replacement))' "$repo/scripts/readme-shots.sh" "$mutant" "${controls[i + 1]}" "${controls[i + 2]}"; then
     fail "control: $label could not be planted"
+    continue
+  fi
+  if [[ $target == sandbox-* ]]; then
+    if sandbox_case "$mutant" "${target#sandbox-}" >/dev/null; then fail "control: $label still gave '$target'"; else ok "control: $label"; fi
     continue
   fi
   if [[ $target == pass ]]; then
