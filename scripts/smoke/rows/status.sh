@@ -80,8 +80,8 @@ tampered() { publish tamper | py_reply 'import json,sys; print(json.dumps(json.l
 expect "the published values do not change in place" "$before_values" tampered
 
 # Choices use the same one record and refusal path as other status types.
-agreed_choices() { agreed statusValues | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["devices"]))'; }
-choices_after_tamper() { publish tamper | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["devices"]))'; }
+agreed_choices() { agreed statusValues | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["devices"]))'; }
+choices_after_tamper() { publish tamper | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["devices"]))'; }
 expect "a labeled choices list is published" ok publish set 'devices=[{"label":"Alpha","value":"a"},{"label":"Beta","value":"b"}]'
 expect_poll "every instance reads the choices list" '[{"label": "Alpha", "value": "a"}, {"label": "Beta", "value": "b"}]' agreed_choices
 choices_revision="$(agreed statusRevision)" || fail "the choices revision is unreadable"

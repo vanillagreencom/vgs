@@ -85,7 +85,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a second directory is refused", result.returncode == 2 and result.stdout.startswith("check-smoke-readers: refused: argument="), result)
 
     # The repository's rows pass, above a floor of the files and readers
-    # they held when the rule landed, 39 rows and 259 reads, less a margin
+    # they held when the rule landed, 39 rows and 264 reads, less a margin
     # for rows that go; a walk below it is a broken extractor, not a clean
     # tree.
     result = run([])

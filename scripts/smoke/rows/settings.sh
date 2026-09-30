@@ -130,7 +130,7 @@ expect "the empty string stays in the file" '""' user_device
 choice_controls="$repo/shell/plugins/vgs.settings"
 choice_source_revision() {
   "$repo/bin/vgsh-scan" --require-base "$repo/shell/plugins" |
-    python3 -c 'import json,sys; print(next(entry["revision"] for entry in json.load(sys.stdin) if entry["dir"] == sys.argv[1]))' "$choice_controls"
+    py_reply 'import json,sys; print(next(entry["revision"] for entry in json.load(sys.stdin) if entry["dir"] == sys.argv[1]))' "$choice_controls"
 }
 choice_revision_before="$(choice_source_revision)" || fail "the Settings source revision is unreadable before the controls"
 python3 - "$choice_controls" <<'PYEDIT'
