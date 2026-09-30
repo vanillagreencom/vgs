@@ -204,6 +204,7 @@ function inside() {
     const mutant = path.join(root, "tui-copy");
     fs.mkdirSync(path.join(mutant, "backend"), { recursive: true });
     fs.copyFileSync(path.join(backend, "keys.js"), path.join(mutant, "backend/keys.js"));
+    fs.copyFileSync(path.join(backend, "net.js"), path.join(mutant, "backend/net.js"));
     const precheck = "this.#referenceUpdate(own);";
     assert.equal(source.split(precheck).length - 1, 1);
     const unchecked = source.replace(precheck, "void own;");

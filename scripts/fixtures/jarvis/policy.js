@@ -7,7 +7,7 @@ const path = require("node:path");
 const cp = require("node:child_process");
 const tree = path.resolve(__dirname, "../../..");
 
-function world(main) {
+function world(main, prepareStandins) {
     if (process.argv[2] === "--inside") return main();
     const parent = path.join(tree, "tmp");
     fs.mkdirSync(parent, { recursive: true });
@@ -15,6 +15,7 @@ function world(main) {
     try {
         const standins = path.join(root, "standins");
         fs.mkdirSync(standins);
+        if (prepareStandins !== undefined) prepareStandins(standins);
         const result = cp.spawnSync("/bin/bash", [path.join(tree, "scripts/lib/jarvis-env.sh"),
             standins, "--", "node", process.argv[1], "--inside"], {
             env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: parent },

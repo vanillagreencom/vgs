@@ -2,6 +2,7 @@
 "use strict";
 const path = require("node:path");
 const { Secrets, ownReference } = require("./Secrets.js");
+const Net = require("./net.js");
 
 function main() {
     const directory = path.join(process.env.XDG_STATE_HOME || path.join(process.env.HOME, ".local/state"), "vgs/jarvis");
@@ -14,7 +15,7 @@ function main() {
     case "add-key": {
         if (process.argv.length !== 6) throw new Error("jarvis-keys: arguments=metadata");
         const [provider, account, origin] = process.argv.slice(3);
-        const ref = ownReference(provider, account, origin);
+        const ref = ownReference(provider, account, Net.endpoint(origin).origin);
         store.addKey(ref);
         process.stdout.write("jarvis-keys: stored=libsecret\n");
         break;

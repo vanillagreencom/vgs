@@ -39,7 +39,7 @@ Changing a provider, account or policy creates a new recipient set. Old grants f
 | `owner.request(item, options, grants?)` | Options are `{url, method?, headers?, key?, signal?}`. It returns a native Response in `{kind:"response", response, close}` or the non-send release answer. The default method is POST. GET and HEAD require empty content. The adapter calls `close` after consuming or cancelling the response. |
 | `owner.websocket(item, options, grants?)` | Options are `{url, headers?, key?}`. The item covers connection metadata. This operation sends no application frame. It returns `{kind:"channel", events, readyState, send, close}` or the non-send release answer. |
 | `channel.send(item, grants?)` | Judges every application frame against the whole set before writing bytes. An ask or withhold writes nothing. |
-| `channel.events` | A separate EventTarget publishes open, message, error and close. Message events contain only received data. Neither event targets nor channel properties expose the native WebSocket. |
+| `channel.events` | A separate EventTarget publishes open, message, error and close. Message events contain only received data. Close events retain numeric `code` and boolean `wasClean`. They omit raw provider reason text pending its owner's redaction. Neither event targets nor channel properties expose the native WebSocket. |
 | `owner.close()` | Refuses further transfers and aborts owned HTTP streams and WebSocket channels. The session calls it before dropping an old set. |
 | Key `{origin, header, prefix, value}` | The secret owner supplies the exact stored canonical origin and the in-memory secret. The adapter supplies the provider's credential header and prefix. Header choices live in `net.js::headers`. Keys require HTTPS outside loopback. |
 
@@ -47,9 +47,11 @@ The door attaches a key only when the stored origin equals the request's origin.
 
 The door refuses every HTTP redirect. Node's WebSocket handshake also refuses redirects. No redirected request forwards credentials or content. An adapter must select an endpoint rather than depend on a redirect.
 
-Only selected network origins can receive a connection. Thus a fully offline set has no route to a non-loopback socket. Numeric loopback addresses need no DNS lookup. The door normalizes `localhost` to the IPv4 loopback address before selection or key storage. A key stored for the text origin `localhost` refuses rather than crossing to that numeric origin. The account owner uses the endpoint judge when storing the origin. A name that merely starts with a loopback address is not loopback.
+Only selected network origins can receive a connection. Thus a fully offline set has no route to a non-loopback socket. Numeric loopback addresses need no DNS lookup. The door normalizes `localhost` to the IPv4 loopback address before selection or key storage. The [Add key producer](jarvis-secrets.md#add-key) uses the same endpoint judge before constructing a new reference. A key already bound to the text origin `localhost` refuses rather than crossing to that numeric origin. No existing reference is migrated. A name that merely starts with a loopback address is not loopback.
 
 Response parsing, provider errors, stream limits, deadlines and audio queue bounds belong to adapters and their session. Transport errors name their operation without including a URL, header or secret. The door opens no key store and passes no key to a child.
+
+The credential header setter has its own safe failure boundary. A native header failure becomes `jarvis: net=key-shape` without an attached cause or original header value. Origin, plaintext and unbound metadata checks still apply before it.
 
 ## Node contract
 
@@ -57,11 +59,4 @@ The [Node URL reference](https://github.com/nodejs/node/blob/v22.20.0/doc/api/ur
 
 ## Evidence
 
-- `scripts/test-jarvis-release.js` runs the complete label, profile, vision, recipient and grant table. It checks nested summaries, buffer snapshots, markers, immutable recipients and expired grant identities. Its controls remove each independent release rule.
-- `scripts/test-jarvis-net.js` uses real HTTP and WebSocket traffic in the [Jarvis test world](validation-jarvis.md). Two origins test key isolation. Redirects test that no second request starts. A socket-creator observer proves that offline refusal occurs before a socket attempt.
-- The transport suite tests grants before connection and before frames, safe event targets, localhost pinning, URL refusals, credential metadata, cancellation and owner closure. Its controls mutate disposable code copies, not the installed tree.
-- `scripts/validate` selects both suites for their direct and shared inputs. `scripts/test-validate.sh` pins the selection. `packaging/install-tree.manifest` includes the installed network door.
-
-## Omarchy comparison
-
-The read-only Omarchy shell's agents plugin reads usage records from collectors. Its `omarchy-agent-usage-claude` and `omarchy-agent-usage-fireworks` collectors attach credentials to fixed API requests. VGS keeps network work outside QML. It does not copy their credential-file readers or automatic urllib redirects. Jarvis sends conversation content and supports custom providers, so it needs explicit release consent and exact origin-bound keys.
+[Release validation](jarvis-release-validation.md) holds the suite boundaries, independent controls and Omarchy comparison.

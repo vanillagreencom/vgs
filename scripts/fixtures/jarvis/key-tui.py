@@ -1,6 +1,7 @@
 # Drive the actual add-key script on a private terminal. Input waits for each
 # prompt, so secret bytes are never sent while the terminal still echoes.
 import errno
+import argparse
 import os
 import pty
 import select
@@ -8,22 +9,29 @@ import subprocess
 import sys
 import time
 
+arguments = argparse.ArgumentParser()
+arguments.add_argument("script")
+arguments.add_argument("library")
+arguments.add_argument("plugin")
+arguments.add_argument("--expect-metadata-refusal", action="store_true")
+arguments.add_argument("--origin", default="https://fixture.invalid")
+args = arguments.parse_args()
 master, slave = pty.openpty()
 env = {name: os.environ[name] for name in (
     "PATH", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME",
     "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")}
-env["VGS_TUI_LIB"] = sys.argv[2]
-env["VGS_PLUGIN_DIR"] = sys.argv[3]
+env["VGS_TUI_LIB"] = args.library
+env["VGS_PLUGIN_DIR"] = args.plugin
 def terminal():
     import fcntl
     import termios
     os.setsid()
     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-child = subprocess.Popen(["bash", sys.argv[1]], stdin=slave, stdout=slave,
+child = subprocess.Popen(["bash", args.script], stdin=slave, stdout=slave,
                          stderr=slave, env=env, preexec_fn=terminal)
 os.close(slave)
 steps = [(b"Provider: ", b"fixture\n"), (b"Account label: ", b"test\n"),
-         (b"Origin (for example https://api.openai.com): ", b"https://fixture.invalid\n"),
+         (b"Origin (for example https://api.openai.com): ", (args.origin + "\n").encode()),
          (b"Password: ", b"test-key-must-stay-private\n")]
 output = b""
 deadline = time.monotonic() + 10  # Bound an interactive fixture that misses a prompt.
@@ -47,8 +55,7 @@ try:
         child.kill()
     code = child.wait(timeout=2)
     sys.stdout.buffer.write(output)
-    metadata_refusal = len(sys.argv) == 5 and sys.argv[4] == "--expect-metadata-refusal"
-    sys.exit(code if not steps or (metadata_refusal and len(steps) == 1) else 90)
+    sys.exit(code if not steps or (args.expect_metadata_refusal and len(steps) == 1) else 90)
 finally:
     if child.poll() is None:
         child.kill()

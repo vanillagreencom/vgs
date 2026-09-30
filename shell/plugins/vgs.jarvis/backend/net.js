@@ -44,7 +44,10 @@ function headers(target, values, key) {
                 || typeof key.value !== "string" || key.value === "" || /[\r\n]/.test(key.value)
                 || typeof key.prefix !== "string" || /[\r\n]/.test(key.prefix))
             throw new Error("jarvis: net=key-shape");
-        result.set(key.header, key.prefix + key.value);
+        // Headers trims edge whitespace. Credentials must not silently lose a
+        // pasted line break; the explicit check above also rejects that case.
+        try { result.set(key.header, key.prefix + key.value); }
+        catch { throw new Error("jarvis: net=key-shape"); }
     }
     return result;
 }
@@ -124,9 +127,9 @@ function create(selected) {
         socket.addEventListener("open", () => events.dispatchEvent(new Event("open")));
         socket.addEventListener("message", event => events.dispatchEvent(new MessageEvent("message", { data: event.data })));
         socket.addEventListener("error", () => events.dispatchEvent(new Event("error")));
-        socket.addEventListener("close", () => {
+        socket.addEventListener("close", event => {
             active.delete(stop);
-            events.dispatchEvent(new Event("close"));
+            events.dispatchEvent(Object.assign(new Event("close"), { code: event.code, wasClean: event.wasClean }));
         });
         return Object.freeze({ kind: "channel", events,
             get readyState() { return socket.readyState; },

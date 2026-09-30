@@ -2,7 +2,8 @@
 // Synthetic HTTP endpoints and RFC 6455 section 5 frames, 2026-09-30.
 // All traffic, including the synthetic non-loopback address, stays in J09.
 "use strict";
-const { assert, path, tree, world, mutant } = require("./fixtures/jarvis/policy.js");
+const { assert, fs, path, tree, world, mutant } = require("./fixtures/jarvis/policy.js");
+const { standins } = require("./fixtures/jarvis/keys-world.js");
 const http = require("node:http");
 const sockets = require("node:net");
 const cp = require("node:child_process");
@@ -56,6 +57,7 @@ world(async () => {
             // native socket through event.target. Only fixture frames are read.
             socket.write(Buffer.concat([Buffer.from([0x81, 7]), Buffer.from("fixture")]));
             let pending = Buffer.alloc(0);
+            let sentClose = false;
             socket.on("data", chunk => {
                 pending = Buffer.concat([pending, chunk]);
                 while (pending.length >= 6) {
@@ -68,10 +70,20 @@ world(async () => {
                     payload.forEach((byte, index) => { payload[index] = byte ^ mask[index % 4]; });
                     pending = pending.subarray(6 + length);
                     if (opcode === 8) {
-                        socket.end(Buffer.concat([Buffer.from([0x88, payload.length]), payload]));
+                        socket.end(sentClose ? undefined : Buffer.concat([Buffer.from([0x88, payload.length]), payload]));
                         return;
                     }
                     assert.ok(opcode === 1 || opcode === 2, "fixture expects text or binary frames");
+                    if (request.url === "/close-abrupt") { socket.destroy(); return; }
+                    if (request.url === "/close-normal" || request.url === "/close-policy") {
+                        const reason = Buffer.from("fixture-private-provider-reason");
+                        const closed = Buffer.alloc(2 + reason.length);
+                        closed.writeUInt16BE(request.url === "/close-normal" ? 1000 : 1008);
+                        reason.copy(closed, 2);
+                        sentClose = true;
+                        socket.write(Buffer.concat([Buffer.from([0x88, closed.length]), closed]));
+                        continue;
+                    }
                     frames.push(payload.toString());
                     socket.write(Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]));
                 }
@@ -113,6 +125,57 @@ world(async () => {
         try { assert.equal(await answer.response.text(), "fixture"); }
         finally { answer.close(); }
         return answer;
+    }
+    const childEnv = {};
+    for (const name of ["PATH", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]) childEnv[name] = process.env[name];
+    const { Secrets, ownReference } = require("../shell/plugins/vgs.jarvis/backend/Secrets.js");
+    function storedLocalKey(folder = path.join(tree, "shell/plugins/vgs.jarvis")) {
+        const entered = first.replace("127.0.0.1", "localhost");
+        const added = cp.spawnSync("python3", [path.join(tree, "scripts/fixtures/jarvis/key-tui.py"),
+            path.join(tree, "shell/plugins/vgs.jarvis/tui/add-key.sh"), path.join(tree, "bin/lib/tui.sh"),
+            folder, "--origin", entered], { env: childEnv, encoding: "utf8", timeout: 15000 });
+        assert.equal(added.error, undefined);
+        assert.equal(added.status, 0, added.stdout + added.stderr);
+        assert.match(added.stdout, /jarvis-keys: stored=libsecret/);
+        assert.equal((added.stdout + added.stderr).includes("test-key-must-stay-private"), false);
+        const store = new Secrets(path.join(childEnv.XDG_STATE_HOME, "vgs/jarvis"), childEnv);
+        const reference = store.references().find(value => value.provider === "fixture" && value.account === "test"
+            && value.origin === first);
+        assert.ok(reference, "real Add key must store the selected numeric origin");
+        assert.equal(reference.attributes.origin, first);
+        const calls = fs.readFileSync(path.join(childEnv.XDG_STATE_HOME, "secret-calls"), "utf8").trim().split("\n").map(JSON.parse);
+        const receipt = calls.findLast(value => value.argv[0] === "store");
+        assert.equal(receipt.argv[receipt.argv.indexOf("origin") + 1], first);
+        return { store, reference, entered };
+    }
+    async function closeOutcome(net, policy, route, code, wasClean) {
+        const { door } = owner(net, policy);
+        const channel = door.websocket(speech, { url: first.replace("http:", "ws:") + route });
+        const greeting = once(channel.events, "message");
+        await once(channel.events, "open");
+        await greeting;
+        const closing = once(channel.events, "close");
+        channel.send(speech);
+        const [event] = await closing;
+        assert.deepEqual([event.code, event.wasClean], [code, wasClean], route);
+        assert.equal(event.reason, undefined, "raw provider reason stays private");
+        assert.equal(event.target, channel.events);
+        assert.equal(event.target.send, undefined, "close event cannot expose the native socket");
+    }
+    async function safeHeaderError(net, policy, value) {
+        const { door } = owner(net, policy);
+        const bad = { ...key, value };
+        const check = error => {
+            assert.equal(error.message, "jarvis: net=key-shape");
+            assert.equal(error.cause, undefined);
+            assert.equal(String(error.stack).includes("fixture-private-key"), false);
+            return true;
+        };
+        const count = connections.length;
+        await assert.rejects(() => door.request(speech, { url: first, key: bad }), check);
+        assert.throws(() => door.websocket(speech, { url: first.replace("http:", "ws:"), key: bad }), check);
+        assert.equal(connections.length, count, "malformed credentials open no socket");
     }
     try {
         const { door } = owner();
@@ -173,6 +236,18 @@ world(async () => {
         assert.equal(Net.endpoint(localhost).url, first + "/", "localhost never needs DNS");
         await assert.rejects(() => consume(pinned.door, speech, { url: localhost, key: { ...key, origin: localhost } }),
             { message: "jarvis: net=key-origin" });
+        const added = storedLocalKey();
+        const lookedUp = added.store.lookup(added.reference);
+        try {
+            const storedKey = { ...key, origin: added.reference.origin, value: lookedUp.toString() };
+            await consume(pinned.door, speech, { url: added.entered + "/echo", key: storedKey });
+            assert.equal(records.at(-1).headers.authorization, "Bearer test-key-must-stay-private");
+            const previouslyBound = ownReference("fixture", "existing", added.entered);
+            assert.equal(previouslyBound.origin, added.entered, "existing references are not migrated");
+            await assert.rejects(() => consume(pinned.door, speech,
+                { url: added.entered, key: { ...storedKey, origin: previouslyBound.origin } }),
+                { message: "jarvis: net=key-origin" });
+        } finally { lookedUp.fill(0); }
 
         const urls = [
             ["http://127.1", "http://127.0.0.1", true],
@@ -204,6 +279,8 @@ world(async () => {
         ];
         for (const [bad, reason] of badKeys)
             await assert.rejects(() => consume(door, speech, { url: first, key: bad }), { message: "jarvis: net=" + reason });
+        const malformedCredentials = ["fixture-private-key\0suffix", "fixture-private-key\u200bsuffix"];
+        for (const value of malformedCredentials) await safeHeaderError(Net, Policy, value);
         await assert.rejects(() => consume(cloud.door, speech, { url: remote, key: { ...key, origin: remote } }),
             { message: "jarvis: net=key-plaintext" });
         await assert.rejects(() => consume(door, speech, { url: first.replace("http:", "ws:") }),
@@ -242,6 +319,12 @@ world(async () => {
         channel.close();
         await closing;
         assert.throws(() => channel.send(speech), { message: "jarvis: net=socket-not-open" });
+        const closeCases = [
+            ["/close-normal", 1000, true],
+            ["/close-policy", 1008, true],
+            ["/close-abrupt", 1006, false]
+        ];
+        for (const [route, code, clean] of closeCases) await closeOutcome(Net, Policy, route, code, clean);
         const rejected = door.websocket(speech, { url: first.replace("http:", "ws:") + "/redirect-ws", key });
         const failed = once(rejected.events, "error");
         const count = records.length;
@@ -268,11 +351,34 @@ world(async () => {
                 check(net, require(path.join(folder, "Policy.js"))));
             controls++;
         }
+        await control("close-outcomes",
+            '{ code: event.code, wasClean: event.wasClean }', '{}',
+            async (net, policy) => closeOutcome(net, policy, "/close-policy", 1008, true));
+        await control("close-clean",
+            'wasClean: event.wasClean', 'wasClean: true',
+            async (net, policy) => closeOutcome(net, policy, "/close-abrupt", 1006, false));
+        await control("header-error",
+            'catch { throw new Error("jarvis: net=key-shape"); }', 'catch (error) { throw error; }',
+            async (net, policy) => {
+                for (const value of malformedCredentials) await safeHeaderError(net, policy, value);
+            });
+        await mutant(path.join(tree, "shell/plugins/vgs.jarvis/backend/keys.js"), "stored-origin",
+            "Net.endpoint(origin).origin", "origin", async (_api, folder) => {
+                // The real CLI expects backend/ beside its snapshot's script.
+                const target = path.join(folder, "tui-plugin", "backend");
+                fs.mkdirSync(target, { recursive: true });
+                for (const source of ["Secrets.js", "net.js", "keys.js"])
+                    fs.copyFileSync(path.join(folder, source), path.join(target, source));
+                storedLocalKey(path.dirname(target));
+            }, "Secrets.js");
+        controls++;
         await control("key-origin", "key.origin !== target.origin", "false", refuseKey);
         for (const [name, needle, bad] of [
             ["key-header", '!["authorization", "x-api-key", "xi-api-key"].includes(key.header)', { ...key, header: "host" }],
             ["key-empty", 'key.value === ""', { ...key, value: "" }],
-            ["key-newline", '/[\\r\\n]/.test(key.value)', { ...key, value: "secret\r\nextra" }],
+            // Native Headers trims leading line breaks. These cases reach
+            // the explicit guard rather than the safe setter-error boundary.
+            ["key-newline", '/[\\r\\n]/.test(key.value)', { ...key, prefix: "", value: "\nsecret" }],
             ["key-prefix-type", 'typeof key.prefix !== "string"', { ...key, prefix: undefined }],
             ["key-prefix-newline", '/[\\r\\n]/.test(key.prefix)', { ...key, prefix: "\n" }]
         ]) {
@@ -373,4 +479,4 @@ world(async () => {
         await Promise.all(servers.map(instance => new Promise(resolve => instance.close(resolve))));
         sockets.Socket.prototype.connect = originalConnect;
     }
-})?.catch(error => { console.error(error); process.exitCode = 1; });
+}, standins)?.catch(error => { console.error(error); process.exitCode = 1; });

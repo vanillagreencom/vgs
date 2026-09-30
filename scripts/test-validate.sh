@@ -252,7 +252,7 @@ jarvis_local_tools_plan=$'python3 scripts/check-readme-images.py\n'"${jarvis_loc
 jarvis_env_plan=$'node scripts/test-jarvis-env.js\n'"$repo_plan"
 jarvis_helper_plan=$'node scripts/test-jarvis-env.js\n'"$jarvis_local_rows$repo_plan"
 jarvis_policy_rows=$'node scripts/test-jarvis-tools.js\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js\nnode scripts/test-jarvis-release.js\nnode scripts/test-jarvis-net.js\nnode scripts/test-jarvis-denied.js\nnode scripts/test-jarvis-audit.js\n'
-jarvis_secrets_plan=$'node scripts/test-jarvis-secrets.js\n'"$repo_plan"
+jarvis_secrets_plan=$'node scripts/test-jarvis-net.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
 jarvis_owner_plan="$jarvis_policy_rows"$'node scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-task-event.js\nnode scripts/test-jarvis-secrets.js\n'"$jarvis_helper_plan"
 jarvis_daemon_plan=$'node scripts/test-jarvis-daemon.js\n'"$repo_plan"
 jarvis_fixture_plan=$'node scripts/test-jarvis-protocol.js\nnode scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-task-event.js\n'"$repo_plan"
@@ -310,9 +310,9 @@ cases=(
   "jarvis-env-suite|scripts/test-jarvis-env.js|offline|$jarvis_env_plan"
   "jarvis-env-fixture|scripts/fixtures/jarvis-env/probe.py|all|$jarvis_env_plan"
   "jarvis-daemon-suite|scripts/test-jarvis-daemon.js|offline|$jarvis_daemon_plan"
-  "jarvis-secrets-suite|scripts/test-jarvis-secrets.js|offline|$jarvis_secrets_plan"
-  "jarvis-key-tui-fixture|scripts/fixtures/jarvis/key-tui.py|offline|node scripts/test-jarvis-daemon.js"$'\n'"$jarvis_secrets_plan"
-  "jarvis-key-fixture|scripts/fixtures/jarvis/keys-world.js|offline|node scripts/test-jarvis-daemon.js"$'\n'"$jarvis_secrets_plan"
+  "jarvis-secrets-suite|scripts/test-jarvis-secrets.js|offline|node scripts/test-jarvis-secrets.js"$'\n'"$repo_plan"
+  "jarvis-key-tui-fixture|scripts/fixtures/jarvis/key-tui.py|offline|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
+  "jarvis-key-fixture|scripts/fixtures/jarvis/keys-world.js|offline|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
   "jarvis-task-suite|scripts/test-jarvis-tasks.js|offline|node scripts/test-jarvis-tasks.js"$'\n'"$repo_plan"
   "task-event-suite|scripts/test-task-event.js|offline|node scripts/test-task-event.js"$'\n'"$repo_plan"
   "task-event-prefix|scripts/test-task-event.js|all|node scripts/test-task-event.js"$'\n'"$repo_plan"$'\nscripts/qml-smoke.sh'
@@ -340,7 +340,8 @@ cases=(
   "jarvis-policy-input|shell/plugins/vgs.jarvis/backend/Policy.js|logic|node scripts/test-jarvis-policy.js"$'\nnode scripts/test-jarvis-release.js'
   "jarvis-policy-net-input|shell/plugins/vgs.jarvis/backend/Policy.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
   "jarvis-net-input|shell/plugins/vgs.jarvis/backend/net.js|logic|node scripts/test-jarvis-release.js"
-  "jarvis-net-cli-input|shell/plugins/vgs.jarvis/backend/net.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
+  "jarvis-net-cli-input|shell/plugins/vgs.jarvis/backend/net.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
+  "jarvis-add-key-input|shell/plugins/vgs.jarvis/backend/keys.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
   "jarvis-denied-input|shell/plugins/vgs.jarvis/backend/Denied.js|logic|node scripts/test-jarvis-policy.js"
   "jarvis-denied-cli-input|shell/plugins/vgs.jarvis/backend/Denied.js|cli|node scripts/test-jarvis-denied.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
   "jarvis-session-suite|scripts/test-jarvis-session.js|offline|node scripts/test-jarvis-session.js"$'\n'"$repo_plan"
