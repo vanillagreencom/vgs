@@ -27,7 +27,11 @@ Item {
     property var shell: null
     property var registeredWith: null
 
-    readonly property bool locked: shell !== null && shell.lock.locked
+    // Whether the session is locked, read through the core's shared
+    // `session` state (D056): from a lock request until the compositor lets
+    // go. The `lock` capability is this plugin's authority to lock, unlock
+    // and hand over its screen.
+    readonly property bool locked: shell !== null && shell.session.locked
     readonly property bool secure: shell !== null && shell.lock.secure
     readonly property int idleLockSeconds: shell === null ? 0 : shell.settings.idleLockSeconds
     readonly property bool lockBeforeSleep: shell !== null && shell.settings.lockBeforeSleep === true

@@ -17,6 +17,7 @@
     "idle",
     "ipc",
     "lock",
+    "session",
     "shortcut",
     "status"
   ],

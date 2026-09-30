@@ -2,11 +2,12 @@
 
 Covers: shell/plugins/vgs.lock/**, shell/plugins/vgs.polkit/**, shell/Core/IdleRegistry.qml, bin/vgsh-lock, scripts/test-lock-model.js, scripts/test-lock-sleep-watch.sh, scripts/test-vgsh-lock.sh, scripts/test-polkit-model.js, scripts/smoke/rows/lock.sh, scripts/smoke/rows/polkit.sh
 
-How a VGS session locks and how it answers polkit. Both are native plugins on objects the core owns: [D056](../decisions/D056-native-lock-and-polkit-plugins.md). The core's `lock`, `polkit` and `idle` capabilities are [capabilities.md](capabilities.md).
+How a VGS session locks and how it answers polkit. Both are native plugins on objects the core owns: [D058](../decisions/D058-native-lock-and-polkit-plugins.md). The core's `lock`, `polkit` and `idle` capabilities are [capabilities.md](capabilities.md).
 
 ## Lock
 
 - **Owner.** `vgs.lock` holds the core's `lock` capability and hands the core `LockView.qml`, which `shell/Hosts/LockHost.qml` builds inside each lock surface. The plugin owns no `WlSessionLock`. The core keeps a locked session locked when the plugin is disabled, updated or rebuilt, and a rebuilt plugin hands its lock screen over again.
+- **State.** The service reads whether the session is locked through the core's shared `session` capability ([D056](../decisions/D056-read-only-session-state.md)), from a lock request until the compositor lets go, and holds `lock` only for its authority: lock, unlock and the hand-over of its screen. Neither covers a lock no live process owns, the case D056 names as its revisit condition, so the stranded-lock reading below stays with the lock holder and runs once at start.
 - **Entry points.** All reach the service's one `lock()`:
   - the shortcut `lock`, `SUPER+L` in the manifest's `hyprland.binds`;
   - the IPC function `vgsh ipc call vgs.lock invoke lock ''`, which `vgsh lock` (`bin/vgsh-lock`) and the launcher's Lock row call;
