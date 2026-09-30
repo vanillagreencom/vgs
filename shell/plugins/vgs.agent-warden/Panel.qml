@@ -89,120 +89,134 @@ Item {
     }
 
     implicitWidth: Theme.size.panel.md
-    implicitHeight: body.implicitHeight + 2 * card.padding
+    implicitHeight: layout.implicitHeight
 
     Surface {
-        id: card
         anchors.fill: parent
+    }
+
+    // One inset box: the heading and its sentence, the body's blocks
+    // `stack.group` apart, and a footer with the check's time and the link.
+    Pane {
+        id: layout
+        anchors.fill: parent
+        container: "popover"
+        fitToContent: true
+        maximumHeight: Theme.size.panel.maxHeight
+
+        header: [
+            Column {
+                width: layout.contentWidth
+                spacing: Theme.row.lineGap
+
+                Label {
+                    role: "h3"
+                    text: "Agents"
+                }
+
+                Label {
+                    role: "body"
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: root.detail === null ? "Agent Warden is starting." : View.sentence(root.detail, root.vsysMissing)
+                }
+            }
+        ]
 
         Column {
-            id: body
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: card.padding
-            spacing: Theme.space.sm
-
-            Label {
-                role: "h3"
-                text: "Agents"
-            }
-
-            Label {
-                role: "body"
-                width: parent.width
-                wrapMode: Text.Wrap
-                text: root.detail === null ? "Agent Warden is starting." : View.sentence(root.detail, root.vsysMissing)
-            }
-
-            Column {
-                id: itemList
-                width: parent.width
-                visible: root.detail !== null && root.detail.items.length > 0
-                // The model changes only with the detail; each row's words
-                // follow the clock, so the rows are not rebuilt each second.
-                Repeater {
-                    model: root.detail === null ? [] : View.shownItems(root.detail)
-                    ListItem {
-                        required property var modelData
-                        readonly property var row: View.itemRow(modelData, root.now)
-                        // The list, not `parent`, which is null while the
-                        // repeater tears the row down.
-                        width: itemList.width
-                        leftPadding: 0
-                        rightPadding: 0
-                        hoverEnabled: false
-                        iconName: row.icon
-                        text: row.text
-                        secondary: row.secondary
-                    }
-                }
-            }
-
-            Column {
-                width: parent.width
-                spacing: Theme.row.lineGap
-                visible: root.memory !== null
-                ProgressBar {
-                    width: parent.width
-                    value: root.memory === null ? 0 : root.memory.value
-                }
-                Label {
-                    role: "hint"
-                    text: root.memory === null ? "" : root.memory.text
-                }
-            }
-
-            Label {
-                role: "hint"
-                width: parent.width
-                wrapMode: Text.Wrap
-                visible: root.summary !== null && !root.vsysMissing
-                text: root.summary === null ? "" : root.summary.text
-                color: root.summary === null ? Theme.color.textFaint : Theme.badge.tone[root.summary.tone].foreground
-            }
-
-            Button {
-                visible: root.setupButton !== null
-                variant: "primary"
-                size: "sm"
-                text: root.setupButton === null ? "" : root.setupButton.label
-                onClicked: root.press(root.setupButton.action)
-            }
-
-            Label {
-                role: "hint"
-                width: parent.width
-                wrapMode: Text.Wrap
-                visible: text !== ""
-                text: root.problem
-                color: Theme.color.danger
-            }
-
-            Divider { width: parent.width }
-
-            Item {
-                width: parent.width
-                implicitHeight: Math.max(checkedLabel.implicitHeight, linkButton.implicitHeight)
-
-                Label {
-                    id: checkedLabel
-                    role: "hint"
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.detail === null ? "" : View.checked(root.detail, root.now)
-                }
-                Button {
-                    id: linkButton
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: root.footerLink !== null
-                    variant: "tertiary"
-                    size: "sm"
-                    text: root.footerLink === null ? "" : root.footerLink.label
-                    onClicked: root.press(root.footerLink.action)
+            id: itemList
+            width: layout.contentWidth
+            visible: root.detail !== null && root.detail.items.length > 0
+            // The model changes only with the detail; each row's words
+            // follow the clock, so the rows are not rebuilt each second.
+            // A row takes no click, so it draws no box and its text sits
+            // on the content edge.
+            Repeater {
+                model: root.detail === null ? [] : View.shownItems(root.detail)
+                ListItem {
+                    required property var modelData
+                    readonly property var row: View.itemRow(modelData, root.now)
+                    // The list, not `parent`, which is null while the
+                    // repeater tears the row down.
+                    width: itemList.width
+                    leftPadding: 0
+                    rightPadding: 0
+                    hoverEnabled: false
+                    iconName: row.icon
+                    text: row.text
+                    secondary: row.secondary
                 }
             }
         }
+
+        Column {
+            width: layout.contentWidth
+            spacing: Theme.row.lineGap
+            visible: root.memory !== null
+            ProgressBar {
+                width: parent.width
+                value: root.memory === null ? 0 : root.memory.value
+            }
+            Label {
+                role: "hint"
+                text: root.memory === null ? "" : root.memory.text
+            }
+        }
+
+        Label {
+            role: "hint"
+            width: layout.contentWidth
+            wrapMode: Text.Wrap
+            visible: root.summary !== null && !root.vsysMissing
+            text: root.summary === null ? "" : root.summary.text
+            color: root.summary === null ? Theme.color.textFaint : Theme.badge.tone[root.summary.tone].foreground
+        }
+
+        Button {
+            visible: root.setupButton !== null
+            variant: "primary"
+            text: root.setupButton === null ? "" : root.setupButton.label
+            onClicked: root.press(root.setupButton.action)
+        }
+
+        Label {
+            role: "hint"
+            width: layout.contentWidth
+            wrapMode: Text.Wrap
+            visible: text !== ""
+            text: root.problem
+            color: Theme.color.danger
+        }
+
+        footer: [
+            Column {
+                width: layout.contentWidth
+                spacing: Theme.stack.group
+
+                Divider { width: parent.width }
+
+                Item {
+                    width: parent.width
+                    implicitHeight: Math.max(checkedLabel.implicitHeight, linkButton.implicitHeight)
+
+                    Label {
+                        id: checkedLabel
+                        role: "hint"
+                        anchors.left: parent.left
+                        y: topForCapCenter(parent.height)
+                        text: root.detail === null ? "" : View.checked(root.detail, root.now)
+                    }
+                    Button {
+                        id: linkButton
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.footerLink !== null
+                        variant: "tertiary"
+                        text: root.footerLink === null ? "" : root.footerLink.label
+                        onClicked: root.press(root.footerLink.action)
+                    }
+                }
+            }
+        ]
     }
 }

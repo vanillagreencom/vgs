@@ -8,7 +8,7 @@ import qs.Unit
 // a click on its row, or Space on the focused row, shows the content under
 // the row and turns the chevron up, and a second click hides it again; a
 // click on a control among its trailing items reaches that control and
-// toggles nothing; a row that cannot expand draws no chevron and a click
+// toggles nothing; a row that cannot expand draws no chevron, keeps its room, and a click
 // on it shows nothing.
 Item {
     id: root
@@ -73,8 +73,11 @@ Item {
         }
 
         function test_a_row_that_cannot_expand_stays_closed() {
+            const trailingWidth = row().contentItem.children[2].width;
             disclosure.expandable = false;
-            verify(!chevron().visible, "a row that cannot expand draws its chevron");
+            compare(chevron().opacity, 0, "a row that cannot expand draws its chevron");
+            // The chevron keeps its room, so the trailing items stay put.
+            compare(row().contentItem.children[2].width, trailingWidth);
             mouseClick(row(), 20, row().height / 2);
             compare(disclosure.expanded, false);
             verify(!line.visible, "a row that cannot expand shows its content");

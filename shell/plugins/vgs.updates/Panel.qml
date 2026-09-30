@@ -52,139 +52,149 @@ Item {
     }
 
     implicitWidth: Theme.size.panel.lg
-    implicitHeight: Math.min(sections.implicitHeight + 2 * Theme.surface.padding, Theme.size.panel.maxHeight)
+    implicitHeight: layout.implicitHeight
 
     Surface {
         anchors.fill: parent
+    }
 
-        ScrollArea {
-            anchors.fill: parent
-            anchors.margins: Theme.surface.padding
+    // One inset box: the heading, the scrolling sources and Update
+    // everything, and a footer that stays in view while the sources
+    // scroll. The panel fits its content up to `size.panel.maxHeight`.
+    Pane {
+        id: layout
+        anchors.fill: parent
+        container: "popover"
+        fitToContent: true
+        maximumHeight: Theme.size.panel.maxHeight
 
+        header: [
             Column {
-                id: sections
-                width: parent.width
-                spacing: Theme.space.xs
+                width: layout.contentWidth
+                spacing: Theme.row.lineGap
 
-                Column {
-                    x: Theme.row.paddingX
-                    width: parent.width - 2 * Theme.row.paddingX
-                    spacing: Theme.row.lineGap
-
-                    Label {
-                        role: "h3"
-                        text: "Updates"
-                    }
-                    Row {
-                        width: parent.width
-                        spacing: Theme.row.lineGap
-                        Spinner {
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: root.view.spinning
-                        }
-                        Label {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: parent.width - (root.view.spinning ? Theme.spinner.size + parent.spacing : 0)
-                            role: "hint"
-                            text: Logic.summaryText(root.values)
-                            color: root.view.tone === "warning" ? Theme.color.warning : Theme.color.textMuted
-                            wrapMode: Text.Wrap
-                        }
+                Label {
+                    role: "h3"
+                    text: "Updates"
+                }
+                Row {
+                    width: parent.width
+                    spacing: Theme.control.gap
+                    Spinner {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.view.spinning
                     }
                     Label {
-                        width: parent.width
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - (root.view.spinning ? Theme.spinner.size + parent.spacing : 0)
                         role: "hint"
-                        visible: text !== ""
-                        text: root.problem
-                        color: Theme.color.danger
+                        text: Logic.summaryText(root.values)
+                        color: root.view.tone === "warning" ? Theme.color.warning : Theme.color.textMuted
                         wrapMode: Text.Wrap
                     }
                 }
+                Label {
+                    width: parent.width
+                    role: "hint"
+                    visible: text !== ""
+                    text: root.problem
+                    color: Theme.color.danger
+                    wrapMode: Text.Wrap
+                }
+            }
+        ]
 
-                Repeater {
-                    model: ScriptModel {
-                        values: root.rows
-                        objectProp: "key"
-                    }
+        // The sources, one group of rows.
+        Column {
+            id: sections
+            width: layout.contentWidth
+            spacing: Theme.stack.row
 
-                    Disclosure {
-                        id: source
-                        required property var modelData
-                        // The column, not `parent`, which is null while the
-                        // repeater tears the row down.
-                        width: sections.width
-                        text: modelData.label
-                        secondary: modelData.secondary
-                        iconName: modelData.icon
-                        expandable: modelData.lines.length > 0 || modelData.more !== ""
-                        trailing: [
-                            Badge {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: source.modelData.badge
-                                tone: source.modelData.badgeTone
-                            },
+            Repeater {
+                model: ScriptModel {
+                    values: root.rows
+                    objectProp: "key"
+                }
+
+                Disclosure {
+                    id: source
+                    required property var modelData
+                    // The column, not `parent`, which is null while the
+                    // repeater tears the row down.
+                    width: sections.width
+                    text: modelData.label
+                    secondary: modelData.secondary
+                    iconName: modelData.icon
+                    expandable: modelData.lines.length > 0 || modelData.more !== ""
+                    // The count stands in one column whatever the row
+                    // offers: the Update button keeps its room while hidden.
+                    trailing: [
+                        Badge {
+                            anchors.verticalCenter: parent.verticalCenter
+                            size: "md"
+                            text: source.modelData.badge
+                            tone: source.modelData.badgeTone
+                        },
+                        Item {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: update.implicitWidth
+                            height: update.implicitHeight
                             Button {
-                                anchors.verticalCenter: parent.verticalCenter
+                                id: update
                                 visible: source.modelData.updatable
                                 variant: "secondary"
                                 size: "sm"
                                 text: "Update"
                                 onClicked: root.run("source", source.modelData.source)
                             }
-                        ]
-
-                        Repeater {
-                            model: source.modelData.lines
-                            Label {
-                                required property string modelData
-                                x: Theme.row.paddingX
-                                width: source.width - 2 * Theme.row.paddingX
-                                role: "itemCode"
-                                text: modelData
-                                elide: Text.ElideRight
-                            }
                         }
+                    ]
+
+                    Repeater {
+                        model: source.modelData.lines
                         Label {
-                            x: Theme.row.paddingX
-                            width: source.width - 2 * Theme.row.paddingX
-                            visible: text !== ""
-                            role: "hint"
-                            text: source.modelData.more
+                            required property string modelData
+                            width: parent.width
+                            role: "itemCode"
+                            text: modelData
+                            elide: Text.ElideRight
                         }
                     }
-                }
-
-                Label {
-                    x: Theme.row.paddingX
-                    width: parent.width - 2 * Theme.row.paddingX
-                    visible: root.rows.length === 0
-                    role: "hint"
-                    text: "No check has listed a source yet"
-                    wrapMode: Text.Wrap
-                }
-
-                Item {
-                    x: Theme.row.paddingX
-                    width: parent.width - 2 * Theme.row.paddingX
-                    height: everything.implicitHeight + 2 * Theme.space.xs
-
-                    Button {
-                        id: everything
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        variant: "primary"
-                        text: "Update everything"
-                        iconName: "download"
-                        onClicked: root.run("all")
+                    Label {
+                        width: parent.width
+                        visible: text !== ""
+                        role: "hint"
+                        text: source.modelData.more
                     }
                 }
+            }
+        }
+
+        Label {
+            width: layout.contentWidth
+            visible: root.rows.length === 0
+            role: "hint"
+            text: "No check has listed a source yet"
+            wrapMode: Text.Wrap
+        }
+
+        Button {
+            width: layout.contentWidth
+            variant: "primary"
+            text: "Update everything"
+            iconName: "download"
+            onClicked: root.run("all")
+        }
+
+        footer: [
+            Column {
+                width: layout.contentWidth
+                spacing: Theme.stack.group
 
                 Divider { width: parent.width }
 
                 Item {
-                    x: Theme.row.paddingX
-                    width: parent.width - 2 * Theme.row.paddingX
+                    width: parent.width
                     height: Math.max(refreshButton.implicitHeight, logButton.implicitHeight)
 
                     Button {
@@ -192,7 +202,6 @@ Item {
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         variant: "tertiary"
-                        size: "sm"
                         text: "Refresh"
                         iconName: "refresh-cw"
                         onClicked: root.refresh()
@@ -200,8 +209,9 @@ Item {
                     Label {
                         anchors.left: refreshButton.right
                         anchors.right: logButton.left
-                        anchors.margins: Theme.space.sm
-                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: Theme.control.gap
+                        anchors.rightMargin: Theme.control.gap
+                        y: topForCapCenter(parent.height)
                         horizontalAlignment: Text.AlignHCenter
                         role: "hint"
                         text: Logic.checkedText(root.values.lastCheck, Time.now.getTime(), root.formatWhen)
@@ -212,13 +222,12 @@ Item {
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         variant: "tertiary"
-                        size: "sm"
                         text: "Open last log"
                         iconName: "scroll-text"
                         onClicked: root.run("log")
                     }
                 }
             }
-        }
+        ]
     }
 }

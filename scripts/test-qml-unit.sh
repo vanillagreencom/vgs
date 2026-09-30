@@ -450,6 +450,7 @@ mutations=(
   "the bar item shows no press|controls/BarItem.qml|root.down ? Theme.bar.item.pressed : root.hovered|root.hovered|tst_baritem.qml"
   "a long inline label elides on one line|controls/Field.qml|            maximumLineCount: 2|            maximumLineCount: 1|tst_textfield.qml"
   "the field publishes no value column|controls/Field.qml|readonly property real valueX: leftPadding + (inline ? Theme.field.labelWidth + Theme.field.labelGap : 0)|readonly property real valueX: leftPadding|tst_textfield.qml"
+  "a row that cannot expand gives up its chevron's room|layout/Disclosure.qml|opacity: root.expandable ? 1 : 0|visible: root.expandable|tst_disclosure.qml"
 )
 
 copy="$tmp/ui"

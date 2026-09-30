@@ -48,7 +48,7 @@ Column {
     visible: entry !== null
     // The rhythm of the rows in a Status section, between the entry's line
     // and each item's.
-    spacing: Theme.space.xs
+    spacing: Theme.stack.row
 
     StatusLine {
         width: row.width

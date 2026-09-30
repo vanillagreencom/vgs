@@ -118,6 +118,7 @@ const DEFAULTS = [
     ["stack.row", 4],
     ["stack.group", 12],
     ["stack.section", 24],
+    ["stack.inline", 8],
     ["button.paddingX", 12],
     ["textField.paddingX", 12],
     ["textField.height", 32],

@@ -44,8 +44,9 @@ FocusScope {
         current = Math.max(0, Math.min(shown.length - 1, current + step));
         const item = rows.itemAt(current);
         if (item === null) return;
-        if (item.y < layout.scrollArea.contentY) layout.scrollArea.contentY = item.y;
-        else if (item.y + item.height > layout.scrollArea.contentY + layout.scrollArea.height) layout.scrollArea.contentY = item.y + item.height - layout.scrollArea.height;
+        const top = item.mapToItem(layout.scrollArea.contentItem, 0, 0).y;
+        if (top < layout.scrollArea.contentY) layout.scrollArea.contentY = top;
+        else if (top + item.height > layout.scrollArea.contentY + layout.scrollArea.height) layout.scrollArea.contentY = top + item.height - layout.scrollArea.height;
     }
 
     function openCurrent() {
@@ -67,7 +68,7 @@ FocusScope {
         header: [
             Column {
                 width: layout.contentWidth
-                spacing: Theme.space.sm
+                spacing: Theme.stack.group
 
                 PageHeader {
                     width: layout.contentWidth
@@ -79,7 +80,6 @@ FocusScope {
                             text: "Add plugin"
                             iconName: "circle-plus"
                             variant: "secondary"
-                            size: "sm"
                             anchors.verticalCenter: parent.verticalCenter
                             onClicked: page.panel.addPlugin()
                         }
@@ -108,12 +108,43 @@ FocusScope {
             }
         ]
 
-        Label {
-            role: "hint"
-            text: "No plugin matches " + JSON.stringify(page.query.trim())
+        // The empty result: an icon, one line and a way back, centred in
+        // the space three of the list's two-line rows take.
+        Item {
+            id: empty
             visible: page.shown.length === 0
-            width: parent.width
-            wrapMode: Text.Wrap
+            width: layout.contentWidth
+            height: 3 * Theme.listItem.twoLineHeight
+
+            Column {
+                anchors.centerIn: parent
+                width: parent.width
+                spacing: Theme.stack.group
+
+                Icon {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    name: "search-x"
+                    size: Theme.icon.size.xl
+                    color: Theme.color.textFaint
+                }
+                Label {
+                    role: "hint"
+                    text: "No plugin matches " + JSON.stringify(page.query.trim())
+                    color: Theme.color.textMuted
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                }
+                Button {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "Clear search"
+                    variant: "tertiary"
+                    onClicked: {
+                        search.clear();
+                        search.forceActiveFocus();
+                    }
+                }
+            }
         }
 
         Repeater {

@@ -5,7 +5,9 @@ import qs.Ui
 // A list row that shows or hides the content declared inside it: a
 // `ListItem` whose click or Space toggles `expanded`, with its `trailing`
 // items and then a chevron that points down while the content is hidden
-// and up while it shows. The content stacks under the row and takes no
+// and up while it shows. A row that cannot expand keeps the chevron's room
+// with nothing drawn in it, so the trailing items of a list of rows stand
+// in one column. The content stacks under the row and takes no
 // height while hidden. A control among the trailing items takes its own
 // click, so pressing it toggles nothing. While `expandable` is false, as
 // for a row with nothing to show, the row draws no chevron and a click
@@ -34,7 +36,7 @@ Column {
                 anchors.verticalCenter: parent.verticalCenter
             },
             Icon {
-                visible: root.expandable
+                opacity: root.expandable ? 1 : 0
                 name: root.expanded ? "chevron-up" : "chevron-down"
                 size: Theme.icon.size.md
                 color: Theme.color.textMuted

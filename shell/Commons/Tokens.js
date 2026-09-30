@@ -333,10 +333,14 @@ var TOKENS = {
         panel: length("{space.lg}")
     },
 
+    // The gaps of a body: `row` between rows of one group, `group` between
+    // its blocks, `section` before a section, and `inline` between
+    // controls side by side in one group, such as a row of buttons.
     stack: {
         row: length("{space.xs}"),
         group: length("{space.lg}"),
-        section: length("{space.xxl}")
+        section: length("{space.xxl}"),
+        inline: length("{space.md}")
     },
 
     surface: {
@@ -722,7 +726,7 @@ var TOKENS = {
         margin: length("{space.lg}"),
         padding: length("{inset.dialog}"),
         gap: length("{stack.group}"),
-        actionGap: length("{space.md}"),
+        actionGap: length("{stack.inline}"),
         maxHeightShare: share(0.8),
         radius: length("{radius.md}"),
         background: color("{color.surfaceRaised}"),

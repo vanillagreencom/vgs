@@ -64,14 +64,20 @@ Scope {
                 onAccepted: Notices.accept()
                 onRejected: Notices.dismiss()
 
-                Repeater {
-                    model: win.shown.rows
-                    Label {
-                        required property var modelData
-                        role: Theme.dialog.bodyRole
-                        width: parent.width
-                        wrapMode: Text.Wrap
-                        text: host.rowText(modelData)
+                // The missing commands, one list `stack.row` apart, a block
+                // of the dialog's body `dialog.gap` under the message.
+                Column {
+                    width: parent.width
+                    spacing: Theme.stack.row
+                    Repeater {
+                        model: win.shown.rows
+                        Label {
+                            required property var modelData
+                            role: Theme.dialog.bodyRole
+                            width: parent.width
+                            wrapMode: Text.Wrap
+                            text: host.rowText(modelData)
+                        }
                     }
                 }
                 Label {

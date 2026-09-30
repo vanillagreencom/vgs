@@ -16,7 +16,10 @@ import qs.Ui
 // read-only and say to enable it; its status rows say it has not reported.
 // The header and body share one content edge, the scroll bar sits in the
 // window's right inset, and each inline value draws at line height 1,
-// centred on its label.
+// centred on its label. The description draws in the hint role in the
+// muted colour; the enabled switch, the listing metadata and Manage are
+// one key/value group `stack.row` apart, the read-only metadata in compact
+// rows.
 FocusScope {
     id: page
 
@@ -93,7 +96,6 @@ FocusScope {
                         id: back
                         iconName: "chevron-left"
                         label: "Back to the plugin list"
-                        size: "sm"
                         anchors.verticalCenter: parent.verticalCenter
                         onClicked: page.panel.back()
                     }
@@ -125,7 +127,8 @@ FocusScope {
             visible: page.row !== null
 
             Label {
-                role: "item"
+                role: "hint"
+                color: Theme.color.textMuted
                 text: page.row === null ? "" : page.row.description
                 width: parent.width
                 wrapMode: Text.Wrap
@@ -133,7 +136,7 @@ FocusScope {
 
             Flow {
                 width: parent.width
-                spacing: Theme.stack.row
+                spacing: Theme.space.xs
                 visible: page.row !== null && page.row.capabilities.length > 0
                 Repeater {
                     model: page.row === null ? [] : page.row.capabilities
@@ -162,55 +165,59 @@ FocusScope {
                 wrapMode: Text.Wrap
             }
 
-            Field {
+            Column {
                 width: parent.width
-                label: "Enabled"
-                inline: true
-                hint: page.isSelf ? "Disabling Settings closes this window; `vgsh plugin enable " + page.row.id + "` brings it back." : page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to change its settings and keys." : ""
-                Switch {
-                    size: "sm"
-                    checked: page.row !== null && page.row.enabled
-                    onToggled: {
-                        checked = Qt.binding(() => page.row !== null && page.row.enabled);
-                        if (page.row !== null) page.panel.toggle(page.row.id);
-                    }
-                }
-            }
+                spacing: Theme.stack.row
 
-            Repeater {
-                model: page.row === null ? [] : [["Author", page.row.author], ["Version", page.row.version], ["License", page.row.license], ["Source", page.row.source === "bundled" ? "Bundled with the shell" : "Installed"]].filter(pair => pair[1] !== "")
                 Field {
-                    id: detail
-                    required property var modelData
-                    width: body.width
-                    label: modelData[0]
+                    width: parent.width
+                    label: "Enabled"
                     inline: true
-                    Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
-                }
-            }
-
-            // A bundled plugin is disabled, never updated or removed.
-            Field {
-                width: parent.width
-                label: "Manage"
-                inline: true
-                visible: page.row !== null && page.row.source === "installed"
-                hint: "Each opens a terminal that asks before it changes anything."
-                Row {
-                    spacing: Theme.space.sm
-                    Button {
-                        text: "Update"
-                        iconName: "refresh-cw"
-                        variant: "secondary"
+                    hint: page.isSelf ? "Disabling Settings closes this window; `vgsh plugin enable " + page.row.id + "` brings it back." : page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to change its settings and keys." : ""
+                    Switch {
                         size: "sm"
-                        onClicked: page.panel.updatePlugin(page.row.id)
+                        checked: page.row !== null && page.row.enabled
+                        onToggled: {
+                            checked = Qt.binding(() => page.row !== null && page.row.enabled);
+                            if (page.row !== null) page.panel.toggle(page.row.id);
+                        }
                     }
-                    Button {
-                        text: "Remove"
-                        iconName: "trash"
-                        variant: "danger"
-                        size: "sm"
-                        onClicked: page.panel.removePlugin(page.row.id)
+                }
+
+                Repeater {
+                    model: page.row === null ? [] : [["Author", page.row.author], ["Version", page.row.version], ["License", page.row.license], ["Source", page.row.source === "bundled" ? "Bundled with the shell" : "Installed"]].filter(pair => pair[1] !== "")
+                    Field {
+                        id: detail
+                        required property var modelData
+                        width: body.width
+                        label: modelData[0]
+                        inline: true
+                        compact: true
+                        Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
+                    }
+                }
+
+                // A bundled plugin is disabled, never updated or removed.
+                Field {
+                    width: parent.width
+                    label: "Manage"
+                    inline: true
+                    visible: page.row !== null && page.row.source === "installed"
+                    hint: "Each opens a terminal that asks before it changes anything."
+                    Row {
+                        spacing: Theme.stack.inline
+                        Button {
+                            text: "Update"
+                            iconName: "refresh-cw"
+                            variant: "secondary"
+                            onClicked: page.panel.updatePlugin(page.row.id)
+                        }
+                        Button {
+                            text: "Remove"
+                            iconName: "trash"
+                            variant: "danger"
+                            onClicked: page.panel.removePlugin(page.row.id)
+                        }
                     }
                 }
             }
@@ -226,7 +233,6 @@ FocusScope {
                     required property var modelData
                     width: body.width
                     title: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
-                    headerInset: 0
 
                     Repeater {
                         model: ScriptModel {
@@ -246,7 +252,6 @@ FocusScope {
                 visible: page.row !== null && page.row.requirements.length > 0
                 title: "Requirements"
                 description: "Commands the plugin runs, looked up on PATH at the last scan"
-                headerInset: 0
 
                 Column {
                     id: requirementRows
@@ -276,7 +281,6 @@ FocusScope {
                         text: "Install"
                         iconName: "download"
                         variant: "primary"
-                        size: "sm"
                         onClicked: page.panel.installRequirements(page.row.id)
                     }
                 }
@@ -295,7 +299,6 @@ FocusScope {
                     required property var modelData
                     width: body.width
                     title: section.modelData.group === "" ? "Settings" : section.modelData.group
-                    headerInset: 0
 
                     Repeater {
                         model: ScriptModel {
@@ -324,7 +327,6 @@ FocusScope {
                 visible: page.row !== null && page.row.binds.length > 0
                 title: "Keys"
                 description: "Written to shell.json; an empty key unbinds it"
-                headerInset: 0
 
                 Repeater {
                     model: ScriptModel {
