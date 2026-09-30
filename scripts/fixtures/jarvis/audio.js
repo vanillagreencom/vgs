@@ -63,7 +63,7 @@ function unlocked() {
 function copyBackend(folder) {
     fs.mkdirSync(folder, { recursive: true });
     for (const file of fs.readdirSync(path.join(tree, "shell/plugins/vgs.jarvis/backend")))
-        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend", file), path.join(folder, file));
+        fs.cpSync(path.join(tree, "shell/plugins/vgs.jarvis/backend", file), path.join(folder, file), { recursive: true });
 }
 
 module.exports = { assert, fs, path, cp, tree, standins, world, until, unlocked, copyBackend };
