@@ -96,6 +96,7 @@ f share/vgs/shell/Ui/feedback/AvatarGroup.qml
 f share/vgs/shell/Ui/feedback/Badge.qml
 f share/vgs/shell/Ui/feedback/CodeLine.qml
 f share/vgs/shell/Ui/feedback/Dialog.qml
+f share/vgs/shell/Ui/feedback/EmptyState.qml
 f share/vgs/shell/Ui/feedback/Kbd.qml
 f share/vgs/shell/Ui/feedback/ProgressBar.qml
 f share/vgs/shell/Ui/feedback/Spinner.qml

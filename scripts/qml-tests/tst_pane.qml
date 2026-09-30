@@ -190,6 +190,20 @@ Item {
             verify(ringTop >= 0, "the ring's top edge " + ringTop + " is inside the viewport");
         }
 
+        // An overlay draws no container: its content sits inset.overlay,
+        // 32, in, and a 30 pixel corner, which would push content 4 in to
+        // 30, moves nothing, since there is no corner to clear.
+        function test_an_overlay_sits_its_inset_in_and_clears_no_corner() {
+            const made = Qt.createQmlObject('import QtQuick\nimport qs.Ui\nPane { width: 300; height: 200; container: "overlay"; header: [ Item { width: 10; height: 10 } ] }', root, "overlay");
+            compare(made.cornerRadius, 0);
+            tryCompare(made, "contentInset", 32);
+            compare(UnitTheme.override({ radius: { md: 30 }, inset: { overlay: 4 } }), "ok");
+            tryCompare(made, "contentInset", 4);
+            wait(50);
+            compare(made.contentInset, 4);
+            made.destroy();
+        }
+
         function test_dialog_padding_token_sets_the_dialog_container_inset() {
             compare(UnitTheme.override({ dialog: { padding: 31 } }), "ok");
             compare(emptyBody.contentInset, 31);

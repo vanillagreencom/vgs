@@ -8,7 +8,9 @@ import qs.Ui
 // over the reference rail or its height over the expanded card's, the
 // smaller, held between `carousel.minScale` and `carousel.maxScale`. The
 // rail is centred in the carousel, and a side shows the slices that fit
-// whole beside the expanded card.
+// whole beside the expanded card. `implicitHeight` is the expanded card's
+// height at the width's unit alone, so a container that fits its content
+// gives the rail the height its width asks for.
 //
 // `model` is anything a Repeater takes. `delegate` is the content of one
 // card, built with the card's area as its parent; its root declares
@@ -25,7 +27,8 @@ import qs.Ui
 //
 // A click on a slice makes it current and a click on the current card
 // emits `activated`; a click lands on the card whose parallelogram holds
-// it, the nearer to the current card where two meet. Left, Shift+Tab and a
+// it, the nearer to the current card where two meet, and the card under
+// the pointer by the same rule is its AngledCard's `hovered`. Left, Shift+Tab and a
 // wheel notch up step back, Right, Tab and a notch down step forward, each
 // wrapping at the ends, and Home and End go to the first and the last
 // card. A wheel notch is 120 units of Qt's angleDelta, eighths of a degree
@@ -54,6 +57,8 @@ Item {
     property real devicePixelRatio: Screen.devicePixelRatio
 
     signal activated(int index)
+
+    implicitHeight: Theme.carousel.expandedHeight * internal.widthUnit
 
     onCurrentIndexChanged: internal.follow()
 
@@ -100,6 +105,7 @@ Item {
         // The rail's geometry, computed once for every card.
         readonly property real reference: tokens.expandedWidth + tokens.referenceSteps * (tokens.sliceWidth - tokens.overlap) + 2 * tokens.referenceMargin
         readonly property real unit: Math.max(tokens.minScale, Math.min(tokens.maxScale, root.width / reference, root.height / tokens.expandedHeight))
+        readonly property real widthUnit: Math.min(Math.max(root.width / reference, tokens.minScale), tokens.maxScale)
         readonly property real expandedWidth: tokens.expandedWidth * unit
         readonly property real expandedHeight: tokens.expandedHeight * unit
         readonly property real sliceWidth: tokens.sliceWidth * unit
@@ -243,6 +249,7 @@ Item {
                                 anchors.fill: parent
                                 skew: internal.skew
                                 selected: slot.offset === 0
+                                hovered: pointer.containsMouse
 
                                 Item {
                                     id: holder
@@ -269,7 +276,9 @@ Item {
                                 }
                             }
                             MouseArea {
+                                id: pointer
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 PointerCursor {}
                                 containmentMask: QtObject {
                                     function contains(point: point): bool { return internal.inside(card, point); }

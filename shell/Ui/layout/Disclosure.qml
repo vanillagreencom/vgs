@@ -47,7 +47,7 @@ Column {
 
     Column {
         id: body
-        readonly property real inset: row.leftPadding + (root.iconName !== "" ? Theme.icon.size.md + Theme.listItem.iconGap : 0)
+        readonly property real inset: row.textStart
         x: inset
         width: Math.max(0, root.width - inset - row.rightPadding)
         visible: root.expandable && root.expanded

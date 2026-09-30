@@ -181,6 +181,16 @@ Item {
             }
         }
 
+        // A row names where its text starts: the pad, 12, the icon, 16, and
+        // the icon gap, 12, for a row with an icon, and the pad alone
+        // without one; the title is drawn there.
+        function test_a_row_names_where_its_text_starts() {
+            compare(item.textStart, 40);
+            compare(item.leftPadding + item.contentItem.children[1].x, 40);
+            compare(twoLine.textStart, 12);
+            compare(twoLine.leftPadding + twoLine.contentItem.children[1].x, 12);
+        }
+
         // A section's heading sits on the content edge and its rows take
         // its row spacing; a disclosure's content starts at the row's text
         // column; a compact inline field is `row.compactHeight` tall.

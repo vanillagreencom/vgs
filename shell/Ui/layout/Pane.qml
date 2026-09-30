@@ -10,7 +10,9 @@ import qs.Ui
 // is scrolled, a divider spans the inset box under the header, and while
 // more of it lies below the view, one spans it over the footer. `padding`
 // and `cornerRadius` default to the container class's tokens; a plugin that
-// owns its look (appearance.md) hands its own. The viewport reaches the
+// owns its look (appearance.md) hands its own. The `overlay` class is a
+// full-screen surface over a scrim, which draws no container and so has
+// no corner for its content to clear. The viewport reaches the
 // focus ring's room past the content's left, top and bottom edges, so a
 // ring drawn around a row on an edge is never clipped.
 Item {
@@ -66,6 +68,7 @@ Item {
         case "popover": return Theme.popover.padding;
         case "panel": return Theme.surface.padding;
         case "window": return Theme.inset.window;
+        case "overlay": return Theme.inset.overlay;
         }
         console.error("Pane: no padding rule named " + JSON.stringify(name));
         return Theme.surface.padding;
@@ -77,6 +80,7 @@ Item {
         case "popover": return Theme.popover.radius;
         case "window":
         case "panel": return Theme.surface.radius;
+        case "overlay": return 0;
         }
         console.error("Pane: no radius rule named " + JSON.stringify(name));
         return Theme.surface.radius;

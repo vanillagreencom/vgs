@@ -158,6 +158,8 @@ const DEFAULTS = [
     ["inset.window", 16],
     ["inset.dialog", 16],
     ["inset.popover", 12],
+    // A full-screen overlay's chrome: space.xxxl, 4 * 8.
+    ["inset.overlay", 32],
     ["popover.padding", 12],
     ["menu.padding", 8],
     ["button.size.sm.paddingX", 8],
@@ -224,24 +226,28 @@ const DEFAULTS = [
     ["dialog.bodyRole", "body"],
     // The angled card: Omarchy's 28 pixel lean and 3 pixel selected
     // outline; its outline is borderStrong, mix(#000000, #d7d7d9, 0.27):
-    // 215 * 0.27 = 58.05, 217 * 0.27 = 58.59; its wash the background at
-    // 0.42: 255 * 0.42 = 107.1.
+    // 215 * 0.27 = 58.05, 217 * 0.27 = 58.59, and textMuted under the
+    // pointer; its wash the background at 0.42: 255 * 0.42 = 107.1, and at
+    // half that under the pointer: 255 * 0.21 = 53.55.
     ["angledCard.skew", 28],
     ["angledCard.border", "#3a3a3bff"],
+    ["angledCard.hoverBorder", "#aaaaabff"],
+    ["angledCard.hoverDim", "#00000036"],
     ["angledCard.borderWidth", 1],
     ["angledCard.selectedBorder", "#ff5a36ff"],
     ["angledCard.selectedBorderWidth", 3],
     ["angledCard.dim", "#0000006b"],
-    // The carousel: Omarchy's 768 by 475 card and 108 by 432 slices, 30
-    // over each other; v1's reference rail, 768 + 13 * (108 - 30) + 2 * 20
-    // = 1822, its unit held from 0.35 to 2, two cards built past the shown
-    // ones and a decode of at most 2560; the rail moves over
-    // motion.duration.normal, 150 ms at motion.scale 1.
+    // The carousel: Omarchy's 768 by 475 card on the grid at 476 and its
+    // 108 by 432 slices, overlapping by the card's 28 pixel lean; v1's
+    // reference rail, 768 + 13 * (108 - 28) + 2 * 20 = 1848, its unit held
+    // from 0.35 to 2, two cards built past the shown ones and a decode of
+    // at most 4096; the rail moves over motion.duration.normal, 150 ms at
+    // motion.scale 1.
     ["carousel.expandedWidth", 768],
-    ["carousel.expandedHeight", 475],
+    ["carousel.expandedHeight", 476],
     ["carousel.sliceWidth", 108],
     ["carousel.sliceHeight", 432],
-    ["carousel.overlap", 30],
+    ["carousel.overlap", 28],
     ["carousel.referenceSteps", 13],
     ["carousel.referenceMargin", 20],
     ["carousel.minScale", 0.35],
@@ -252,7 +258,14 @@ const DEFAULTS = [
     ["carousel.duration", 150],
     ["desktopPreview.referenceWidth", 1600],
     ["desktopPreview.referenceHeight", 900],
-    ["desktopPreview.barHeight", 42],
+    // The preview's desktop: a 40 pixel bar, windows space.xxl 24 apart,
+    // their content space.lg 12 in with lines space.md 8 apart, and a
+    // shadow space.md 8 off.
+    ["desktopPreview.barHeight", 40],
+    ["desktopPreview.gap", 24],
+    ["desktopPreview.padding", 12],
+    ["desktopPreview.lineGap", 8],
+    ["desktopPreview.shadowOffset", 8],
     ["desktopPreview.terminalWidthShare", 0.56],
     ["desktopPreview.barOpacity", 0.86]
 ];
@@ -899,8 +912,7 @@ const GRID_EXCEPTIONS = [
     [/^(icon\.size\.|button\.size\.[^.]+\.icon$|slider\.handle$|radio\.dot$)/, "indicator and icon drawing sizes"],
     [/^(space\.xxs|segmented\.padding|segmented\.gap|toggle\.inset|focusRing\.offset|scrollArea\.barInset|titleButton\.underlineGap)$/, "2 px steps inside one component"],
     [/^(space\.sm|badge\.size\.sm\.paddingX|kbd\.paddingX)$/, "6 px padding inside a chip or a key cap"],
-    [/^motion\./, "motion distances"],
-    [/^(carousel|desktopPreview|angledCard)\./, "the theme browser's reference geometry, pending VGS-596"]
+    [/^motion\./, "motion distances"]
 ];
 function gridShortfalls(values) {
     const out = [];
@@ -924,5 +936,10 @@ function gridShortfalls(values) {
     const moved = judge.accept(TOKENS, document({ row: { height: 30 } }));
     assert.equal(moved.ok, true, "the grid control document is accepted");
     assert.deepEqual(gridShortfalls(moved.values), ["row.height=30", "listItem.height=30"], "control: a row height off the grid is named with the list row that reads it");
+    // The theme browser's reference geometry is walked like every other
+    // group: Omarchy's own card height and overlap are named.
+    const omarchy = judge.accept(TOKENS, document({ carousel: { expandedHeight: 475, overlap: 30 } }));
+    assert.equal(omarchy.ok, true, "the browser grid control document is accepted");
+    assert.deepEqual(gridShortfalls(omarchy.values), ["carousel.expandedHeight=475", "carousel.overlap=30"], "control: the carousel's off-grid card height and overlap are named");
 }
 console.log(`test-theme-logic: ok documents=${ACCEPTED.length + REFUSED.length} controls=${CONTROLS.length}`);

@@ -213,7 +213,7 @@ Item {
                 Section {
                     title: "Feedback"
                     rowSpacing: Theme.stack.group
-                    description: "Progress, spinner, badges, key caps and a code line to copy"
+                    description: "Progress, spinner, badges, key caps, a code line to copy and an empty result"
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline
@@ -265,6 +265,7 @@ Item {
                 }
                 CodeLine { width: parent.width; text: "vgsh plugin enable vgs.agent-warden"; copyLabel: "Copy the command" }
                 CodeLine { width: parent.width; text: "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"; copyLabel: "Copy the command" }
+                EmptyState { width: parent.width; iconName: "search-x"; text: "No plugin matches \"zzqx\""; actionText: "Clear search" }
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline

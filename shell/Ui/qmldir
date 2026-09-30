@@ -23,6 +23,7 @@ Spinner 1.0 feedback/Spinner.qml
 VoiceOrb 1.0 feedback/VoiceOrb.qml
 ProgressBar 1.0 feedback/ProgressBar.qml
 Badge 1.0 feedback/Badge.qml
+EmptyState 1.0 feedback/EmptyState.qml
 Kbd 1.0 feedback/Kbd.qml
 CodeLine 1.0 feedback/CodeLine.qml
 AvatarGroup 1.0 feedback/AvatarGroup.qml

@@ -17,7 +17,9 @@ import qs.Ui
 // is created, unless `enters` is false, as for a view that creates rows as
 // they scroll in. Without a cursor the row's own fill follows hover, press
 // and highlight. Under a rounded theme the side padding grows until the
-// content clears the drawn corner.
+// content clears the drawn corner. `textStart` is where the row's text
+// starts, its padding plus its icon and icon gap, for content a caller
+// lines up under the text.
 T.ItemDelegate {
     id: root
 
@@ -26,6 +28,7 @@ T.ItemDelegate {
     property alias trailing: trailingRow.data
     property ListCursor cursor: null
     property bool enters: cursor !== null
+    readonly property real textStart: leftPadding + (iconName !== "" ? Theme.icon.size.md + Theme.listItem.iconGap : 0)
 
     signal pointed()
 

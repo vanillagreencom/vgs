@@ -108,42 +108,17 @@ FocusScope {
             }
         ]
 
-        // The empty result: an icon, one line and a way back, centred in
-        // the space three of the list's two-line rows take.
-        Item {
+        // The empty result: an icon, one line and a way back.
+        EmptyState {
             id: empty
             visible: page.shown.length === 0
             width: layout.contentWidth
-            height: 3 * Theme.listItem.twoLineHeight
-
-            Column {
-                anchors.centerIn: parent
-                width: parent.width
-                spacing: Theme.stack.group
-
-                Icon {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    name: "search-x"
-                    size: Theme.icon.size.xl
-                    color: Theme.color.textFaint
-                }
-                Label {
-                    role: "hint"
-                    text: "No plugin matches " + JSON.stringify(page.query.trim())
-                    color: Theme.color.textMuted
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
-                }
-                Button {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "Clear search"
-                    variant: "tertiary"
-                    onClicked: {
-                        search.clear();
-                        search.forceActiveFocus();
-                    }
-                }
+            iconName: "search-x"
+            text: "No plugin matches " + JSON.stringify(page.query.trim())
+            actionText: "Clear search"
+            onActivated: {
+                search.clear();
+                search.forceActiveFocus();
             }
         }
 

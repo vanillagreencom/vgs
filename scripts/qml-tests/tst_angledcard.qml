@@ -7,8 +7,9 @@ import qs.Unit
 // AngledCard: the parallelogram its corners state, leaning either way; the
 // clip wired as a mask of that parallelogram over the content; the dim wash
 // over a card that is not selected and none over one that is, either way
-// when `dimmed` is set; the outline's width and colour for each state, read
-// and drawn; and all of it under the default theme and a light theme that
+// when `dimmed` is set; the lifted wash and outline of a hovered card and
+// none on a hovered selected one; the outline's width and colour for each
+// state, read and drawn; and all of it under the default theme and a light theme that
 // moves the palette, the skew and the selected width. Expected values are
 // worked by hand from the defaults in Tokens.js, never read from Theme.
 //
@@ -46,6 +47,8 @@ Item {
         function init() {
             UnitTheme.reset();
             chosen.selected = true;
+            plain.hovered = false;
+            chosen.hovered = false;
         }
 
         function childrenOf(card, type) { return card.children.filter(child => String(child).startsWith(type + "(")); }
@@ -86,6 +89,24 @@ Item {
             verify(!wash(chosen).visible);
         }
 
+        // Under the pointer the wash is alpha(#000000, 0.21): 0.21 * 255 =
+        // 53.55, 0x36, and the outline textMuted, mix(#d7d7d9, #000000,
+        // 0.21): 215 * 0.79 = 169.85, 217 * 0.79 = 171.43. A selected card
+        // keeps its unwashed accent outline.
+        function test_a_hovered_card_lifts_its_wash_and_outline() {
+            plain.hovered = true;
+            tryCompare(wash(plain), "color", Qt.color("#36000000"));
+            compare(String(pathOf(edge(plain)).strokeColor), "#aaaaab");
+            compare(pathOf(edge(plain)).strokeWidth, 1);
+            chosen.hovered = true;
+            verify(!wash(chosen).visible);
+            compare(String(pathOf(edge(chosen)).strokeColor), "#ff5a36");
+            compare(pathOf(edge(chosen)).strokeWidth, 3);
+            plain.hovered = false;
+            tryCompare(wash(plain), "color", Qt.color("#6b000000"));
+            compare(String(pathOf(edge(plain)).strokeColor), "#3a3a3b");
+        }
+
         function test_dimmed_is_set_apart_from_selected() {
             const undimmed = Qt.createQmlObject("import qs.Ui\nAngledCard { dimmed: false }", root, "undimmed");
             const dimmed = Qt.createQmlObject("import qs.Ui\nAngledCard { selected: true; dimmed: true }", root, "dimmed");
@@ -124,7 +145,7 @@ Item {
             }), "ok");
             compare(points(plain.corners), [[40, 0], [200, 0], [160, 100], [0, 100]]);
             compare(points(pathOf(mask(plain)).pathElements[0].path), [[40, 0], [200, 0], [160, 100], [0, 100], [40, 0]]);
-            compare(String(wash(plain).color), "#6bffffff");
+            tryCompare(wash(plain), "color", Qt.color("#6bffffff"));
             compare(pathOf(edge(plain)).strokeWidth, 1);
             compare(String(pathOf(edge(plain)).strokeColor), "#bababa");
             compare(pathOf(edge(chosen)).strokeWidth, 5);

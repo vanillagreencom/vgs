@@ -333,7 +333,10 @@ var TOKENS = {
         window: length("{space.xl}"),
         dialog: length("{space.xl}"),
         popover: length("{space.lg}"),
-        panel: length("{space.lg}")
+        panel: length("{space.lg}"),
+        // A full-screen overlay over a scrim, such as the theme browser:
+        // no drawn container, its chrome this far from the output's edge.
+        overlay: length("{space.xxxl}")
     },
 
     // The gaps of a body: `row` between rows of one group, `group` between
@@ -746,15 +749,18 @@ var TOKENS = {
 
     // A card whose content is clipped to a parallelogram, its top edge
     // `skew` pixels right of its bottom edge. Its outline is `borderWidth`
-    // of `border`, or `selectedBorderWidth` of `selectedBorder` while
-    // selected, and `dim` washes the content of a dimmed card.
+    // of `border`, `hoverBorder` under the pointer, or `selectedBorderWidth`
+    // of `selectedBorder` while selected, and `dim` washes the content of a
+    // dimmed card, `hoverDim` under the pointer.
     angledCard: {
         skew: length(28),
         border: color("{color.borderStrong}"),
+        hoverBorder: color("{color.textMuted}"),
         borderWidth: length("{border.thin}"),
         selectedBorder: color("{color.accent}"),
         selectedBorderWidth: length(3),
-        dim: color("alpha({palette.background}, 0.42)")
+        dim: color("alpha({palette.background}, 0.42)"),
+        hoverDim: color("alpha({palette.background}, 0.21)")
     },
 
     // A rail of angled cards: one expanded card between slices that
@@ -767,13 +773,16 @@ var TOKENS = {
     // Cards within `band` slices past the ones shown stay built. The
     // selected card and its neighbours decode at their drawn size in
     // device pixels, the longer side no more than `decodeCap`, and the
-    // rail moves over `duration`.
+    // rail moves over `duration`. The card is Omarchy's image picker card,
+    // 768 by 475, moved onto the 4 px grid at 476, which keeps its 1.61
+    // ratio; the slices overlap by the card's lean, so neighbours meet on
+    // one edge where Omarchy's 30 overlaps them by 2 pixels.
     carousel: {
         expandedWidth: length(768),
-        expandedHeight: length(475),
+        expandedHeight: length(476),
         sliceWidth: length(108),
         sliceHeight: length(432),
-        overlap: length(30),
+        overlap: length("{angledCard.skew}"),
         referenceSteps: number(13, 0, 64),
         referenceMargin: length(20),
         minScale: number(0.35, 0.1, 1),
@@ -784,15 +793,22 @@ var TOKENS = {
         duration: duration("{motion.duration.normal}")
     },
 
+    // A theme's desktop drawn at a reference display of `referenceWidth`
+    // by `referenceHeight` and scaled to its card: a bar `barHeight` tall,
+    // windows `gap` apart, the terminal `terminalWidthShare` of the width
+    // and the editor `panelHeightShare` of the terminal's height, each
+    // window's content `padding` in, its lines `lineGap` apart, a shadow
+    // `shadowOffset` down and right, and the bar at `barOpacity`.
     desktopPreview: {
         referenceWidth: length(1600),
         referenceHeight: length(900),
-        barHeight: length(42),
+        barHeight: length(40),
         gap: length("{space.xxl}"),
+        padding: length("{space.lg}"),
+        lineGap: length("{space.md}"),
         terminalWidthShare: share(0.56),
         panelHeightShare: share(0.5),
-        shadowOffset: length("{space.sm}"),
-        wallpaperDim: share(0.5),
+        shadowOffset: length("{space.md}"),
         barOpacity: share(0.86)
     },
 
