@@ -26,12 +26,10 @@ orb_shader_ok() { ipc smoke galleryOrbs window vgs.gallery "$1" | py_reply 'impo
 rows=json.load(sys.stdin)
 index=int(sys.argv[1])
 print("absent" if index<0 or index>=len(rows) else bool(rows[index]["compiled"] and rows[index]["url"].endswith("/voiceorb.frag.qsb")))' "$2"; }
-gallery_orb_offset() { ipc smoke descendantGeometry window vgs.gallery | py_reply 'import json,sys
-items=json.load(sys.stdin)
-orbs=[item for item in items if item["type"]=="VoiceOrb"]
-title=next((item for item in items if item["type"]=="Label" and item.get("text")=="Gallery"),None)
+gallery_orb_offset() { ipc smoke galleryOrbs window vgs.gallery '' | py_reply 'import json,sys
+orbs=json.load(sys.stdin)
 index=int(sys.argv[1])
-print("absent" if title is None or index>=len(orbs) else round(orbs[index]["box"][1]-title["box"][1]))' "$1"; }
+print("absent" if index>=len(orbs) or orbs[index]["scrollOffset"] is None else orbs[index]["scrollOffset"])' "$1"; }
 gallery_compile_orbs() {
   local label="$1" count index position offset failed_before
   count="$(ipc smoke galleryOrbs window vgs.gallery '' | py_reply 'import json,sys; print(len(json.load(sys.stdin)))')" || return 1

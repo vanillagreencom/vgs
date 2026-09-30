@@ -497,11 +497,13 @@ Scope {
             const item = copyName === "" ? root.instance(hostKey, id) : root.popupCopies[copyName];
             if (item === null || item === undefined) return "absent";
             const orbs = copyName === "" ? root.descendants(item).filter(child => root.typeName(child) === "VoiceOrb") : [item];
+            const title = root.descendants(item).find(child => root.typeName(child) === "Label" && child.text === "Gallery");
             return JSON.stringify(orbs.map(orb => {
                 const shader = root.descendants(orb).find(child => child instanceof ShaderEffect);
                 return {
                     tone: orb.tone, active: orb.active, level: orb.level, secondaryLevel: orb.secondaryLevel,
                     width: orb.width, height: orb.height,
+                    scrollOffset: title === undefined ? null : Math.round(orb.mapToGlobal(0, 0).y - title.mapToGlobal(0, 0).y),
                     url: shader === undefined ? "" : String(shader.fragmentShader),
                     shaderLog: shader === undefined ? "no-shader" : shader.log,
                     compiled: shader !== undefined && shader.status === ShaderEffect.Compiled
