@@ -111,7 +111,7 @@ devtools_insets() {
   python3 - "$(ipc smoke shownWindowGeometry window vgs.devtools SectionHeader VGS)" "$(ipc smoke scopedWindowGeometry window vgs.devtools ToolRow VGS Badge Unknown)" "$(ipc smoke readInstance window vgs.devtools width)" "${1:-}" <<'PY'
 import json, sys
 head, chip, width, plant = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "narrow"
-if not head.startswith("[") or not chip.startswith("[") or width in ("absent", "undefined"):
+if not head.startswith("[") or not chip.startswith("[") or not width.replace(".", "", 1).isdigit():
     print(json.dumps(["heading=%s chip=%s width=%s" % (head, chip, width)])); sys.exit()
 head, chip, width = json.loads(head), json.loads(chip), json.loads(width)
 left, right = head[0], width - (chip[0] + chip[2] - (8 if plant else 0))

@@ -881,7 +881,7 @@ Scope {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
             const names = properties === "" ? [] : properties.split(",");
-            return JSON.stringify(root.descendants(item).filter(child => root.typeName(child) === type).map(child => {
+            return root.json(root.descendants(item).filter(child => root.typeName(child) === type).map(child => {
                 const values = {};
                 for (const name of names) values[name] = child[name] !== null && typeof child[name] === "object" && "hslHue" in child[name] ? child[name].toString() : child[name];
                 return values;

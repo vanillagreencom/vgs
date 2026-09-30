@@ -400,6 +400,9 @@ flyout_geometry() {
   rows="$(ipc smoke descendantGeometry panel vgs.updates)" || return
   python3 - "$rows" "${1:-}" <<'PY'
 import json, sys
+# A failure word from the probe is the answer, never a traceback.
+if not sys.argv[1].startswith("["):
+    print(json.dumps(["unread=%s" % sys.argv[1]])); sys.exit()
 rows, plant = json.loads(sys.argv[1]), sys.argv[2] == "shift"
 out = []
 def inside(j, i):
@@ -440,7 +443,7 @@ expect "control: a count moved off the column is refused" True flyout_shifted
 short_mode=480x360
 short_monitor="$(first_name)" || fail "the monitor is unreadable"
 short_main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
-short_gutter="$(ipc smoke themeValue size.window.gutter)" || fail "the gutter token is unreadable"
+short_gutter="$(ipc smoke themeValue size.window.gutter)" || { fail "the gutter token is unreadable"; short_gutter=unreadable; }
 expect "the flyout hides before the short monitor" ok ipc shell hide panel vgs.updates
 expect_poll "the flyout is closed before the short monitor" closed flyout_open
 hold_mode "the nested compositor makes its monitor short and narrow" "$short_monitor" "$short_mode"
@@ -452,9 +455,9 @@ open_flyout
 panel_room() { # [PLANT]
   python3 - "$(ipc smoke instanceGeometry panel vgs.updates)" "$short_gutter" "${1:-}" <<'PY'
 import json, sys
+if not sys.argv[1].startswith("[") or not sys.argv[2].isdigit():
+    print(json.dumps(["panel=%s gutter=%s" % (sys.argv[1], sys.argv[2])])); sys.exit()
 box, gutter, plant = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "wide"
-if not box.startswith("["):
-    print(json.dumps(["panel=%s" % box])); sys.exit()
 x, y, w, h = json.loads(box)
 if plant: w += 8
 out = []

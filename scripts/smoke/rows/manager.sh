@@ -624,7 +624,11 @@ page_geometry() { # [PLANT]
   glyph="$(ipc smoke readShownDescendant window vgs.settings IconButton glyphStart)" || return
   cap="$(ipc smoke readShownDescendant window vgs.settings TitleButton capCentre)" || return
   python3 - "$rows" "$md" "$compact" "$gap" "$glyph" "$cap" "${1:-}" <<'PY'
-import json, sys
+import json, re, sys
+# A failure word from the probe is the answer, never a traceback.
+words = [a for a in sys.argv[1:7] if not re.match(r"^(\[|-?[0-9])", a)]
+if words:
+    print(json.dumps(["unread=%s" % ",".join(words)])); sys.exit()
 rows, md, compact, gap, glyph, cap = (json.loads(a) for a in sys.argv[1:7])
 plant = sys.argv[7] == "shift"
 out = []
