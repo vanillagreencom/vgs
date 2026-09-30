@@ -25,6 +25,7 @@ Requires:       python3
 Requires:       git
 Requires:       util-linux-core
 Requires:       util-linux
+Requires:       pipewire-utils
 Recommends:     xdg-terminal-exec
 Recommends:     gum
 Recommends:     fzf
@@ -36,7 +37,6 @@ Recommends:     curl
 Recommends:     libsecret
 Recommends:     bubblewrap
 Recommends:     systemd
-Recommends:     pipewire-utils
 Recommends:     ImageMagick
 Conflicts:      vgs-shell
 # end runtime dependencies

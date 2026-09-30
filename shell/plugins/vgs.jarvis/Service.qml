@@ -55,7 +55,7 @@ Item {
         }
         const audioReport = shell.status.set("audio", { tone: "info", text: "Reading devices" });
         if (audioReport !== "ok") throw new Error("jarvis: " + audioReport);
-        const quiet = shell.status.set("level", 0);
+        const quiet = shell.status.set("level", { capture: 0, playback: 0 });
         if (quiet !== "ok") throw new Error("jarvis: " + quiet);
         child.completion = null;
         child.stdinEnabled = true;

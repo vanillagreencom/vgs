@@ -46,7 +46,7 @@
     "keys": { "type": "presenceList", "label": "Provider keys", "hint": "Use Add key below. This check never reads a key or unlocks the keyring." },
     "microphones": { "type": "choices", "label": "Microphones" },
     "speakers": { "type": "choices", "label": "Speakers" },
-    "level": { "type": "data", "label": "Microphone level" },
+    "level": { "type": "data", "label": "Audio levels" },
     "audio": { "type": "state", "label": "Audio" }
   },
   "tui": {

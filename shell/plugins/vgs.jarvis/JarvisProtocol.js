@@ -119,7 +119,9 @@ function accept(line, direction) {
     case "level":
         if (direction !== "daemon") fail("direction-level");
         keys(message, ["v", "type", "gen", "revision", "level"], "level");
-        if (!Number.isFinite(message.level) || message.level < 0 || message.level > 1) fail("level");
+        keys(message.level, ["capture", "playback"], "levels");
+        for (var channel of ["capture", "playback"])
+            if (!Number.isFinite(message.level[channel]) || message.level[channel] < 0 || message.level[channel] > 1) fail("level");
         break;
     case "audio-fault":
         if (direction !== "daemon") fail("direction-audio-fault");

@@ -27,7 +27,7 @@ assert.deepEqual(manifest.hyprland.binds, [
 assert.equal(manifest.capabilities.includes("shortcut"), true);
 const devices = { v: 1, type: "devices", gen: 0, revision: hello.revision,
     microphones: [{ label: "Microphone", value: "fixture.mic" }], speakers: [] };
-const level = { v: 1, type: "level", gen: 0, revision: hello.revision, level: 0.5 };
+const level = { v: 1, type: "level", gen: 0, revision: hello.revision, level: { capture: 0.5, playback: 0 } };
 const audioFault = { v: 1, type: "audio-fault", gen: 0, revision: hello.revision, reason: "discovery-exit" };
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const cases = [
@@ -39,7 +39,8 @@ const cases = [
     ["choice", changed(devices, { microphones: [{ label: "Microphone", value: "" }] }), "daemon", "choice"],
     ["choice-duplicate", changed(devices, { microphones: devices.microphones.concat(devices.microphones) }), "daemon", "choice-duplicate"],
     ["level-direction", JSON.stringify(level), "shell", "direction-level"],
-    ["level-bound", changed(level, { level: 1.01 }), "daemon", "level"],
+    ["level-bound", changed(level, { level: { capture: 1.01, playback: 0 } }), "daemon", "level"],
+    ["playback-level-bound", changed(level, { level: { capture: 0, playback: -0.01 } }), "daemon", "level"],
     ["json", "{", "shell", "json"],
     ["object", "[]", "shell", "object"],
     ["version", changed(hello, { v: 2 }), "shell", "version"],
@@ -91,7 +92,8 @@ assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, mod
     keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
 for (const message of [devices, level, audioFault])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
-for (const value of [0, 1]) assert.equal(Protocol.accept(changed(level, { level: value }), "daemon").level, value);
+for (const value of [0, 1])
+    assert.equal(Protocol.accept(changed(level, { level: { capture: value, playback: value } }), "daemon").level.capture, value);
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, microphone: "missing.mic" } }), "shell").settings.microphone, "missing.mic");
 for (const text of ["", "a", "é", "語", "😀", "\ud800"])
     assert.equal(Protocol.bytes(text), Buffer.byteLength(text), text);
@@ -140,7 +142,7 @@ try {
         ["choice-duplicate", 'if (Object.prototype.hasOwnProperty.call(seen, choice.value)) fail("choice-duplicate");',
             'if (false) fail("choice-duplicate");', "choice-duplicate"],
         ["level-direction", 'if (direction !== "daemon") fail("direction-level");', 'if (false) fail("direction-level");', "level-direction"],
-        ["level-bound", 'if (!Number.isFinite(message.level) || message.level < 0 || message.level > 1) fail("level");',
+        ["level-bound", 'if (!Number.isFinite(message.level[channel]) || message.level[channel] < 0 || message.level[channel] > 1) fail("level");',
             'if (false) fail("level");', "level-bound"],
         ["object", 'if (!object(message)) fail("object");', 'if (false) fail("object");', "object"],
         ["version", 'if (message.v !== 1) fail("version");', 'if (false) fail("version");', "version"],

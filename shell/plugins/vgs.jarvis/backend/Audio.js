@@ -34,6 +34,7 @@ class Audio {
         this.feed = null;
         this.playbackFeed = null;
         this.lastLevel = -Infinity;
+        this.levels = { capture: 0, playback: 0 };
         this.release = Promise.resolve();
         this.capturePort = {
             open: (e, done, failed) => this.openCapture(e, done, failed),
@@ -112,6 +113,7 @@ class Audio {
                 reject(error);
                 this.offers({ microphones: [], speakers: [] });
                 this.devices = { microphones: [], speakers: [] };
+                this.nodes.clear();
                 this.failCapture("discovery-failed", error.message);
                 this.fault(error.message);
                 void this.teardown("discovery-failed", ["discovery"]);
@@ -158,22 +160,26 @@ class Audio {
             else if (node.type === "PipeWire:Interface:Node") {
                 const prior = this.nodes.get(node.id);
                 const props = node.info && node.info.props;
-                if (props) this.nodes.set(node.id, { ...(prior || {}), ...props });
+                if (!props) continue;
+                const group = props["media.class"] === undefined ? (prior && prior.group)
+                    : props["media.class"] === "Audio/Source" ? "microphones"
+                    : props["media.class"] === "Audio/Sink" ? "speakers" : null;
+                if (!group) { this.nodes.delete(node.id); continue; }
+                const value = props["node.name"] === undefined ? (prior && prior.value) : props["node.name"];
+                const label = props["node.description"] || props["node.nick"] || (prior && prior.label) || value;
+                if (typeof value !== "string" || !/^[^\x00-\x1f\x7f]{1,200}$/.test(value)
+                        || typeof label !== "string" || !/^[^\x00-\x1f\x7f]+$/.test(label))
+                    throw new Error("discovery-device");
+                if (!this.nodes.has(node.id) && this.nodes.size >= 4096) throw new Error("discovery-nodes");
+                // Retain only bounded offer data, never arbitrary properties
+                // another client can add or remove indefinitely.
+                this.nodes.set(node.id, { group, label: label.slice(0, 60), value });
             }
         }
-        if (this.nodes.size > 4096) throw new Error("discovery-nodes");
         const devices = { microphones: [], speakers: [] };
-        for (const p of this.nodes.values()) {
-            const group = p["media.class"] === "Audio/Source" ? "microphones"
-                : p["media.class"] === "Audio/Sink" ? "speakers" : null;
-            if (group === null) continue;
-            const value = p["node.name"];
-            const label = p["node.description"] || p["node.nick"] || value;
-            if (typeof value !== "string" || !/^[^\x00-\x1f\x7f]{1,200}$/.test(value)
-                    || typeof label !== "string" || !/^[^\x00-\x1f\x7f]+$/.test(label))
-                throw new Error("discovery-device");
+        for (const { group, label, value } of this.nodes.values()) {
             if (devices[group].some(item => item.value === value)) throw new Error("discovery-duplicate");
-            devices[group].push({ label: label.slice(0, 60), value });
+            devices[group].push({ label, value });
         }
         for (const group of Object.keys(devices)) {
             devices[group].sort((a, b) => a.value < b.value ? -1 : a.value > b.value ? 1 : 0);
@@ -235,13 +241,7 @@ class Audio {
                     return;
                 }
                 if (!this.feed.write(pcm)) owner.child.stdout.pause();
-                const at = this.clock.now();
-                if (at - this.lastLevel >= 1000 / 30) {
-                    let square = 0;
-                    for (let i = 0; i < pcm.length; i += 2) square += (pcm.readInt16LE(i) / 32768) ** 2;
-                    this.lastLevel = at;
-                    this.level(e.gen, pcm.length === 0 ? 0 : Math.min(1, Math.sqrt(square / (pcm.length / 2))));
-                }
+                this.reportLevel(e.gen, "capture", pcm);
             });
             this.feed.on("drain", () => { if (!owner.stopping) owner.child.stdout.resume(); });
             owner.closed.then(() => {
@@ -259,6 +259,18 @@ class Audio {
         if (capture === null || capture.owner.stopping) return;
         void this.teardown(reason).then(() => capture.failed(reason));
         if (diagnostic !== "") this.fault(reason + ": " + diagnostic.slice(0, 200));
+    }
+
+    reportLevel(gen, channel, pcm) {
+        if (pcm.length === 0) return;
+        let square = 0;
+        for (let i = 0; i < pcm.length; i += 2) square += (pcm.readInt16LE(i) / 32768) ** 2;
+        this.levels[channel] = Math.min(1, Math.sqrt(square / (pcm.length / 2)));
+        const at = this.clock.now();
+        if (at - this.lastLevel >= 1000 / 30) {
+            this.lastLevel = at;
+            this.level(gen, { ...this.levels });
+        }
     }
 
     async startPlayback(e, done, failed) {
@@ -284,6 +296,7 @@ class Audio {
                     await Promise.race([once(owner.child.stdin, "drain"), owner.closed]);
                     if (owner.stopping) return;
                 }
+                this.reportLevel(e.gen, "playback", frame);
             }
             owner.child.stdin.end();
             await owner.closed;
@@ -311,6 +324,7 @@ class Audio {
             owner.child.stdin.destroy();
         }
         if (kinds.includes("capture")) {
+            this.levels.capture = 0;
             this.capture = null;
             if (this.feed !== null) {
                 if (!this.feed.closed) feeds.push(new Promise(resolve => this.feed.once("close", resolve)));
@@ -319,6 +333,7 @@ class Audio {
             }
         }
         if (kinds.includes("playback") && this.playbackFeed) {
+            this.levels.playback = 0;
             if (!this.playbackFeed.closed) feeds.push(new Promise(resolve => this.playbackFeed.once("close", resolve)));
             this.playbackFeed.destroy();
             this.playbackFeed = null;

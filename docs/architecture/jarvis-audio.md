@@ -34,7 +34,7 @@ Playback consumes the speech owner's PCM stream and owns the real `pw-cat` proce
 
 `Audio.discover` owns one read-only `pw-dump --monitor --no-colors` child. Its bounded incremental JSON reader merges node changes and deletions. Discovery never sets metadata, a default device or a setting.
 
-- Offers use `node.name`, the stable target that `pw-cat` accepts. Transient object ids only identify monitor updates. Offers sort by that stable name and fit the [choices contract](status.md#setting-choices).
+- Offers use `node.name`, the stable target that `pw-cat` accepts. Transient object ids only identify monitor updates. The cache holds only bounded labels, names and device groups, not arbitrary client properties. Offers sort by that stable name and fit the [choices contract](status.md#setting-choices).
 - Empty settings resolve to the first offer at acquisition. An unavailable configured name faults without changing the setting or selecting another device. Device changes apply at the next acquisition.
 - A removed active microphone closes capture and the echo loader. Session reports a device-lost fault and allows the plan's three retries. Each retry resolves the same configured selection from current offers. No offers end the retries without starting a microphone.
 - Unexpected command exit reports its exit cause. It is not called a lost device. A failed discovery drops offers and faults capture instead of keeping an untrusted list.
@@ -46,13 +46,13 @@ Playback consumes the speech owner's PCM stream and owns the real `pw-cat` proce
 
 Capture and playback use mono signed 16-bit PCM at 24 kHz. Audio limits each PCM buffer to 64 KiB and closes the audio set on overflow. Stream backpressure pauses capture or waits for playback's drain. Teardown ends a blocked source or sink.
 
-Levels use root-mean-square sample amplitude, clamped to the wire's range. The injectable clock permits at most 30 reports per second. Audio retains no level queue. Discovery limits an unfinished JSON array to 1 MiB and retained nodes to 4096. Diagnostic retention is bounded. The daemon's wire judge bounds each outgoing message. A full outgoing pipe buffer faults and closes the daemon instead of retaining more messages.
+Levels use root-mean-square sample amplitude, clamped to the wire's range. Each `level` message carries `{ capture, playback }`. The injectable clock permits at most 30 combined reports per second. Playback amplitude describes PCM sent to its pipe, not frames heard. Audio retains no level queue. Discovery limits an unfinished JSON array to 1 MiB and retained nodes to 4096. Diagnostic retention is bounded. The daemon's wire judge bounds each outgoing message. A full outgoing pipe buffer faults and closes the daemon instead of retaining more messages.
 
 These are buffer and protocol limits, not measured latency budgets.
 
 ## Requirements and installation
 
-The plugin manifest declares each shipping command under [D035](../decisions/D035-manifest-requirements.md). PipeWire's Arch package provides the audio commands. Debian's [pipewire-bin file list](https://packages.debian.org/trixie/amd64/pipewire-bin/filelist) and Fedora's [pipewire-utils file list](https://packages.fedoraproject.org/pkgs/pipewire/pipewire-utils/fedora-44.html) verify the other package names. The bootstrap uses the already-required Python runtime and util-linux commands. The Arch optional dependency and Fedora recommendation name the audio package. The install manifest includes the owner and bootstrap.
+The plugin manifest declares each shipping command under [D035](../decisions/D035-manifest-requirements.md). PipeWire's Arch package provides the audio commands. Debian's [pipewire-bin file list](https://packages.debian.org/trixie/amd64/pipewire-bin/filelist) and Fedora's [pipewire-utils file list](https://packages.fedoraproject.org/pkgs/pipewire/pipewire-utils/fedora-44.html) verify the other package names. The bootstrap uses the already-required Python runtime and util-linux commands. The Arch optional dependency and Fedora required dependency name the audio package. The install manifest includes the owner and bootstrap.
 
 Debian's [util-linux file list](https://packages.debian.org/trixie/amd64/util-linux/filelist) includes setpriv and unshare. Fedora's [util-linux package declaration](https://src.fedoraproject.org/rpms/util-linux/raw/rawhide/f/util-linux.spec) puts setpriv in util-linux and unshare in util-linux-core.
 

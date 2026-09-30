@@ -37,7 +37,7 @@ function setup(Implementation = Audio, echo = null, sink = null, source = null) 
     dispatch("snapshot", { locked: false, configured: true, echoCancel: echo !== null,
         settings: { microphone: "", speaker: "" } });
     dispatch("indicator", { shown: true });
-    return { audio, runner, dispatch, levels, offers, faults, frames: () => frames };
+    return { audio, runner, dispatch, levels, offers, faults, frames: () => frames, tick: ms => { at += ms; } };
 }
 
 async function capture(w) {
@@ -81,7 +81,7 @@ async function inside() {
         await capture(w);
         await until(() => w.frames() >= 15, "level samples");
         assert.ok(w.levels.length > 0);
-        assert.equal(w.levels[0].value, 0.5);
+        assert.deepEqual(w.levels[0].value, { capture: 0.5, playback: 0 });
         for (let i = 1; i < w.levels.length; i++)
             assert.ok(w.levels[i].at - w.levels[i - 1].at >= 1000 / 30);
         const argv = fs.readFileSync(path.join(process.env.HOME, "audio-argv"), "utf8").trim().split("\n").map(JSON.parse);
@@ -131,10 +131,17 @@ async function inside() {
             w.dispatch("final", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op, text: "fixture" });
             await until(() => w.runner.state.capture.kind === "closed", "capture ends before playback");
             w.dispatch("play", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op, interruptible: true });
-            source.write(Buffer.alloc(480));
+            w.tick(40);
+            const frame = Buffer.alloc(480);
+            for (let i = 0; i < frame.length; i += 2) frame.writeInt16LE(8192, i);
+            source.write(frame);
             await until(() => [...w.audio.children.values()].some(owner => owner.kind === "playback"),
                 "real playback child starts");
             await until(() => !unlocked(), "playback descendant holds a lock");
+            await until(() => w.levels.some(row => row.value.playback === 0.25), "playback RMS is published");
+            assert.deepEqual(w.levels.at(-1).value, { capture: 0, playback: 0.25 });
+            for (let i = 1; i < w.levels.length; i++)
+                assert.ok(w.levels[i].at - w.levels[i - 1].at >= 1000 / 30, "combined channel rate");
             w.dispatch("interrupt");
             await until(() => w.runner.state.playback.kind === "idle", "interrupt waits for playback exit");
             assert.equal(unlocked(), true, "interrupt kills detached playback descendants");
@@ -172,6 +179,22 @@ async function inside() {
         }
     }
     await discoveryOverflow();
+
+    async function cacheBound(Implementation = Audio) {
+        fs.writeFileSync(path.join(process.env.HOME, "extra-properties"), "");
+        const w = setup(Implementation);
+        try {
+            await w.audio.discover();
+            assert.ok(w.audio.nodes.size > 0, "the monitor retained real offer nodes");
+            for (const node of w.audio.nodes.values())
+                assert.ok(Buffer.byteLength(JSON.stringify(node)) <= 1024, "arbitrary properties cannot grow the node cache");
+        } finally {
+            w.runner.close();
+            await w.audio.close("test-end");
+            fs.unlinkSync(path.join(process.env.HOME, "extra-properties"));
+        }
+    }
+    await cacheBound();
 
     const lost = setup();
     try {
@@ -235,6 +258,10 @@ async function inside() {
         "const DISCOVERY_BYTES = 2 * 1024 * 1024;", discoveryOverflow);
     await control("playback-release", 'kinds.includes("playback") && this.playbackFeed',
         'false && kinds.includes("playback") && this.playbackFeed', playback);
+    await control("playback-level", 'this.reportLevel(e.gen, "playback", frame);',
+        'if (false) this.reportLevel(e.gen, "playback", frame);', playback);
+    await control("node-cache-bound", 'this.nodes.set(node.id, { group, label: label.slice(0, 60), value });',
+        'this.nodes.set(node.id, { ...props, group, label: label.slice(0, 60), value });', cacheBound);
     await control("closed-owner", 'this.lifetime.kind === "closed" || (kind !== "discovery"',
         'false || (kind !== "discovery"', async impl => {
         const w = setup(impl);
