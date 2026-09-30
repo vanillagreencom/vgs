@@ -8,12 +8,12 @@ import "NotificationLogic.js" as Logic
 // workspace list, and the icon images its disk cache already holds. The
 // list is read when the service starts, and again when a notification names
 // a workspace it lacks or holds with no icon, at most once per
-// NotificationLogic.WORKSPACE_RELOAD_GAP. slack-cache.js, the one reader
-// of that cache, copies each icon out of it into this rule's own directory
+// NotificationLogic.WORKSPACE_RELOAD_GAP. slack-cache.js, the one reader of
+// that cache, copies each icon out of it into this rule's own directory
 // under the cache home, which it empties first, so the directory holds at
-// most two icons for each of NotificationLogic.WORKSPACES_MAX workspaces. A workspace with no icon
-// keeps its name as text on the card. `known` is the list as last read, for
-// the rule's other readers.
+// most two icons for each of NotificationLogic.WORKSPACES_MAX workspaces. A
+// workspace with no icon keeps its name as text on the card. `known` is the
+// list as last read, for the rule's other readers.
 Scope {
     id: source
 

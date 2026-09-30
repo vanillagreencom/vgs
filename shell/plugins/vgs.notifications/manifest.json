@@ -80,10 +80,10 @@
       "purpose": "Reads each workspace's Slack token from the keyring"
     },
     {
-      "command": "magick",
+      "command": "convert",
       "packages": { "pacman": "imagemagick", "apt": "imagemagick", "dnf": "ImageMagick", "xbps": "ImageMagick", "emerge": "media-gfx/imagemagick", "nix": "imagemagick" },
       "optional": true,
-      "purpose": "Draws Slack custom emoji and crops Slack photos; ImageMagick 6's convert also serves"
+      "purpose": "Draws Slack custom emoji and crops Slack photos; the helpers run magick instead when it is installed"
     }
   ],
   "appearance": "Appearance.js",
