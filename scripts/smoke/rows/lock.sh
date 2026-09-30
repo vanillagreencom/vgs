@@ -25,9 +25,12 @@
 # `misc.allow_session_lock_restore`. A sampler reads the session lock from
 # the compositor every 100 ms from before the kill until the new shell's
 # lock is confirmed and must find it locked each time; its control runs it
-# across the second lock client's unlock, which unlocks the session. The
-# time from the kill to the confirmed lock with the lock screen is printed
-# as latency_lock_back_ms and held under lock_back_budget_ms, below.
+# across the second lock client's unlock, which unlocks the session. An
+# unlock shorter than one 100 ms sample, between two readings, is not
+# read. The runner's relaunch line for each kill names session=locked,
+# the runner's own reading of the same lock. The time from the kill to the
+# confirmed lock with the lock screen is printed as latency_lock_back_ms
+# and held under lock_back_budget_ms, below.
 #
 # No row types a password: PAM would check it against the real account,
 # whose pam_faillock counts each failure. The sandbox's own probe releases
@@ -187,8 +190,16 @@ lock_back_budget_ms=3212
 # reads the session lock from before the kill until the caller stops it.
 # The killed shell's log is checked and kept first: the rows after this one
 # read the next shell's.
+# relaunch_lines: the runner's relaunch lines in its log, one per line.
+# The relaunch count and the delay depend on how long the shell before ran
+# (docs/architecture/runtime.md § Process), so a line is read without
+# them.
+relaunch_lines() { grep -E '^vgsh: shell=exited .* relaunch=' -- "$shell_log" | sed -E 's/ relaunch=[0-9]+ delay=[0-9.]+//' || :; }
+relaunch_count() { relaunch_lines | wc -l; }
+last_relaunch() { relaunch_lines | tail -n 1; }
 kill_and_relaunch() { # LABEL
-  local killed="$shell_qs_pid" kept="$sandbox/lock-shell-${#kept_logs[@]}.log"
+  local killed="$shell_qs_pid" kept="$sandbox/lock-shell-${#kept_logs[@]}.log" before
+  before="$(relaunch_count)"
   check_unexpected_log "$1: the shell's log before the kill" "$instance_log"
   no_checks "$1: before the kill"
   cp -- "$instance_log" "$kept" || fail "$1: keeping the shell's log failed"
@@ -199,6 +210,8 @@ kill_and_relaunch() { # LABEL
   kill -KILL "$killed" || fail "$1: SIGKILL to the shell pid $killed failed"
   expect_poll "$1: the killed shell is gone" gone alive "$killed"
   if adopt_shell "$killed"; then ok "$1: the runner started the next shell"; fi
+  expect "$1: the runner logged one relaunch for the kill" $((before + 1)) relaunch_count
+  expect "$1: the runner read the session locked before the relaunch" "vgsh: shell=exited status=137 session=locked" last_relaunch
 }
 # The time from the kill to the core's confirmed lock with the plugin's
 # lock screen, polled every 50 ms for up to 20 s; `none` past that.
