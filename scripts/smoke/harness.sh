@@ -730,6 +730,25 @@ cpu_some_us() {
       if [[ $kind == some && $rest =~ total=([0-9]+) ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return 0; fi
     done </proc/pressure/cpu; } 2>/dev/null || true
 }
+# cpu_some_pct START_US END_US MS: the percent of a window of MS
+# milliseconds in which some runnable task on the host waited for a CPU,
+# from the cpu_some_us totals read at its start and its end, with one
+# decimal; `unmeasured` when either total is empty or the window has no
+# length. It is a record for reading a slow window, not a gate. The load
+# average is no measure of this: it counts tasks running on a CPU and
+# tasks in uninterruptible sleep, so on a host with many CPUs a high load
+# can mean no task waited at all.
+cpu_some_pct() {
+  local tenths
+  if [[ -n $1 && -n $2 && $3 -gt 0 ]]; then
+    # Stalled microseconds over the window's milliseconds is the percent
+    # in tenths.
+    tenths=$(( ($2 - $1) / $3 ))
+    echo "$((tenths / 10)).$((tenths % 10))"
+  else
+    echo unmeasured
+  fi
+}
 # click X Y: one left click at that layout position on the nested seat.
 # click_centre HOST_KEY ID: the same on the centre of a built instance.
 # hover X Y: the pointer moved there with no press. drag X Y X2 Y2: a
@@ -1091,14 +1110,9 @@ theme_idle() { # [IPC_FN]
 # The first-bar reading is the latency from the runner's spawn to the first
 # bar surface with a client, polled every 10 ms from the compositor's
 # layer list, which answers in a few milliseconds; the reading carries at
-# most one poll interval. first_bar_cpu_some_pct records beside it the
-# percent of that window in which some runnable task on the host waited
-# for a CPU, from the host-wide pressure stall `some` totals read before
-# the spawn and at the reading, with one decimal; `unmeasured` when either
-# total is unreadable. It is a record for reading a slow start, not a
-# gate. The load average is no measure of this: it counts tasks running on
-# a CPU and tasks in uninterruptible sleep, so on a host with many CPUs a
-# high load can mean no task waited at all.
+# most one poll interval. first_bar_cpu_some_pct records beside it
+# cpu_some_pct of that window, from the host-wide pressure stall `some`
+# totals read before the spawn and at the reading.
 #
 # qs buffers stdout when redirected, so the shell's own per-instance log
 # file is the record: it is line-flushed and holds every QML warning. The
@@ -1111,7 +1125,7 @@ theme_idle() { # [IPC_FN]
 # spawn's setsid does not fork, as a background job is no process group
 # leader, so the runner is spawn_pid itself.
 start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
-  local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths
+  local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms layers_text
   shift $(( $# < 3 ? $# : 3 ))
   [[ $bar == bar || $bar == no-bar ]] || { fail "start_shell: refused: bar=$bar want=bar|no-bar"; return 1; }
   instance_log=""
@@ -1128,13 +1142,7 @@ start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
     for _ in $(seq 1 $((timeout_s * 100))); do
       if layers_text="$(hypr layers 2>/dev/null)" && [[ $layers_text =~ namespace:\ vgs:bar,\ pid:\ [1-9] ]]; then
         first_bar_ms=$(( $(now_ms) - start_ms ))
-        bar_cpu_some_us="$(cpu_some_us)"
-        if [[ -n $start_cpu_some_us && -n $bar_cpu_some_us && $first_bar_ms -gt 0 ]]; then
-          # Stalled microseconds over the window's milliseconds is the
-          # percent in tenths.
-          tenths=$(( (bar_cpu_some_us - start_cpu_some_us) / first_bar_ms ))
-          first_bar_cpu_some_pct="$((tenths / 10)).$((tenths % 10))"
-        fi
+        first_bar_cpu_some_pct="$(cpu_some_pct "$start_cpu_some_us" "$(cpu_some_us)" "$first_bar_ms")"
         break
       fi
       kill -0 "$shell_pid" 2>/dev/null || break

@@ -3,8 +3,10 @@
 
 Log fields come from Qt 6.11.2 QSGRenderThread::syncAndRender and
 QRhiVulkan::create. The costly shader is proved separately on the real GPU.
-Controls remove each sample/ceiling rule from a disposable reader, without
-removing the matched error text.
+Controls remove each sample, percentile, pass and ceiling rule from a
+disposable reader, without removing the matched error text. The runner's
+held-scene loop and its argument refusals run with the sandbox stubbed,
+and their controls plant one defect per rule in a copy.
 """
 import importlib.util
 import json
@@ -48,7 +50,7 @@ class ShaderReadings(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             fixture(root)
-            result = reader.report(root)
+            result = reader.calibrate([root])
             self.assertEqual(result["samples"], 600)
             self.assertEqual(result["warmup"], 120)
             self.assertEqual(result["readings"]["1"], {
@@ -56,7 +58,7 @@ class ShaderReadings(unittest.TestCase):
             self.assertEqual(result["ceilings"], {
                 "cpu_sync_ms": 2, "cpu_render_ms": 2, "gpu_cost_ms": 0.2, "presentation_ms": 32})
             self.assertEqual(set(result["readings"]), {"1", "2"})
-            self.assertAlmostEqual(result["costly_control"]["2"]["gpu_cost_ms"], 0.9)
+            self.assertAlmostEqual(result["calibration_runs"][0]["costly_control"]["2"]["gpu_cost_ms"], 0.9)
 
     def test_sample_and_attribution_rules(self):
         cases = (
@@ -91,7 +93,7 @@ class ShaderReadings(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             fixture(root)
-            result = reader.report(root)
+            result = reader.calibrate([root])
             row = result["readings"]["1"]
             for name in reader.READINGS:
                 with self.subTest(name=name):
@@ -100,7 +102,7 @@ class ShaderReadings(unittest.TestCase):
             self.assertEqual(reader.over_ceiling(dict(row, cpu_sync_ms=1), dict(result["ceilings"], cpu_sync_ms=0)), ["cpu_sync_ms"])
             (root / "scale-2-costly.log").write_text(log(0.2))
             with self.assertRaisesRegex(ValueError, "costly-control=accepted scale=2"):
-                reader.report(root)
+                reader.calibrate([root])
 
     def test_check_mode_report_and_cli(self):
         cases = (
@@ -115,10 +117,10 @@ class ShaderReadings(unittest.TestCase):
                 with self.subTest(name=name):
                     baseline = dict(BASELINE, ceilings=dict(BASELINE["ceilings"], gpu_cost_ms=ceiling))
                     if error is None:
-                        self.assertEqual(reader.report(root, baseline)["ceilings"], baseline["ceilings"])
+                        self.assertEqual(reader.check(root, baseline)["ceilings"], baseline["ceilings"])
                     else:
                         with self.assertRaisesRegex(ValueError, error):
-                            reader.report(root, baseline)
+                            reader.check(root, baseline)
                     path = root / "baseline.json"
                     path.write_text(json.dumps(baseline))
                     result = subprocess.run(
@@ -145,7 +147,7 @@ class ShaderReadings(unittest.TestCase):
                         path = root / f"scale-{scale}-{mode}.log"
                         path.write_text(path.read_text().replace("'Test GPU'", "'Other GPU'"))
                     with self.assertRaisesRegex(reader.Unmeasured, "calibration=identity-mismatch"):
-                        reader.report(root, baseline)
+                        reader.check(root, baseline)
                     path = root / "baseline.json"
                     path.write_text(json.dumps(baseline))
                     result = subprocess.run(
@@ -155,14 +157,70 @@ class ShaderReadings(unittest.TestCase):
                     self.assertEqual(result.returncode, 77, result.stdout + result.stderr)
                     self.assertIn("shader-cost: status=not-measured calibration=identity-mismatch", result.stdout)
 
+    def test_percentile_ignores_a_spike(self):
+        # Nearest rank: the smallest sample with at least 90 percent of
+        # the samples at or below it.
+        self.assertEqual(reader.percentile(list(range(600, 0, -1))), 540)
+        self.assertEqual(reader.percentile(list(range(1, 11))), 9)
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            fixture(root)
+            values = [0.2] * 720
+            values[reader.WARMUP + 300] = 5.0
+            (root / "scale-1-on.log").write_text(HEADER + "".join(CPU + GPU % value for value in values))
+            self.assertAlmostEqual(reader.calibrate([root])["readings"]["1"]["gpu_cost_ms"], 0.1)
+            self.assertEqual(reader.check(root, BASELINE)["ceilings"], BASELINE["ceilings"])
+
+    def test_calibration_over_passes(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            first, second, weak = (Path(scratch) / name for name in ("run-1", "run-2", "run-3"))
+            for root in (first, second, weak):
+                root.mkdir()
+                fixture(root)
+            (second / "scale-2-on.log").write_text(log(0.25))
+            (weak / "scale-1-costly.log").write_text(log(0.35))
+            result = reader.calibrate([first, second])
+            self.assertAlmostEqual(result["ceilings"]["gpu_cost_ms"], 0.3)
+            self.assertAlmostEqual(result["readings"]["2"]["gpu_cost_ms"], 0.15)
+            self.assertAlmostEqual(result["readings"]["1"]["gpu_cost_ms"], 0.1)
+            self.assertEqual([run["run"] for run in result["calibration_runs"]],
+                             [f"{Path(scratch).name}/run-1", f"{Path(scratch).name}/run-2"])
+            self.assertAlmostEqual(result["calibration_runs"][0]["readings"]["2"]["gpu_cost_ms"], 0.1)
+            with self.assertRaisesRegex(ValueError, f"costly-control=accepted scale=1 .* run={Path(scratch).name}/run-3$"):
+                reader.calibrate([first, second, weak])
+
+    def test_check_takes_one_directory(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            first, second = Path(scratch) / "a", Path(scratch) / "b"
+            for root in (first, second):
+                root.mkdir()
+                fixture(root)
+            path = Path(scratch) / "baseline.json"
+            path.write_text(json.dumps(BASELINE))
+            for roots, status in (([first], 0), ([first, second], 2)):
+                with self.subTest(directories=len(roots)):
+                    result = subprocess.run(
+                        [sys.executable, str(READER), *map(str, roots), "--check", str(path)],
+                        env={"PATH": "/usr/bin:/bin", "HOME": scratch, "LC_ALL": "C"},
+                        text=True, capture_output=True, check=False)
+                    self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                    if status:
+                        self.assertEqual(result.stdout, "shader-cost: refused directories=2 check=1\n")
+
     def test_sample_and_ceiling_mutants_turn_tests_red(self):
         plants = (
             ("sample guard", "if len(values) < WARMUP + SAMPLES:", "if False and len(values) < WARMUP + SAMPLES:", "test_sample_and_attribution_rules"),
             ("ceiling guard", "if reading[name] > ceilings[name]", "if reading[name] > float('inf') + ceilings[name]", "test_costly_control_and_each_ceiling"),
             ("baseline rejection", 'raise ValueError(f"ceiling=exceeded scale={scale} readings={\',\'.join(broken)}")',
              'str(f"ceiling=exceeded scale={scale} readings={\',\'.join(broken)}")', "test_check_mode_report_and_cli"),
-            ("calibration identity", "if baseline is not None and (", "if baseline is not None and False and (",
+            ("calibration identity", "if identity is not None and (", "if identity is not None and False and (",
              "test_check_mode_calibration_identity"),
+            ("percentile reading", "return ordered[rank - 1]", "return ordered[-1]", "test_percentile_ignores_a_spike"),
+            ("calibration over passes", "for root in roots:", "for root in roots[:1]:", "test_calibration_over_passes"),
+            ("costly control of every pass", "    for run in runs:\n        prove_control(",
+             "    for run in runs[:1]:\n        prove_control(", "test_calibration_over_passes"),
+            ("check reads one directory", "if args.check and len(args.directory) != 1:",
+             "if args.check and len(args.directory) != len(args.directory):", "test_check_takes_one_directory"),
         )
         source = READER.read_text()
         suite = Path(__file__).read_text()
@@ -185,48 +243,97 @@ class ShaderReadings(unittest.TestCase):
                     self.assertIn("FAILED (", result.stderr)
 
 
+SCENE = ROOT / "shader/measure-scene.sh"
+
+
 class ShaderRunner(unittest.TestCase):
-    def mode_result(self, text, state, prior_failures=0):
-        start = '    mode_state="$(held_mode_state)"'
-        end = "    printf 'shader-cost: scene="
-        self.assertEqual(text.count(start), 1)
-        self.assertEqual(text.count(end), 1)
-        guard = text[text.index(start):text.index(end)]
+    def held_scene(self, text, states, restores="ok", prior_failures=0):
+        """Drive measure_held_scene from TEXT with its sandbox stubbed:
+        measure_scene counts each measurement, held_mode_state answers the
+        next of STATES after each one and hold_restore answers RESTORES.
+        Returns the run, how many times the scene was measured and the
+        hold restored, and the scratch HOME the scene's log is under."""
         with tempfile.TemporaryDirectory() as scratch:
+            subject = Path(scratch) / "measure-scene.sh"
+            subject.write_text(text)
             script = """
 set -euo pipefail
 source "$1"
-state="$2"
-held_mode_state() { printf '%s\\n' "$state"; }
-failures="$3"; behaviour_failures="$3"; sandbox="$HOME"
-""" + guard + "\necho 'shader-test: held'\n"
-            return subprocess.run(
-                ["bash", "-c", script, "_", str(ROOT / "smoke/verdict.sh"), state, str(prior_failures)],
+source "$2"
+home="$HOME"; states="$3"; restores="$4"
+failures="$5"; behaviour_failures="$5"; sandbox="$HOME"
+mode_hold=(WAYLAND-1 "3510x1866 scale=2")
+count() { local n=0; [[ -f $home/$1 ]] && n="$(<"$home/$1")"; echo $((n + 1)) >"$home/$1"; echo $((n + 1)); }
+measure_scene() { count measured >/dev/null; scene_cpu_some_pct=1.5; }
+held_mode_state() { local n; n="$(<"$home/measured")"; IFS=, read -r -a all <<<"$states"; echo "${all[n - 1]:-${all[-1]}}"; }
+mode_scale_of() { echo "1755x933 scale=1.5"; }
+hold_restore() { count restored >/dev/null; [[ $restores == ok ]] || { echo 'hold-restore: not-held output=WAYLAND-1'; return 1; }; }
+measure_held_scene 2 on "$HOME/scale-2-on"
+"""
+            result = subprocess.run(
+                ["bash", "-c", script, "_", str(ROOT / "smoke/verdict.sh"), str(subject), states, restores, str(prior_failures)],
                 env={"PATH": "/usr/bin:/bin", "HOME": scratch, "LC_ALL": "C"},
                 text=True, capture_output=True, check=False)
+            counts = [int((Path(scratch) / name).read_text()) if (Path(scratch) / name).exists() else 0
+                      for name in ("measured", "restored")]
+            return result, counts, scratch
 
-    def test_held_mode_verdict(self):
-        cases = (
-            ("held", 0, 0, "shader-test: held"),
-            ("reset", 0, 77, "qml-smoke: status=not-measured nested-output=mode-reset failed=1"),
-            ("unreadable", 0, 1, "shader-cost: failed output=unreadable"),
-            ("reset", 1, 1, "qml-smoke: failed=2"),
+    RESET = "shader-cost: mode-reset scene=on scale=2 got=[1755x933 scale=1.5] attempt=%d"
+    MEASURED = "shader-cost: scene=on scale=2 samples=600 cpu_some_pct=1.5 log=%s/scale-2-on.log"
+
+    def held_cases(self):
+        """Rows: states after each measurement, restore answer, earlier
+        failures, exit status, measurements, restores, lines printed
+        before the last and the last line."""
+        return (
+            ("held", "ok", 0, 0, 1, 0, [], self.MEASURED),
+            ("reset,held", "ok", 0, 0, 2, 1, [self.RESET % 1], self.MEASURED),
+            ("reset", "ok", 0, 77, 3, 2, [self.RESET % 1, self.RESET % 2, self.RESET % 3,
+                                          "qml-smoke: status=not-measured nested-output=mode-reset failed=1"],
+             "the nested output left a mode a row held: the host resized or refocused the nested window; "
+             "leave the nested window alone during the run, then run the smoke again"),
+            ("reset", "failed", 0, 1, 1, 1, [self.RESET % 1, "hold-restore: not-held output=WAYLAND-1"],
+             "shader-cost: failed output=not-restored scene=on scale=2"),
+            ("unreadable", "ok", 0, 1, 1, 0, [], "shader-cost: failed output=unreadable"),
+            ("reset", "ok", 1, 1, 3, 2, [self.RESET % 1, self.RESET % 2, self.RESET % 3], "qml-smoke: failed=2"),
         )
-        for state, prior, status, first_line in cases:
-            with self.subTest(state=state, prior=prior):
-                result = self.mode_result(RUNNER.read_text(), state, prior)
-                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
-                self.assertEqual(result.stdout.splitlines()[0], first_line)
-        old = '"$((mode_resets + 1))"'
-        text = RUNNER.read_text()
-        self.assertEqual(text.count(old), 1)
-        changed = text.replace(old, '"$mode_resets"')
-        self.assertNotEqual(text, changed)
-        result = self.mode_result(changed, "reset")
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertNotIn("status=not-measured", result.stdout)
 
-    def runner_copy(self, root, harness, text):
+    def assert_held_case(self, text, case):
+        states, restores, prior, status, measured, restored, before, last = case
+        result, counts, home = self.held_scene(text, states, restores, prior)
+        self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+        self.assertEqual(counts, [measured, restored], result.stdout)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:-1], before)
+        self.assertEqual(lines[-1], last % home if last == self.MEASURED else last)
+
+    def test_held_scene(self):
+        text = SCENE.read_text()
+        for case in self.held_cases():
+            with self.subTest(states=case[0], restores=case[1], prior=case[2]):
+                self.assert_held_case(text, case)
+
+    def test_held_scene_mutants_turn_red(self):
+        # Each plant keeps the matched text's place and removes one rule;
+        # the case it names must fail.
+        cases = self.held_cases()
+        plants = (
+            ("no measurement again", "scene_attempts=3", "scene_attempts=1", cases[1]),
+            ("a reset is not counted", '"$((mode_resets + 1))"', '"$mode_resets"', cases[2]),
+            ("a failed restore is ignored", "hold_restore || {", "hold_restore || true || {", cases[3]),
+            ("an unreadable output passes", "      *) printf 'shader-cost: failed output=%s\\n' \"$state\"; exit 1 ;;",
+             "      *) break ;;", cases[4]),
+        )
+        text = SCENE.read_text()
+        for name, old, new, case in plants:
+            with self.subTest(name=name):
+                self.assertEqual(text.count(old), 1)
+                changed = text.replace(old, new)
+                self.assertNotEqual(changed, text)
+                with self.assertRaises(AssertionError):
+                    self.assert_held_case(changed, case)
+
+    def runner_copy(self, root, harness, text, args=()):
         scripts = root / "scripts"
         (scripts / "smoke").mkdir(parents=True)
         (scripts / "shader").mkdir()
@@ -241,6 +348,7 @@ failures="$3"; behaviour_failures="$3"; sandbox="$HOME"
         self.assertNotEqual(changed, owner)
         (scripts / "check-voiceorb-shader.py").write_text(changed)
         shutil.copyfile(ROOT / "shader/Scene.qml", scripts / "shader/Scene.qml")
+        shutil.copyfile(SCENE, scripts / "shader/measure-scene.sh")
         shutil.copyfile(ROOT.parent / "shell/Ui/feedback/shaders/voiceorb.frag", root / "shell/Ui/feedback/shaders/voiceorb.frag")
         (scripts / "smoke/harness.sh").write_text(harness)
         compiler = root / "qsb stand-in"
@@ -250,7 +358,7 @@ pathlib.Path(os.environ["HOME"], "compiler-args.json").write_text(json.dumps(sys
 """)
         compiler.chmod(0o755)
         return subprocess.run(
-            ["bash", str(script)],
+            ["bash", str(script), *args],
             env={"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "LC_ALL": "C", "QSB": str(compiler)},
             text=True, capture_output=True, check=False)
 
@@ -271,6 +379,30 @@ exit 0
                     result = self.runner_copy(root, harness, source)
                     self.assertEqual(result.returncode, status, result.stdout + result.stderr)
                     self.assertEqual((root / "tmp").is_dir(), status == 0)
+
+    def test_runs_needs_calibration(self):
+        # Check mode judges one pass; the refusals come before the harness,
+        # whose stand-in says so if it is reached.
+        harness = "echo 'shader-test: harness-reached'; exit 0\n"
+        cases = (
+            (["--runs", "2"], "shader-cost: refused argument=--runs without=--calibrate"),
+            (["--calibrate", "out.json", "--runs", "0"], "shader-cost: refused argument=--runs value=0"),
+            (["--calibrate", "out.json", "--runs"], "shader-cost: refused argument=--runs value="),
+        )
+        text = RUNNER.read_text()
+        old = "${choice[0]} != --calibrate"
+        self.assertEqual(text.count(old), 1)
+        changed = text.replace(old, "${choice[0]} == never")
+        self.assertNotEqual(changed, text)
+        with tempfile.TemporaryDirectory() as scratch:
+            for index, (args, line) in enumerate(cases):
+                with self.subTest(args=args):
+                    result = self.runner_copy(Path(scratch) / str(index), harness, text, args)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertEqual(result.stdout, line + "\n")
+            result = self.runner_copy(Path(scratch) / "mutant", harness, changed, cases[0][0])
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("shader-test: harness-reached", result.stdout)
 
     def test_compiler_consumes_owner_options(self):
         # Stop before any compositor or QML process. The compiler only
