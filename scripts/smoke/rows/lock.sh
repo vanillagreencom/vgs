@@ -4,7 +4,13 @@
 # lock`, SUPER+L on the nested seat, its idle watch and its before-sleep
 # hook. Each lock is read back from the compositor, a monitor naming LOCK
 # among the reasons it cannot go solitary in `hyprctl -j monitors`, and
-# from the core's lending record. While a second lock client, the harness's
+# from the core's lending record. The lock screen's geometry holds the
+# design standard on every screen (docs/architecture/design-quality.md):
+# each part inside its surface, the time and the date at least `stack.row`
+# apart, the field and the status line each at least `stack.group` below
+# the block above, the field at least `size.control.md` tall and centred;
+# its control is a planted reading with the field `stack.group` short.
+# While a second lock client, the harness's
 # lock-client standing in for another locker, holds the session, the
 # plugin's lock takes over under the restore option; the client's unlock
 # then unlocks the session, the core ends the plugin's lock, and the plugin
@@ -75,6 +81,40 @@ restore_option() { hypr -j getoption misc:allow_session_lock_restore | py_reply 
 kept_logs=()
 check_starts() { cat -- "${kept_logs[@]}" "$instance_log" | grep -c -F 'lock: check=started' || :; }
 no_checks() { expect "$1: no PAM check started and no attempt failed" '[false, 0, 0]' lock_status checking checks failures; }
+# The lock screens vgs.lock reports, as the probe reads them.
+lock_screens() { ipc smoke lockScreens vgs.lock; }
+# Read a lockScreens reply on stdin against the standard: `ok`, or the
+# first rule a screen breaks. Arguments: size.control.md, stack.group and
+# stack.row.
+lock_geometry_check() { py_reply 'import json,sys
+screens = json.load(sys.stdin)
+control, group, row = (float(v) for v in sys.argv[1:4])
+def bad(text):
+    print(text)
+    sys.exit(0)
+if not isinstance(screens, list) or not screens:
+    bad("no-screen")
+for i, screen in enumerate(screens):
+    width, height, parts = screen["width"], screen["height"], screen["parts"]
+    for key in ("time", "date", "field", "status"):
+        if key not in parts:
+            bad("screen%d: no %s" % (i, key))
+        x, y, w, h = parts[key]
+        if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > width + 0.5 or y + h > height + 0.5:
+            bad("screen%d: %s outside the screen" % (i, key))
+    time, date, field, status = (parts[k] for k in ("time", "date", "field", "status"))
+    if date[1] < time[1] + time[3] + row - 0.5:
+        bad("screen%d: the date is less than stack.row under the time" % i)
+    if field[1] < date[1] + date[3] + group - 0.5:
+        bad("screen%d: the field is less than stack.group under the date" % i)
+    if status[1] < field[1] + field[3] + group - 0.5:
+        bad("screen%d: the status line is less than stack.group under the field" % i)
+    if field[3] < control - 0.5:
+        bad("screen%d: the field is shorter than size.control.md" % i)
+    if abs(field[0] + field[2] / 2 - width / 2) > 1:
+        bad("screen%d: the field is off centre" % i)
+print("ok")' "$@"; }
+standard_values() { local key; for key in size.control.md stack.group stack.row; do ipc smoke themeValue "$key" || return; done; }
 alive() { if [[ $1 =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null; then echo alive; else echo gone; fi; }
 # Release the core's lock with the probe and read the session unlocked.
 release() { # LABEL
@@ -169,6 +209,16 @@ expect "the lock read no stranded lock at start" '[false, true]' lock_status loc
 expect "the IPC lock answers ok" ok ipc vgs.lock invoke lock ''
 expect_poll "the compositor reports the session locked" locked session_lock
 expect_poll "the core holds the confirmed lock with the plugin's lock screen" '[true, true, true]' core_lock
+mapfile -t standard < <(standard_values) || :
+if [[ ${#standard[@]} -eq 3 ]]; then
+  lock_geometry() { lock_screens | lock_geometry_check "${standard[@]}"; }
+  expect_poll "the lock screen holds the design standard's geometry" ok lock_geometry
+  planted='[{"width": 1000, "height": 800, "parts": {"time": [400, 300, 200, 40], "date": [400, 344, 200, 24], "field": [400, 370, 200, 32], "status": [400, 414, 200, 20]}}]'
+  got="$(lock_geometry_check "${standard[@]}" <<<"$planted")" || got=unreadable
+  if [[ $got == ok ]]; then fail "control: a planted field stack.group short of the date passed the geometry reading"; else ok "control: a planted field too close to the date fails the geometry reading ($got)"; fi
+else
+  fail "the standard's values are unreadable: ${standard[*]}"
+fi
 expect "vgsh lock while locked answers ok" ok "${shell_env[@]}" "$repo/bin/vgsh" lock
 expect "the session stays locked" locked session_lock
 release "the IPC lock"

@@ -9,6 +9,13 @@ import qs.Ui
 // it, Escape clears it, and a click anywhere puts the keyboard back in the
 // field. While PAM checks, the field waits and a spinner turns; a failure
 // shows under the field in the danger colour.
+//
+// Layout follows docs/architecture/design-quality.md: the time and the date
+// are rows of one group, `stack.row` apart; the clock, the field and the
+// status line are blocks, `stack.group` apart; the spinner and its label
+// are inline, `stack.inline` apart. Each view reports itself to the
+// service's `views`, and its parts carry object names, so the smoke's
+// geometry reading finds them on every screen.
 Item {
     id: root
 
@@ -25,8 +32,10 @@ Item {
 
     Component.onCompleted: {
         field.text = service === null ? "" : service.password;
+        if (service !== null) service.viewShown(root);
         Qt.callLater(focusField);
     }
+    Component.onDestruction: if (service !== null) service.viewGone(root)
     onCheckingChanged: if (!checking) Qt.callLater(focusField)
 
     Image {
@@ -46,19 +55,21 @@ Item {
     Column {
         anchors.centerIn: parent
         width: Theme.size.panel.sm
-        spacing: Theme.space.lg
+        spacing: Theme.stack.group
 
         Column {
             width: parent.width
-            spacing: Theme.space.xs
+            spacing: Theme.stack.row
 
             Label {
+                objectName: "time"
                 role: "display"
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
                 text: Qt.formatTime(Time.now, "HH:mm")
             }
             Label {
+                objectName: "date"
                 role: "subheading"
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
@@ -69,6 +80,7 @@ Item {
 
         TextField {
             id: field
+            objectName: "field"
             width: parent.width
             leadingIcon: "lock"
             echoMode: TextInput.Password
@@ -81,13 +93,14 @@ Item {
         }
 
         Item {
+            objectName: "status"
             width: parent.width
             height: Math.max(spinnerRow.implicitHeight, failureLine.implicitHeight)
 
             Row {
                 id: spinnerRow
                 anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Theme.space.sm
+                spacing: Theme.stack.inline
                 visible: root.checking
 
                 Spinner {

@@ -648,6 +648,20 @@ Scope {
         // client died, so the release can follow.
         function sessionUnlock(): string { return Capabilities.sessionLock.unlock(); }
         function sessionLockBare(): string { Capabilities.sessionLock.lockRequested = true; return "ok"; }
+        // Each lock screen the lock plugin ID reports in its service's
+        // `views`: its surface's size and the box, in that surface's
+        // coordinates, of each descendant that carries an object name.
+        function lockScreens(id: string): string {
+            const service = root.instance("service", id);
+            if (service === null) return "absent";
+            if (!Array.isArray(service.views)) return "no-views";
+            return root.json(service.views.filter(view => view !== null).map(view => {
+                const parts = {};
+                for (const child of root.descendants(view))
+                    if (child.objectName !== "") parts[child.objectName] = root.windowBox(child);
+                return { width: view.width, height: view.height, parts: parts };
+            }));
+        }
         // A plugin's published status values, as each of its instances reads them.
         function statusValues(id: string): string { return JSON.stringify(PluginStatus.valuesOf(id)); }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }

@@ -111,7 +111,7 @@ Item {
         }
 
         Row {
-            spacing: Theme.space.sm
+            spacing: Theme.stack.inline
             visible: root.view !== null && root.view.identity !== "" && root.view.identities.length <= 1
             Icon {
                 name: "user"
@@ -143,7 +143,7 @@ Item {
         }
 
         Row {
-            spacing: Theme.space.sm
+            spacing: Theme.stack.inline
             visible: root.view !== null && root.view.waiting
             Spinner {
                 anchors.verticalCenter: parent.verticalCenter

@@ -51,6 +51,17 @@ Item {
     // requirement notice installs them starts the hook.
     readonly property var sleepMissing: shell === null ? [] : shell.requirements.missing.filter(command => LockModel.SLEEP_COMMANDS.indexOf(command) !== -1)
 
+    // The lock screen drawn on each screen, as LockView reports it.
+    property var views: []
+
+    function viewShown(view) {
+        if (views.indexOf(view) === -1) views = views.concat([view]);
+    }
+
+    function viewGone(view) {
+        views = views.filter(v => v !== view);
+    }
+
     // The field's text on every screen, one value so every screen shows it.
     property string password: ""
     property bool checking: false
