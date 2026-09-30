@@ -530,7 +530,7 @@ const CONTROLS = [
     [logicFile, "row key normalised", "return { shortcut: bind.shortcut, key: key.key };\n    });", "return { shortcut: bind.shortcut, key: keys[bind.shortcut] };\n    });"],
     [logicFile, "unknown keys", "return names.indexOf(name) === -1; }).sort()", "return false; }).sort()"],
     [logicFile, "appearance setting resolved", "appearance[group] = { setting: setting, enabled: settings[setting] === true };", "appearance[group] = { setting: setting, enabled: true };"],
-    [layerFile, "sections by id", "var rows = sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).map(function (section) {\n        var bindRows", "var rows = sections.slice().map(function (section) {\n        var bindRows"],
+    [layerFile, "sections by id", "var rows = sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).map(", "var rows = sections.slice().map("],
     [layerFile, "empty section unwritten", "if (section.binds.length === 0 && section.layerRules.length === 0) return;", ""],
     [layerFile, "first id keeps a key", "if (held[bind.key] !== undefined) {", "if (false) {"],
     [layerFile, "unbound bind", "if (bind.key === null) return { kind: \"unbound\"", "if (false) return { kind: \"unbound\""],
