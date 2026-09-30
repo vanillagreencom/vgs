@@ -88,7 +88,8 @@ Item {
             ListCursor {
                 id: plate
                 motion: menu.motion
-                background: Highlight { look: menu.look; radius: menu.look.radius.sm }
+                // Concentric with the flyout: its radius less the padding.
+                background: Highlight { look: menu.look; radius: Math.max(0, menu.look.flyout.radius - menu.look.flyout.padding) }
             }
 
             Column {

@@ -225,16 +225,16 @@ Item {
                 objectName: "notificationBodyText"
                 // The height left for the body under maxHeight, and so the
                 // whole lines it shows; the last one elides.
-                readonly property real room: card.look.card.maxHeight - 2 * card.pad - Layout.topMargin - (summaryRow.visible ? summaryRow.implicitHeight + textBlock.spacing : 0)
+                // The column's spacing is the one gap under the summary.
+                readonly property real room: card.look.card.maxHeight - 2 * card.pad - (summaryRow.visible ? summaryRow.implicitHeight + textBlock.spacing : 0)
                 Layout.fillWidth: true
-                Layout.topMargin: card.look.card.lineGap
                 visible: !card.singleLine
                 // StyledText, since the server advertises body markup. The
                 // body's fade is its colour's alpha, so an emoji draws at
                 // full strength.
                 segments: card.bodySegments
                 color: card.look.text.subtitle.color
-                font: Qt.font({ family: card.look.font.family, pixelSize: card.look.text.subtitle.size })
+                font: Qt.font({ family: card.look.font.family, pixelSize: card.look.text.body.size })
                 maximumLineCount: Math.max(1, Math.floor(room / bodyMetrics.height))
             }
 

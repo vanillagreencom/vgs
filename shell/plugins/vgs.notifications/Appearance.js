@@ -79,6 +79,10 @@ var TOKENS = {
         // The body's colour is the foreground at the subtitle's opacity, so
         // an image inline in the body draws at full strength.
         subtitle: { size: length(11), opacity: share(0.5), color: color("alpha({text.foreground}, {text.subtitle.opacity})") },
+        // A card's body: the subtitle's colour at the shell's 13 px reading
+        // floor (docs/architecture/design-quality.md), above the
+        // reference's 11.
+        body: { size: length(13) },
         label: { size: length(11), weight: weight(500), opacity: share(0.7) }
     },
 
@@ -238,7 +242,8 @@ var TOKENS = {
     },
 
     pill: {
-        padX: length(22),
+        // Each side's padding around the label.
+        padX: length(12),
         height: length(28),
         pressed: ink(0.16),
         hover: ink(0.11),
@@ -254,6 +259,9 @@ var TOKENS = {
     toggle: {
         width: length(36),
         height: length(20),
+        // The height the toggle takes a press over, the pills' height, so
+        // it lines up with them and a press beside the track still lands.
+        hitHeight: length(28),
         track: ink(0.12),
         border: ink(0.08),
         borderWidth: length(1),
@@ -274,6 +282,19 @@ var TOKENS = {
         controlsInset: length(10),
         controlsGap: length(8),
         labelGap: length(7)
+    },
+
+    // The slim bar a scrolling stack shows in its side room, as the
+    // launcher's list does: thin at rest, wide under the pointer.
+    scrollbar: {
+        width: length(12),
+        gap: length(4),
+        minHeight: length(24),
+        thin: length(3),
+        wide: length(6),
+        idle: share(0.14),
+        moving: share(0.35),
+        active: share(0.45)
     },
 
     // Two point lights orbit just outside a card and its edge reflects them.

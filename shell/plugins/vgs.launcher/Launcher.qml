@@ -663,7 +663,7 @@ Item {
         fileSearch.loadApps(path, apps => {
             if (fileFlyout.targetPath !== path) return;
             const entries = apps.map(app => ({ id: "app:" + app.desktopFile, label: app.name, icon: app.icon, detail: app.isDefault ? "Default" : "" }));
-            entries.push({ separator: true, id: "sep" });
+            if (entries.length > 0) entries.push({ separator: true, id: "sep" });
             entries.push({ id: "reveal", label: "Show in folder", glyph: "folder-open" });
             entries.push({ id: "copy", label: "Copy path", glyph: "copy" });
             fileFlyout.items = entries;

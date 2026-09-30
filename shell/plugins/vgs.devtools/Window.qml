@@ -72,114 +72,112 @@ Item {
     implicitWidth: screen === null ? look.window.width : Math.floor(Math.min(look.window.width, screen.width - 2 * look.window.gutter))
     implicitHeight: screen === null ? look.window.maxHeight : Math.floor(Math.min(look.window.maxHeight, screen.height - 2 * look.window.gutter))
 
-    ScrollArea {
+    // The window's one inset box: the header, the scrolling sections and
+    // the launcher switch at the foot, all on one content edge, with the
+    // look's own padding, radius and gaps (appearance.md).
+    Pane {
+        id: pane
         anchors.fill: parent
-        anchors.margins: root.look.window.padding
+        container: "window"
+        padding: root.look.window.padding
+        cornerRadius: root.look.window.radius
+        gap: root.look.window.gap
+        bodySpacing: root.look.window.sectionGap
 
-        Column {
-            id: content
-            width: parent.width
-            spacing: root.look.window.gap
+        header: Column {
+            width: pane.contentWidth
+            spacing: root.look.row.lineGap
 
-            Column {
-                x: root.look.row.paddingX
-                width: parent.width - 2 * root.look.row.paddingX
-                spacing: root.look.row.lineGap
-
-                Label {
-                    role: "h3"
-                    text: "Dev Tools"
+            Label {
+                role: "h3"
+                text: "Dev Tools"
+            }
+            Label {
+                width: parent.width
+                role: "hint"
+                text: ViewLogic.summary(root.catalog)
+                elide: Text.ElideRight
+            }
+            Repeater {
+                model: ViewLogic.runningLines(root.tuiState)
+                Row {
+                    required property string modelData
+                    spacing: root.look.row.gap
+                    Spinner { anchors.verticalCenter: parent.verticalCenter }
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        role: "hint"
+                        text: parent.modelData
+                    }
                 }
-                Label {
-                    width: parent.width
-                    role: "hint"
-                    text: ViewLogic.summary(root.catalog)
-                    elide: Text.ElideRight
+            }
+            Label {
+                width: parent.width
+                role: "hint"
+                visible: text !== ""
+                text: root.problem
+                wrapMode: Text.Wrap
+            }
+        }
+
+        Repeater {
+            model: ScriptModel {
+                values: root.drawn
+                objectProp: "key"
+            }
+
+            Section {
+                id: section
+                required property var modelData
+                width: pane.contentWidth
+                title: section.modelData.title
+                description: section.modelData.description
+                rowSpacing: root.look.row.spacing
+                Repeater {
+                    model: section.modelData.lines
+                    Label {
+                        required property string modelData
+                        width: section.width
+                        role: "hint"
+                        text: modelData
+                        wrapMode: Text.Wrap
+                    }
                 }
                 Repeater {
-                    model: ViewLogic.runningLines(root.tuiState)
-                    Row {
-                        required property string modelData
-                        spacing: root.look.row.lineGap
-                        Spinner { anchors.verticalCenter: parent.verticalCenter }
-                        Label {
-                            anchors.verticalCenter: parent.verticalCenter
-                            role: "hint"
-                            text: parent.modelData
-                        }
+                    model: ScriptModel {
+                        values: section.modelData.rows
+                        objectProp: "key"
                     }
-                }
-                Label {
-                    width: parent.width
-                    role: "hint"
-                    visible: text !== ""
-                    text: root.problem
-                    wrapMode: Text.Wrap
-                }
-            }
-
-            Repeater {
-                model: ScriptModel {
-                    values: root.drawn
-                    objectProp: "key"
-                }
-
-                Section {
-                    id: section
-                    required property var modelData
-                    width: content.width
-                    title: section.modelData.title
-                    description: section.modelData.description
-                    headerInset: root.look.row.paddingX
-                    Repeater {
-                        model: section.modelData.lines
-                        Label {
-                            required property string modelData
-                            x: root.look.row.paddingX
-                            width: section.width - 2 * root.look.row.paddingX
-                            role: "hint"
-                            text: modelData
-                            wrapMode: Text.Wrap
-                        }
-                    }
-                    Repeater {
-                        model: ScriptModel {
-                            values: section.modelData.rows
-                            objectProp: "key"
-                        }
-                        ToolRow {
-                            required property var modelData
-                            width: section.width
-                            row: modelData
-                            look: root.look
-                            onActed: (action, channel) => root.act(modelData, action, channel)
-                        }
+                    ToolRow {
+                        required property var modelData
+                        width: section.width
+                        row: modelData
+                        look: root.look
+                        onActed: (action, channel) => root.act(modelData, action, channel)
                     }
                 }
             }
+        }
 
-            Column {
-                x: root.look.row.paddingX
-                width: parent.width - 2 * root.look.row.paddingX
-                topPadding: root.look.window.sectionGap
-                spacing: root.look.row.lineGap
+        footer: Column {
+            width: pane.contentWidth
+            spacing: root.look.row.lineGap
 
-                Switch {
-                    text: "Write launchers"
-                    checked: root.writeLaunchers
-                    onToggled: {
-                        const wanted = checked;
-                        checked = Qt.binding(() => root.writeLaunchers);
-                        const reply = root.shell.configure.set("writeLaunchers", wanted);
-                        root.problem = reply === "ok" ? "" : reply;
-                    }
+            Switch {
+                text: "Write launchers"
+                checked: root.writeLaunchers
+                onToggled: {
+                    const wanted = checked;
+                    checked = Qt.binding(() => root.writeLaunchers);
+                    const reply = root.shell.configure.set("writeLaunchers", wanted);
+                    root.problem = reply === "ok" ? "" : reply;
                 }
-                Label {
-                    width: parent.width
-                    role: "hint"
-                    text: "A launcher in ~/.local/bin installs its tool through mise on first run; VGS never touches a file it did not write"
-                    wrapMode: Text.Wrap
-                }
+            }
+            Label {
+                width: parent.width
+                role: "hint"
+                text: "A launcher in ~/.local/bin installs its tool through mise on first run; VGS never touches a file it did not write"
+                wrapMode: Text.Wrap
             }
         }
     }

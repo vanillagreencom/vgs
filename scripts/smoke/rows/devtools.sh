@@ -92,8 +92,16 @@ expect "IPC open summons the window again" ok devtools open
 expect_poll "the window is shown" shown window_shown
 expect_poll "the window draws the VGS section and every catalog section in order" \
   '["VGS", "Agents", "Apps", "CLI tools", "Languages", "Editors", "Databases", "Terminals", "Other mise tools"]' section_titles
+# The error line is longer than the row: it shows one elided line and a
+# Details button, which shows the whole line in a CodeLine to copy.
 expect_poll "the VGS row names the version and the install method it could not read" \
-  "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" error=method=unknown Unknown)" vgs_texts
+  "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" error=method=unknown Details Unknown)" vgs_texts
+vgs_error_lines() { ipc smoke itemTexts window vgs.devtools CodeLine | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(sum(1 for r in json.loads(t) if r and r[0].startswith("method=")) if t.startswith("[") else t)'; }
+expect "the VGS row keeps its detail folded" 0 vgs_error_lines
+click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow VGS Button Details || fail "the click on the VGS row's Details failed"
+expect_poll "Details shows the whole error line to copy" 1 vgs_error_lines
+click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow VGS Button "Hide details" || fail "the click on the VGS row's Hide details failed"
+expect_poll "Hide details folds the error line again" 0 vgs_error_lines
 expect_poll "the absent agent draws Not installed and Install" "$(texts "$agent_name" "Not installed" Install)" row_texts "$agent_name"
 expect_poll "the other mise tool draws its version and its actions" "$(texts github:acme/extra 1.0.0 Update Remove)" row_texts github:acme/extra
 

@@ -451,6 +451,8 @@ mutations=(
   "a long inline label elides on one line|controls/Field.qml|            maximumLineCount: 2|            maximumLineCount: 1|tst_textfield.qml"
   "the field publishes no value column|controls/Field.qml|readonly property real valueX: leftPadding + (inline ? Theme.field.labelWidth + Theme.field.labelGap : 0)|readonly property real valueX: leftPadding|tst_textfield.qml"
   "a row that cannot expand gives up its chevron's room|layout/Disclosure.qml|opacity: root.expandable ? 1 : 0|visible: root.expandable|tst_disclosure.qml"
+  "a pane's footer divider shows only while more lies below|layout/Pane.qml|visible: root.footerHeight > 0 && scroll.contentY + scroll.height < scroll.contentHeight - 1|visible: root.footerHeight > 0|tst_pane.qml"
+  "a title button reports its title's capital centre|controls/TitleButton.qml|readonly property real capCentre: topPadding + label.capCentre|readonly property real capCentre: topPadding + label.height / 2|tst_titlebutton.qml"
 )
 
 copy="$tmp/ui"

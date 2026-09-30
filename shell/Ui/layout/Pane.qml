@@ -7,7 +7,8 @@ import qs.Ui
 // in the right inset strip, outside the body's content width, so content
 // never moves when it overflows. The footer stays outside the scrolling
 // body, so its actions stay in view while the body scrolls. While the body
-// is scrolled, a divider spans the inset box under the header. `padding`
+// is scrolled, a divider spans the inset box under the header, and while
+// more of it lies below the view, one spans it over the footer. `padding`
 // and `cornerRadius` default to the container class's tokens; a plugin that
 // owns its look (appearance.md) hands its own. The viewport reaches the
 // focus ring's room past the content's left, top and bottom edges, so a
@@ -136,5 +137,15 @@ Item {
         height: root.dividerWidth
         color: root.dividerColor
         visible: root.headerHeight > 0 && scroll.contentY > 0
+    }
+
+    Rectangle {
+        id: footerDivider
+        x: root.contentInset
+        y: footerSlot.y - root.footerGap + Math.round((root.footerGap - height) / 2)
+        width: root.contentWidth
+        height: root.dividerWidth
+        color: root.dividerColor
+        visible: root.footerHeight > 0 && scroll.contentY + scroll.height < scroll.contentHeight - 1
     }
 }

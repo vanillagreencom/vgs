@@ -89,6 +89,13 @@ Item {
             verify(Math.abs(caret(title).y + caret(title).height / 2 - label(title).capCentre) <= 0.5, "caret centre " + (caret(title).y + caret(title).height / 2) + ", capital centre " + label(title).capCentre);
         }
 
+        // The button reports its title's capital centre from its own top,
+        // so a header can put the text on its centre line.
+        function test_the_button_reports_its_capital_centre() {
+            compare(title.capCentre, title.topPadding + label(title).mapToItem(title, 0, 0).y - title.topPadding + label(title).capCentre);
+            verify(title.capCentre > 0 && title.capCentre < label(title).height, "the capital centre lies inside the title's line");
+        }
+
         function test_a_narrow_title_elides_and_keeps_its_caret_inside() {
             verify(label(narrow).implicitWidth > narrow.width, "the text is wider than the button");
             compare(label(narrow).width, narrow.width - Theme.titleButton.gap - caret(narrow).width);

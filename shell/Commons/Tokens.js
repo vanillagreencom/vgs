@@ -551,7 +551,9 @@ var TOKENS = {
         },
         gap: length("{space.xs}"),
         tone: {
-            neutral: { background: color("{color.surfaceRaised}"), foreground: color("{color.textMuted}") },
+            // A step above a raised surface, so a neutral chip keeps a
+            // fill beside a toned one on every container.
+            neutral: { background: color("{color.surfaceHover}"), foreground: color("{color.textMuted}") },
             accent: tone("accent"),
             success: tone("success"),
             warning: tone("warning"),

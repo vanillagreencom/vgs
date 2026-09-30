@@ -65,6 +65,7 @@ Item {
         function scroll(of) { return of.scrollArea; }
         function footerSlot(of) { return of.children[2]; }
         function divider(of) { return of.children[3]; }
+        function footerDivider(of) { return of.children[4]; }
         function body(of) { return of.scrollArea.contentItem.children[0].children[0]; }
 
         function test_header_body_and_footer_share_the_content_edge() {
@@ -137,6 +138,19 @@ Item {
             verify(divider(pane).y >= headerSlot(pane).y + headerSlot(pane).height && divider(pane).y + divider(pane).height <= body(pane).mapToItem(pane, 0, 0).y + scroll(pane).contentY, "the divider sits in the header gap");
             scroll(pane).contentY = 0;
             compare(divider(pane).visible, false);
+        }
+
+        // The divider over the footer shows while more of the body lies
+        // below the view, and sits in the footer gap.
+        function test_the_footer_divider_shows_while_more_lies_below() {
+            verify(scroll(pane).contentHeight > scroll(pane).height, "the fixture overflows");
+            scroll(pane).contentY = 0;
+            compare(footerDivider(pane).visible, true);
+            compare(footerDivider(pane).width, pane.width - 2 * pane.contentInset);
+            verify(footerDivider(pane).y >= scroll(pane).y + scroll(pane).height - pane.ringRoom && footerDivider(pane).y + footerDivider(pane).height <= footerSlot(pane).y, "the divider sits in the footer gap");
+            scroll(pane).contentY = scroll(pane).contentHeight - scroll(pane).height;
+            compare(footerDivider(pane).visible, false);
+            scroll(pane).contentY = 0;
         }
 
         // A focus ring around a row on the content's left and top edges

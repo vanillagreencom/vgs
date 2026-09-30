@@ -108,10 +108,11 @@ var TOKENS = {
         padding: length(18),
         gap: length(36),
         // The card's top line and its tallest height, as shares of the
-        // screen, and its margin from the screen edge.
+        // screen, and its margin from the screen edge: the shell's window
+        // gutter, so a narrow monitor keeps a frame around the card.
         top: share(0.2),
         tallest: share(0.6),
-        margin: length(5),
+        margin: length(12),
         enterScale: share(0.965),
         exitScale: share(0.98),
         lift: length(10)
@@ -168,7 +169,9 @@ var TOKENS = {
         height: length(50),
         detailHeight: length(58),
         spacing: length(4),
-        iconInset: length(8),
+        // The tile's side inset equals its top inset, (50 - 30) / 2, and
+        // the chevron keeps the same inset from the plate's other edge.
+        iconInset: length(10),
         textGap: length(12),
         textInset: length(16),
         textRight: length(10),
@@ -198,7 +201,7 @@ var TOKENS = {
         width: length(7),
         height: length(12),
         stroke: number(1.5, 0, 8),
-        inset: length(14),
+        inset: length(10),
         length: share(0.62),
         spread: share(0.21),
         idle: share(0.28),

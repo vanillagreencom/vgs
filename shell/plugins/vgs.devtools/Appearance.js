@@ -7,12 +7,16 @@
 // draws itself reads this table alone. The active theme reaches it through
 // `palette.accent`, `motion.scale` and its `scheme.mode`, which applies
 // LIGHT. The metrics are the shipped theme's own values, from
-// shell/Commons/Tokens.js: `space.lg` 12, `space.xs` 4, `size.control.lg`
-// 36 for a tile, `size.window.width` 600 for the width and
-// `size.panel.maxHeight` 600 for the height, `size.window.gutter` 12 kept
-// clear of a narrower or shorter screen's edges, so the window sits beside the
-// shell's surfaces under that theme. The tile's corner and glyph are the
-// window's own.
+// shell/Commons/Tokens.js: `inset.window` 16 for the padding,
+// `hyprland.window.radius` 0 for the corner the content clears,
+// `stack.group` 12 between the header, the sections and the foot,
+// `stack.section` 24 between sections, `space.xs` 4 between lines,
+// `stack.inline` 8 between a row's chips and actions,
+// `row.twoLineHeight` 56 for a row, `size.window.width` 600 for the width
+// and `size.panel.maxHeight` 600 for the height, `size.window.gutter` 12
+// kept clear of a narrower or shorter screen's edges, so the window sits
+// beside the shell's surfaces under that theme. The tile's size, corner and
+// glyph are the window's own.
 
 function color(value) { return { type: "color", value: value }; }
 function length(value) { return { type: "length", value: value }; }
@@ -89,7 +93,7 @@ var TOKENS = {
 // (Symfony) both read in either mode.
 TOKENS.tile = {
     size: length(36),
-    glyph: length(18),
+    glyph: length(20),
     radius: length(6),
     neutral: color("#3f3f46"),
     neutralInk: color("contrast({tile.neutral})"),
@@ -105,16 +109,23 @@ TOKENS.window = {
     width: length(600),
     maxHeight: length(600),
     gutter: length(12),
-    padding: length(12),
-    gap: length(4),
-    sectionGap: length(12)
+    padding: length(16),
+    radius: length(0),
+    gap: length(12),
+    sectionGap: length(24)
 };
 
+// A row is at least `height` tall with `paddingY` above and below its
+// tallest part; rows sit `spacing` apart, and a row's actions move under its
+// text once they would take more than `stackShare` of the text's room.
 TOKENS.row = {
-    paddingX: length(12),
-    paddingY: length(6),
+    height: length(56),
+    paddingY: length(8),
+    spacing: length(4),
     gap: length(12),
-    lineGap: length(4)
+    lineGap: length(4),
+    actionGap: length(8),
+    stackShare: number(0.5, 0, 1)
 };
 
 var LIGHT = {

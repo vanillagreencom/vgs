@@ -12,7 +12,7 @@ Item {
     readonly property bool hovered: mouse.containsMouse
     signal clicked()
 
-    implicitWidth: label.implicitWidth + look.pill.padX
+    implicitWidth: label.implicitWidth + 2 * look.pill.padX
     implicitHeight: look.pill.height
 
     Rectangle {

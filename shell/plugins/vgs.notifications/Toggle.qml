@@ -54,9 +54,12 @@ Item {
         }
     }
 
+    // Taller than the track, centred on it: the pills' height.
     MouseArea {
         id: mouse
-        anchors.fill: parent
+        anchors.centerIn: parent
+        width: parent.width
+        height: Math.max(parent.height, control.look.toggle.hitHeight)
         PointerCursor {}
         onClicked: control.toggled(!control.checked)
     }

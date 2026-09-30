@@ -4,7 +4,8 @@ import qs.Ui
 
 // One Settings page header row. The list page and each plugin page use it
 // so the title, leading controls and trailing controls share one height,
-// `size.control.md` unless an item is taller, every item centred on it,
+// `size.control.md` unless an item is taller, every item centred on it
+// and the title's capital centre, not its box, on the centre line,
 // and the body does not move during a push or pop. The title draws in
 // `h3`, the role of every window title (design-quality.md). A leading
 // icon button puts its glyph's ink, not its box, on the content edge, and
@@ -60,7 +61,7 @@ Item {
         x: leadingSlot.width > 0 ? Math.round(leadingSlot.x + leadingSlot.width - root.leadingEnd) + Theme.control.gap : 0
         width: Math.max(0, root.width - x - (trailingSlot.width > 0 ? trailingSlot.width + Theme.control.gap : 0))
         elide: Text.ElideRight
-        anchors.verticalCenter: parent.verticalCenter
+        y: topForCapCenter(root.height)
     }
 
     TitleButton {
@@ -71,7 +72,7 @@ Item {
         visible: root.menu !== null
         x: titleLabel.x
         width: Math.min(implicitWidth, titleLabel.width)
-        anchors.verticalCenter: parent.verticalCenter
+        y: Math.round(root.height / 2 - capCentre)
     }
 
     Item {

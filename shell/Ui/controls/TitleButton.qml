@@ -21,6 +21,9 @@ T.AbstractButton {
     readonly property bool menuOpen: menu !== null && menu.opened
     readonly property color foreground: hovered || menuOpen ? Theme.titleButton.hover : Theme.titleButton.foreground
     readonly property bool engaged: hovered || menuOpen || visualFocus
+    // The title's capital centre from the button's top, so a header puts
+    // the text, not the box with its underline, on its centre line.
+    readonly property real capCentre: topPadding + label.capCentre
 
     function toggleMenu() { if (menu !== null) menu.toggle(); }
 

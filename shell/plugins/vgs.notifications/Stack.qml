@@ -86,6 +86,49 @@ Item {
                     }
                 }
             }
+
+            // A slim bar in the side room while the stack overflows, thin
+            // at rest and wide under the pointer; it drags the stack.
+            Item {
+                id: scrollbar
+                objectName: "notificationScrollBar"
+                readonly property real ratio: view.contentHeight <= 0 ? 1 : view.height / view.contentHeight
+                readonly property real travel: Math.max(1, view.contentHeight - view.height)
+                readonly property bool active: scrollMouse.containsMouse || scrollMouse.pressed
+                parent: view
+                visible: ratio < 1
+                x: cards.x + cards.width + stack.look.scrollbar.gap
+                width: stack.look.scrollbar.width
+                height: Math.max(stack.look.scrollbar.minHeight, view.height * ratio)
+                y: (view.height - height) * Math.max(0, Math.min(1, view.contentY / travel))
+
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: scrollbar.active ? stack.look.scrollbar.wide : stack.look.scrollbar.thin
+                    height: parent.height
+                    radius: stack.look.radius.full
+                    color: stack.look.text.foreground
+                    opacity: scrollbar.active ? stack.look.scrollbar.active : (view.moving ? stack.look.scrollbar.moving : stack.look.scrollbar.idle)
+                    Behavior on width { Anim { duration: stack.look.motion.duration.short4; curve: stack.look.motion.curve.standard } }
+                    Behavior on opacity { Anim { duration: stack.look.motion.duration.medium2; curve: stack.look.motion.curve.standard } }
+                }
+
+                // pointer-cursor-exempt: a scroll bar keeps the arrow, as Qt's own scroll bars do
+                MouseArea {
+                    id: scrollMouse
+                    property real grab: 0
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    preventStealing: true
+                    onPressed: mouse => { grab = mouse.y; }
+                    onPositionChanged: mouse => {
+                        if (!pressed) return;
+                        const track = Math.max(1, view.height - scrollbar.height);
+                        const top = scrollbar.y + mouse.y - grab;
+                        view.contentY = Math.max(0, Math.min(1, top / track)) * scrollbar.travel;
+                    }
+                }
+            }
         }
     }
 }
