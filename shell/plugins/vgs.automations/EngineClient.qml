@@ -12,10 +12,18 @@ Item {
     property var queue: []
     property var active: null
 
+    // A call equal to one still waiting joins it: the engine runs once and
+    // every caller hears the answer. A call equal to the running one waits
+    // for its own run, since what it asks about can have changed after that
+    // run started.
     function request(args, done) {
         const key = JSON.stringify(args);
-        if (queue.some(q => JSON.stringify(q.args) === key) || (active !== null && JSON.stringify(active.args) === key)) return;
-        queue = queue.concat([{ args: args, done: done }]);
+        const waiting = queue.find(q => JSON.stringify(q.args) === key);
+        if (waiting !== undefined) {
+            if (done !== undefined) waiting.dones.push(done);
+            return;
+        }
+        queue = queue.concat([{ args: args, dones: done === undefined ? [] : [done] }]);
         pump();
     }
 
@@ -51,7 +59,7 @@ Item {
         active = null;
         const ok = done !== null && done.code === 0;
         const failure = ok ? "" : (request.args[0] + " " + (done === null ? "start=failed" : "exit=" + done.code) + " " + firstLine(stderrText));
-        if (request !== null && request.done !== undefined) request.done(ok, stdoutText, stderrText, failure);
+        for (const each of request.dones) each(ok, stdoutText, stderrText, failure);
         pump();
     }
 
