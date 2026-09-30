@@ -28,7 +28,7 @@ Hyprland is configured in Lua alone; a classic `hyprland.conf` is unsupported. T
   | `tall` | `org.vgs.tui.tall` | `vgs:tui-tall` | 875 × 900 |
 
 - **Application windows.** A window of kind `window` ([surfaces.md](surfaces.md)) has the shell's class and its plugin's name as its title. `vgs:window` floats it and centres it on its monitor's work area, and it keeps the size it asks for. A user rule matches one window by the class and the title.
-- **Keys.** [hyprland-shortcuts.md](hyprland-shortcuts.md) defines key normalization, configuration overrides and effective key reads.
+- **Keys.** [hyprland-shortcuts.md](hyprland-shortcuts.md) defines key normalization, configuration overrides, effective key reads and hold release binds.
 - **Conflicts.** A key two binds claim stays with the first plugin by id. The later bind is written as `-- skipped <key>: already bound by <id>`. A layer rule an earlier section wrote, with the same namespace and effects, is written once and noted.
 - **Reports.** `vgsh plugin list` and the `listPlugins` IPC list each skipped bind, each `keys` name no bind declares, each ignored appearance owner, and a failed write, mkdir or reload among their errors, each led by `hyprland: `. `HyprlandLayer.qml` hands them to the registry, which both read, and the Settings window shows a plugin's own among its errors.
 - **Overlay capture.** A full-screen overlay has namespace `vgs:overlay`. While one is mapped, Hyprland stays in `vgs:capture`. Unbound keys go to the overlay because the host gives it exclusive keyboard focus. The capture submap repeats every enabled plugin shortcut and learns user directional focus binds from dispatcher objects as `hl.bind` receives them.

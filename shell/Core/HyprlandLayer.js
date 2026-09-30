@@ -303,12 +303,28 @@ function resolveBinds(sections) {
     return { sections: rows, keys: keys, conflicts: conflicts };
 }
 
+// A dot is outside the public registration-name grammar, so the companion
+// cannot collide with a shortcut a plugin registers.
+function releaseShortcutName(name) {
+    return name + ".release";
+}
+
+function shortcutBindLines(entry) {
+    var global = entry.global;
+    var lines = ["hl.bind(\"" + bindKeys(entry.bind.key) + "\", hl.dsp.global(\"" + global + "\"), { description = \"" + global + "\" })"];
+    if (entry.bind.hold === true) {
+        var release = releaseShortcutName(global);
+        lines.push("hl.bind(\"" + bindKeys(entry.bind.key) + "\", hl.dsp.global(\"" + release + "\"), { description = \"" + release + "\", release = true, non_consuming = true, transparent = true, ignore_mods = true })");
+    }
+    return lines;
+}
+
 function overlayCapturePluginBindLines(plan) {
     var lines = [];
     plan.sections.forEach(function (row) {
         row.binds.forEach(function (entry) {
             if (entry.kind === "bound")
-                lines.push("    hl.bind(\"" + bindKeys(entry.bind.key) + "\", hl.dsp.global(\"" + entry.global + "\"), { description = \"" + entry.global + "\" })");
+                lines = lines.concat(shortcutBindLines(entry).map(function (line) { return "    " + line; }));
         });
     });
     return lines;
@@ -474,7 +490,7 @@ function render(sections, theme, themeName, highestScale) {
                 lines.push("-- skipped " + entry.bind.key + ": already bound by " + entry.heldBy);
                 return;
             }
-            lines.push("hl.bind(\"" + bindKeys(entry.bind.key) + "\", hl.dsp.global(\"" + entry.global + "\"), { description = \"" + entry.global + "\" })");
+            lines = lines.concat(shortcutBindLines(entry));
         });
     });
     return { text: lines.join("\n") + "\n", conflicts: plan.conflicts, appearanceConflicts: switches.conflicts };

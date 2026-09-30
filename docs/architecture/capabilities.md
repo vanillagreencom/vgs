@@ -24,6 +24,8 @@ The compositor provider derives its operation list from `Dispatch.PLUGIN_DISPATC
 
 `shortcut.keys` follows the enabled manifests and configuration without replacing the provider. [hyprland.md § Shortcut key reads](hyprland.md#shortcut-key-reads) defines the map. `scripts/qml-tests/tst_shortcutregistry.qml` pins reactive reads and mutation isolation against the shipped provider. `scripts/test-qml-unit.sh` changes the getter to a snapshot and changes the calling plugin id as its controls.
 
+An optional release callback adds one native companion to the same shortcut registration, not a second capability hold. [hyprland-shortcuts.md § Hold shortcuts](hyprland-shortcuts.md#hold-shortcuts) owns the release and cancellation contract.
+
 `Capabilities` maps providers and accounts for holds. Each resource owner keeps its state, registration and release together; a stateless provider needs no separate component.
 
 ## Toasts

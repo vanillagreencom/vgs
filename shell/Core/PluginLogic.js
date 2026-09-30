@@ -160,7 +160,7 @@ var NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 // core renders it (HyprlandLayer.js), so no plugin text reaches the
 // compositor's Lua.
 var HYPRLAND_KEYS = ["binds", "layerRules", "appearance"];
-var HYPRLAND_BIND_KEYS = ["shortcut", "key"];
+var HYPRLAND_BIND_KEYS = ["shortcut", "key", "hold"];
 var HYPRLAND_RULE_KEYS = ["namespace", "blur", "ignoreAlpha"];
 // The modifiers a Hyprland key may hold, in the order a normalised key
 // writes them, and the key name after them: a keysym name, which Hyprland
@@ -885,7 +885,7 @@ function keysError(keys, at) {
 }
 
 // The first defect of a manifest's `hyprland` key, or "". It holds `binds`,
-// a list of { shortcut, key }, `layerRules`, a list of { namespace,
+// a list of { shortcut, key, hold? }, `layerRules`, a list of { namespace,
 // blur, ignoreAlpha }, and `appearance`, an object mapping the fixed
 // theme-appearance groups to boolean settings in this manifest. A bind's
 // shortcut is a name the plugin registers through its `shortcut` capability,
@@ -930,6 +930,8 @@ function hyprlandError(hyprland, capabilities, schema) {
         if (shortcuts.indexOf(bind.shortcut) !== -1)
             return at + ".shortcut " + bind.shortcut + " is bound twice";
         shortcuts.push(bind.shortcut);
+        if (bind.hold !== undefined && typeof bind.hold !== "boolean")
+            return at + ".hold must be a boolean";
         var key = hyprlandKey(bind.key);
         if (!key.ok)
             return at + ".key " + key.error;
@@ -2149,7 +2151,11 @@ function validateManifest(raw, sourceDir) {
     manifest.status = raw.status === undefined ? {} : clone(raw.status);
     if (raw.hyprland !== undefined) {
         manifest.hyprland = {
-            binds: (raw.hyprland.binds || []).map(function (bind) { return { shortcut: bind.shortcut, key: hyprlandKey(bind.key).key }; }),
+            binds: (raw.hyprland.binds || []).map(function (bind) {
+                var result = { shortcut: bind.shortcut, key: hyprlandKey(bind.key).key };
+                if (bind.hold === true) result.hold = true;
+                return result;
+            }),
             layerRules: clone(raw.hyprland.layerRules || []),
             appearance: clone(raw.hyprland.appearance || {})
         };
@@ -2265,7 +2271,7 @@ var ENTRY_RESERVED_KEYS = ["id", "keys"];
 
 // What plugin MANIFEST asks of Hyprland under CONFIG: { id, version, binds,
 // layerRules, appearance, unknownKeys }. `binds` follows the manifest's
-// `hyprland.binds` in order, each { shortcut, key }: the key its plugins
+// `hyprland.binds` in order, each { shortcut, key, hold? }: the key its plugins
 // row's `keys` gives that shortcut, normalised, null when the row gives it
 // null (the user unbinds it), else the manifest's. `appearance` resolves
 // each declared group to the boolean effective setting the plugin receives.
@@ -2278,12 +2284,12 @@ function hyprlandSection(config, manifest) {
     var keys = row !== undefined && isPlainObject(row.keys) ? row.keys : {};
     var declared = manifest.hyprland === undefined ? { binds: [], layerRules: [], appearance: {} } : manifest.hyprland;
     var binds = declared.binds.map(function (bind) {
-        if (!hasOwn(keys, bind.shortcut)) return { shortcut: bind.shortcut, key: bind.key };
-        if (keys[bind.shortcut] === null) return { shortcut: bind.shortcut, key: null };
+        if (!hasOwn(keys, bind.shortcut)) return Object.assign({}, bind);
+        if (keys[bind.shortcut] === null) return Object.assign({}, bind, { key: null });
         var key = hyprlandKey(keys[bind.shortcut]);
         if (!key.ok)
             throw new Error("hyprlandSection: plugins row " + manifest.id + " passed configError with keys." + bind.shortcut + " " + key.error);
-        return { shortcut: bind.shortcut, key: key.key };
+        return Object.assign({}, bind, { key: key.key });
     });
     var names = declared.binds.map(function (bind) { return bind.shortcut; });
     var settings = settingsFor(config, manifest, "plugins", null);

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "acme.hold",
+  "name": "Hold shortcut fixture",
+  "version": "1.0.0",
+  "author": "smoke",
+  "description": "Records core hold edges without audio or network.",
+  "kinds": ["service"],
+  "entryPoints": { "service": "Service.qml" },
+  "capabilities": ["shortcut", "ipc"],
+  "hyprland": {
+    "binds": [
+      { "shortcut": "talk", "key": "SUPER+code:108", "hold": true },
+      { "shortcut": "other", "key": "CTRL+code:108", "hold": true }
+    ]
+  }
+}

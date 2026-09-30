@@ -20,16 +20,15 @@ Scope {
         // REVISIT(D059): A compositor readback API could include later user overrides.
         return {
             get keys() { return Layer.shortcutKeys(Registry.hyprlandSections, ctx.id); },
-            register: (name, description, onPressed) => root.registerShortcut(ctx, name, description, onPressed)
+            register: (name, description, onPressed, onReleased) => root.registerShortcut(ctx, name, description, onPressed, onReleased)
         };
     }
 
-    // shortcut: one GlobalShortcut per name under the plugin id, bound in
-    // Hyprland as `global, <plugin id>:<name>`. A second registration of
-    // the same name throws.
-    function registerShortcut(ctx, name, description, onPressed) {
+    // One registration owns the main GlobalShortcut and, for an onReleased
+    // caller, its release companion. The instance owns one disposer for both.
+    function registerShortcut(ctx, name, description, onPressed, onReleased) {
         Capabilities.checkName("shortcut", name);
-        const shortcut = root.registerHeldShortcut(ctx.id, name, description, onPressed);
+        const shortcut = root.registerHeldShortcut(ctx.id, name, description, onPressed, onReleased);
         return ctx.onDispose(() => root.releaseShortcut(ctx.id + ":" + name, shortcut));
     }
 
@@ -38,14 +37,22 @@ Scope {
         registerHeldShortcut(appid, name, description, onPressed);
     }
 
-    function registerHeldShortcut(appid, name, description, onPressed) {
+    function registerHeldShortcut(appid, name, description, onPressed, onReleased) {
         if (typeof onPressed !== "function")
             throw new Error("refused: shortcut=" + name + " handler=not-a-function");
+        if (onReleased !== undefined && typeof onReleased !== "function")
+            throw new Error("refused: shortcut=" + name + " release-handler=not-a-function");
         const key = appid + ":" + name;
         if (Logic.hasOwn(shortcuts, key))
             throw new Error("refused: shortcut=" + key + " held");
         const shortcut = shortcutComponent.createObject(root, { appid: appid, name: name, description: String(description || "") });
         shortcut.handler = onPressed;
+        if (onReleased !== undefined) {
+            shortcut.releaseHandler = onReleased;
+            const companion = releaseComponent.createObject(shortcut, { appid: appid, name: Layer.releaseShortcutName(name), description: String(description || "") });
+            companion.owner = shortcut;
+            shortcut.companion = companion;
+        }
         const next = Object.assign({}, shortcuts);
         next[key] = shortcut;
         shortcuts = next;
@@ -56,7 +63,8 @@ Scope {
         const rest = Object.assign({}, root.shortcuts);
         delete rest[key];
         root.shortcuts = rest;
-        shortcut.destroy();
+        try { shortcut.finish("disposed"); }
+        finally { shortcut.destroy(); }
     }
 
     // The `pressed` property shadows the `pressed` signal from script, so
@@ -64,8 +72,43 @@ Scope {
     Component {
         id: shortcutComponent
         GlobalShortcut {
+            id: shortcut
             property var handler: null
-            onPressed: handler()
+            property var releaseHandler: null
+            property var companion: null
+            property var stroke: ({ kind: "idle" })
+            readonly property var effectiveKey: Layer.shortcutKeys(Registry.hyprlandSections, appid)[name]
+
+            function finish(nextKind) {
+                const held = stroke.kind === "held";
+                stroke = { kind: nextKind };
+                if (held) releaseHandler();
+            }
+
+            onEffectiveKeyChanged: {
+                if (stroke.kind === "held" && stroke.key !== effectiveKey)
+                    finish("idle");
+            }
+
+            onPressed: {
+                if (stroke.kind === "disposed") return;
+                if (releaseHandler === null) { handler(); return; }
+                if (stroke.kind === "held") return;
+                stroke = { kind: "held", key: effectiveKey };
+                handler();
+            }
+            // Lua global dispatch can lose this object's native release
+            // when the modifier mask changes. The companion owns that edge.
+        }
+    }
+
+    Component {
+        id: releaseComponent
+        GlobalShortcut {
+            property var owner: null
+            onReleased: {
+                if (owner.stroke.kind === "held") owner.finish("idle");
+            }
         }
     }
 

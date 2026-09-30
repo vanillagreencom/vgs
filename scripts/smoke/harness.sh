@@ -17,6 +17,7 @@ done
 # one found, which the shots' theme-browser scene resizes a preview with.
 imagemagick="$(command -v magick 2>/dev/null || command -v convert 2>/dev/null)" || missing+=("magick")
 if command -v pkg-config >/dev/null 2>&1 && ! pkg-config --exists wayland-client; then missing+=("wayland-client.pc"); fi
+if command -v pkg-config >/dev/null 2>&1 && ! pkg-config --exists xkbcommon; then missing+=("xkbcommon.pc"); fi
 [[ -n ${WAYLAND_DISPLAY:-} ]] || missing+=("WAYLAND_DISPLAY")
 [[ -n ${XDG_RUNTIME_DIR:-} ]] || missing+=("XDG_RUNTIME_DIR")
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -340,15 +341,20 @@ shell_start_words=(PATH="$shell_start_path" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_
 # row reads back how the nested compositor places a window of that class.
 # lock-client: a second session-lock client, which rows/lock.sh starts and
 # stops by pid in place of another locker; it runs no authentication.
-# build_helper NAME KEY SOURCE PROTOCOL_XML; a failed build exits 77 as
+# keyboard: physical keycodes with explicit modifier transitions.
+# build_helper NAME KEY SOURCE PROTOCOL_XML [PACKAGES...]; a failed build exits 77 as
 # missing=KEY-helper-build.
 build_helper() {
-  local protocol
+  local protocol flags
   protocol="$(basename -- "$4" .xml)"
+  flags="$(pkg-config --cflags --libs wayland-client "${@:5}")" || {
+    printf 'qml-smoke: status=not-measured missing=%s-helper-packages\n' "$2"
+    exit 77
+  }
   if ! (cd "$sandbox" \
         && wayland-scanner client-header "$4" "$protocol-client-protocol.h" \
         && wayland-scanner private-code "$4" "$protocol-protocol.c" \
-        && cc -o "$1" "$3" "$protocol-protocol.c" -I. $(pkg-config --cflags --libs wayland-client)) >"$sandbox/$1-build.log" 2>&1; then
+        && cc -o "$1" "$3" "$protocol-protocol.c" -I. $flags) >"$sandbox/$1-build.log" 2>&1; then
     printf 'qml-smoke: status=not-measured missing=%s-helper-build\n' "$2"
     cat "$sandbox/$1-build.log"
     exit 77
@@ -357,6 +363,7 @@ build_helper() {
 build_helper click pointer "$repo/scripts/smoke/pointer/click.c" "$repo/scripts/smoke/pointer/wlr-virtual-pointer-unstable-v1.xml"
 build_helper toplevel toplevel "$repo/scripts/smoke/toplevel/toplevel.c" "$repo/scripts/smoke/toplevel/xdg-shell.xml"
 build_helper lock-client lock-client "$repo/scripts/smoke/lock/lock-client.c" "$repo/scripts/smoke/lock/ext-session-lock-v1.xml"
+build_helper keyboard keyboard "$repo/scripts/smoke/keyboard/keyboard.c" "$repo/scripts/smoke/keyboard/virtual-keyboard-unstable-v1.xml" xkbcommon
 
 # The authentication helpers under a process tree: pam_unix's unix_chkpwd,
 # polkit's polkit-agent-helper-1 (its name cut to 15 bytes in /proc), sudo
@@ -1282,14 +1289,14 @@ lock_holders() { # LOCK
     printf '        holder pid=%s comm=%s cmdline=%s\n' "$pid" "$(cat -- "/proc/$pid/comm" 2>/dev/null)" "$(tr '\0' ' ' 2>/dev/null <"/proc/$pid/cmdline")"
   done
 }
-# Lines of the instance log matching an extended regex, counted. grep exits
+# Lines of the instance log, or FILE, matching an extended regex, counted. grep exits
 # 1 for a count of zero, which is an answer; anything above is a read or
 # pattern failure: grep's message goes to stderr and the function returns 1.
 # It runs inside a command substitution, so it never calls fail: the caller
 # does, in the shell that holds the counters.
 log_lines() {
   local count status=0
-  count="$(grep -c -E -e "$1" -- "$instance_log")" || status=$?
+  count="$(grep -c -E -e "$1" -- "${2:-$instance_log}")" || status=$?
   if [[ $status -gt 1 ]]; then return 1; fi
   printf '%s\n' "$count"
 }

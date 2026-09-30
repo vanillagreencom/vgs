@@ -1,6 +1,6 @@
 # Smoke harness helpers
 
-Covers: scripts/smoke/harness.sh, scripts/smoke/Probe.qml, scripts/smoke/pointer/, scripts/smoke/toplevel/, scripts/check-smoke-readers.py, scripts/test-check-smoke-readers.py
+Covers: scripts/smoke/harness.sh, scripts/smoke/Probe.qml, scripts/smoke/pointer/, scripts/smoke/toplevel/, scripts/smoke/keyboard/, scripts/check-smoke-readers.py, scripts/test-check-smoke-readers.py
 
 The helpers `scripts/smoke/harness.sh` shares with every smoke row: the row runner and its traceback gate, the start and the stop of a sandbox shell, the readers and the pointer. The sandbox, its verdicts and its teardown are in [validation-smoke.md](validation-smoke.md). What no row may reach on the host, an authentication or a plugin's real TUI script, is in [validation-smoke-host.md](validation-smoke-host.md).
 

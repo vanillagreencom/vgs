@@ -187,6 +187,9 @@ const MANIFESTS = [
     ["a modifier after the key", { hyprland: { binds: [toggle, { shortcut: "open", key: "space+super" }] } }, "hyprland.binds.1.key ends in the modifier SUPER"],
     ["one key bound twice", { hyprland: { binds: [toggle, { shortcut: "open", key: "super + space" }] } }, "hyprland.binds.1.key SUPER+SPACE is bound twice"],
     ["a keycode bind", { hyprland: { binds: [{ shortcut: "talk", key: "SUPER+code:108" }] } }, null],
+    ["a hold bind", { hyprland: { binds: [{ shortcut: "talk", key: "SUPER+code:108", hold: true }] } }, null],
+    ["a non-hold bind", { hyprland: { binds: [{ shortcut: "talk", key: "SUPER+code:108", hold: false }] } }, null],
+    ["hold is not a boolean", { hyprland: { binds: [{ shortcut: "talk", key: "SUPER+code:108", hold: "yes" }] } }, "hyprland.binds.0.hold must be a boolean"],
     ["one keycode bound twice", { hyprland: { binds: [{ shortcut: "talk", key: "SUPER+code:108" }, { shortcut: "mute", key: "super+CODE:00108" }] } }, "hyprland.binds.1.key SUPER+code:108 is bound twice"],
     ["a rule that is no object", { hyprland: { layerRules: ["^vgs:overlay$"] } }, "hyprland.layerRules.0 must be an object"],
     ["a rule with an unknown key", { hyprland: { layerRules: [{ namespace: "^vgs:overlay$", blur: true, xray: true }] } }, "hyprland.layerRules.0 has unknown key \"xray\""],
@@ -260,6 +263,27 @@ function verify(logic, layer, shellText) {
     const keycodeText = layer.render(colliding, theme, "probe").text;
     assert.ok(keycodeText.includes('hl.bind("SUPER + code:108", hl.dsp.global("acme.keys:talk"), { description = "acme.keys:talk" })'), "renderer preserves lower-case code prefix");
     assert.ok(keycodeText.includes("-- skipped SUPER+code:108: already bound by acme.keys"), "renderer shares the keycode conflict judge");
+    const holdManifest = manifestOf(logic, { hyprland: { binds: [{ shortcut: "talk", key: "super+CODE:00108", hold: true }] } });
+    same(holdManifest.hyprland.binds, [{ shortcut: "talk", key: "SUPER+code:108", hold: true }], "manifest retains hold");
+    assert.equal(layer.releaseShortcutName("talk"), "talk.release", "companion cannot be a public registration name");
+    for (const [label, keys, key] of [
+        ["default", {}, "SUPER+code:108"],
+        ["rebound", { talk: "SUPER+SHIFT+code:108" }, "SUPER+SHIFT+code:108"],
+        ["unbound", { talk: null }, null]
+    ]) {
+        const section = logic.hyprlandSection({ plugins: [{ id: "acme.keys", keys }] }, holdManifest);
+        same(section.binds, [{ shortcut: "talk", key, hold: true }], "effective hold " + label);
+        const text = layer.render([section], theme, "hold").text;
+        const releaseLine = 'hl.bind("' + (key || "").split("+").join(" + ") + '", hl.dsp.global("acme.keys:talk.release"), { description = "acme.keys:talk.release", release = true, non_consuming = true, transparent = true, ignore_mods = true })';
+        if (key === null) assert.ok(!text.includes("talk.release"), "unbound hold writes neither companion");
+        else {
+            assert.ok(text.split("\n").includes(releaseLine), "default map release flags " + label);
+            assert.ok(text.split("\n").includes("    " + releaseLine), "overlay map release flags " + label);
+        }
+    }
+    const losingHold = Object.assign({}, logic.hyprlandSection({}, holdManifest), { id: "acme.other" });
+    assert.ok(!layer.render([logic.hyprlandSection({}, holdManifest), losingHold], theme, "hold").text.includes("acme.other:talk.release"), "conflict skips both hold binds");
+    assert.ok(!keycodeText.includes("talk.release"), "ordinary bind has no release companion");
     same(declared.hyprland, { binds: [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "inbox", key: "SUPER+N" }], layerRules: [overlayRule], appearance: {} }, "a normalised manifest holds normalised keys");
     same(manifestOf(logic, { hyprland: { layerRules: [overlayRule] } }).hyprland.binds, [], "a normalised manifest without binds holds none");
     assert.strictEqual(manifestOf(logic, {}).hyprland, undefined, "a manifest declaring no hyprland key carries none");
@@ -503,6 +527,13 @@ const CONTROLS = [
     [logicFile, "bind keys", "if (HYPRLAND_BIND_KEYS.indexOf(bindKeys[k]) === -1)", "if (false)"],
     [logicFile, "shortcut name", "if (typeof bind.shortcut !== \"string\" || !NAME_PATTERN.test(bind.shortcut))", "if (typeof bind.shortcut !== \"string\")"],
     [logicFile, "shortcut once", "if (shortcuts.indexOf(bind.shortcut) !== -1)", "if (false)"],
+    [logicFile, "hold boolean", "if (bind.hold !== undefined && typeof bind.hold !== \"boolean\")", "if (false)"],
+    [logicFile, "hold retained", "if (bind.hold === true) result.hold = true;", "if (false) result.hold = true;"],
+    [layerFile, "hold release emitted", "if (entry.bind.hold === true)", "if (false)"],
+    [layerFile, "release ignores live modifiers", "ignore_mods = true", "ignore_mods = false"],
+    [layerFile, "release does not consume input", "non_consuming = true", "non_consuming = false"],
+    [layerFile, "release is not shadowed", "transparent = true", "transparent = false"],
+    [layerFile, "release runs on key up", "release = true", "release = false"],
     [logicFile, "bind key judged", "if (!key.ok)\n            return at + \".key \" + key.error;", "if (false)\n            return at + \".key \" + key.error;"],
     [logicFile, "key once", "if (boundKeys.indexOf(key.key) !== -1)", "if (false)"],
     [logicFile, "rule object", "if (!isPlainObject(rule))", "if (false)"],
@@ -518,16 +549,16 @@ const CONTROLS = [
     [logicFile, "appearance schema key", "if (!hasOwn(schema, setting))", "if (false)"],
     [logicFile, "appearance boolean setting", "if (schema[setting].type !== \"boolean\")", "if (false)"],
     [logicFile, "keys setting reserved", "if (hasOwn(settings, \"keys\"))", "if (false)"],
-    [logicFile, "manifest keys normalised", "return { shortcut: bind.shortcut, key: hyprlandKey(bind.key).key };", "return { shortcut: bind.shortcut, key: bind.key };"],
+    [logicFile, "manifest keys normalised", "var result = { shortcut: bind.shortcut, key: hyprlandKey(bind.key).key };", "var result = { shortcut: bind.shortcut, key: bind.key };"],
     [logicFile, "config keys judged", "if (config.plugins[p].keys !== undefined && (bad = keysError(", "if (false && (bad = keysError("],
     [logicFile, "keys object", "if (!isPlainObject(keys))\n        return at + \" must be an object\";", "if (false)\n        return at + \" must be an object\";"],
     [logicFile, "keys names", "if (!NAME_PATTERN.test(names[i]))", "if (false)"],
     [logicFile, "keys null unbinds", "if (keys[names[i]] === null)\n            continue;", "if (false)\n            continue;"],
     [logicFile, "keys values", "if (!key.ok)\n            return at + \".\" + names[i] + \" \" + key.error;", "if (false)\n            return at + \".\" + names[i] + \" \" + key.error;"],
     [logicFile, "keys no setting", "var ENTRY_RESERVED_KEYS = [\"id\", \"keys\"];", "var ENTRY_RESERVED_KEYS = [\"id\"];"],
-    [logicFile, "row key wins", "if (!hasOwn(keys, bind.shortcut)) return { shortcut: bind.shortcut, key: bind.key };", "return { shortcut: bind.shortcut, key: bind.key };"],
-    [logicFile, "null unbinds", "if (keys[bind.shortcut] === null) return { shortcut: bind.shortcut, key: null };", ""],
-    [logicFile, "row key normalised", "return { shortcut: bind.shortcut, key: key.key };\n    });", "return { shortcut: bind.shortcut, key: keys[bind.shortcut] };\n    });"],
+    [logicFile, "row key wins", "if (!hasOwn(keys, bind.shortcut)) return Object.assign({}, bind);", "return Object.assign({}, bind);"],
+    [logicFile, "null unbinds", "if (keys[bind.shortcut] === null) return Object.assign({}, bind, { key: null });", ""],
+    [logicFile, "row key normalised", "return Object.assign({}, bind, { key: key.key });\n    });", "return Object.assign({}, bind, { key: keys[bind.shortcut] });\n    });"],
     [logicFile, "unknown keys", "return names.indexOf(name) === -1; }).sort()", "return false; }).sort()"],
     [logicFile, "appearance setting resolved", "appearance[group] = { setting: setting, enabled: settings[setting] === true };", "appearance[group] = { setting: setting, enabled: true };"],
     [layerFile, "sections by id", "var rows = sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).map(", "var rows = sections.slice().map("],
