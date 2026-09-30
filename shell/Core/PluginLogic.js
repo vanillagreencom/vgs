@@ -1173,25 +1173,30 @@ function noticeAdmit(queue, rest, id, request, trigger, now) {
 // What NOTICE, { commands, required }, shows for plugin MANIFEST after the
 // last scan, whose missing commands are MISSING, on a system whose managers
 // are FOUND, detect's answer, or null when detection has no answer:
-// { satisfied, rows, install, byHand }. `satisfied` holds once no command
+// { satisfied, rows, install, commandLine, byHand }. `satisfied` holds once no command
 // of `required` is missing. `rows` are the listed commands still missing,
 // in declaration order, each { command, purpose, optional, package }, the
 // package PackageManagers.installGroups picks, null with FOUND null or when
 // no present manager maps one. `install` is the arguments after
 // `vgsh pkg run install` of the first group whose manager installs, null
 // when none does; one Install runs one manager's packages, and the notice
-// offers the next group once a rescan finds the first installed. `byHand`
-// is each group whose manager installs nothing through vgsh, nix, as
+// offers the next group once a rescan finds the first installed.
+// `commandLine` is that install as one command a reader could run, the
+// core TUI's argv and `install` joined, or "" with `install` null: the
+// notice draws it only behind its Show command (D061). `byHand` is each
+// group whose manager installs nothing through vgsh, nix, as
 // { manager, names }.
 function noticeView(manifest, missing, notice, found) {
     var rows = requirementRows(manifest, missing).filter(function (row) { return row.state === "missing" && notice.commands.indexOf(row.command) !== -1; });
     var satisfied = !notice.required.some(function (c) { return missing.indexOf(c) !== -1; });
     var plan = found === null ? { picks: rows.map(function () { return null; }), groups: [] } : PackageManagers.installGroups(rows, found);
     var installable = plan.groups.filter(function (g) { return g.installs; });
+    var install = installable.length === 0 ? null : PackageManagers.installArgs(installable[0]);
     return {
         satisfied: satisfied,
         rows: rows.map(function (row, i) { return { command: row.command, purpose: row.purpose, optional: row.optional, package: plan.picks[i] }; }),
-        install: installable.length === 0 ? null : PackageManagers.installArgs(installable[0]),
+        install: install,
+        commandLine: install === null ? "" : CORE_TUIS["requirements-install"].argv.concat(install).join(" "),
         byHand: plan.groups.filter(function (g) { return !g.installs; }).map(function (g) { return { manager: g.manager, names: g.names }; })
     };
 }

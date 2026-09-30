@@ -98,7 +98,14 @@ install_words() {
   words --app-id=org.vgs.tui "--title=VGS · Install requirements" -- "$tui_self" present --presentation full \
     --record core/requirements-install --run RUN --record-dir "$rt_dir/vgs/tui" --app-id org.vgs.tui --window-title "VGS · Install requirements" -- "$core_vgsh" pkg run install "$@"
 }
-needs_rows='["vgs-smoke-needs (vgs-smoke-needs-pkg): The command the fixture runs", "vgs-smoke-extra (vgs-smoke-extra-git) optional: An extra the fixture can do without", "vgs-smoke-unmapped optional: A command no manager here provides"]'
+# Each listed requirement reads as its purpose, then a hint naming its
+# command, this system's package and whether it is optional (D061); the
+# command Install runs is only behind Show command, read on its own.
+needs_rows='["The command the fixture runs", "vgs-smoke-needs · package vgs-smoke-needs-pkg", "An extra the fixture can do without", "vgs-smoke-extra · package vgs-smoke-extra-git · optional", "A command no manager here provides", "vgs-smoke-unmapped · optional"]'
+needs_command_line="vgsh pkg run install vgs-smoke-needs-pkg"
+# Whether any drawn row of the notice's body holds TEXT: the command line
+# Install runs is drawn only behind Show command.
+rows_hold() { ipc smoke noticeDrawn | py_reply 'import json,sys; print(str(any(sys.argv[1] in r for r in json.load(sys.stdin)["rows"])).lower())' "$1"; }
 all_needs='["vgs-smoke-needs", "vgs-smoke-extra", "vgs-smoke-unmapped"]'
 
 expect "the Settings plugin is disabled for the notice rows" False plugin_enabled vgs.settings
@@ -154,7 +161,10 @@ expect "disabling the layers fixture under the notice is allowed" ok ipc shell s
 expect_poll "the layers fixture under the notice is gone" False record_exists acme.layers
 expect_poll "the notice holds the keyboard after the clicks" true ipc smoke noticeFocused
 expect "the notice names the plugin and the count" '"Needs needs 3 commands"' drawn title
-expect "each missing command is drawn with this system's package" "$needs_rows" drawn rows
+expect "each missing requirement is drawn as its purpose, then its command and this system's package" "$needs_rows" drawn rows
+expect "the command Install runs is behind Show command, closed" "{\"toggle\": \"Show command\", \"expanded\": false, \"text\": \"$needs_command_line\"}" drawn command
+expect "no row of the notice's body draws a command line" false rows_hold "pkg run install"
+expect "control: the same reading finds a purpose the body draws" true rows_hold "The command the fixture runs"
 expect "an installable notice offers Install and Not now" '["Install", "Not now"]' drawn actions
 expect "the plugin landed disabled" False plugin_enabled acme.needs
 
@@ -286,7 +296,8 @@ expected_errors+=('notices: detect=failed exit=70 status=0 vgsh: refused: stub=v
 expect "enabling the fixture while detection fails raises the notice" ok ipc shell setPluginEnabled acme.needs true
 expect_poll "the notice shows with detection failed" 1 layer_count vgs:notice
 expect_log "the failed detection is logged" 1 'notices: detect=failed exit=70 status=0 vgsh: refused: stub=vgsh-pkg'
-expect "a notice without managers draws the commands alone" '["vgs-smoke-needs: The command the fixture runs", "vgs-smoke-extra optional: An extra the fixture can do without", "vgs-smoke-unmapped optional: A command no manager here provides"]' drawn rows
+expect "a notice without managers draws each requirement without a package" '["The command the fixture runs", "vgs-smoke-needs", "An extra the fixture can do without", "vgs-smoke-extra · optional", "A command no manager here provides", "vgs-smoke-unmapped · optional"]' drawn rows
+expect "a notice without an install has no command to show" null drawn command
 expect "a notice without an install offers Close alone" '["Close"]' drawn actions
 expect "the message says detection failed" '"VGS could not detect this system'"'"'s package manager. Install these commands by hand."' drawn message
 expect_poll "the notice without an install holds the keyboard" true ipc smoke noticeFocused

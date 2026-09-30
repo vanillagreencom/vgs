@@ -62,6 +62,11 @@ ROWS = [
     ("a log line telling the user to run a command", {"Service.qml": qml('    Component.onCompleted: console.warn("acme: refused: run vgsh doctor")')}, "instruction", "Service.qml:3"),
     ("a JavaScript toast telling the user to run a command", {"Logic.js": '.pragma library\nvar TOAST = { title: "Token missing", message: "Run `secret-tool store` to add it" };\n'}, "instruction", "Logic.js:2"),
     ("a command in a comment", {"Service.qml": qml('    // Run `vgsh doctor` to see it.')}, None, None),
+    ("a notice body drawing its command line", {"Service.qml": qml('    Label { text: "Install with " + view.commandLine }')}, "drawn-command-line", "Service.qml:3"),
+    ("a message bound to a command line", {"Logic.js": '.pragma library\nvar TOAST = { title: "Missing", message: shown.commandLine };\n'}, "drawn-command-line", "Logic.js:2"),
+    ("a command line behind Show command", {"Service.qml": qml('    CommandDisclosure { command: view.commandLine }')}, None, None),
+    ("a judge naming its command line", {"Logic.js": '.pragma library\nvar VIEW = { commandLine: "vgsh pkg run install a" };\n'}, None, None),
+    ("a drawn string that only says commandLine", {"Service.qml": qml('    Label { text: "commandLine" }')}, None, None),
 ]
 
 
@@ -136,6 +141,8 @@ CONTROLS = [
     ("the manifest strings", "            for _index, excerpt in instructions(text, heads, True):\n                findings.append((\"instruction\", path, where, excerpt))", "            pass"),
     ("the disclosure's reach", "text = blank(read(path), DETAILS)", "text = read(path)"),
     ("the drawn-property reach of code-command", "if DRAWN_BEFORE.search(code, start, literal.start()) is None:", "if False:"),
+    ("the drawn-command-line rule", "if re.search(r\"\\b\" + COMMAND_LINE + r\"\\b\", binding.group(1)):", "if False:"),
+    ("a string literal names no command line", "bare = STRING.sub(lambda m: '\"\"', code)", "bare = code"),
     ("a clause after or", "|\\b(?:or|then)\\s+)(", ")("),
     ("inline code past a dot", "[.!?;](?=[^\\s`])|", ""),
     ("the heads floor", "if len(heads) < HEADS_FLOOR or any(h not in heads for h in REQUIRED_HEADS):", "if False:"),

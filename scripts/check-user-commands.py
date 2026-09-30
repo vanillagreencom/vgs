@@ -19,6 +19,12 @@ check fails where user-facing text tells the user to run a command:
                 a toast draws: a command there is copied off a label, where
                 the one route is a CommandDisclosure. A log line is read by
                 `instruction` alone.
+  drawn-command-line  a property of DRAWN bound, on its line, to an
+                expression naming COMMAND_LINE, the name a judge gives a
+                value that holds a whole command a reader could run, such
+                as PluginLogic.noticeView's `commandLine`: that value
+                reaches the screen only as a CommandDisclosure's `command`,
+                which DRAWN does not hold.
 The text read is every Markdown file and every manifest.json of each plugin
 directory under the root's plugins/, the user-facing strings of each
 manifest (FIELDS), and every string literal of every `.qml` and `.js` file
@@ -79,6 +85,8 @@ DETAILS = re.compile(r"<details>\s*<summary>\s*Show command\s*</summary>.*?</det
 # notice's title and message, a row's label and description.
 DRAWN = ("text", "hint", "error", "description", "placeholderText", "title", "message", "label", "secondary", "body", "summary")
 DRAWN_BEFORE = re.compile(r"\b(?:" + "|".join(DRAWN) + r")\s*:")
+COMMAND_LINE = "commandLine"
+DRAWN_BINDING = re.compile(r"\b(?:" + "|".join(DRAWN) + r")\s*:([^\n]*)")
 STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'')
 WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 
@@ -254,6 +262,10 @@ def main(argv):
         for path, text in source_texts(root):
             code_files += 1
             code = blank_comments(text)
+            bare = STRING.sub(lambda m: '""', code)
+            for binding in DRAWN_BINDING.finditer(bare):
+                if re.search(r"\b" + COMMAND_LINE + r"\b", binding.group(1)):
+                    findings.append(("drawn-command-line", path, line_of(bare, binding.start()), binding.group(0).strip()[:120]))
             for literal in STRING.finditer(code):
                 strings += 1
                 value = literal.group(0)[1:-1]

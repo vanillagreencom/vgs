@@ -570,11 +570,21 @@ Scope {
         function noticeDrawn(): string {
             const dialog = Plugins.hosts.notice === undefined ? null : Plugins.hosts.notice.dialog;
             if (dialog === null) return "absent";
-            const labels = root.descendants(dialog).filter(child => root.typeName(child) === "Label" && child.visible);
+            // The Show command disclosure is read on its own, so a command
+            // line reaches `rows` only when the body draws it.
+            const disclosures = root.descendants(dialog).filter(child => root.typeName(child) === "CommandDisclosure");
+            const inDisclosure = item => {
+                for (let p = item.parent; p !== null; p = p.parent)
+                    if (disclosures.indexOf(p) !== -1) return true;
+                return false;
+            };
+            const labels = root.descendants(dialog).filter(child => root.typeName(child) === "Label" && child.visible && !inDisclosure(child));
+            const shownDisclosure = disclosures.find(d => d.visible);
             return root.json({
                 title: dialog.title,
                 message: dialog.message,
                 rows: labels.map(label => label.text).filter(text => text !== dialog.title && text !== dialog.message && !dialog.entries.some(entry => entry.label === text)),
+                command: shownDisclosure === undefined ? null : { toggle: shownDisclosure.toggle.text, expanded: shownDisclosure.expanded, text: shownDisclosure.command },
                 actions: dialog.entries.map(entry => entry.label),
                 busy: dialog.busy
             });

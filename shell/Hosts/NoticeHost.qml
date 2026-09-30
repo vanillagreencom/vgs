@@ -8,8 +8,9 @@ import qs.Ui
 // The requirement notice's surface: one OverlaySurface on the screen
 // Notices chose, existing only while a notice shows, taking the keyboard on
 // demand. It draws the shown notice as a Dialog: each missing command with
-// its package and purpose, then Install and Not now, or Close alone when no
-// manager here installs a listed package. Install runs Notices.accept,
+// its purpose first, then Install and Not now, or Close alone when no
+// manager here installs a listed package. The command Install runs is
+// only behind Show command (D061). Install runs Notices.accept,
 // every other answer Notices.dismiss. While the shown notice's install runs
 // the window is gone, so the floating TUI it opened, centred on the same
 // monitor, shows whole; a notice the scan after the run keeps comes back as
@@ -24,11 +25,12 @@ Scope {
     // The dialog, for a validation row that reads its focus.
     readonly property Item dialog: loader.item === null ? null : loader.item.dialog
 
-    // One line per listed command: `<command> (<package>)[ optional]:
-    // <purpose>`, the package being this system's pick, as the command
-    // line's reports name it (requirements.md § Command line).
-    function rowText(row) {
-        return row.command + (row.package === null ? "" : " (" + row.package.name + ")") + (row.optional ? " optional" : "") + ": " + row.purpose;
+    // What names a listed requirement under its purpose: the command,
+    // then this system's package for it, as the command line's reports
+    // name it (requirements.md § Command line), then whether it is
+    // optional, joined by a middle dot.
+    function rowNote(row) {
+        return [row.command].concat(row.package === null ? [] : ["package " + row.package.name], row.optional ? ["optional"] : []).join(" · ");
     }
 
     function message(shown) {
@@ -64,21 +66,38 @@ Scope {
                 onAccepted: Notices.accept()
                 onRejected: Notices.dismiss()
 
-                // The missing commands, one list `stack.row` apart, a block
-                // of the dialog's body `dialog.gap` under the message.
+                // The missing requirements, one list `stack.row` apart, a
+                // block of the dialog's body `dialog.gap` under the message:
+                // each its purpose, with its name under it as a hint, as a
+                // Field draws a label's hint.
                 Column {
                     width: parent.width
                     spacing: Theme.stack.row
                     Repeater {
                         model: win.shown.rows
-                        Label {
+                        Column {
                             required property var modelData
-                            role: Theme.dialog.bodyRole
                             width: parent.width
-                            wrapMode: Text.Wrap
-                            text: host.rowText(modelData)
+                            spacing: Theme.field.gap
+                            Label {
+                                role: Theme.dialog.bodyRole
+                                width: parent.width
+                                wrapMode: Text.Wrap
+                                text: modelData.purpose
+                            }
+                            Label {
+                                role: "hint"
+                                width: parent.width
+                                wrapMode: Text.Wrap
+                                text: host.rowNote(modelData)
+                            }
                         }
                     }
+                }
+                // The command Install runs, for a reader who runs it by hand.
+                CommandDisclosure {
+                    width: parent.width
+                    command: win.shown.commandLine
                 }
                 Label {
                     role: Theme.dialog.bodyRole
