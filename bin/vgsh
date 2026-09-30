@@ -4,7 +4,7 @@
 #   vgsh run                       start the shell in the foreground; holds the instance lock
 #   vgsh restart                   stop the running shell and relaunch it through Hyprland
 #   vgsh pid                       print the running shell's pid from the instance lock
-#   vgsh ipc <qs ipc args...>      talk to the running shell (qs ipc against its pid)
+#   vgsh ipc <qs ipc args...>      talk to the running shell; failed client replies exit 69
 #   vgsh log <qs log args...>      read the running shell's log
 #   vgsh plugin list               every discovered plugin with its enabled state, each configured id no plugin has,
 #                                  and each requirement the last scan did not find as `missing <id> <command> (<package>)`
@@ -390,7 +390,7 @@ shell_pid() {
 # One IPC call. qs prints its own log lines on stdout ahead of the reply;
 # the reply is the last stdout line. stderr passes through untouched.
 ipc() {
-  local pid out status
+  local pid out status last label
   pid="$(shell_pid)" || exit $?
   set +e
   out="$(qs ipc --pid "$pid" call "$@")"
@@ -400,7 +400,16 @@ ipc() {
     printf 'vgsh: refused: shell=not-running pid=%s\n%s\n' "$pid" "$out" >&2
     exit 69
   fi
-  printf '%s\n' "${out##*$'\n'}"
+  last="${out##*$'\n'}"
+  label="${1:-missing}.${2:-missing}"
+  if ipc_reply_failure_reason "$label" "$last"; then
+    exit 69
+  fi
+  if [[ -z $last ]]; then
+    printf 'vgsh: refused: ipc=%s reason=empty-reply\n\n' "$label" >&2
+    exit 69
+  fi
+  printf '%s\n' "$last"
 }
 
 user_plugins="$config_home/vgs/plugins"
@@ -418,6 +427,28 @@ refuse() { # STATUS FIRST_LINE [ENGLISH...]
   shift 2
   [[ $# -gt 0 ]] && printf '%s\n' "$@" >&2
   exit "$status"
+}
+
+# shellcheck source=bin/lib/ipc-reply.sh
+source "$root/bin/lib/ipc-reply.sh" || refuse 1 "library=missing path=$root/bin/lib/ipc-reply.sh"
+
+ipc_arg_label() { # QS_IPC_ARG...
+  if [[ ${1:-} == call ]]; then
+    printf '%s.%s\n' "${2:-missing}" "${3:-missing}"
+  else
+    printf '%s\n' "${1:-missing}"
+  fi
+}
+
+ipc_reply_failure_reason() { # LABEL LINE
+  local label="$1" line="$2" reason stripped
+  if reason="$(vgs_ipc_reply_failure "$line")"; then
+    stripped="$(vgs_ipc_strip_ansi "$line")" || stripped="$line"
+    printf 'vgsh: refused: ipc=%s reason=%s\n' "$label" "$reason" >&2
+    printf '%s\n' "$stripped" >&2
+    return 0
+  fi
+  return 1
 }
 
 # Opens COUNT write descriptors into the array scratch_fds, each on its own
@@ -1575,7 +1606,25 @@ case "$cmd" in
     ;;
   ipc)
     pid="$(shell_pid)" || exit $?
-    exec qs ipc --pid "$pid" "$@"
+    marker=$'\036vgsh-status='
+    set +e
+    reply_and_status="$(qs ipc --pid "$pid" "$@"; status=$?; printf '%s%03d' "$marker" "$status")"
+    capture_status=$?
+    set -e
+    [[ $capture_status == 0 ]] || refuse 1 "ipc=capture-failed"
+    status_text="${reply_and_status##*"$marker"}"
+    [[ $status_text =~ ^[0-9][0-9][0-9]$ ]] || refuse 1 "ipc=status-missing"
+    reply="${reply_and_status%"$marker$status_text"}"
+    status=$((10#$status_text))
+    [[ -z $reply ]] || printf '%s' "$reply"
+    label="$(ipc_arg_label "$@")" || refuse 1 "ipc=label-failed"
+    last="$reply"
+    while [[ $last == *$'\n' ]]; do last="${last%$'\n'}"; done
+    last="${last##*$'\n'}"
+    if ipc_reply_failure_reason "$label" "$last"; then
+      exit 69
+    fi
+    exit "$status"
     ;;
   log)
     pid="$(shell_pid)" || exit $?

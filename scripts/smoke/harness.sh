@@ -4,6 +4,7 @@ source "$repo/scripts/smoke/verdict.sh"
 source "$repo/scripts/smoke/tree.sh"
 source "$repo/scripts/smoke/shot.sh"
 source "$repo/scripts/smoke/app-window.sh"
+source "$repo/bin/lib/ipc-reply.sh"
 missing=()
 # fd, fzf and file are the launcher file search helper's, which rows/launcher.sh runs;
 # grim reads the pixels app-window.sh checks.
@@ -707,23 +708,13 @@ ipc_call_last() {
   return "$status"
 }
 
-ipc_strip_ansi() { sed $'s/\x1b\[[0-9;]*m//g' <<<"$1"; }
-
-# Quickshell 0.3.1 prints these forms in src/io/ipccomm.cpp callFunction
-# and src/ipc/ipc.hpp waitForResponse.
+# Quickshell 0.3.1 client failures are classified in bin/lib/ipc-reply.sh.
 ipc_failed() { # TARGET FUNCTION LINE
-  local target="$1" fn="$2" line="$3" stripped
-  if [[ $line == *quickshell.ipc* ]]; then
-    IFS= read -r stripped < <(ipc_strip_ansi "$line") || return 1
-    [[ $stripped == *"ERROR quickshell.ipc"* ]] || return 1
-    printf 'ipc: %s %s: %s\n' "$target" "$fn" "$stripped" >>"$sandbox/ipc.log"
-    return 0
-  fi
-  case "$line" in
-    "Function not found."|"Target not found."|"Not ready to accept queries yet."|"Target required to send message."|"Function required to send message."|Too\ many\ arguments\ provided*|Too\ few\ arguments\ provided*|Unable\ to\ parse\ argument*|Function\ definition:*)
-      printf 'ipc: %s %s: %s\n' "$target" "$fn" "$line" >>"$sandbox/ipc.log" ;;
-    *) return 1 ;;
-  esac
+  local target="$1" fn="$2" line="$3" reason stripped
+  reason="$(vgs_ipc_reply_failure "$line")" || return 1
+  stripped="$(vgs_ipc_strip_ansi "$line")" || stripped="$line"
+  printf 'ipc: %s %s: %s\n' "$target" "$fn" "$stripped" >>"$sandbox/ipc.log"
+  return 0
 }
 
 ipc_page_failed() { # TEXT
@@ -741,6 +732,10 @@ ipc_pages() {
       :
     else
       status=$?
+      if ipc_failed smoke page "$ipc_last_reply"; then
+        printf 'ipc-failed\n'
+        return 1
+      fi
       ipc_page_failed "status=$status reply=${ipc_last_reply:-}"
       return 1
     fi
@@ -776,13 +771,15 @@ ipc_pages() {
 ipc_via() {
   local vgsh="$1" target="$2" fn="$3" status reply id
   shift 3
-  if ipc_call_last "$vgsh" "$target" "$fn" "$@"; then
-    :
-  else
+  ipc_call_last "$vgsh" "$target" "$fn" "$@" || {
     status=$?
+    if ipc_failed "$target" "$fn" "$ipc_last_reply"; then
+      printf 'ipc-failed\n'
+      return 1
+    fi
     [[ -n $ipc_last_reply ]] && printf '%s\n' "$ipc_last_reply"
     return "$status"
-  fi
+  }
   if ipc_failed "$target" "$fn" "$ipc_last_reply"; then
     printf 'ipc-failed\n'
     return 1

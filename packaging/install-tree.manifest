@@ -2,6 +2,7 @@ f share/doc/vgs/README.md
 f share/licenses/vgs/LICENSE
 f share/vgs/VERSION
 f share/vgs/bin/lib/check-manifests.js
+f share/vgs/bin/lib/ipc-reply.sh
 f share/vgs/bin/lib/judge-files.js
 f share/vgs/bin/lib/logo.txt
 f share/vgs/bin/lib/pkg-run.sh

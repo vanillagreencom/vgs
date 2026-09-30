@@ -61,7 +61,13 @@ if [[ ${4:-} == call && ${5:-} == shell && ${6:-} == guarded ]]; then
     fi
   fi
 fi
-printf '%s\n' "$reply"
+case "${STUB_REPLY_FORM:-text}" in
+  ansi-ipc-error) printf '\033[31m ERROR\033[97m quickshell.ipc\033[0m: Error occurred while waiting for response.\n' ;;
+  empty) ;;
+  function-not-found) printf 'Function not found.\n' ;;
+  text) printf '%s\n' "$reply" ;;
+  *) printf 'unexpected STUB_REPLY_FORM=%s\n' "$STUB_REPLY_FORM" >&2; exit 99 ;;
+esac
 [[ -n ${STUB_STDERR:-} ]] && printf '%s\n' "$STUB_STDERR" >&2
 exit "${STUB_STATUS:-0}"
 EOF2
@@ -103,7 +109,7 @@ run_row() { # NAME RT ENVSTR ARGS WANT_OUT WANT_EXIT WANT_ERR
   local name="$1" rt="$2" envstr="$3" args="$4" want_out="$5" want_exit="$6" want_err="$7" out status err=""
   set +e
   # shellcheck disable=SC2086
-  out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt" $envstr "$repo/bin/vgsh" $args 2>"$tmp/err")"
+  out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt" $envstr "${INST_BIN:-$repo/bin/vgsh}" $args 2>"$tmp/err")"
   status=$?
   set -e
   [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
@@ -178,10 +184,16 @@ run_restart_capture() { # RUNTIME_DIR RECORD DISPATCH REPLY [ENV...]
 }
 
 dead_pid="$(( $(cat /proc/sys/kernel/pid_max) + 1 ))"
+ipc_error_line="$(printf '\033[31m ERROR\033[97m quickshell.ipc\033[0m: Error occurred while waiting for response.')" || { echo "test-vgsh: ipc-error-line=build-failed" >&2; exit 1; }
 
 run_row "enable prints ok" "$rt_live" "STUB_REPLY=ok" "plugin enable vgs.clock" "ok" 0 ""
+run_row "raw ipc prints ok" "$rt_live" "STUB_REPLY=ok" "ipc call shell ping" "ok" 0 ""
 run_row "reply is the last stdout line, log noise ahead of it is ignored" "$rt_live" "STUB_REPLY=ok STUB_NOISE=INFO:something" "plugin enable vgs.clock" "ok" 0 ""
 run_row "stderr after the reply does not become the reply" "$rt_live" "STUB_REPLY=ok STUB_STDERR=WARN:late" "plugin enable vgs.clock" "ok" 0 "WARN:late"
+run_row "raw ipc client failure exits 69" "$rt_live" "STUB_REPLY_FORM=ansi-ipc-error" "ipc call shell ping" "$ipc_error_line" 69 "vgsh: refused: ipc=shell.ping reason=client-error"
+run_row "enable client failure exits 69" "$rt_live" "STUB_REPLY_FORM=ansi-ipc-error" "plugin enable vgs.clock" "" 69 "vgsh: refused: ipc=shell.setPluginEnabled reason=client-error"
+run_row "enable empty IPC reply exits 69" "$rt_live" "STUB_REPLY_FORM=empty" "plugin enable vgs.clock" "" 69 "vgsh: refused: ipc=shell.setPluginEnabled reason=empty-reply"
+run_row "raw ipc function-not-found exits 69" "$rt_live" "STUB_REPLY_FORM=function-not-found" "ipc call shell missing" "Function not found." 69 "vgsh: refused: ipc=shell.missing reason=function-not-found"
 run_row "an unexpected reply is a refusal" "$rt_live" "STUB_REPLY=ok_hidden" "plugin disable vgs.bar" "" 1 "vgsh: refused: ok_hidden"
 run_row "a guard refusal from the shell is a refusal with exit 1" "$rt_live" "STUB_REPLY=refused:_guard=unowned" "plugin enable vgs.clock" "" 1 "vgsh: refused: refused:_guard=unowned"
 run_row "unknown id is a refusal with exit 1" "$rt_live" "STUB_REPLY=unknown:_x" "plugin enable x" "" 1 "vgsh: refused: unknown:_x"
@@ -210,6 +222,34 @@ run_row "a lock file holding no pid exits 69" "$rt_junk" "STUB_REPLY=ok" "plugin
 if [[ "$(cat "$tmp/args")" == "ipc --pid $$ call shell setPluginEnabled vgs.clock true" ]]; then ok "a manager call names the shell's pid from the lock file"; else fail "manager call args: $(cat "$tmp/args")"; fi
 "${base_env[@]}" XDG_RUNTIME_DIR="$rt_live" STUB_ARGS="$tmp/args" STUB_REPLY=ok "$repo/bin/vgsh" ipc call shell ping >/dev/null
 if [[ "$(cat "$tmp/args")" == "ipc --pid $$ call shell ping" ]]; then ok "a raw ipc call names the shell's pid from the lock file"; else fail "ipc args: $(cat "$tmp/args")"; fi
+
+ipc_mutant="$tmp/ipc-mutant"; mkdir -p "$ipc_mutant/bin"
+python3 - "$repo/bin/vgsh" "$ipc_mutant/bin/vgsh" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+needle = 'if ipc_reply_failure_reason "$label" "$last"; then'
+replacement = 'if false && ipc_reply_failure_reason "$label" "$last"; then'
+count = source.count(needle)
+if count != 2:
+    raise SystemExit(f"ipc-judge-control: expected two matches, found {count}")
+changed = source.replace(needle, replacement)
+if changed == source:
+    raise SystemExit("ipc-judge-control: mutation changed nothing")
+pathlib.Path(sys.argv[2]).write_text(changed)
+PY
+chmod +x "$ipc_mutant/bin/vgsh"; ln -s -- "$repo/bin/lib" "$ipc_mutant/bin/lib"
+set +e
+out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt_live" STUB_REPLY_FORM=ansi-ipc-error "$ipc_mutant/bin/vgsh" ipc call shell ping 2>"$tmp/err")"
+status=$?
+set -e
+err=""; [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
+if [[ $status == 69 && $err == "vgsh: refused: ipc=shell.ping reason=client-error" ]]; then
+  fail "the IPC judge mutant still holds"
+else
+  ok "the IPC judge mutant fails the raw ipc row"
+fi
 
 # The hidden reply carries a space, which env cannot pass; call directly.
 set +e
@@ -244,9 +284,10 @@ else
   fail "unlocked run: exit=$status record=$([[ -f $tmp/record ]] && echo present || echo absent) stderr=$(head -n 1 "$tmp/err")"
 fi
 
-mutant="$tmp/mutant"; mkdir -p "$mutant/bin" "$mutant/shell"
-cp -- "$repo/bin/vgsh" "$mutant/bin/vgsh"; chmod +x "$mutant/bin/vgsh"
-python3 - "$mutant/bin/vgsh" <<'PY'
+watcher_mutant="$tmp/watcher-mutant"; mkdir -p "$watcher_mutant/bin" "$watcher_mutant/shell"
+cp -- "$repo/bin/vgsh" "$watcher_mutant/bin/vgsh"; chmod +x "$watcher_mutant/bin/vgsh"
+ln -s -- "$repo/bin/lib" "$watcher_mutant/bin/lib"
+python3 - "$watcher_mutant/bin/vgsh" <<'PY'
 import pathlib
 import sys
 
@@ -264,7 +305,7 @@ path.write_text(changed)
 PY
 rt_mutant="$tmp/rt-mutant"; mkdir -p "$rt_mutant"
 set +e
-"${base_env[@]}" XDG_RUNTIME_DIR="$rt_mutant" STUB_RECORD="$tmp/record-mutant" "$mutant/bin/vgsh" run 2>"$tmp/err"
+"${base_env[@]}" XDG_RUNTIME_DIR="$rt_mutant" STUB_RECORD="$tmp/record-mutant" "$watcher_mutant/bin/vgsh" run 2>"$tmp/err"
 status=$?
 set -e
 mutant_record=""

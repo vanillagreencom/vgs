@@ -89,8 +89,9 @@ while read -r name; do unset "$name"; done < <(compgen -v GIT_CONFIG_ | grep -E 
 # A scratch repository with the files the scripts read and COMMITS commits.
 fixture() { # DIR COMMITS
   local dir="$1" i
-  mkdir -p "$dir/bin" "$dir/packaging/fedora" "$dir/.copr" "$dir/scripts/lib"
+  mkdir -p "$dir/bin/lib" "$dir/packaging/fedora" "$dir/.copr" "$dir/scripts/lib"
   cp -- "$repo/bin/vgsh" "$dir/bin/"
+  cp -- "$repo/bin/lib/ipc-reply.sh" "$dir/bin/lib/"
   cp -- "$repo/scripts/lib/release-tarball.sh" "$dir/scripts/lib/"
   cp -- "$repo/VERSION" "$dir/"
   cp -- "$repo/packaging/fedora/srpm.sh" "$repo/packaging/fedora/vgs.spec" "$repo/packaging/fedora/vgs-git.spec" "$dir/packaging/fedora/"

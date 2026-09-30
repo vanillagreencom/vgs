@@ -393,8 +393,9 @@ echo "=== pid resolution ==="
 toolbin="$tmp/toolbin"
 qsbin="$tmp/qsbin"
 rt="$tmp/rt"
-mkdir -p "$toolbin" "$qsbin" "$rt" "$tmp/home" "$tmp/bin"
+mkdir -p "$toolbin" "$qsbin" "$rt" "$tmp/home" "$tmp/bin/lib"
 cp "$repo_root/bin/vgsh" "$tmp/bin/vgsh"
+cp "$repo_root/bin/lib/ipc-reply.sh" "$tmp/bin/lib/ipc-reply.sh"
 chmod +x "$tmp/bin/vgsh"
 for tool in bash env awk grep find date getconf python3 mkdir dirname cat sleep id readlink head; do
   ln -s "$(command -v "$tool")" "$toolbin/$tool" ||
