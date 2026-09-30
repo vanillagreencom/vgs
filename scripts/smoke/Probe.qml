@@ -50,6 +50,9 @@ Scope {
     property var replyPageOrder: []
     readonly property var runnerContext: ({ id: "smoke-runner-copy", onDispose: () => () => {} })
 
+    // Large replies are paged because Quickshell can close the socket
+    // before a reply past its send buffer drains (runtime.md). Keep at
+    // most the eight newest replies, and answer with the page id.
     function answer(text) {
         if (typeof text !== "string") return text;
         if (text.length <= root.replyChars) return text;
@@ -63,6 +66,7 @@ Scope {
         return "paged=" + id;
     }
 
+    // JSON reply helper for every probe answer that can grow.
     function json(value) {
         const text = JSON.stringify(value);
         return root.answer(text === undefined ? "undefined" : text);
@@ -192,12 +196,6 @@ Scope {
                 if (found !== undefined) return found;
             }
         return null;
-    }
-
-    function shownIn(rootItem, child) {
-        for (let at = child; at !== null && at !== rootItem; at = at.parent)
-            if (!at.visible) return false;
-        return child.visible;
     }
 
     // The first visible, enabled item named `type` whose `text`, or `name`
@@ -333,6 +331,7 @@ Scope {
     IpcHandler {
         target: "smoke"
         function pageChars(): int { return root.replyChars; }
+        // Page replies are `<pages> <slice>`. The last page drops the reply.
         function page(id: string, index: int): string {
             const text = root.replyPages[id];
             if (text === undefined) return "absent";
@@ -406,13 +405,13 @@ Scope {
                     }
             return root.json(out);
         }
-        // A small reading for latency rows that only need a count, not each text item.
+        // The count of visible items named TYPE whose PROPERTY text
+        // contains NEEDLE, in a plugin's layer copies.
         function layerItemsWith(id: string, type: string, property: string, needle: string): int {
             let total = 0;
             for (const entry of Layers.entries.filter(e => e.pluginId === id))
                 for (const screen of Object.keys(entry.screens).sort()) {
-                    const rootItem = entry.screens[screen];
-                    for (const item of root.descendants(rootItem).filter(i => root.typeName(i) === type && root.shownIn(rootItem, i)))
+                    for (const item of root.descendants(entry.screens[screen]).filter(i => root.typeName(i) === type && i.visible))
                         if (String(item[property]).indexOf(needle) !== -1) total += 1;
                 }
             return total;

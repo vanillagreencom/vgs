@@ -619,7 +619,9 @@ expect_cursor_at() { # LABEL SHAPE X Y
 ipc_reply_chars=32768
 ipc_last_reply=""
 
-ipc_call_last() { # VGSH TARGET FUNCTION [ARG...]
+# ipc_call_last VGSH TARGET FUNCTION [ARG...]: run one IPC call and keep
+# the last stdout line in ipc_last_reply.
+ipc_call_last() {
   local vgsh="$1" out status
   shift
   ipc_last_reply=""
@@ -631,15 +633,17 @@ ipc_call_last() { # VGSH TARGET FUNCTION [ARG...]
 
 ipc_strip_ansi() { sed $'s/\x1b\[[0-9;]*m//g' <<<"$1"; }
 
+# Quickshell 0.3.1 prints these forms in src/io/ipccomm.cpp callFunction
+# and src/ipc/ipc.hpp waitForResponse.
 ipc_failure_text() { # LINE
   local line="$1" stripped
-  case "$line" in
-    *quickshell.ipc*|"Function not found."|"Target not found."|"Not ready to accept queries yet."|"Target required to send message."|"Function required to send message."|Too\ many\ arguments\ provided*|Too\ few\ arguments\ provided*|Unable\ to\ parse\ argument*|Function\ definition:*) ;;
-    *) return 1 ;;
-  esac
   stripped="$(ipc_strip_ansi "$line")" || return 1
+  if [[ $line == *quickshell.ipc* && $stripped == *"ERROR quickshell.ipc"* ]]; then
+    printf '%s\n' "$stripped"
+    return 0
+  fi
   case "$stripped" in
-    *"ERROR quickshell.ipc"*|"Function not found."|"Target not found."|"Not ready to accept queries yet."|"Target required to send message."|"Function required to send message."|Too\ many\ arguments\ provided*|Too\ few\ arguments\ provided*|Unable\ to\ parse\ argument*|Function\ definition:*) printf '%s\n' "$stripped" ;;
+    "Function not found."|"Target not found."|"Not ready to accept queries yet."|"Target required to send message."|"Function required to send message."|Too\ many\ arguments\ provided*|Too\ few\ arguments\ provided*|Unable\ to\ parse\ argument*|Function\ definition:*) printf '%s\n' "$stripped" ;;
     *) return 1 ;;
   esac
 }
@@ -657,7 +661,9 @@ ipc_page_failed() { # TEXT
   return 1
 }
 
-ipc_pages() { # VGSH ID
+# ipc_pages VGSH ID: fetch all pages for a paged smoke reply and print the
+# concatenated document, or ipc-failed.
+ipc_pages() {
   local vgsh="$1" id="$2" index=0 pages="" reply count slice text="" status
   while :; do
     if ipc_call_last "$vgsh" smoke page "$id" "$index"; then
@@ -693,7 +699,10 @@ ipc_pages() { # VGSH ID
   printf '%s\n' "$text"
 }
 
-ipc_via() { # VGSH TARGET FUNCTION [ARG...]
+# ipc_via VGSH TARGET FUNCTION [ARG...]: run the smoke IPC transport,
+# classify client failure lines, reassemble smoke pages and record
+# oversize replies.
+ipc_via() {
   local vgsh="$1" target="$2" fn="$3" status reply id
   shift 3
   if ipc_call_last "$vgsh" "$target" "$fn" "$@"; then

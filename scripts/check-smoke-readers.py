@@ -5,9 +5,10 @@ states.
 A smoke row reads the shell through the probe or the compositor and parses
 the answer with an inline Python program. The probe answers a state word,
 such as `absent` or `ipc-failed`, in place of JSON, and an empty reply can
-still come from a failed command; `json.load` raises on both, and a poll that retries past the failed read
-leaves the traceback in the log behind a passing check. `py_reply` in
-scripts/smoke/harness.sh answers the word itself and parses only JSON, so a
+still come from a failed command. A raw JSON reader raises on these states,
+and a poll that retries past the failed read leaves the traceback in the
+log behind a passing check. `py_reply` in scripts/smoke/harness.sh answers
+the word itself and parses only JSON, so a
 program in a row that parses JSON from its stdin is `py_reply`'s program:
   inline-reader   the read's command is python3, not py_reply.
   unowned-reader  the read is not inside the literal that opens py_reply's

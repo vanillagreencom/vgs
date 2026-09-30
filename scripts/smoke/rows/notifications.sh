@@ -1050,11 +1050,7 @@ latency_since() {
   shift 3
   latency_ms=-1
   while (( $(date +%s%3N) - start < latency_bound_ms )); do
-    if got="$("$@" 2>"$err")"; then
-      :
-    else
-      :
-    fi
+    got="$("$@" 2>"$err")" || :
     reader_stderr "$label" "$err" || return 0
     last="$got"
     [[ $got =~ ^[0-9]+$ ]] || got=0
@@ -1066,46 +1062,44 @@ latency_since() {
     [[ -z $last_ipc ]] || printf '        %s\n' "$last_ipc"
   fi
 }
-emoji_vgsh_once() { # PATH THEN_REPLY
-  python3 - "$1" "$2" <<'PY'
-import pathlib, sys
-path, reply = sys.argv[1], sys.argv[2]
-pathlib.Path(path).write_text("""#!/usr/bin/env bash
+ipc_cut_stand_in() { # PATH FAIL_COUNT|always THEN_REPLY
+  local path="$1" fail_count="$2" reply="$3" counter_q fail_q reply_q
+  printf -v counter_q '%q' "$path.count"
+  printf -v fail_q '%q' "$fail_count"
+  printf -v reply_q '%q' "$reply"
+  cat >"$path" <<SH
+#!/usr/bin/env bash
 set -euo pipefail
-counter="$0.count"
+counter=$counter_q
+fail_count=$fail_q
+reply=$reply_q
 count=0
-[[ -f $counter ]] && count="$(cat -- "$counter")"
-count=$((count + 1))
-printf '%%s\n' "$count" >"$counter"
-if [[ $count -eq 1 ]]; then
+[[ -f \$counter ]] && count="\$(cat -- "\$counter")"
+count=\$((count + 1))
+printf '%s\n' "\$count" >"\$counter"
+if [[ \$fail_count == always || \$count -le \$fail_count ]]; then
   printf '\033[31m ERROR\033[97m quickshell.ipc\033[0m: Socket Error QLocalSocket::PeerClosedError\n'
   printf '\033[31m ERROR\033[97m quickshell.ipc\033[0m: Error occurred while waiting for response.\n'
 else
-  printf '%%s\n' %s
+  printf '%s\n' "\$reply"
 fi
-""" % repr(reply))
-PY
+SH
   chmod 755 "$1"
 }
-emoji_retry_control() {
-  local fake="$sandbox/vgsh-emoji-retry" start
-  emoji_vgsh_once "$fake" 1
+ipc_cut_retry_control() {
+  local fake="$sandbox/vgsh-ipc-retry" start
+  ipc_cut_stand_in "$fake" 1 1
   (ipc() { ipc_via "$fake" "$@"; }; latency_bound_ms=2000; latency_since "control retry" "$(date +%s%3N)" 1 emoji_texts >/dev/null; [[ $latency_ms =~ ^[0-9]+$ ]] && echo recovered || echo "latency=$latency_ms")
 }
-expect "control: a cut IPC reply is retried by the latency reader" recovered emoji_retry_control
-emoji_cut_failure_control() {
-  local fake="$sandbox/vgsh-emoji-cut" out
-  cat >"$fake" <<'SH'
-#!/usr/bin/env bash
-printf '\033[31m ERROR\033[97m quickshell.ipc\033[0m: Socket Error QLocalSocket::PeerClosedError\n'
-printf '\033[31m ERROR\033[97m quickshell.ipc\033[0m: Error occurred while waiting for response.\n'
-SH
-  chmod 755 "$fake"
+expect "control: a cut IPC reply is retried by the latency reader" recovered ipc_cut_retry_control
+ipc_cut_failure_control() {
+  local fake="$sandbox/vgsh-ipc-cut" out
+  ipc_cut_stand_in "$fake" always 1
   out="$(ipc() { ipc_via "$fake" "$@"; }; latency_bound_ms=250; latency_since "control cut" "$(date +%s%3N)" 1 emoji_texts)"
   if [[ $out == *ipc-failed* && $out == *"Error occurred while waiting for response."* ]]; then echo named; else printf '%s\n' "$out"; fi
 }
-expect "control: a lasting cut IPC reply names the raw client line" named emoji_cut_failure_control
-emoji_page_control() {
+expect "control: a lasting cut IPC reply names the raw client line" named ipc_cut_failure_control
+ipc_page_control() {
   local fake="$sandbox/vgsh-page-ok"
   cat >"$fake" <<'SH'
 #!/usr/bin/env bash
@@ -1123,8 +1117,8 @@ SH
   chmod 755 "$fake"
   ipc_via "$fake" smoke anything
 }
-expect "control: ipc_via reassembles a paged probe reply" '{"a":1}' emoji_page_control
-emoji_page_failure_control() {
+expect "control: ipc_via reassembles a paged probe reply" '{"a":1}' ipc_page_control
+ipc_page_failure_control() {
   local fake="$sandbox/vgsh-page-fails"
   cat >"$fake" <<'SH'
 #!/usr/bin/env bash
@@ -1143,22 +1137,18 @@ SH
   got="$(ipc_via "$fake" smoke anything || true)"
   printf '%s\n' "$got"
 }
-expect "control: a failed page yields ipc-failed, not a partial document" ipc-failed emoji_page_failure_control
-emoji_oversize_control() {
-  local fake="$sandbox/vgsh-oversize"
-  python3 - "$fake" "$ipc_reply_chars" <<'PY'
-import pathlib, sys
-path, bound = sys.argv[1], int(sys.argv[2])
-pathlib.Path(path).write_text("""#!/usr/bin/env bash
-python3 - <<'INNER'
-print("x" * %d)
-INNER
-""" % (bound + 1))
-PY
+expect "control: a failed page yields ipc-failed, not a partial document" ipc-failed ipc_page_failure_control
+ipc_oversize_control() {
+  local fake="$sandbox/vgsh-oversize" chars=$((ipc_reply_chars + 1))
+  cat >"$fake" <<SH
+#!/usr/bin/env bash
+head -c $chars /dev/zero | tr '\\0' x
+echo
+SH
   chmod 755 "$fake"
   (failures=0; ipc_via "$fake" product target >/dev/null; ipc_oversize_check control >/dev/null; [[ $failures -eq 1 && ! -s $sandbox/ipc-oversize.log ]] && echo failed-once || echo "failures=$failures")
 }
-expect "control: an unpaged oversize reply fails its row once" failed-once emoji_oversize_control
+expect "control: an unpaged oversize reply fails its row once" failed-once ipc_oversize_control
 expect "the smoke probe and harness agree on the page size" "$ipc_reply_chars" ipc smoke pageChars
 # The control: a latency reader that raises fails its reading once.
 latency_traceback_control() { (failures=0 behaviour_failures=0; latency_since "the planted latency reader" "$(date +%s%3N)" 1 python3 -c 'raise ValueError("planted")' >"$sandbox/latency-traceback-control.log"; echo "$failures $latency_ms"); }
@@ -1187,8 +1177,8 @@ raw_emoji_layer_items() { "${shell_env[@]}" "$repo/bin/vgsh" ipc call smoke laye
 raw_paged() { local r; r="$(raw_emoji_layer_items)" || return; [[ $r =~ ^paged=[0-9]+$ ]] && echo paged || printf '%s\n' "$r"; }
 emoji_layer_images() { ipc smoke layerItems vgs.notifications QQuickText text,visible | py_reply 'import json,sys; print(sum(1 for s, r, v in json.load(sys.stdin) if v["visible"] and "<img src=" in v["text"]))'; }
 expect "the raw emoji inbox text reply is paged" paged raw_paged
-emoji_layer_items_whole() { ipc smoke layerItems vgs.notifications QQuickText text,visible | py_reply 'import json,sys; print("whole" if isinstance(json.load(sys.stdin), list) else "not-list")'; }
-expect "the paged emoji inbox text reply reassembles as JSON through ipc" whole emoji_layer_items_whole
+emoji_layer_images_hold_all() { [[ $(emoji_layer_images) -ge $((40 * monitors)) ]] && echo True || echo False; }
+expect "the paged emoji inbox text reply reassembles whole through ipc" True emoji_layer_images_hold_all
 expect "the probe counts exactly the forty visible emoji inbox texts" "$((40 * monitors))" emoji_texts
 expect "the emoji inbox closes" ok notes close
 expect_poll "the emoji inbox closed" '""' read_notes panelMode

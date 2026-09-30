@@ -119,9 +119,7 @@ def records(path):
     if not os.path.exists(path):
         return []
     text = open(path).read()
-    lines = text.splitlines()
-    if text and not text.endswith("\n"):
-        lines = lines[:-1]
+    lines = text.split("\n")[:-1]
     return [json.loads(line) for line in lines]
 
 path, mode = sys.argv[1], sys.argv[2]
