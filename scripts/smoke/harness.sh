@@ -711,10 +711,10 @@ theme_idle() { # [IPC_FN]
 #
 # qs buffers stdout when redirected, so the shell's own per-instance log
 # file is the record: it is line-flushed and holds every QML warning. The
-# runner starts qs as its child and waits on it (runtime.md § Process), so
-# the shell's pid is never the runner's. spawn's setsid does not fork, as
-# a background job is no process group leader, so the runner is
-# spawn_pid itself.
+# runner starts qs as its child and waits on it
+# (docs/architecture/runtime.md § Process), so the shell's pid is never
+# the runner's. spawn's setsid does not fork, as a background job is no
+# process group leader, so the runner is spawn_pid itself.
 start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
   local tree="$1" log="$2" bar="${3:-bar}" start_cpu_some_us start_ms bar_cpu_some_us layers_text tenths pong up=false child instance_id
   shift $(( $# < 3 ? $# : 3 ))
@@ -772,14 +772,15 @@ start_shell() { # TREE LOG [BAR [NAME=VALUE...]]
 # stop_shell: TERM to the runner start_shell started, which passes it to
 # the shell, then a wait on the instance lock the runner holds, before a
 # row starts another. The runner exits after the shell and holds the lock
-# until then, and no process the shell starts holds it (runtime.md
-# § Process), so the lock frees when the shell has exited, whatever
-# processes the shell left behind; the next `vgsh run` refuses until
-# then. The bound is stop_lock_wait_s, the 10 s `vgsh restart` gives the
-# same wait. On the bound the row fails, naming each process that holds
-# the lock, and it returns 1 with the runner unreaped. Once the lock is
-# free it reaps the runner and clears shell_pid, so a second stop signals
-# no stale pid. rows/start-order.sh holds the controls.
+# until then, and no process the shell starts holds it
+# (docs/architecture/runtime.md § Process), so the lock frees when the
+# shell has exited, whatever processes the shell left behind; the next
+# `vgsh run` refuses until then. The bound is stop_lock_wait_s, the 10 s
+# `vgsh restart` gives the same wait. On the bound the row fails, naming
+# each process that holds the lock, and it returns 1 with the runner
+# unreaped. Once the lock is free it reaps the runner and clears
+# shell_pid, so a second stop signals no stale pid. rows/start-order.sh
+# holds the controls.
 stop_lock_wait_s=10
 stop_shell() {
   local lock="$rt_dir/vgsh.lock"
