@@ -52,6 +52,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [validation.md](validation.md), [validation-smoke.md](validation-smoke.md) and [validation-smoke-harness.md](validation-smoke-harness.md): read before touching `scripts/validate`, the nested sandbox, its harness or a smoke row's verdict.
 - [validation-smoke-faults.md](validation-smoke-faults.md): read before touching a sandbox fault the smoke excuses, a mode a row holds on the nested output, or `scripts/smoke/verdict.sh`.
 - [validation-latency.md](validation-latency.md): read before touching a latency the smoke reads or its budget.
+- [readme-images.md](readme-images.md): read before touching a plugin README's screenshot, `docs/images/plugins/`, `scripts/readme-shots.sh` or its check.
 - [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS; it links each channel's file.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.
 - [decisions.md](decisions.md): read for the one-line list of decisions, and add a line there with each new decision record.
