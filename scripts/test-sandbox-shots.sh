@@ -304,8 +304,11 @@ git_quiet init -q
 git_quiet add shell bin config themes
 git_quiet commit -q -m manager
 old_rev="$(git -C "$shots_repo" rev-parse HEAD)"
-mkdir -p "$shots_repo/shell/plugins/vgs.settings"
+mkdir -p "$shots_repo/shell/plugins/vgs.settings" "$shots_repo/shell/plugins/vgs.themes"
 : >"$shots_repo/shell/plugins/vgs.settings/manifest.json"
+# The checkout ships the theme browsers, so their scene reaches the theme
+# card check; it ships no Dev Tools, whose scene is refused.
+: >"$shots_repo/shell/plugins/vgs.themes/manifest.json"
 git -C "$shots_repo" rm -q shell/plugins/vgs.bar/Manager.qml
 git_quiet add shell
 git_quiet commit -q -m settings
