@@ -7,6 +7,7 @@ vendor version applies. D-Bus cases use org.freedesktop.DBus's standard API.
 """
 import errno
 import fcntl
+import json
 import os
 from pathlib import Path
 import shutil
@@ -54,6 +55,23 @@ elif mode == "orphan":
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     assert process.stdout.readline().strip() == "locked"
     print(os.environ["JARVIS_TEST_ROOT"])
+elif mode in ("cancel", "cli-timeout", "timeout-world"):
+    # Keep stderr inherited: a leaked descendant retains the caller's output
+    # pipe as well as this lock. A finite lifetime lets broken controls end.
+    process = subprocess.Popen(["/usr/bin/python3", __file__, "lock", sys.argv[2]],
+                               env=dict(os.environ), cwd=os.environ["HOME"],
+                               stdout=subprocess.PIPE, text=True)
+    assert process.stdout.readline().strip() == "locked"
+    record = {"root": os.environ.get("JARVIS_TEST_ROOT")}
+    if mode == "cli-timeout":
+        Path(sys.argv[3]).write_text(json.dumps(record))
+    print(json.dumps(record), flush=True)
+    # This real wait exposes ignored cancellation. The marker can only be
+    # emitted when the fixture survives until its own, unrequested exit.
+    time.sleep(2)
+    if mode == "cli-timeout":
+        Path(sys.argv[3]).write_text(json.dumps({**record, "expired": True}))
+    print("fixture=expired", flush=True)
 elif mode == "namespace":
     kinds = ("user", "net", "pid")
     mine = [os.readlink("/proc/self/ns/" + kind) for kind in kinds]
@@ -134,24 +152,66 @@ elif mode == "activation":
         result = bus_call(kind, "StartServiceByName", "org.vgs.JarvisFixture", "0")
         assert result.returncode != 0
         assert "org.freedesktop.DBus.Error.ServiceUnknown" in result.stderr, result.stderr
-elif mode == "tmux":
+elif mode in ("tmux", "tmux-safe"):
     # The helper must ignore even a scratch home's config. Mutations can
     # select this file safely without reading /etc or a live user's config.
     (Path(os.environ["HOME"]) / ".tmux.conf").write_text("set -g @jarvis_fixture loaded\n")
     result = child(["tmux", "new-session", "-d", "-s", "fixture", "sleep 60"])
     assert result.returncode == 0, result.stderr
-    result = child(["tmux", "display-message", "-p", "#{socket_path}"])
+    options = sys.argv[2:] if mode == "tmux-safe" else []
+    result = child(["tmux", *options, "display-message", "-p", "#{socket_path}"])
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == os.environ["JARVIS_TEST_TMUX_SOCKET"]
     result = child(["tmux", "show-option", "-gqv", "@jarvis_fixture"])
     assert result.returncode == 0 and result.stdout.strip() == ""
-elif mode == "tmux-override":
-    flag = sys.argv[2]
-    value = {"-S": os.environ["XDG_RUNTIME_DIR"] + "/override.sock",
-             "-L": "override", "-f": "/dev/null"}[flag]
-    result = child(["tmux", flag, value, "new-session", "-d", "-s", "fixture", "sleep 60"])
-    assert result.returncode == 2, result
-    assert result.stderr.splitlines()[0] == "jarvis-env: tmux=override-refused"
+elif mode in ("tmux-override", "tmux-getopt"):
+    # Values remain scratch-only even when the wrapper's guard is mutated.
+    config = Path(os.environ["HOME"]) / ".tmux.conf"
+    config.write_text("set -g @jarvis_fixture loaded\n")
+    shapes = {
+        "socket": ["-S", "{socket}"],
+        "label": ["-L", "override"],
+        "config": ["-f", "{config}"],
+        "cluster-socket": ["-uS", "{socket}"],
+        "attached-socket": ["-uS{socket}"],
+        "cluster-config": ["-2f", "{config}"],
+        "attached-config": ["-2f{config}"],
+        "cluster-label": ["-uL", "override"],
+        "post-feature-socket": ["-T", "256", "-S", "{socket}"],
+        "post-attached-feature-config": ["-T256", "-f", "{config}"],
+        "post-cluster-feature-label": ["-uT", "256", "-L", "override"],
+        "post-command-socket": ["-c", "printf fixture", "-S", "{socket}"],
+        "unknown": ["-Z"],
+        "missing-value": ["-T"],
+    }
+    shape = sys.argv[2]
+    socket_path = os.environ["XDG_RUNTIME_DIR"] + "/override.sock"
+    options = [arg.format(socket=socket_path, config=config) for arg in shapes[shape]]
+    command = [] if shape in ("post-command-socket", "unknown", "missing-value") else [
+        "new-session", "-d", "-s", "fixture", "sleep 60"]
+    if mode == "tmux-getopt":
+        # Prove that the vendor really parses the bypass forms before using
+        # them as guard controls. Both possible targets are private sockets.
+        binary = os.environ["JARVIS_TEST_ROOT"] + "/bootstrap/tmux"
+        base = [binary, "-f", "/dev/null", "-S", os.environ["JARVIS_TEST_TMUX_SOCKET"]]
+        result = child([*base, *options, *command])
+        assert result.returncode == 0, result.stderr
+        if "socket" in shape:
+            if shape == "post-command-socket":
+                assert result.stdout == "fixture"
+            else:
+                assert Path(socket_path).is_socket()
+        elif "config" in shape:
+            result = child([*base, "show-option", "-gqv", "@jarvis_fixture"])
+            assert result.returncode == 0 and result.stdout.strip() == "loaded"
+    else:
+        result = child(["tmux", *options, *command])
+        assert result.returncode == 2, result
+        assert result.stderr.splitlines()[0] == "jarvis-env: tmux=override-refused"
+elif mode == "tmux-command":
+    result = child(["tmux", "-uc", "printf '%s' '-S value'"])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "-S value"
 elif mode == "audio":
     runtime = os.environ["XDG_RUNTIME_DIR"]
     assert os.environ["PIPEWIRE_RUNTIME_DIR"] == runtime

@@ -17,8 +17,8 @@ const probe = path.join(__dirname, "fixtures/jarvis-env/probe.py");
 const systemPath = "/usr/bin:/usr/sbin:/bin:/sbin";
 class Unavailable extends Error {}
 
-function run(command, args, env) {
-    const result = cp.spawnSync(command, args, { env, cwd: env.HOME, encoding: "utf8", timeout: 60000 });
+function run(command, args, env, timeout = 60000) {
+    const result = cp.spawnSync(command, args, { env, cwd: env.HOME, encoding: "utf8", timeout, killSignal: "SIGTERM" });
     if (result.error?.code === "ENOENT") throw new Unavailable("missing=" + command);
     if (result.error) throw result.error;
     if (result.signal) throw new Error("test-jarvis-env: child-signal=" + result.signal);
@@ -31,15 +31,39 @@ function explicitEnv(root) {
         JARVIS_PARENT_ONLY: "scrub-me", VGS_TEST_RUN: "1" };
 }
 
+// This is the suite's namespace supervisor, not a CLI world owner with TERM
+// traps. SIGKILL is required because unshare --fork ignores TERM while waiting.
+function runNamespace(args, env, timeout = 180000) {
+    return cp.spawnSync("/usr/bin/unshare",
+        ["-rn", "--pid", "--fork", "--mount-proc", "--kill-child", "--", ...args],
+        { env, cwd: env.HOME, encoding: "utf8", timeout, killSignal: "SIGKILL" });
+}
+
+function namespaceTimeout(root) {
+    const env = explicitEnv(root);
+    const lock = path.join(root, "timeout.lock");
+    const started = process.hrtime.bigint();
+    // A real timeout: the fixture has a live descendant and output pipe, and
+    // must be cancelled before it emits its natural-expiration marker.
+    const result = runNamespace(["/usr/bin/python3", probe, "timeout-world", lock], env, 1000);
+    assert.equal(result.error?.code, "ETIMEDOUT");
+    assert.match(result.stdout, /"root": null/, "the descendant must start before timeout");
+    assert.equal(result.signal, "SIGKILL");
+    assert.doesNotMatch(result.stdout, /fixture=expired/, "timeout must stop the running fixture");
+    assert.equal(run("/usr/bin/python3", [probe, "acquire", lock], env).status, 0, "timeout must end the descendant");
+    console.log("  ok    namespace-timeout elapsed-ms=" + Number(process.hrtime.bigint() - started) / 1e6);
+}
+
 async function main() {
+    if (process.argv[2] === "--namespace-timeout") {
+        namespaceTimeout(process.argv[3]);
+        return;
+    }
     if (process.argv[2] !== "--inside") {
         const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "test-jarvis-env-")));
         fs.mkdirSync(path.join(root, "parent-home"));
         try {
-            const result = cp.spawnSync("/usr/bin/unshare",
-                ["-rn", "--pid", "--fork", "--mount-proc", "--kill-child", "--",
-                    process.execPath, __filename, "--inside", root],
-                { env: explicitEnv(root), cwd: root, encoding: "utf8", timeout: 180000 });
+            const result = runNamespace([process.execPath, __filename, "--inside", root], explicitEnv(root));
             if (result.error?.code === "ENOENT") throw new Unavailable("missing=unshare");
             if (result.error) throw result.error;
             process.stdout.write(result.stdout);
@@ -98,13 +122,17 @@ async function main() {
         assert.equal(result.status, 1, result.stdout + result.stderr);
         assert.equal(result.stderr.trim(), "outbound=blocked errno=101");
     }
-    function mutation(name, old, replacement, check, count = 1) {
+    function mutationFile(name, old, replacement, count = 1) {
         assert.equal(source.split(old).length - 1, count, name + ": mutation match");
         const changed = source.split(old).join(replacement);
         assert.notEqual(changed, source);
         const file = path.join(root, name + ".sh");
         fs.writeFileSync(file, changed);
         assert.equal(run("/bin/bash", ["-n", file], env).status, 0, name + ": syntax");
+        return file;
+    }
+    function mutation(name, old, replacement, check, count = 1) {
+        const file = mutationFile(name, old, replacement, count);
         assert.throws(() => check(file), assert.AssertionError, name + ": test must turn red");
         controls++;
         console.log("  ok    control=" + name);
@@ -115,14 +143,92 @@ async function main() {
         assert.equal(result.stderr.trim(), key);
     }
 
+    async function cancellation(file, signal) {
+        const lock = path.join(root, "cancel.lock");
+        const started = process.hrtime.bigint();
+        // The owned group is a safety net for intentionally broken copies.
+        // The assertion samples cleanup before this fallback removes anything.
+        const launcher = cp.spawn("/bin/bash",
+            ["--noprofile", "--norc", file, standins, "--", "python3", probe, "cancel", lock],
+            { env, cwd: env.HOME, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+        let stdout = "", stderr = "", world, atExit, forced = false;
+        const closed = new Promise((resolve, reject) => {
+            launcher.once("error", reject);
+            launcher.once("close", (code, received) => resolve({ code, signal: received }));
+        });
+        const ready = new Promise((resolve, reject) => {
+            launcher.stdout.on("data", data => {
+                stdout += data;
+                if (!world && stdout.includes("\n")) {
+                    try {
+                        world = JSON.parse(stdout.split("\n")[0]).root;
+                        resolve();
+                    } catch (error) { reject(error); }
+                }
+            });
+            launcher.once("error", reject);
+            launcher.once("close", code => {
+                if (!world) reject(code === 77 ? new Unavailable(stderr) : new Error("cancellation fixture did not start: " + stderr));
+            });
+        });
+        launcher.stderr.on("data", data => { stderr += data; });
+        launcher.once("exit", () => {
+            atExit = { removed: world && !fs.existsSync(world),
+                descendantEnded: run("/usr/bin/python3", [probe, "acquire", lock], env).status === 0 };
+        });
+        const watchdog = setTimeout(() => {
+            forced = true;
+            try { process.kill(-launcher.pid, "SIGKILL"); } catch (error) {
+                if (error.code !== "ESRCH") throw error;
+            }
+        }, 5000); // Bounds a deliberately broken cleanup control, never a pass.
+        try {
+            await ready;
+            assert.equal(launcher.kill(signal), true, "signal the exact CLI PID");
+            const result = await closed; // close also proves both output pipes reached EOF.
+            assert.equal(forced, false, "cancellation must not need the test watchdog");
+            assert.equal(atExit.removed, true, "scratch must be removed before the CLI exits");
+            assert.equal(atExit.descendantEnded, true, "descendant must end before the CLI exits");
+            assert.doesNotMatch(stdout, /fixture=expired/, "cancelled fixture must not run to natural expiry");
+            assert.equal(result.code, { SIGTERM: 143, SIGINT: 130, SIGHUP: 129 }[signal], stderr);
+            assert.equal(result.signal, null, "the CLI must handle cancellation");
+            console.log("  ok    cancellation=" + signal + " elapsed-ms=" + Number(process.hrtime.bigint() - started) / 1e6);
+        } finally {
+            clearTimeout(watchdog);
+            // Never leave the disabled-cleanup control's process group alive.
+            try { process.kill(-launcher.pid, "SIGKILL"); } catch (error) {
+                if (error.code !== "ESRCH") throw error;
+            }
+            await closed;
+            if (world) fs.rmSync(world, { recursive: true, force: true });
+        }
+    }
+
+    function cliTimeout(file) {
+        const lock = path.join(root, "cli-timeout.lock");
+        const record = path.join(root, "cli-timeout.json");
+        fs.rmSync(record, { force: true });
+        const started = process.hrtime.bigint();
+        // Use the shipped synchronous caller's actual timeout path. Its TERM
+        // must reach the CLI owner and close the descendant's inherited pipe.
+        assert.throws(() => run("/bin/bash",
+            [file, standins, "--", "python3", probe, "cli-timeout", lock, record], env, 1000),
+        error => error.code === "ETIMEDOUT");
+        const result = JSON.parse(fs.readFileSync(record, "utf8"));
+        assert.equal(result.expired, undefined, "CLI timeout must cancel, not wait for natural expiry");
+        assert.equal(fs.existsSync(result.root), false, "CLI timeout must remove scratch");
+        assert.equal(run("/usr/bin/python3", [probe, "acquire", lock], env).status, 0, "CLI timeout must end descendants");
+        console.log("  ok    cli-timeout elapsed-ms=" + Number(process.hrtime.bigint() - started) / 1e6);
+    }
+
     try {
         const standinResult = cli(helper, standins, "jarvis-standin");
         assert.equal(standinResult.status, 0, standinResult.stderr);
         assert.equal(standinResult.stdout, "standin=ok\n");
         const sourced = run("/bin/bash", ["--noprofile", "--norc", "-c",
-            'source "$1"; jarvis_env_run "$2" -- jarvis-standin', "probe", helper, standins], env);
+            'trap "printf caller-exit" EXIT; umask 022; before="$PWD"; source "$1"; jarvis_env_run "$2" -- jarvis-standin; [[ "$PWD" == "$before" && $(umask) == 0022 && "$JARVIS_PARENT_ONLY" == scrub-me ]]', "probe", helper, standins], env);
         assert.equal(sourced.status, 0, sourced.stderr);
-        assert.equal(sourced.stdout, "standin=ok\n");
+        assert.equal(sourced.stdout, "standin=ok\ncaller-exit");
         missingStandin(helper);
         outbound(helper);
         // Prove the synthetic outbound destination is reachable before
@@ -135,7 +241,21 @@ async function main() {
         good(helper, "buses");
         good(helper, "activation");
         good(helper, "tmux");
-        for (const flag of ["-S", "-L", "-f"]) good(helper, "tmux-override", flag);
+        const tmuxShapes = ["socket", "label", "config", "cluster-socket", "attached-socket",
+            "cluster-config", "attached-config", "cluster-label", "post-feature-socket",
+            "post-attached-feature-config", "post-cluster-feature-label", "post-command-socket"];
+        for (const shape of tmuxShapes) {
+            good(helper, "tmux-getopt", shape);
+            good(helper, "tmux-override", shape);
+        }
+        for (const shape of ["unknown", "missing-value"]) good(helper, "tmux-override", shape);
+        for (const options of [[], ["-u2"], ["-T", "256"], ["-T256"], ["-uT256"], ["-T", "-S"], ["--"]]) {
+            good(helper, "tmux-safe", ...options);
+        }
+        good(helper, "tmux-command");
+        for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) await cancellation(helper, signal);
+        cliTimeout(helper);
+        namespaceTimeout(root);
         good(helper, "audio");
         const directories = [
             ["HOME", "home"], ["XDG_CONFIG_HOME", "config"], ["XDG_DATA_HOME", "data"],
@@ -178,9 +298,38 @@ async function main() {
             file => good(file, "tmux"));
         mutation("tmux-config", "-f /dev/null -S", '-f "$JARVIS_TEST_ROOT/home/.tmux.conf" -S',
             file => good(file, "tmux"));
-        mutation("tmux-override", 'echo "jarvis-env: tmux=override-refused" >&2; exit 2 ;;',
-            'echo "jarvis-env: tmux=override-refused" >&2; : ;;',
-            file => good(file, "tmux-override", "-S"));
+        for (const shape of tmuxShapes) {
+            mutation("tmux-override-" + shape, 'echo "jarvis-env: tmux=override-refused" >&2; exit 2 ;;',
+                'echo "jarvis-env: tmux=override-refused" >&2; : ;;',
+                file => good(file, "tmux-override", shape));
+        }
+        for (const shape of ["cluster-socket", "cluster-config", "post-feature-socket", "post-attached-feature-config"]) {
+            mutation("tmux-parsing-" + shape, 'case "$option" in', 'case "${1:1:1}" in',
+                file => good(file, "tmux-override", shape));
+        }
+        const termOwner = mutationFile("ignored-owner-signal", 'kill -KILL "$owner"', 'kill -TERM "$owner"');
+        await assert.rejects(cancellation(termOwner, "SIGTERM"), assert.AssertionError);
+        assert.throws(() => cliTimeout(termOwner), assert.AssertionError);
+        controls++;
+        const wrongCli = mutationFile("cli-subshell", '    _jarvis_env_run "$@"', '    jarvis_env_run "$@"');
+        await assert.rejects(cancellation(wrongCli, "SIGTERM"), assert.AssertionError);
+        controls++;
+        // Exercise the real suite supervisor's timeout through a copied suite.
+        const nodeCopy = path.join(root, "node-control");
+        fs.mkdirSync(path.join(nodeCopy, "fixtures/jarvis-env"), { recursive: true });
+        fs.copyFileSync(probe, path.join(nodeCopy, "fixtures/jarvis-env/probe.py"));
+        const suiteSource = fs.readFileSync(__filename, "utf8");
+        const timeoutSignal = 'timeout, ' + 'killSignal: "SIGKILL"';
+        assert.equal(suiteSource.split(timeoutSignal).length - 1, 1);
+        const ignoredTimeout = suiteSource.replace(timeoutSignal, 'timeout, killSignal: "SIGTERM"');
+        assert.notEqual(ignoredTimeout, suiteSource);
+        const nodeMutant = path.join(nodeCopy, "test-jarvis-env.js");
+        fs.writeFileSync(nodeMutant, ignoredTimeout);
+        const timeoutResult = run(process.execPath, [nodeMutant, "--namespace-timeout", root], env);
+        assert.equal(timeoutResult.status, 1);
+        assert.match(timeoutResult.stderr, /AssertionError/);
+        assert.match(timeoutResult.stderr, /SIGKILL/);
+        controls++;
         for (const [key, value] of [
             ["PIPEWIRE_RUNTIME_DIR", '"$root/run"'], ["PIPEWIRE_REMOTE", "jarvis-test-no-pipewire"],
             ["PULSE_RUNTIME_PATH", '"$root/run"'], ["PULSE_SERVER", '"unix:$root/run/no-pulse"'],
@@ -226,10 +375,10 @@ async function main() {
             assert.equal(fs.existsSync(marker), false);
         }
         unavailableCase(unavailable);
-        const old = "cat -- \"$root/namespace.log\" >&2 || return 1\n    return 77";
+        const old = "cat -- \"$root/namespace.log\" >&2 || exit 1\n    exit 77";
         assert.equal(unavailableSource.split(old).length - 1, 1);
         const wrongStatus = path.join(root, "unavailable-status.sh");
-        fs.writeFileSync(wrongStatus, unavailableSource.replace(old, old.replace("return 77", "return 1")));
+        fs.writeFileSync(wrongStatus, unavailableSource.replace(old, old.replace("exit 77", "exit 1")));
         assert.throws(() => unavailableCase(wrongStatus), assert.AssertionError);
         controls++;
         console.log("test-jarvis-env: ok cases=" + cases + " controls=" + controls);

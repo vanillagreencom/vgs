@@ -19,8 +19,12 @@ _jarvis_env_error() {
 _jarvis_env_tools=(bash sh env node python3 cat mkdir rm cp mv ln chmod sleep
   readlink dirname basename stat grep sed awk sort cut wc true false timeout gdbus)
 
-# jarvis_env_run STANDINS -- COMMAND [ARG...]: one scratch world per call.
-jarvis_env_run() (
+# jarvis_env_run STANDINS -- COMMAND [ARG...]: preserve the sourced caller's
+# traps, options, directories and environment in a subshell.
+jarvis_env_run() ( _jarvis_env_run "$@"; )
+
+# The CLI calls the owner directly, so its returned PID owns cancellation.
+_jarvis_env_run() {
   set -euo pipefail
   export LC_ALL=C
   if [[ $# -lt 3 || $2 != -- || -z $3 ]]; then
@@ -39,7 +43,9 @@ jarvis_env_run() (
   _jarvis_env_cleanup() {
     local result=$?
     if [[ -n $owner ]]; then
-      if kill -0 "$owner" 2>/dev/null; then kill -TERM "$owner" || result=1; fi
+      # unshare --fork ignores TERM and INT while waiting. KILL ends that
+      # supervisor; --kill-child then ends its PID namespace and descendants.
+      if kill -0 "$owner" 2>/dev/null; then kill -KILL "$owner" || result=1; fi
       wait "$owner" 2>/dev/null || :
     fi
     rm -rf -- "${root:?}" || { _jarvis_env_error "cleanup=failed path=$root"; exit 1; }
@@ -50,42 +56,41 @@ jarvis_env_run() (
   trap 'exit 143' TERM
   trap 'exit 129' HUP
   umask 077
-  mkdir -p "$root"/{standins,tools,bootstrap,home,config,data,state,cache,run,tmp} || return 1
+  mkdir -p "$root"/{standins,tools,bootstrap,home,config,data,state,cache,run,tmp} || exit 1
   for tool in "${_jarvis_env_tools[@]}" unshare ip dbus-daemon tmux; do
     # A fixed search path avoids a login-shell function or version-manager
     # shim that opens the developer's configuration before the test starts.
     real="$(PATH=/usr/bin:/usr/sbin:/bin:/sbin type -P -- "$tool")" ||
-      { _jarvis_env_error "status=not-measured missing=$tool"; return 77; }
+      { _jarvis_env_error "status=not-measured missing=$tool"; exit 77; }
     case "$tool" in
-      unshare|ip|dbus-daemon|tmux) ln -s -- "$real" "$root/bootstrap/$tool" || return 1 ;;
-      *) ln -s -- "$real" "$root/tools/$tool" || return 1 ;;
+      unshare|ip|dbus-daemon|tmux) ln -s -- "$real" "$root/bootstrap/$tool" || exit 1 ;;
+      *) ln -s -- "$real" "$root/tools/$tool" || exit 1 ;;
     esac
   done
   shopt -s nullglob dotglob
   for entry in "$standins"/*; do
     name="${entry##*/}"
     if [[ ! -f $entry || ! -x $entry || -L $entry ]]; then
-      _jarvis_env_error "standin=not-executable-file name=$name"; return 1
+      _jarvis_env_error "standin=not-executable-file name=$name"; exit 1
     fi
     if [[ -e $root/tools/$name || -e $root/bootstrap/$name ]]; then
-      _jarvis_env_error "standin=host-tool-collision name=$name"; return 1
+      _jarvis_env_error "standin=host-tool-collision name=$name"; exit 1
     fi
-    cp -- "$entry" "$root/standins/$name" || return 1
+    cp -- "$entry" "$root/standins/$name" || exit 1
   done
   # Force the socket and an empty config even when the caller uses tmux
-  # directly. A later -S, -L or -f would otherwise override these options.
+  # directly. getopts follows tmux 3.7c tmux.c::main's global syntax, including
+  # clusters and c/T values. Unknown global syntax fails closed.
   printf '%s\n' '#!/bin/bash' 'set -euo pipefail' \
-    'for arg in "$@"; do' \
-    '  case "$arg" in' \
-    '    -S*|-L*|-f*) echo "jarvis-env: tmux=override-refused" >&2; exit 2 ;;' \
-    '    --) break ;;' \
-    '    -*) ;;' \
-    '    *) break ;;' \
+    'while getopts ":2c:CDdf:hlL:NqS:T:uUvV" option; do' \
+    '  case "$option" in' \
+    '    S|L|f|\?|:) echo "jarvis-env: tmux=override-refused" >&2; exit 2 ;;' \
+    '    *) ;;' \
     '  esac' \
     'done' \
     'exec "$JARVIS_TEST_ROOT/bootstrap/tmux" -f /dev/null -S "$JARVIS_TEST_TMUX_SOCKET" "$@"' \
-    >"$root/tools/tmux" || return 1
-  chmod 700 "$root/tools/tmux" || return 1
+    >"$root/tools/tmux" || exit 1
+  chmod 700 "$root/tools/tmux" || exit 1
   local clean_env=(/usr/bin/env -i
     PATH="$root/standins:$root/tools" HOME="$root/home"
     XDG_CONFIG_HOME="$root/config" XDG_DATA_HOME="$root/data"
@@ -99,8 +104,8 @@ jarvis_env_run() (
   if ! "${clean_env[@]}" "$root/bootstrap/unshare" -rn --pid --fork --mount-proc --kill-child -- \
     "$root/tools/true" 2>"$root/namespace.log"; then
     _jarvis_env_error 'status=not-measured reason=namespaces-unavailable'
-    cat -- "$root/namespace.log" >&2 || return 1
-    return 77
+    cat -- "$root/namespace.log" >&2 || exit 1
+    exit 77
   fi
   "${clean_env[@]}" "$root/bootstrap/unshare" -rn --pid --fork --mount-proc --kill-child -- \
     "$root/tools/bash" --noprofile --norc "$self" --inside "$root" "$@" &
@@ -110,10 +115,11 @@ jarvis_env_run() (
   # Namespace creation can fail between the probe and the real start.
   if [[ ! -f $root/started ]]; then
     _jarvis_env_error 'status=not-measured reason=namespace-start-failed'
-    return 77
+    exit 77
   fi
-  return "$status"
-)
+  # Exit while the owner's local resource bindings still exist for its trap.
+  exit "$status"
+}
 
 # Runs only as the namespace's init process. Bootstrap tools never enter PATH.
 _jarvis_env_inside() {
@@ -148,6 +154,6 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     shift
     _jarvis_env_inside "$@"
   else
-    jarvis_env_run "$@"
+    _jarvis_env_run "$@"
   fi
 fi
