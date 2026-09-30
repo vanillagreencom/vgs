@@ -11,6 +11,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [status.md](status.md): read before touching plugin status or the Settings page's Status rows.
 - [notification-actions.md](notification-actions.md): read before touching what a click on a notification does, which window it raises, or which notifications the service keeps holding for the inbox.
 - [notification-senders.md](notification-senders.md): read before touching a notification rule's senders, a browser's site address, the copies of one message, or the Slack photo cache and its tokens.
+- [notification-slack-cache.md](notification-slack-cache.md): read before touching how Slack's disk cache is read, the workspace icon copy or the Slack custom emoji.
 - [notification-state.md](notification-state.md): read before touching the notifications' state file, their stored images or what a restart restores.
 - [notification-layout.md](notification-layout.md): read before touching where a notification card's text and media sit, or the media slot's tiers.
 - [notification-hints.md](notification-hints.md): read before touching the VGS notification hints, a card's hinted icon or click, or the notifications' `open` TUI.
