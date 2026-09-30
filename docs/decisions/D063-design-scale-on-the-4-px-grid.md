@@ -1,4 +1,4 @@
-# D058: The design scale sits on a 4 px grid, and row heights are their own tokens
+# D063: The design scale sits on a 4 px grid, and row heights are their own tokens
 
 [← Decision Index](INDEX.md)
 

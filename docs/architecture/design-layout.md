@@ -27,4 +27,4 @@ A notification's media sits in one square slot whose size is a tier, not a prope
 ## Decisions
 
 - Containers use one inset box, an inner scroll gutter and fitted popup height: [D050](../decisions/D050-container-layout-contract.md).
-- Every layout dimension sits on a 4 px grid: [D058](../decisions/D058-design-scale-on-the-4-px-grid.md).
+- Every layout dimension sits on a 4 px grid: [D063](../decisions/D063-design-scale-on-the-4-px-grid.md).

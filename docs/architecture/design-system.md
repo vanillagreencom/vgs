@@ -96,4 +96,4 @@ The grid, type scale, control sizes, container classes and states every surface 
 - Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).
 - A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D023](../decisions/D023-plugin-owned-appearance.md).
 - Containers use one inset box, an inner scroll gutter and fitted popup height: [D050](../decisions/D050-container-layout-contract.md).
-- Every layout dimension sits on a 4 px grid, and row heights are their own tokens: [D058](../decisions/D058-design-scale-on-the-4-px-grid.md).
+- Every layout dimension sits on a 4 px grid, and row heights are their own tokens: [D063](../decisions/D063-design-scale-on-the-4-px-grid.md).

@@ -6,7 +6,7 @@ The standard every surface is judged against, and the evidence that proves a sur
 
 ## Grid
 
-- Every layout dimension is a multiple of 4 px: a gap, a padding, an inset, a control's height and a row's height. The shipped scale moved onto this grid in [D058](../decisions/D058-design-scale-on-the-4-px-grid.md).
+- Every layout dimension is a multiple of 4 px: a gap, a padding, an inset, a control's height and a row's height. The shipped scale moved onto this grid in [D063](../decisions/D063-design-scale-on-the-4-px-grid.md).
 - Inside one component a 2 px step is allowed: a segment's inset (`segmented.padding`), a switch knob's inset (`toggle.inset`), a focus ring's offset (`focusRing.offset`), a scroll bar's inset (`scrollArea.barInset`) and the gap between a title and its underline (`titleButton.underlineGap`). Inside a chip or a key cap, a 6 px side padding, `space.sm`, is allowed: `badge.size.sm.paddingX` and `kbd.paddingX`.
 - The grid does not govern type, strokes, icon and indicator drawing sizes (`icon.size`, `slider.handle`, `radio.dot`), motion distances or computed corner clearance. A font size and its line box follow § Type. An icon's painted bounds follow the glyph (`IconBounds.js`). A stroke is `border.thin` or `border.thick`. A corner clearance is `Inset.clearing` by `inset.cornerStep`.
 - The theme browser's reference geometry, the `carousel`, `angledCard` and `desktopPreview` groups, is not on the grid yet; VGS-596 owns it.

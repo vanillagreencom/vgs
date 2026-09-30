@@ -63,7 +63,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D058 | VGS-619 | Passive layers take input on the union of their items | Shared notice mask keeps gaps available to applications below | A layer needs non-rectangular input or items outside its tree | Active | [Full](D058-layer-input-union.md) |
 | 2026-09-30 | D060 | [Jarvis plan §10](../plans/v2-jarvis-plan.md#10-decisions-to-record) | A generic passive voice ring belongs to qs.Ui | Shared tokens and animation lifetime; actions stay outside the decoration | An interactive visual is needed or GPU readings change the mechanism | Active | [Full](D060-passive-voice-orb.md) |
 | 2026-09-29 | D067 | VGS-596 | Full-screen overlays capture keyboard through a Hyprland submap | Hyprland runs binds before focused layers | Hyprland exposes Lua dispatcher details | Active | [Full](D067-overlay-keyboard-capture.md) |
-| 2026-09-30 | D058 | VGS-580 | The design scale sits on a 4 px grid, with row heights as their own tokens | One step removes the pixel mismatches between neighbours; each value has a Radix, Geist or Linear reference | The owner picks another density, or a theme needs another grid | Active | [Full](D058-design-scale-on-the-4-px-grid.md) |
+| 2026-09-30 | D063 | VGS-580 | The design scale sits on a 4 px grid, with row heights as their own tokens | One step removes the pixel mismatches between neighbours; each value has a Radix, Geist or Linear reference | The owner picks another density, or a theme needs another grid | Active | [Full](D063-design-scale-on-the-4-px-grid.md) |
 
 ---
 

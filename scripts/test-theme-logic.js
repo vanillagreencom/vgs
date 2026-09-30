@@ -888,7 +888,7 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-// The 4 px grid (D058, docs/architecture/design-quality.md § Grid): every
+// The 4 px grid (D063, docs/architecture/design-quality.md § Grid): every
 // length token of the shipped table resolves to a multiple of 4 or to
 // radius.full, except the classes the rule names, one pattern each. The
 // control moves row.height off the grid in a theme document, and the
