@@ -14,6 +14,9 @@ Scope {
     WlSessionLock {
         locked: Capabilities.sessionLock.lockRequested
         onSecureChanged: Capabilities.sessionLock.lockSecure = secure
+        // A lock that goes while still requested was refused or ended by
+        // the compositor; the owner drops the request (SessionLock).
+        onLockedChanged: if (!locked) Capabilities.sessionLock.compositorEnded()
 
         WlSessionLockSurface {
             id: surface

@@ -13,8 +13,9 @@ import qs.Unit
 // variant per role and an unknown role read as cancel; `busy` and a
 // disabled action answering nothing and fading; content under the message;
 // an initial focus field taking the focus and the typing, its Enter and
-// Escape answering and Tab cycling through it; and a theme change reaching
-// the card and the roles.
+// Escape answering and Tab cycling through it; a Select listed in
+// `tabItems` taking Tab and Backtab ahead of the field, and skipped while
+// hidden; and a theme change reaching the card and the roles.
 Item {
     id: root
     width: 500
@@ -66,6 +67,17 @@ Item {
         actions: [{ label: "Cancel", role: "cancel" }, { label: "Authenticate", role: "accept" }]
         TextField { id: secret; width: parent.width; echoMode: TextInput.Password }
     }
+    Dialog {
+        id: chooser
+        x: 260
+        y: 180
+        title: "Authenticate"
+        initialFocus: chooserSecret
+        tabItems: [who, chooserSecret]
+        actions: [{ label: "Cancel", role: "cancel" }, { label: "Authenticate", role: "accept" }]
+        Select { id: who; width: parent.width; model: ["alice", "root"] }
+        TextField { id: chooserSecret; width: parent.width; echoMode: TextInput.Password }
+    }
     SignalSpy { id: accepts; target: dialog; signalName: "accepted" }
     SignalSpy { id: promptAccepts; target: prompt; signalName: "accepted" }
     SignalSpy { id: promptRejects; target: prompt; signalName: "rejected" }
@@ -84,6 +96,7 @@ Item {
             for (const spy of [accepts, rejects, threeAccepts, threeRejects, blockedAccepts, promptAccepts, promptRejects]) spy.clear();
             secret.text = "";
             secret.enabled = true;
+            who.visible = true;
             outside.forceActiveFocus();
         }
 
@@ -201,6 +214,33 @@ Item {
             compare(secret.activeFocus, true);
             keyClick(Qt.Key_Backtab);
             compare(authenticate.activeFocus, true);
+        }
+
+        function test_a_listed_select_takes_tab_ahead_of_the_field() {
+            const [cancel, authenticate] = chooser.buttons();
+            chooser.forceActiveFocus();
+            compare(chooserSecret.activeFocus, true);
+            keyClick(Qt.Key_Backtab);
+            compare(who.activeFocus, true, "Backtab from the field reaches the Select");
+            keyClick(Qt.Key_Backtab);
+            compare(authenticate.activeFocus, true, "Backtab from the Select wraps to the last action");
+            keyClick(Qt.Key_Tab);
+            compare(who.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(chooserSecret.activeFocus, true, "Tab from the Select reaches the field");
+            keyClick(Qt.Key_Tab);
+            compare(cancel.activeFocus, true);
+            compare(outside.activeFocus, false);
+        }
+
+        function test_a_hidden_listed_select_is_skipped() {
+            who.visible = false;
+            const [cancel, authenticate] = chooser.buttons();
+            chooser.forceActiveFocus();
+            keyClick(Qt.Key_Backtab);
+            compare(authenticate.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(chooserSecret.activeFocus, true);
         }
 
         function test_a_disabled_initial_focus_field_leaves_the_focus_to_the_accept_action() {

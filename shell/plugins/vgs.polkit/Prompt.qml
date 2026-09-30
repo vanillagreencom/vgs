@@ -74,6 +74,7 @@ Item {
         title: root.view === null ? "" : root.view.title
         message: root.view === null ? "" : root.view.message
         initialFocus: secret
+        tabItems: [identityChoice, secret]
         actions: [
             { label: "Cancel", role: "cancel" },
             { label: "Authenticate", role: "accept", enabled: root.view !== null && root.view.inputEnabled }
@@ -96,6 +97,7 @@ Item {
             visible: root.view !== null && root.view.identities.length > 1
 
             Select {
+                id: identityChoice
                 width: parent.width
                 model: root.view === null ? [] : root.view.identities
                 currentIndex: root.view === null ? 0 : Math.max(0, root.view.identityIndex)

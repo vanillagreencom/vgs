@@ -2,13 +2,17 @@
 # vgsh-lock: ask the running shell's lock plugin to lock the session.
 #
 #   vgsh lock
-#       call `lock` on vgs.lock's IPC target and print its answer
+#       call `lock` on vgs.lock's IPC target and wait for the compositor
 #
 # It is the route a user script, an idle daemon or a lid-switch bind calls;
 # the shortcut, the launcher's Lock row, the plugin's idle watch and its
 # before-sleep hook reach the same function inside the shell. The plugin
-# answers `ok` once it asked the core for the lock; the compositor confirms
-# the lock after that: docs/architecture/lock-polkit.md.
+# answers `ok` once it asked the core for the lock; the compositor answers
+# after that, so the command reads the plugin's `status` reply every 100 ms
+# for up to 2 s. It prints `ok` once the lock is confirmed (`secure`), and
+# refuses when the compositor refused the lock, as it does while another
+# lock screen holds the session (`refusals` grew), or never confirmed it:
+# docs/architecture/lock-polkit.md.
 #
 # Refusals, each one keyed first line on stderr:
 #   vgsh: refused: argument=<arg>              exit 2; lock takes no argument
@@ -18,6 +22,9 @@
 #                                              is disabled
 #   vgsh: refused: <refusal>                   exit 1; the plugin's own refusal,
 #                                              its `refused: ` prefix dropped
+#   vgsh: refused: lock=refused-by-compositor  exit 1; the compositor refused
+#                                              or ended the lock
+#   vgsh: refused: lock=unconfirmed            exit 1; no confirmation in 2 s
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
@@ -32,13 +39,33 @@ refuse() { # STATUS KEY [DETAIL]
 [[ $# -eq 0 ]] || refuse 2 "argument=$1" "vgsh lock takes no argument"
 
 pid="$("$vgsh" pid)" || exit $?
-# qs prints its own log lines on stdout ahead of the reply; the reply is
-# the last line.
-out="$(qs ipc --pid "$pid" call vgs.lock invoke lock "" 2>/dev/null)" ||
-  refuse 1 "lock=no-answer pid=$pid" "vgs.lock is disabled, or the shell did not answer; vgsh plugin enable vgs.lock"
-reply="${out##*$'\n'}"
+# One call on vgs.lock's target: qs prints its own log lines on stdout
+# ahead of the reply, so the reply is the last line; a failed call prints
+# nothing and fails.
+call() { # FUNCTION
+  local out
+  out="$(qs ipc --pid "$pid" call vgs.lock invoke "$1" "" 2>/dev/null)" || return 1
+  printf '%s\n' "${out##*$'\n'}"
+}
+# The whole number after `"refusals":` in a status reply, -1 for none.
+refusals_of() { [[ $1 =~ \"refusals\":([0-9]+) ]] && echo "${BASH_REMATCH[1]}" || echo -1; }
+
+no_answer() { refuse 1 "lock=no-answer pid=$pid" "vgs.lock is disabled, or the shell did not answer; enable it in the Settings window"; }
+
+before="$(call status)" || no_answer
+reply="$(call lock)" || no_answer
 case "$reply" in
-  ok) echo ok ;;
-  "unknown: lock") refuse 1 "lock=no-answer pid=$pid" "vgs.lock has not registered its lock function yet" ;;
+  ok) ;;
+  "unknown: lock"|"unknown: status") refuse 1 "lock=no-answer pid=$pid" "vgs.lock has not registered its functions yet" ;;
   *) refuse 1 "${reply#refused: }" ;;
 esac
+refusals="$(refusals_of "$before")"
+for _ in $(seq 1 20); do
+  now="$(call status)" || now=""
+  if [[ $now == *'"secure":true'* ]]; then echo ok; exit 0; fi
+  if (( refusals >= 0 )) && (( $(refusals_of "$now") > refusals )); then
+    refuse 1 "lock=refused-by-compositor" "Hyprland refused the lock: another lock screen, such as hyprlock, holds the session"
+  fi
+  sleep 0.1
+done
+refuse 1 "lock=unconfirmed" "the compositor did not confirm the lock within 2 s"

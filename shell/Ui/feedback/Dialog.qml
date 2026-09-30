@@ -18,9 +18,12 @@ import qs.Ui
 //
 // The accept action takes the focus each time the dialog does, or
 // `initialFocus` when set: an enabled item of the content that takes typing,
-// such as a password field. Tab and Backtab move the focus through that item
-// and the enabled actions and wrap, so the keys stay in the dialog; any other
-// content is shown and never takes the focus. Enter and Return press the
+// such as a password field. `tabItems` lists further content items that
+// take the keys, such as a Select ahead of that field, in their order. Tab
+// and Backtab move the focus through the shown and enabled `tabItems`, the
+// initial focus item when the list does not hold it, and the enabled
+// actions, and wrap, so the keys stay in the dialog; any other content is
+// shown and never takes the focus. Enter and Return press the
 // focused action, or the accept action when none holds the focus, the
 // initial focus item included when it leaves the key unaccepted, and Escape
 // rejects. While `busy` holds, every action is disabled, a Spinner turns
@@ -33,6 +36,7 @@ FocusScope {
     property var actions: []
     property bool busy: false
     property Item initialFocus: null
+    property list<Item> tabItems
     // Hosts may set this. When they do not, the dialog reads its window's
     // screen height, so the cap remains relative to the surface it draws on.
     property real availableHeight: 0
@@ -99,11 +103,18 @@ FocusScope {
         trigger(focused !== -1 ? focused : acceptIndex);
     }
 
-    // Move the focus by `step` over the initial focus item and the enabled
+    // The content items in the cycle, in order: the shown and enabled
+    // `tabItems`, then the initial focus item unless the list holds it.
+    function contentStops() {
+        const items = Array.from(tabItems).filter(item => item.enabled && item.visible);
+        const lead = initialFocus !== null && initialFocus.enabled && !items.includes(initialFocus) ? [initialFocus] : [];
+        return items.concat(lead);
+    }
+
+    // Move the focus by `step` over the content stops and the enabled
     // actions, wrapping; from none, Tab takes the first and Backtab the last.
     function cycle(step) {
-        const lead = initialFocus !== null && initialFocus.enabled ? [initialFocus] : [];
-        const reach = lead.concat(buttons().filter(button => button.enabled));
+        const reach = contentStops().concat(buttons().filter(button => button.enabled));
         if (reach.length === 0) return;
         const at = reach.findIndex(button => button.activeFocus);
         const next = at === -1 ? reach[step > 0 ? 0 : reach.length - 1] : reach[(at + step + reach.length) % reach.length];
@@ -127,6 +138,15 @@ FocusScope {
     // before the key reaches the dialog, out of it on Backtab; the dialog's
     // cycle moves it instead.
     Binding { target: root.initialFocus; property: "activeFocusOnTab"; value: false; when: root.initialFocus !== null }
+    Instantiator {
+        model: root.tabItems
+        delegate: Binding {
+            required property Item modelData
+            target: modelData
+            property: "activeFocusOnTab"
+            value: false
+        }
+    }
     Keys.onReturnPressed: pressFocused()
     Keys.onEnterPressed: pressFocused()
     Keys.onEscapePressed: if (!busy) rejected()

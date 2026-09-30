@@ -17,30 +17,98 @@
     "idle",
     "ipc",
     "lock",
+    "requirements",
     "session",
     "shortcut",
-    "status"
+    "status",
+    "toasts"
   ],
   "settings": {
     "idleLockSeconds": 300,
     "lockBeforeSleep": true
   },
   "schema": {
-    "idleLockSeconds": { "type": "number", "label": "Lock after idle", "description": "Seconds without input before the session locks; 0 never locks on idle", "min": 0, "max": 86400, "step": 30, "group": "Lock" },
-    "lockBeforeSleep": { "type": "boolean", "label": "Lock before sleep", "description": "Hold each suspend until the session is locked", "group": "Lock" }
+    "idleLockSeconds": {
+      "type": "number",
+      "label": "Lock after idle",
+      "description": "Seconds without input before the session locks; 0 never locks on idle",
+      "min": 0,
+      "max": 86400,
+      "step": 30,
+      "group": "Lock"
+    },
+    "lockBeforeSleep": {
+      "type": "boolean",
+      "label": "Lock before sleep",
+      "description": "Hold each suspend until the session is locked",
+      "group": "Lock"
+    }
   },
   "status": {
-    "sleep": { "type": "state", "label": "Before sleep", "hint": "logind holds each suspend until the lock is confirmed, for at most its delay" }
+    "lock": {
+      "type": "state",
+      "label": "Lock",
+      "hint": "Hyprland refuses a lock while another lock screen, such as hyprlock, holds the session"
+    },
+    "sleep": {
+      "type": "state",
+      "label": "Before sleep",
+      "hint": "logind holds each suspend until the lock is confirmed, for at most its delay"
+    },
+    "lastSleep": {
+      "type": "state",
+      "label": "Last suspend",
+      "hint": "Whether the session was locked before the machine last slept"
+    }
   },
   "requirements": [
-    { "command": "systemd-inhibit", "packages": { "pacman": "systemd", "apt": "systemd", "nix": "systemd" }, "optional": true, "purpose": "Holds each suspend until the session is locked" },
-    { "command": "dbus-monitor", "packages": { "pacman": "dbus", "apt": "dbus-bin", "nix": "dbus" }, "optional": true, "purpose": "Hears logind announce a suspend" },
-    { "command": "busctl", "packages": { "pacman": "systemd", "apt": "systemd", "nix": "systemd" }, "optional": true, "purpose": "Reads how long logind waits for the lock before a suspend" },
-    { "command": "readlink", "packages": { "pacman": "coreutils", "apt": "coreutils", "nix": "coreutils" }, "optional": true, "purpose": "Finds the theme's background image for the lock screen" }
+    {
+      "command": "systemd-inhibit",
+      "packages": {
+        "pacman": "systemd",
+        "apt": "systemd",
+        "nix": "systemd"
+      },
+      "optional": true,
+      "purpose": "Holds each suspend until the session is locked"
+    },
+    {
+      "command": "dbus-monitor",
+      "packages": {
+        "pacman": "dbus",
+        "apt": "dbus-bin",
+        "nix": "dbus"
+      },
+      "optional": true,
+      "purpose": "Hears logind announce a suspend"
+    },
+    {
+      "command": "busctl",
+      "packages": {
+        "pacman": "systemd",
+        "apt": "systemd",
+        "nix": "systemd"
+      },
+      "optional": true,
+      "purpose": "Reads how long logind waits for the lock before a suspend"
+    },
+    {
+      "command": "readlink",
+      "packages": {
+        "pacman": "coreutils",
+        "apt": "coreutils",
+        "nix": "coreutils"
+      },
+      "optional": true,
+      "purpose": "Finds the theme's background image for the lock screen"
+    }
   ],
   "hyprland": {
     "binds": [
-      { "shortcut": "lock", "key": "SUPER+L" }
+      {
+        "shortcut": "lock",
+        "key": "SUPER+L"
+      }
     ]
   }
 }

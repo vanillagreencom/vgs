@@ -4,7 +4,13 @@
 # lock`, SUPER+L on the nested seat, its idle watch and its before-sleep
 # hook. Each lock is read back from the compositor, a monitor naming LOCK
 # among the reasons it cannot go solitary in `hyprctl -j monitors`, and
-# from the core's lending record. Disabling the plugin while locked keeps
+# from the core's lending record. While a second lock client, the harness's
+# lock-client standing in for another locker, holds the session, Hyprland
+# refuses the plugin's lock: `vgsh lock` answers the refusal, the core
+# drops the request, the plugin publishes it, and a sleep then is released
+# as refused with a toast; once that client lets go, the plugin locks again.
+# A hook that cannot start is published as such and taken again once the
+# setting turns it back on. Disabling the plugin while locked keeps
 # the session locked, and the rebuilt plugin hands its lock screen over
 # again. The shell killed by its pid while locked leaves the session
 # locked, and the next shell's lock plugin reads the stranded lock and takes
@@ -13,14 +19,16 @@
 # No row types a password: PAM would check it against the real account,
 # whose pam_faillock counts each failure. The sandbox's own probe releases
 # the core's lock with no password, test code that never ships
-# (docs/architecture/lock-polkit.md § Validation), and the plugin's status
-# shows it never started a PAM conversation.
+# (docs/architecture/lock-polkit.md § Validation). The plugin's status
+# shows it never started a PAM check, and no authentication helper ever
+# runs under the shell.
 #
 # The before-sleep hook runs under stand-ins in the shell's stand-in
 # directory: a systemd-inhibit that runs its command with no inhibitor and
-# logs the command's lines, a busctl that answers logind's 5 s default and a
-# dbus-monitor that announces one PrepareForSleep once the row creates its
-# trigger file. The sandbox's system bus holds no logind.
+# logs the command's lines, a busctl that answers logind's 5 s default and
+# no preparation under way, and a dbus-monitor that prints the bus's
+# NameAcquired at once and announces one PrepareForSleep once the row
+# creates its trigger file. The sandbox's system bus holds no logind.
 #
 # The control installs a copy of the plugin, in the user directory whose id
 # wins, that never locks a stranded session: after a kill and a restart the
@@ -37,15 +45,21 @@ sleep_trigger="$sandbox/prepare-sleep"
 # `locked` while any nested monitor names LOCK among the reasons it cannot
 # go solitary, which Hyprland keeps while an ext-session-lock holds, its
 # client dead or not; `unlocked` otherwise.
-session_lock() { hypr -j monitors | python3 -c 'import json,sys; print("locked" if any("LOCK" in (m.get("solitaryBlockedBy") or []) for m in json.load(sys.stdin)) else "unlocked")'; }
+session_lock() { hypr -j monitors | py_reply 'import json,sys; print("locked" if any("LOCK" in (m.get("solitaryBlockedBy") or []) for m in json.load(sys.stdin)) else "unlocked")'; }
 # The core's lock as [requested, secure, content].
-core_requested() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["lock"]["requested"]))'; }
-core_lock() { ipc shell lent | python3 -c 'import json,sys; l=json.load(sys.stdin)["lock"]; print(json.dumps([l["requested"], l["secure"], l["content"]]))'; }
+core_requested() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["lock"]["requested"]))'; }
+core_lock() { ipc shell lent | py_reply 'import json,sys; l=json.load(sys.stdin)["lock"]; print(json.dumps([l["requested"], l["secure"], l["content"]]))'; }
 lock_status() { ipc vgs.lock invoke status '' | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[k] for k in sys.argv[1:]]))' "$@"; }
 sleep_status() { ipc smoke statusValues vgs.lock | py_reply 'import json,sys; v=json.load(sys.stdin).get("sleep"); print(v["tone"] if v else "unpublished")'; }
-lock_binds() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs.lock"))))'; }
-lock_lent() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.lock")], [t for t in d["ipcTargets"] if t == "vgs.lock"], [[w["id"], w["timeout"]] for w in d["idle"] if w["id"] == "vgs.lock"]]))'; }
-restore_option() { hypr -j getoption misc:allow_session_lock_restore | python3 -c 'import json,sys; v=json.load(sys.stdin); print(json.dumps({k: v[k] for k in v if k not in ("option", "set")}))'; }
+# A published status value of vgs.lock as [tone, text], or null.
+status_value() { ipc smoke statusValues vgs.lock | py_reply 'import json,sys; v=json.load(sys.stdin).get(sys.argv[1]); print(json.dumps(v if v is None else [v["tone"], v["text"]]))' "$1"; }
+lock_toasts() { ipc shell lent | py_reply 'import json,sys; print(json.dumps([[t["title"], t["tone"]] for t in json.load(sys.stdin)["toasts"]["visible"] if t["plugin"] == "vgs.lock"]))'; }
+# `vgsh lock`'s first line and its exit status.
+vgsh_lock() { local out status=0; out="$("${shell_env[@]}" "$repo/bin/vgsh" lock 2>&1)" || status=$?; printf '%s exit=%s\n' "$(head -n 1 <<<"$out")" "$status"; }
+client_said() { if grep -q -x -- "$2" "$1" 2>/dev/null; then echo "$2"; else echo waiting; fi; }
+lock_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs.lock"))))'; }
+lock_lent() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.lock")], [t for t in d["ipcTargets"] if t == "vgs.lock"], [[w["id"], w["timeout"]] for w in d["idle"] if w["id"] == "vgs.lock"]]))'; }
+restore_option() { hypr -j getoption misc:allow_session_lock_restore | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps({k: v[k] for k in v if k not in ("option", "set")}))'; }
 alive() { if [[ $1 =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null; then echo alive; else echo gone; fi; }
 # Release the core's lock with the probe and read the session unlocked.
 release() { # LABEL
@@ -53,11 +67,11 @@ release() { # LABEL
   expect_poll "$1: the session is unlocked" unlocked session_lock
   expect_poll "$1: the core holds no lock" false core_requested
 }
-# Set vgs.lock's idleLockSeconds in shell.json, or drop it for null.
-set_idle() {
-  python3 - "$lock_user_config" "$1" <<'PY'
+# Set vgs.lock's setting KEY in shell.json, or drop it for null.
+set_setting() { # KEY VALUE
+  python3 - "$lock_user_config" "$1" "$2" <<'PY'
 import json, os, sys
-path, value = sys.argv[1], json.loads(sys.argv[2])
+path, key, value = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
 config = json.load(open(path))
 rows = config.setdefault("plugins", [])
 row = next((r for r in rows if r.get("id") == "vgs.lock"), None)
@@ -65,9 +79,9 @@ if row is None:
     row = {"id": "vgs.lock"}
     rows.append(row)
 if value is None:
-    row.pop("idleLockSeconds", None)
+    row.pop(key, None)
 else:
-    row["idleLockSeconds"] = value
+    row[key] = value
 with open(path + ".tmp", "w") as out:
     json.dump(config, out)
 os.replace(path + ".tmp", path)
@@ -94,9 +108,10 @@ set -o pipefail
 while [[ \${1:-} == --* ]]; do shift; done
 "\$@" | tee -a $(printf %q "$sleep_log")
 SH
-printf '#!/bin/sh\necho "t 5000000"\n' >"$shim/busctl"
+printf '#!/bin/sh\ncase "$5" in PreparingForSleep) echo "b false" ;; *) echo "t 5000000" ;; esac\n' >"$shim/busctl"
 cat >"$shim/dbus-monitor" <<SH
 #!/usr/bin/env bash
+echo 'signal sender=org.freedesktop.DBus -> destination=:1.9 serial=2 path=/org/freedesktop/DBus; interface=org.freedesktop.DBus; member=NameAcquired'
 until [[ -e $(printf %q "$sleep_trigger") ]]; do sleep 0.1; done
 rm -f -- $(printf %q "$sleep_trigger")
 echo '   boolean true'
@@ -147,13 +162,55 @@ expect_poll "the hook let the sleep go once the lock was confirmed" "released re
 expect "the hook announced the sleep with its budget" "sleep budget_ms=4000" bash -c 'grep -x "sleep budget_ms=[0-9]*" -- "$1" || :' _ "$sleep_log"
 release "the sleep lock"
 expect_poll "the hook is taken again after the sleep" 2 bash -c 'grep -c -x "ready budget_ms=4000" -- "$1" || :' _ "$sleep_log"
+expect "the last sleep is published as locked" '["ok", "The session was locked before the last suspend"]' status_value lastSleep
+
+# Another client holds the session lock: Hyprland refuses the plugin's.
+# The client runs no authentication and is stopped by its pid.
+expected_errors+=('capabilities: lock=ended-by-compositor' 'lock: sleep=unlocked reason=refused')
+spawn "$sandbox/lock-client.log" "${shell_env[@]}" "$sandbox/lock-client"
+client_pid="$spawn_pid"
+expect_poll "the second lock client holds the session" locked client_said "$sandbox/lock-client.log" locked
+expect "the session is locked by the other client" locked session_lock
+expect "vgsh lock answers the compositor's refusal" "vgsh: refused: lock=refused-by-compositor exit=1" vgsh_lock
+expect_poll "the core dropped the refused request" '[false, false, true]' core_lock
+expect "the plugin counted the refusal" '[1, false]' lock_status refusals secure
+expect "the lock status warns of the refusal" '["warning", "Hyprland refused or ended the last lock: another lock screen may hold the session"]' status_value lock
+: >"$sleep_trigger"
+expect_poll "a sleep under the other client's lock is released as refused" "released reason=refused" bash -c 'grep -x "released reason=refused" -- "$1" || :' _ "$sleep_log"
+expect_poll "the last sleep is published as unlocked" '["danger", "The last suspend went ahead unlocked: Hyprland refused the lock"]' status_value lastSleep
+expect_poll "the user is told the machine slept unlocked" '[["The session was not locked before sleep", "danger"]]' lock_toasts
+expect_poll "the hook is taken again after the refused sleep" 3 bash -c 'grep -c -x "ready budget_ms=4000" -- "$1" || :' _ "$sleep_log"
+kill -TERM "$client_pid" || fail "SIGTERM to the lock client pid $client_pid failed"
+expect_poll "the other client let the session go" unlocked client_said "$sandbox/lock-client.log" unlocked
+expect_poll "the session is unlocked after the other client" unlocked session_lock
+expect "vgsh lock locks again once the other client let go" "ok exit=0" vgsh_lock
+expect_poll "the core holds the confirmed lock again" '[true, true, true]' core_lock
+expect "the lock status is ready again" '["ok", "Ready"]' status_value lock
+release "the lock after the other client"
+
+# A hook that cannot start, here a systemd-inhibit whose interpreter does
+# not exist, is published as such, and turning the setting back on takes it
+# again at once.
+mv -- "$shim/systemd-inhibit" "$sandbox/systemd-inhibit.good"
+set_setting lockBeforeSleep false
+expect_poll "turning the setting off publishes the hook off" info sleep_status
+printf '#!/nonexistent/interpreter\n' >"$shim/systemd-inhibit"
+chmod 755 "$shim/systemd-inhibit"
+expected_errors+=('lock: sleep-watch ended before holding; exit=not-started')
+set_setting lockBeforeSleep null
+expect_poll "a hook that cannot start is published as such" '["warning", "Unavailable: the sleep hook could not start; the session is not locked before sleep"]' status_value sleep
+mv -- "$sandbox/systemd-inhibit.good" "$shim/systemd-inhibit"
+set_setting lockBeforeSleep false
+expect_poll "the setting off again" info sleep_status
+set_setting lockBeforeSleep null
+expect_poll "the hook holds again once it can start" ok sleep_status
 
 # The idle watch: two seconds with no input lock the session. The setting
 # goes back before any key, which would start the next idle period.
-set_idle 2
+set_setting idleLockSeconds 2
 expect_poll "the idle watch follows the setting" '[["vgs.lock:lock"], ["vgs.lock"], [["vgs.lock", 2]]]' lock_lent
 expect_poll "two seconds without input locked the session" locked session_lock
-set_idle null
+set_setting idleLockSeconds null
 expect_poll "the idle watch is back at its default" '[["vgs.lock:lock"], ["vgs.lock"], [["vgs.lock", 300]]]' lock_lent
 release "the idle lock"
 
@@ -183,7 +240,7 @@ open(path, "w").write(text.replace(needle, '            }\n        }\n    }\n\n 
 PY
 expected_errors+=('plugins: .*vgs\.lock')
 expect "rescan over the control copy answers ok" ok ipc shell rescanPlugins
-lock_dir_of() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.lock"][0])'; }
+lock_dir_of() { ipc shell listPlugins | py_reply 'import json,sys; print([p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.lock"][0])'; }
 expect_poll "the control copy is the plugin the shell runs" "$control_dir" lock_dir_of
 expect "the control's IPC lock answers ok" ok ipc vgs.lock invoke lock ''
 expect_poll "the control's session is locked" '[true, true, true]' core_lock
@@ -207,7 +264,8 @@ expect_poll "the restarted shell took the stranded lock over" '[true, true, true
 expect "the session is still locked" locked session_lock
 release "the taken-over lock"
 
-expect "no PAM conversation ran and no attempt failed" '[false, 0]' lock_status checking failures
+expect "no PAM check started and no attempt failed" '[false, 0, 0]' lock_status checking checks failures
+expect "no authentication helper runs under the shell" none auth_helpers "$shell_qs_pid"
 expect "disabling the lock plugin is allowed" ok ipc shell setPluginEnabled vgs.lock false
 expect_poll "disable released the lock's shortcut, IPC target and idle watch" '[[], [], []]' lock_lent
 expect_poll "the nested instance drops the lock's bind" '[]' lock_binds

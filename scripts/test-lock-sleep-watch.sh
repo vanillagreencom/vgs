@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Controls for vgs.lock's before-sleep hook, shell/plugins/vgs.lock/bin/
 # sleep-watch: the budget it derives from logind's InhibitDelayMaxUSec, the
-# lines it prints, the release on `secure`, on the budget's end and on a
-# closed stdin, and its refusal when dbus-monitor ends. Stand-in busctl and
-# dbus-monitor, first on PATH, answer from STUB_WINDOW and announce one
-# PrepareForSleep unless STUB_QUIET is set; no row reaches logind or the
-# system bus. Expected values are computed by hand from Omarchy's rule.
+# lines it prints, a preparation already under way when it subscribes, the
+# release on `secure`, `refused`, the budget's end and a closed stdin, and
+# its refusals when dbus-monitor stays silent or ends. Stand-in busctl and
+# dbus-monitor, first on PATH, answer from STUB_WINDOW and STUB_PREPARING;
+# the monitor prints the bus's NameAcquired, then one PrepareForSleep
+# unless STUB_NO_SIGNAL or STUB_QUIET is set, nothing with STUB_SILENT. No
+# row reaches logind or the system bus. Expected values are computed by
+# hand from Omarchy's rule.
 set -euo pipefail
 
 TMP_ROOT="$(mktemp -d)" || { echo "test-lock-sleep-watch: scratch=mktemp-failed" >&2; exit 1; }
@@ -19,13 +22,20 @@ stub="$TMP_ROOT/stub"
 mkdir -p "$stub"
 cat >"$stub/busctl" <<'SH'
 #!/usr/bin/env bash
-[[ -n ${STUB_WINDOW:-} ]] || exit 1
-echo "t $STUB_WINDOW"
+case "${5:-}" in
+  InhibitDelayMaxUSec) [[ -n ${STUB_WINDOW:-} ]] || exit 1; echo "t $STUB_WINDOW" ;;
+  PreparingForSleep) echo "b ${STUB_PREPARING:-false}" ;;
+  *) exit 1 ;;
+esac
 SH
 cat >"$stub/dbus-monitor" <<'SH'
 #!/usr/bin/env bash
-echo "signal time=1 sender=:1.1 member=PrepareForSleep"
-[[ -n ${STUB_QUIET:-} ]] && exit 3
+[[ -n ${STUB_SILENT:-} ]] && exec sleep 3
+echo "signal time=1 sender=org.freedesktop.DBus -> destination=:1.9 serial=4294967295 path=/org/freedesktop/DBus; interface=org.freedesktop.DBus; member=NameAcquired"
+# A resume, PrepareForSleep(false), is no sleep.
+[[ -n ${STUB_QUIET:-} ]] && { echo "   boolean false"; exit 3; }
+[[ -n ${STUB_NO_SIGNAL:-} ]] && exec sleep 30
+echo "signal time=2 sender=:1.1 member=PrepareForSleep"
 echo "   boolean true"
 exec sleep 30
 SH
@@ -66,6 +76,9 @@ watch_row "a 15 s window leaves 12000 ms" 0 "ready budget_ms=12000|sleep budget_
 watch_row "a 30 s window is capped at 12000 ms" 0 "ready budget_ms=12000|sleep budget_ms=12000|released reason=secure" "" secure STUB_WINDOW=30000000
 watch_row "a 2 s window keeps a second for logind" 0 "ready budget_ms=1000|sleep budget_ms=1000|released reason=secure" "" secure STUB_WINDOW=2000000
 watch_row "an unreadable window reads as 5 s" 0 "ready budget_ms=4000|sleep budget_ms=4000|released reason=secure" "" secure
+watch_row "a refusal releases the sleep as refused" 0 "ready budget_ms=4000|sleep budget_ms=4000|released reason=refused" "" refused STUB_WINDOW=5000000
+watch_row "a preparation under way before the listener is a sleep" 0 "ready budget_ms=4000|sleep budget_ms=4000|released reason=secure" "" secure STUB_WINDOW=5000000 STUB_PREPARING=true STUB_NO_SIGNAL=1
+watch_row "a silent dbus-monitor is refused" 1 "" "sleep-watch: refused: monitor=silent" closed STUB_WINDOW=5000000 STUB_SILENT=1
 watch_row "a line other than secure is no confirmation" 0 "ready budget_ms=4000|sleep budget_ms=4000|released reason=timeout" "" other STUB_WINDOW=5000000
 watch_row "the budget's end releases the sleep" 0 "ready budget_ms=250|sleep budget_ms=250|released reason=timeout" "" silent STUB_WINDOW=1250000
 watch_row "a closed stdin releases the sleep" 0 "ready budget_ms=4000|sleep budget_ms=4000|released reason=closed" "" closed STUB_WINDOW=5000000
@@ -97,10 +110,16 @@ control no-reserve 'window=$((window - (window / 5 > 1000 ? window / 5 : 1000)))
 control_row "a copy that keeps no second for logind" "ready budget_ms=1000|sleep budget_ms=1000|released reason=secure" secure STUB_WINDOW=2000000
 control no-default '|| window=5000000' '|| window=1000000'
 control_row "a copy with another default window" "ready budget_ms=4000|sleep budget_ms=4000|released reason=secure" secure
-control any-reply 'if [[ $reply == secure ]]; then' 'if true; then'
+control any-reply '      *) echo "released reason=timeout" ;;' '      *) echo "released reason=secure" ;;'
 control_row "a copy that takes any line for the confirmation" "ready budget_ms=4000|sleep budget_ms=4000|released reason=timeout" other STUB_WINDOW=5000000
 control no-bound 'IFS= read -r -t "$budget_s" reply' 'IFS= read -r reply'
 control_row "a copy with no bound on the wait" "ready budget_ms=250|sleep budget_ms=250|released reason=timeout" silent STUB_WINDOW=1250000
+control no-preparing '[[ $preparing != "b true" ]] || sleep_once' ':'
+control_row "a copy that ignores a preparation under way" "ready budget_ms=4000|sleep budget_ms=4000|released reason=secure" secure STUB_WINDOW=5000000 STUB_PREPARING=true STUB_NO_SIGNAL=1
+control no-subscribe-wait 'if ! IFS= read -r -t 2 line <&"$monitor_fd"; then' 'if false; then'
+control_row "a copy that reports ready before the listener answers" "" closed STUB_WINDOW=5000000 STUB_SILENT=1
+control no-refused '      refused) echo "released reason=refused" ;;' '      refused) echo "released reason=timeout" ;;'
+control_row "a copy that takes a refusal for a timeout" "ready budget_ms=4000|sleep budget_ms=4000|released reason=refused" refused STUB_WINDOW=5000000
 control any-signal '[[ $line == *"boolean true"* ]] || continue' ':'
 control_row "a copy that takes any bus line for a sleep" "ready budget_ms=4000" closed STUB_WINDOW=5000000 STUB_QUIET=1
 

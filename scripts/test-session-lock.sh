@@ -22,7 +22,11 @@ controls = [
      "return root.lockRequested || (false && root.lockSecure);"),
     ("frozen", "return Object.freeze({", "return Object.assign({"),
     ("unload", "        lockContentOwner = null;",
-     "        lockContentOwner = null;\n        lockRequested = false;")
+     "        lockContentOwner = null;\n        lockRequested = false;"),
+    ("ended", "        if (!lockRequested) return;\n        lockRequested = false;\n        lockSecure = false;",
+     "        if (!lockRequested) return;\n        lockSecure = false;"),
+    ("ended-unrequested", "        if (!lockRequested) return;\n        lockRequested = false;",
+     "        lockRequested = false;")
 ]
 for name, needle, replacement in controls:
     assert source.count(needle) == 1, (name, "control match count")
@@ -34,7 +38,7 @@ for name, needle, replacement in controls:
     assert not path.is_symlink(), (name, "control symlink")
     path.write_text(changed)
 PY
-for rule in request secure frozen unload; do
+for rule in request secure frozen unload ended ended-unrequested; do
   status=0
   out="$("$repo/scripts/qml-unit.sh" --core "$TMP_ROOT/$rule" "$repo/scripts/qml-tests/tst_session_lock.qml" 2>&1)" || status=$?
   if [[ $status == 1 && $out == *"::session-lock::"* && $out == *"FAIL!  :"* ]]; then

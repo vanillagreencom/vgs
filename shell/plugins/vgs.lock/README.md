@@ -4,7 +4,7 @@
 
 ## Install
 
-The plugin ships with VGS and is enabled by default. Its password check needs no setup: the plugin carries its own PAM stack. Locking before sleep needs `systemd-inhibit`, `busctl` and `dbus-monitor`, which systemd and D-Bus provide.
+The plugin ships with VGS and is enabled by default. Its password check needs no setup: the plugin carries its own PAM stack. Locking before sleep needs `systemd-inhibit`, `busctl` and `dbus-monitor`, which systemd and D-Bus provide. If one is missing, the shell's requirement notice installs it in one click, and the hook starts by itself once it is there.
 
 ## Features
 
@@ -12,7 +12,9 @@ The plugin ships with VGS and is enabled by default. Its password check needs no
 - The session locks after five minutes without input. A playing video that inhibits idle holds it off.
 - The session locks before the machine suspends, and the suspend waits for the lock, for at most logind's delay.
 - Every screen shows the time, the date and the password field; typing on any screen fills every field.
-- Ten wrong passwords pause the check for two minutes.
+- Ten wrong passwords pause the check for two minutes, and the lock screen tells you to wait.
+- If another lock screen already holds the session, `vgsh lock` says so, and the Settings page shows it.
+- If a suspend goes ahead before the lock is confirmed, a warning toast tells you once you are back at the desktop.
 - A shell started after a crash while locked locks the session again with its own lock screen.
 
 ## How it works
@@ -23,7 +25,7 @@ The plugin ships with VGS and is enabled by default. Its password check needs no
 4. The shell keeps a logind delay on every suspend while it runs. When logind announces a suspend, the plugin locks and lets the suspend go once Hyprland confirms the lock.
 5. When a shell starts, the plugin asks Hyprland whether a session lock is still held by a lock screen that is gone, and locks again if so.
 
-If the shell dies while locked, Hyprland keeps the session locked and shows its own warning screen. Start the shell again from a TTY, `vgsh run` or your Hyprland autostart, and the lock screen returns.
+If the shell dies while locked, Hyprland keeps the session locked and shows its own warning screen. The lock screen returns the next time the shell starts.
 
 ## Settings
 

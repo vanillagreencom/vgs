@@ -18,8 +18,16 @@ import "LockModel.js" as LockModel
 // it reads Hyprland's monitors and locks again a session a shell that died
 // left locked, as Omarchy's lock service does.
 //
+// A lock the compositor refuses, as while another locker such as hyprlock
+// holds the session, drops the core's request (SessionLock); the service
+// publishes it in the `lock` status, and a sleep waiting on it is released
+// as refused. A suspend that went ahead unconfirmed is published in
+// `lastSleep`, logged, and shown as a toast once the user is back at the
+// desktop, as Omarchy sends a critical notification.
+//
 // The password lives in `password` while it is typed and in PAM's answer
 // while it is checked, and is never logged, published or answered over IPC.
+// `checks` counts the checks started, for the status reply.
 Item {
     id: root
 
@@ -33,30 +41,46 @@ Item {
     // and hand over its screen.
     readonly property bool locked: shell !== null && shell.session.locked
     readonly property bool secure: shell !== null && shell.lock.secure
+    readonly property int compositorEnds: shell === null ? 0 : shell.lock.compositorEnds
     readonly property int idleLockSeconds: shell === null ? 0 : shell.settings.idleLockSeconds
     readonly property bool lockBeforeSleep: shell !== null && shell.settings.lockBeforeSleep === true
+    // The hook's commands the last scan did not find; a rescan after the
+    // requirement notice installs them starts the hook.
+    readonly property var sleepMissing: shell === null ? [] : shell.requirements.missing.filter(command => LockModel.SLEEP_COMMANDS.indexOf(command) !== -1)
 
     // The field's text on every screen, one value so every screen shows it.
     property string password: ""
     property bool checking: false
+    property int checks: 0
     property int failures: 0
     property string failure: ""
     property string answer: ""
+    property string pamError: ""
+    // pam_faillock's pause, read from the plugin's own PAM stack.
+    property var faillock: null
     property var idleDisposer: null
     // The theme's current background image, the target of the state
     // directory's `background` link, read at each lock; "" for none.
     property string backgroundPath: ""
+
+    // Compositor ends seen, and whether the last lock asked for was refused.
+    property int seenEnds: -1
+    property bool refused: false
 
     // The stranded-lock reading: how many more times it asks while
     // Hyprland's answer is unknown, a monitor still coming up.
     property int strandedTries: 20
     property bool strandedDone: false
 
-    // The before-sleep hook: `off`, `starting`, `held` or `failed`, and
-    // whether a sleep waits for the lock to be confirmed.
+    // The before-sleep hook: `off`, `missing`, `starting`, `held` or
+    // `failed` with its detail; whether a sleep waits for the lock to be
+    // confirmed; the exit the hook's run recorded, null before one; and the
+    // toast of a missed suspend still to show, null for none.
     property string sleepState: "off"
-    property int sleepCode: 0
+    property var sleepDetail: null
     property bool sleepPending: false
+    property var sleepExit: null
+    property var missedSleep: null
 
     onShellChanged: {
         if (shell === null) return;
@@ -66,35 +90,55 @@ Item {
             shell.ipc.handle("lock", () => root.lock());
             shell.ipc.handle("status", () => root.statusJson());
         }
+        if (seenEnds < 0) seenEnds = shell.lock.compositorEnds;
         // A holder rebuilt while locked hands the lock screen over again.
         if (shell.lock.locked && !shell.lock.hasContent) lock();
         watchIdle();
+        publishLock();
         publishSleep();
         strandedCheck();
     }
     onIdleLockSecondsChanged: watchIdle()
-    onLockBeforeSleepChanged: publishSleep()
-    onLockedChanged: if (!locked) reset()
-    onSecureChanged: if (secure) confirmSleep()
+    // A changed setting or a scan that changed what is missing, such as
+    // after the requirement notice installed a command, takes the hook
+    // again at once rather than at the next retry.
+    onLockBeforeSleepChanged: retrySleep()
+    onSleepMissingChanged: retrySleep()
+    onLockedChanged: {
+        if (locked) return;
+        reset();
+        showMissedSleep();
+    }
+    onSecureChanged: {
+        if (!secure) return;
+        refused = false;
+        publishLock();
+        confirmSleep();
+    }
+    onCompositorEndsChanged: {
+        if (seenEnds < 0 || compositorEnds <= seenEnds) return;
+        seenEnds = compositorEnds;
+        refused = true;
+        publishLock();
+        if (sleepPending) {
+            sleepPending = false;
+            sleepWatch.write("refused\n");
+        }
+    }
 
-    // `ok`, or the core's refusal.
+    // `ok`, or the core's refusal. The compositor answers later: a refusal
+    // shows in the `lock` status and the IPC `status` reply's `refusals`.
     function lock() {
         if (shell === null) return "refused: lock=not-ready";
         if (!backgroundProc.running) backgroundProc.running = true;
         return shell.lock.lock(lockView);
     }
 
-    Process {
-        id: backgroundProc
-        command: ["readlink", "-e", "--", Paths.stateDir + "/background"]
-        stdout: StdioCollector { id: backgroundOut; waitForEnd: true }
-        onExited: code => root.backgroundPath = code === 0 ? backgroundOut.text.trim() : ""
-    }
-
     function reset() {
         if (pam.active) pam.abort();
         password = "";
         answer = "";
+        pamError = "";
         checking = false;
         failures = 0;
         failure = "";
@@ -105,16 +149,18 @@ Item {
         if (!locked || checking || password.length === 0) return;
         root.password = "";
         answer = password;
+        pamError = "";
         failure = "";
         checking = true;
-        if (!pam.start()) fail("");
+        checks += 1;
+        if (!pam.start()) fail();
     }
 
-    function fail(message) {
+    function fail() {
         answer = "";
         checking = false;
         failures += 1;
-        failure = LockModel.failureText(failures, message);
+        failure = LockModel.failureText(failures, pamError, faillock);
     }
 
     function respond() {
@@ -129,7 +175,29 @@ Item {
     }
 
     function statusJson() {
-        return JSON.stringify({ locked: locked, secure: secure, checking: checking, failures: failures, idleLockSeconds: idleLockSeconds, sleep: sleepState, strandedDone: strandedDone });
+        return JSON.stringify({ locked: locked, secure: secure, refusals: seenEnds < 0 ? 0 : seenEnds, checking: checking, checks: checks, failures: failures, idleLockSeconds: idleLockSeconds, sleep: sleepState, strandedDone: strandedDone });
+    }
+
+    // Each status value last published, as JSON by key, so an unchanged
+    // one is written once.
+    property var published: ({})
+
+    function publish(key, value) {
+        if (shell === null) return;
+        const text = JSON.stringify(value);
+        if (published[key] === text) return;
+        const reply = shell.status.set(key, value);
+        if (reply !== "ok") {
+            console.warn("lock: status " + reply);
+            return;
+        }
+        const next = Object.assign({}, published);
+        next[key] = text;
+        published = next;
+    }
+
+    function publishLock() {
+        publish("lock", LockModel.lockStatus(refused));
     }
 
     // ------------------------------------------------------------ stranded
@@ -167,18 +235,20 @@ Item {
 
     // --------------------------------------------------------------- sleep
 
-    // The sleep status last published, as JSON, so an unchanged one is
-    // written once.
-    property string sleepPublished: ""
-
     function publishSleep() {
         if (shell === null) return;
-        const state = !lockBeforeSleep ? "off" : sleepState === "off" ? "starting" : sleepState;
-        const value = LockModel.sleepStatus(state, sleepCode);
-        if (JSON.stringify(value) === sleepPublished) return;
-        const reply = shell.status.set("sleep", value);
-        if (reply === "ok") sleepPublished = JSON.stringify(value);
-        else console.warn("lock: status " + reply);
+        let state = sleepState, detail = sleepDetail;
+        if (!lockBeforeSleep) state = "off";
+        else if (sleepMissing.length > 0) { state = "missing"; detail = sleepMissing; }
+        else if (state === "off" || state === "missing") state = "starting";
+        publish("sleep", LockModel.sleepStatus(state, detail));
+        // The requirement notice installs what the hook needs in one click.
+        if (state === "missing") shell.requirements.offer(sleepMissing);
+    }
+
+    function retrySleep() {
+        sleepRetry.stop();
+        publishSleep();
     }
 
     function confirmSleep() {
@@ -187,12 +257,26 @@ Item {
         sleepWatch.write("secure\n");
     }
 
+    function released(reason) {
+        const record = LockModel.lastSleep(reason);
+        publish("lastSleep", record.status);
+        if (record.toast === null) return;
+        console.warn("lock: sleep=unlocked reason=" + reason);
+        missedSleep = record.toast;
+        if (!locked) showMissedSleep();
+    }
+
+    function showMissedSleep() {
+        if (missedSleep === null || shell === null) return;
+        shell.toasts.show(missedSleep);
+        missedSleep = null;
+    }
+
     Process {
         id: sleepWatch
-        running: root.shell !== null && root.lockBeforeSleep && !sleepRetry.running
+        running: root.shell !== null && root.lockBeforeSleep && root.sleepMissing.length === 0 && !sleepRetry.running
         stdinEnabled: true
         command: ["systemd-inhibit", "--what=sleep", "--mode=delay", "--who=VGS", "--why=Lock the screen before sleep", String(Qt.resolvedUrl("bin/sleep-watch")).replace(/^file:\/\//, "")]
-        onStarted: { root.sleepState = "starting"; root.publishSleep(); }
         stdout: SplitParser {
             onRead: line => {
                 const event = LockModel.sleepLine(line);
@@ -203,24 +287,37 @@ Item {
                     root.sleepPending = true;
                     root.lock();
                     root.confirmSleep();
-                } else if (event.kind === "unknown") {
+                } else if (event.kind === "released") {
+                    root.released(event.reason);
+                } else {
                     console.warn("lock: sleep-watch line unknown: " + line);
                 }
             }
         }
-        // A hook that held and exited 0 ran a sleep and is taken again at
-        // once; any other exit is a failure, retried a minute later, so a
-        // system without logind costs one start a minute.
-        onExited: code => {
+        onExited: code => { sleepWatch.recorded = code; }
+        property var recorded: null
+        // A command that fails to start emits only runningChanged, so the
+        // end is read there: no exit recorded is a failed start
+        // (runtime-qml.md). A hook that held and exited 0 ran a sleep and
+        // is taken again at once; any other end is a failure, retried a
+        // minute later or at once by retrySleep.
+        onRunningChanged: {
+            if (running) {
+                recorded = null;
+                root.sleepState = "starting";
+                root.publishSleep();
+                return;
+            }
             root.sleepPending = false;
-            if (root.shell === null || !root.lockBeforeSleep) {
+            if (root.shell === null || !root.lockBeforeSleep || root.sleepMissing.length > 0) {
                 root.sleepState = "off";
                 root.publishSleep();
                 return;
             }
-            const cycled = root.sleepState === "held" && code === 0;
+            const cycled = root.sleepState === "held" && recorded === 0;
             root.sleepState = cycled ? "starting" : "failed";
-            root.sleepCode = code;
+            root.sleepDetail = recorded === null ? "not-started" : recorded;
+            if (!cycled) console.warn("lock: sleep-watch ended before holding; exit=" + root.sleepDetail);
             root.publishSleep();
             sleepRetry.interval = cycled ? 2000 : 60000;
             sleepRetry.restart();
@@ -234,21 +331,34 @@ Item {
 
     // ----------------------------------------------------------------- PAM
 
+    FileView {
+        path: String(Qt.resolvedUrl("pam/vgs-lock")).replace(/^file:\/\//, "")
+        onLoaded: {
+            root.faillock = LockModel.faillockPolicy(text());
+            if (root.faillock === null) console.error("lock: pam=vgs-lock has no pam_faillock authfail line with deny and unlock_time");
+        }
+        onLoadFailed: error => console.error("lock: pam=vgs-lock unreadable error=" + error)
+    }
+
+    // Quickshell clears PAM's message before it reports the result, so an
+    // error message is kept as it arrives.
     PamContext {
         id: pam
         config: "vgs-lock"
         configDirectory: String(Qt.resolvedUrl("pam")).replace(/^file:\/\//, "")
         onResponseRequiredChanged: root.respond()
-        onPamMessage: root.respond()
+        onPamMessage: {
+            if (pam.messageIsError && pam.message !== "") root.pamError = pam.message;
+            root.respond();
+        }
         onCompleted: result => {
-            const message = pam.messageIsError ? pam.message : "";
             if (!root.checking) return;
             if (result === PamResult.Success) {
                 root.answer = "";
                 root.checking = false;
                 root.shell.lock.unlock();
             } else {
-                root.fail(message);
+                root.fail();
             }
         }
     }

@@ -66,6 +66,32 @@ Item {
             tryCompare(reader, "locked", true, 100);
         }
 
+        // expected-log: capabilities: lock=ended-by-compositor; another client may hold the session lock, and this shell's lock is dropped -- the compositor refuses the requested lock
+        function test_compositor_end_drops_the_request() {
+            const holder = owner.provider({ onDispose: fn => {} });
+            compare(holder.lock(contentComponent), "ok");
+            owner.lockSecure = true;
+            tryCompare(reader, "locked", true);
+            owner.compositorEnded();
+            compare(owner.lockRequested, false);
+            compare(holder.locked, false);
+            compare(holder.secure, false);
+            compare(holder.compositorEnds, 1);
+            tryCompare(reader, "locked", false);
+            // The next request locks again.
+            compare(holder.lock(contentComponent), "ok");
+            compare(holder.locked, true);
+        }
+
+        function test_a_released_lock_is_no_compositor_end() {
+            const holder = owner.provider({ onDispose: fn => {} });
+            compare(holder.lock(contentComponent), "ok");
+            compare(holder.unlock(), "ok");
+            owner.compositorEnded();
+            compare(holder.compositorEnds, 0);
+            compare(holder.locked, false);
+        }
+
         function test_holder_unload_keeps_lock() {
             let dispose = null;
             const holder = owner.provider({ onDispose: fn => { dispose = fn; } });

@@ -139,7 +139,7 @@ expect_poll "the compositor moved back" 1 active_ws
 # idle: a watch reports idle once the nested seat has had no input for its
 # timeout and active again at the next key; the lending record lists it,
 # and its disposer drops it. A zero timeout is refused.
-idle_watches() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps([[w["id"], w["timeout"]] for w in json.load(sys.stdin)["idle"]]))'; }
+idle_watches() { ipc shell lent | py_reply 'import json,sys; print(json.dumps([[w["id"], w["timeout"]] for w in json.load(sys.stdin)["idle"]]))'; }
 expect "an idle watch of zero seconds is refused" "refused: idle-timeout=0 want=1..86400" probe idle-watch 0
 expect "the fixture watches for one second without input" ok probe idle-watch 1
 expect "the lending record lists the watch" '[["acme.probe", 1]]' idle_watches

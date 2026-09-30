@@ -10,7 +10,9 @@
 # A live flow cannot run here: it needs polkitd and the setuid
 # polkit-agent-helper-1, which would run PAM against the real account and
 # could trip pam_faillock. The sandbox's system bus has no polkitd, so the
-# agent stays unregistered. What the prompt draws from a flow is
+# agent stays unregistered. The row reads that no flow ever went live and
+# that no polkit-agent-helper-1 or other authentication helper ran under
+# the shell. What the prompt draws from a flow is
 # scripts/test-polkit-model.js's.
 #
 # The control installs a copy of the plugin in the user directory, whose id
@@ -18,7 +20,7 @@
 # summon reading maps a prompt then, so the reading is not vacuous. The
 # row ends with vgs.polkit disabled and the fixture as it found it.
 set -euo pipefail
-polkit_lent() { ipc shell lent | python3 -c 'import json,sys; v=json.load(sys.stdin)
+polkit_lent() { ipc shell lent | py_reply 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v=v.get(k) if isinstance(v, dict) else None
 print(json.dumps(v))' "$1"; }
 polkit_status() { ipc smoke statusValues vgs.polkit | py_reply 'import json,sys; v=json.load(sys.stdin).get("agent"); print(json.dumps(v if v is None else [v["tone"], v["text"]]))'; }
@@ -45,6 +47,7 @@ expect "no prompt surface exists without a flow" 0 layer_count vgs:overlay
 expected_errors+=('summon host: vgs\.polkit open\(\) failed: polkit: refused: flow=none')
 expect "a summon with no flow is refused" "refused: open-failed=vgs.polkit" flowless_summon
 expect "the refused summon maps no prompt surface" 0 layer_count vgs:overlay
+expect "no authentication helper runs under the shell" none auth_helpers "$shell_qs_pid"
 
 # Control: the same reading over a prompt that opens with no flow.
 control_dir="$home/.config/vgs/plugins/vgs.polkit"
@@ -60,7 +63,7 @@ open(path, "w").write(text.replace(needle, ""))
 PY
 expected_errors+=('plugins: .*vgs\.polkit')
 expect "rescan over the control copy answers ok" ok ipc shell rescanPlugins
-control_dir_of() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.polkit"][0])'; }
+control_dir_of() { ipc shell listPlugins | py_reply 'import json,sys; print([p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.polkit"][0])'; }
 expect_poll "the control copy is the plugin the shell runs" "$control_dir" control_dir_of
 expect_poll "the control copy's agent is lent" true polkit_lent polkitAgent
 got="$(flowless_summon)" || got="unreadable"
@@ -72,10 +75,12 @@ expect "rescan after removing the control copy answers ok" ok ipc shell rescanPl
 expect_poll "the shipped plugin runs again" "$repo/shell/plugins/vgs.polkit" control_dir_of
 expect_poll "no prompt surface is left" 0 layer_count vgs:overlay
 
+expect "no authentication request went live in this shell" 0 polkit_lent polkitFlows
+expect "no authentication helper runs under the shell at the row's end" none auth_helpers "$shell_qs_pid"
 expect "disabling the polkit plugin is allowed" ok ipc shell setPluginEnabled vgs.polkit false
 expect_poll "disable destroyed the agent" false polkit_lent polkitAgent
 expect "disable released polkit" null polkit_lent holders.polkit
-polkit_record() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["status"].get("vgs.polkit")))'; }
+polkit_record() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["status"].get("vgs.polkit")))'; }
 expect "disable dropped the plugin's status record" null polkit_record
 if [[ $probe_enabled == True ]]; then
   expect "re-enabling the capability fixture is allowed" ok ipc shell setPluginEnabled acme.probe true

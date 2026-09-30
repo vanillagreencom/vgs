@@ -9,6 +9,9 @@ Scope {
     property var lockContent: null
     property bool lockSecure: false
     property var lockContentOwner: null
+    // How many requested locks the compositor refused or ended while the
+    // holder still asked for them, bindable, so the holder sees each one.
+    property int compositorEnds: 0
 
     // REVISIT(D056): A session observer needs a lock not owned by this shell.
     // Report locked from the request until the compositor releases it.
@@ -25,7 +28,8 @@ Scope {
             unlock: () => root.unlock(),
             get locked() { return root.lockRequested; },
             get hasContent() { return root.lockContent !== null; },
-            get secure() { return root.lockSecure; }
+            get secure() { return root.lockSecure; },
+            get compositorEnds() { return root.compositorEnds; }
         };
     }
 
@@ -44,6 +48,23 @@ Scope {
     function unlock() {
         lockRequested = false;
         return "ok";
+    }
+
+    // The compositor ended a lock the holder still requests: it refused it,
+    // as Hyprland does while another client such as hyprlock holds the
+    // session, or it ended it. Quickshell 0.3.1 then drops the lock itself
+    // (`ext_session_lock_v1_finished` unlocks, and `WlSessionLock::unlock`
+    // clears its target), so the request is dropped with it: the session
+    // reads unlocked, for the holder and for `session` readers alike, and
+    // the next request locks again. LockHost calls it when the compositor's
+    // lock goes; a release the holder asked for finds no request and does
+    // nothing.
+    function compositorEnded() {
+        if (!lockRequested) return;
+        lockRequested = false;
+        lockSecure = false;
+        compositorEnds += 1;
+        console.warn("capabilities: lock=ended-by-compositor; another client may hold the session lock, and this shell's lock is dropped");
     }
 
     // A lock request the compositor has not confirmed by the time this

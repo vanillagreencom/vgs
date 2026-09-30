@@ -202,6 +202,8 @@ shell_start_words=(PATH="$shell_start_path" VGS_NOTIFICATIONS_SLACK_TEST_SECRET_
 # environment. click: one click through the nested compositor's virtual
 # pointer protocol. toplevel: one xdg toplevel with a given app-id, so a
 # row reads back how the nested compositor places a window of that class.
+# lock-client: a second session-lock client, which rows/lock.sh starts and
+# stops by pid in place of another locker; it runs no authentication.
 # build_helper NAME KEY SOURCE PROTOCOL_XML; a failed build exits 77 as
 # missing=KEY-helper-build.
 build_helper() {
@@ -218,6 +220,34 @@ build_helper() {
 }
 build_helper click pointer "$repo/scripts/smoke/pointer/click.c" "$repo/scripts/smoke/pointer/wlr-virtual-pointer-unstable-v1.xml"
 build_helper toplevel toplevel "$repo/scripts/smoke/toplevel/toplevel.c" "$repo/scripts/smoke/toplevel/xdg-shell.xml"
+build_helper lock-client lock-client "$repo/scripts/smoke/lock/lock-client.c" "$repo/scripts/smoke/lock/ext-session-lock-v1.xml"
+
+# The authentication helpers running under PID, one `name pid` per line,
+# `none` when there is none: pam_unix's unix_chkpwd, polkit's
+# polkit-agent-helper-1 (its name cut to 15 bytes in /proc), sudo and
+# faillock. The lock and polkit rows read none beside their plugins' own
+# counts, since no row may authenticate the host's user.
+auth_helpers() { # PID
+  python3 - "$1" <<'PY'
+import os, sys
+names = {"unix_chkpwd", "polkit-agent-he", "sudo", "faillock"}
+children = {}
+for pid in filter(str.isdigit, os.listdir("/proc")):
+    try:
+        stat = open(f"/proc/{pid}/stat").read()
+    except OSError:
+        continue
+    comm, rest = stat[stat.index("(") + 1:stat.rindex(")")], stat[stat.rindex(")") + 2:].split()
+    children.setdefault(rest[1], []).append((pid, comm))
+found, todo = [], [sys.argv[1]]
+while todo:
+    for pid, comm in children.get(todo.pop(), []):
+        if comm in names:
+            found.append(f"{comm} {pid}")
+        todo.append(pid)
+print("\n".join(found) if found else "none")
+PY
+}
 
 # Start a command in its own session and process group; the pid doubles as
 # the pgid for teardown and is left in spawn_pid. Not a command substitution,

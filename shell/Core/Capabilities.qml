@@ -34,6 +34,7 @@ Singleton {
         return out;
     }
     readonly property bool polkitHeld: holderIds("polkit").length > 0
+    property int polkitFlows: 0
 
     function holderIds(name) {
         return Logic.hasOwn(held, name) ? Object.keys(held[name]).sort() : [];
@@ -199,7 +200,11 @@ Singleton {
     LazyLoader {
         id: polkitLoader
         active: root.polkitHeld
-        PolkitAgent {}
+        // Each request that went live, counted for the lending record, so
+        // a validation row can read that none ever did.
+        PolkitAgent {
+            onIsActiveChanged: if (isActive) root.polkitFlows += 1
+        }
     }
 
     // Every capability's live state, for the validation rows and for
@@ -216,6 +221,7 @@ Singleton {
             notificationServer: notifications.server !== null,
             polkitAgent: polkitLoader.item !== null,
             polkitRegistered: polkitLoader.item !== null && polkitLoader.item.isRegistered,
+            polkitFlows: root.polkitFlows,
             lock: { requested: sessionLock.lockRequested, secure: sessionLock.lockSecure, content: sessionLock.lockContent !== null },
             toasts: Toasts.record(),
             layers: Layers.record(),
