@@ -120,6 +120,7 @@ tallies=(
   "a row failing while the mode holds is behaviour|behaviour|held|held|1 1 0|1"
   "a row failing after the held mode's reset is a mode reset|behaviour|held|reset|1 0 1|77"
   "a row failing on an unreadable hold is behaviour|behaviour|held|unreadable|1 1 0|1"
+  "a hold row failing after the held mode's reset is behaviour|hold|held|reset|1 1 0|1"
 )
 for row in "${tallies[@]}"; do
   if run_tally "$verdict" "$row"; then ok "${row%%|*}"; else fail "${row%%|*}"; fi
@@ -147,6 +148,7 @@ controls=(
   "fail counts no mode reset|    mode_resets=\$((mode_resets + 1))|    mode_resets=\$((mode_resets + 0))|a row failing after the held mode's reset is a mode reset"
   "fail also counts a mode reset as behaviour|\"\${mode_hold[1]}\"|\"\${mode_hold[1]}\"; behaviour_failures=\$((behaviour_failures + 1))|a row failing after the held mode's reset is a mode reset"
   "fail asks the hold with no mode held|\${#mode_hold[@]} -gt 0 &&|\${#mode_hold[@]} -ge 0 &&|a behaviour row failing with no hold is behaviour"
+  "fail excuses a hold row's reset|\$row_class != hold &&|\$row_class != never &&|a hold row failing after the held mode's reset is behaviour"
   "fail excuses an unreadable hold|\$(held_mode_state) == reset|\$(held_mode_state) != held|a row failing on an unreadable hold is behaviour"
   "fail excuses a mode that holds|\$(held_mode_state) == reset|\$(held_mode_state) != unreadable|a row failing while the mode holds is behaviour"
   "a mode reset is not read|if [[ \$mode_resets -eq \$failures ]]; then|if [[ \$mode_resets -eq -1 ]]; then|every failure after a held mode's reset is not measured"

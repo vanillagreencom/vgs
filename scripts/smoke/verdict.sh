@@ -6,10 +6,12 @@
 failures=0
 # A row that reads positions, sizes or reserved space from the compositor
 # runs under `geometry`; a row whose subject shows only once the shell
-# draws a frame runs under `render`; every other failure counts as
-# behaviour. Only a run whose failures are all geometry or render can be
-# excused by a sandbox fault: the compositor's buffers, or a host that
-# withholds frame callbacks from the nested window.
+# draws a frame runs under `render`; a row that reads the held mode itself,
+# whose failure is the hold misbehaving, runs under `hold`; every other
+# failure counts as behaviour, `hold` included. Only a run whose failures
+# are all geometry or render can be excused by a sandbox fault: the
+# compositor's buffers, or a host that withholds frame callbacks from the
+# nested window.
 behaviour_failures=0
 stalled_render=false
 row_class=behaviour
@@ -17,14 +19,14 @@ row_class=behaviour
 # and scale as mode_scale_of in harness.sh reads them, empty when no row
 # holds one; hold_mode and release_mode alone write it. A row that fails
 # after the output left the held mode counts in mode_resets and never as
-# behaviour: it measured an output the sandbox reset (held_mode_state in
-# harness.sh).
+# behaviour, unless it runs under `hold`: it measured an output the sandbox
+# reset (held_mode_state in harness.sh).
 mode_hold=()
 mode_resets=0
 # fail MESSAGE: one failed row, counted by its class and printed.
 fail() {
   failures=$((failures + 1))
-  if [[ ${#mode_hold[@]} -gt 0 && $(held_mode_state) == reset ]]; then
+  if [[ $row_class != hold && ${#mode_hold[@]} -gt 0 && $(held_mode_state) == reset ]]; then
     mode_resets=$((mode_resets + 1))
     printf '  FAIL  %s\n' "$*"
     printf '        %s left the held mode %s: not measured\n' "${mode_hold[0]}" "${mode_hold[1]}"
@@ -68,7 +70,7 @@ smoke_verdict() {
   fi
   if [[ $mode_resets -eq $failures ]]; then
     printf 'qml-smoke: status=not-measured nested-output=mode-reset failed=%s\n' "$failures"
-    echo "the nested output left a mode a row held: the host resized or refocused the nested window, or a configuration reload dropped the row's monitor rule; leave the nested window alone during the run, then run the smoke again"
+    echo "the nested output left a mode a row held: the host resized or refocused the nested window; leave the nested window alone during the run, then run the smoke again"
     return 77
   fi
   if [[ $behaviour_failures -eq 0 && $stalled_render == true ]]; then

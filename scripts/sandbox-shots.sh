@@ -30,8 +30,8 @@
 # (shell_output_scale in scripts/smoke/harness.sh), so the layout keeps its
 # logical size and the shell draws each PNG in device pixels. Each shot at
 # scale 2 checks before and after its capture that the output still reads
-# that mode and scale, since a host resize or a configuration reload resets
-# them, and fails when it does not. Another value is refused as
+# that mode, since a host resize or refocus resets it (held_mode_state in
+# scripts/smoke/harness.sh), and fails when it does not. Another value is refused as
 # `sandbox-shots: refused: scale=<value>`.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
@@ -170,7 +170,7 @@ undrawn=0
 # output reads.
 hold_kept() {
   [[ ${#mode_hold[@]} -eq 0 || $(held_mode_state) == held ]] && return 0
-  fail "$1: ${mode_hold[0]} reads $(mode_scale_of "${mode_hold[0]}" || echo unreadable), not the held ${mode_hold[1]}; a host resize or a configuration reload reset it"
+  fail "$1: ${mode_hold[0]} reads $(mode_scale_of "${mode_hold[0]}" || echo unreadable), not the held ${mode_hold[1]}; a host resize or refocus reset it"
   return 1
 }
 # take NAME: one shot, refused while the output has left a mode the run
@@ -350,10 +350,16 @@ scene_settings() { # MODE
   settings_close
   # The monitor made narrower than the window: the nested output holds a
   # mode 480 by 720 logical pixels at the run's scale for the shot, then
-  # its own mode again. The gear opens the window on its bar's monitor, the
-  # list first and then a page.
+  # the run's mode again. The gear opens the window on its bar's monitor,
+  # the list first and then a page. At scale 2 the run's mode is the one
+  # the harness held before the shell started, since the monitor may read
+  # a reset one by now; at scale 1 it is the monitor's own mode.
   local main_mode narrow_mode="$((480 * scale))x$((720 * scale))"
-  main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
+  if [[ $scale == 2 ]]; then
+    main_mode="$shell_output_mode"
+  else
+    main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
+  fi
   [[ $scale == 1 ]] || release_mode "the run's scale-2 hold ends for the narrow monitor" "$main_name" "$main_mode" "$scale"
   hold_mode "the monitor is made narrower than the window" "$main_name" "$narrow_mode" "$scale"
   expect_poll "the monitor is 480 logical pixels wide" 480 first_width
@@ -364,7 +370,7 @@ scene_settings() { # MODE
   expect_poll "the probe's page is shown on the narrow monitor" '"acme.probe"' settings_page
   take "settings-$1-narrow-page"
   settings_close
-  release_mode "the monitor's own mode is restored" "$main_name" "$main_mode" "$scale"
+  release_mode "the run's mode is restored" "$main_name" "$main_mode" "$scale"
   [[ $scale == 1 ]] || hold_mode "the monitor holds its scale-2 mode again" "$main_name" "$main_mode" "$scale"
   expect_poll "the monitor has its width back" "$mon_w" first_width
 }

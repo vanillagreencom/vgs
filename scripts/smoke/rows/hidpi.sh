@@ -2,13 +2,18 @@
 # scale 2. It reads:
 # - the hold: the compositor reports the first monitor's sized mode,
 #   doubled, at scale 2 (hold_mode's poll of `hyprctl -j monitors`);
+# - a configuration reload under the hold, after the scale alone dropped
+#   to 1: the reload runs the harness's hold file and the held mode and
+#   scale come back;
 # - the shell's screen, as the host handed it to the vgs.themes background
 #   (the probe's screenOf): devicePixelRatio 2 at half the held mode, the
 #   monitor's logical size;
 # - the background's requested sourceSize: the held mode, in device pixels.
 # Controls: the scale alone drops to 1 under the hold, the compositor
 # reports that scale and the hold reads it as a reset, so the reading is
-# the scale the compositor applied; a sandbox copy of Background.qml that
+# the scale the compositor applied; with the hold file removed, a reload
+# gives the monitor the configuration's default rule, its own mode at
+# scale 1, and the hold reads reset; a sandbox copy of Background.qml that
 # decodes at logical pixels requests half the held mode.
 # The row starts its own shell because a scale change under a running
 # shell does not reach it: the screen reports no devicePixelRatio change,
@@ -42,6 +47,16 @@ else
     expect "control: $hidpi_output drops to scale 1 at the held mode" ok output_mode "$hidpi_output" "$hidpi_mode" 1
     expect_poll "control: $hidpi_output reads the held mode at scale 1" "$hidpi_mode scale=1" mode_scale_of "$hidpi_output"
     expect "control: the hold reads the scale-only drop as a reset" reset held_mode_state
+    # A reload runs hyprland.lua again, which loads the hold file after its
+    # default rule, so the held rule comes back over the drop. The reads
+    # run under hold_check: a reset they read is their failure.
+    expect "the nested instance reloads its configuration under the hold" ok hypr reload config-only
+    hold_check expect_poll "the reload gives $hidpi_output the held mode and scale again" held held_mode_state
+    # Control of the hold file: without it the reload gives the default rule.
+    rm -- "$mode_hold_file" || fail "control: the hold file $mode_hold_file is not removed"
+    expect "control: the nested instance reloads its configuration without the hold file" ok hypr reload config-only
+    hold_check expect_poll "control: without the hold file the reload gives $hidpi_output its own mode at scale 1" "$hidpi_base scale=1" mode_scale_of "$hidpi_output"
+    expect "control: the hold reads the reload without its file as a reset" reset held_mode_state
     release_mode "the control ends at $hidpi_output's own mode at scale 1" "$hidpi_output" "$hidpi_base"
     hold_mode "the nested compositor holds $hidpi_output at scale 2 again before the shell starts" "$hidpi_output" "$hidpi_mode" 2
   fi
