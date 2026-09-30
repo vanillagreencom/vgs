@@ -56,16 +56,21 @@ fresh() {
 
 # row NAME DIR WANT_EXIT EXTRA_ENV LINE...: run `scripts/validate repo` in
 # DIR under EXTRA_ENV (words of NAME=VALUE, or "") and assert its exit
-# status and that each LINE is a whole line of its output.
+# status and that each LINE is a whole line of its output. A LINE written
+# !TEXT asserts instead that TEXT appears nowhere in the output.
 row() {
-  local name="$1" dir="$2" want_exit="$3" extra="$4" out status=0 line missing=""
+  local name="$1" dir="$2" want_exit="$3" extra="$4" out status=0 line missing="" present=""
   shift 4
   # shellcheck disable=SC2086
   out="$(cd -- "$dir" && "${base_env[@]}" $extra bash scripts/validate "${test_area:-repo}" "${test_args[@]}" 2>&1)" || status=$?
   for line in "$@"; do
-    grep -qxF -e "$line" <<<"$out" || missing+="[$line]"
+    if [[ $line == '!'* ]]; then
+      ! grep -qF -e "${line#!}" <<<"$out" || present+="[${line#!}]"
+    else
+      grep -qxF -e "$line" <<<"$out" || missing+="[$line]"
+    fi
   done
-  if [[ $status == "$want_exit" && -z $missing ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit missing=$missing"; printf '%s\n' "$out" | sed 's/^/        /'; fi
+  if [[ $status == "$want_exit" && -z $missing && -z $present ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit missing=$missing present=$present"; printf '%s\n' "$out" | sed 's/^/        /'; fi
 }
 
 d="$tmp/clean"; fresh "$d"
@@ -147,39 +152,56 @@ d="$tmp/runtime-unreadable"; fresh "$d"; mkdir -p "$d/bin"; printf 'x\n' >"$d/bi
 row "a file under bin/ the boundary check cannot read is an error, not a pass" "$d" 1 "" \
   "validate: unreadable: runtime-reads-scripts status=1"
 
-# The private-key check: one PEM block planted per row, header, body and
-# footer, untracked unless the row says committed. A private-key header of
-# any type is refused with the count and the header line; a certificate, a
-# public key and a line that spells the check's pattern pass. The armor is
-# assembled here and never written whole, so this file holds no header the
-# check or a secret scanner would match.
+# The private-key check: one PEM key planted per row, header, a body marker
+# and footer, untracked unless the row says committed or ignored. An ignored
+# row lists tmp/ in the fixture's .gitignore. The shape is a block of three
+# lines, a one-line JSON string joined by literal backslash-n, or a JS
+# template literal whose header sits partway along its first line. A
+# private-key header of any type is refused with the count and the header
+# alone, and the body marker appears nowhere in the output; a certificate, a
+# public key, a line that spells the check's pattern and an ignored key pass.
+# The armor is assembled here and never written whole, so this file holds no
+# header the check or a secret scanner would match.
 pem_begin='-----BEGIN'
 pem_end='-----END'
 key_cases=(
-  'private key|keys/test.pem|untracked|1|PRIVATE KEY'
-  'committed private key|keys/committed.pem|committed|1|PRIVATE KEY'
-  'RSA private key|id_rsa|untracked|1|RSA PRIVATE KEY'
-  'OpenSSH private key|shell/plugins/acme.p/key|untracked|1|OPENSSH PRIVATE KEY'
-  'PGP private key block|docs/key.asc|untracked|1|PGP PRIVATE KEY BLOCK'
-  'certificate|keys/cert.pem|untracked|0|CERTIFICATE'
-  'public key|keys/key.pub|untracked|0|PUBLIC KEY'
-  'line naming the pattern|notes.txt|untracked|0|[A-Z ]*PRIVATE KEY( BLOCK)?'
+  'private key|keys/test.pem|untracked|1|PRIVATE KEY|block'
+  'committed private key|keys/committed.pem|committed|1|PRIVATE KEY|block'
+  'RSA private key|id_rsa|untracked|1|RSA PRIVATE KEY|block'
+  'OpenSSH private key|shell/plugins/acme.p/key|untracked|1|OPENSSH PRIVATE KEY|block'
+  'PGP private key block|docs/key.asc|untracked|1|PGP PRIVATE KEY BLOCK|block'
+  'one-line JSON private key|keys/service-account.json|untracked|1|PRIVATE KEY|json'
+  'private key partway along a line|scripts/fixture.js|untracked|1|PRIVATE KEY|inline'
+  'certificate|keys/cert.pem|untracked|0|CERTIFICATE|block'
+  'public key|keys/key.pub|untracked|0|PUBLIC KEY|block'
+  'line naming the pattern|notes.txt|untracked|0|[A-Z ]*PRIVATE KEY( BLOCK)?|block'
+  'git-ignored private key|tmp/key.pem|ignored|0|PRIVATE KEY|block'
 )
 for spec in "${key_cases[@]}"; do
-  IFS='|' read -r name file state want type <<<"$spec"
+  IFS='|' read -r name file state want type shape <<<"$spec"
   d="$tmp/key-${name// /-}"; fresh "$d"
   mkdir -p -- "$d/$(dirname -- "$file")"
   header="$pem_begin $type-----"
-  printf '%s\nMIIBdummy\n%s\n' "$header" "$pem_end $type-----" >"$d/$file"
-  if [[ $state == committed ]]; then
-    "${base_env[@]}" git -C "$d" add -- "$file"
-    "${base_env[@]}" git -C "$d" commit -q -m planted
-  fi
+  footer="$pem_end $type-----"
+  case "$shape" in
+    block) printf '%s\nBODYMARKER\n%s\n' "$header" "$footer" ;;
+    json) printf '{"private_key": "%s\\nBODYMARKER\\n%s\\n"}\n' "$header" "$footer" ;;
+    inline) printf 'const KEY = `%s\nBODYMARKER\n%s`;\n' "$header" "$footer" ;;
+    *) echo "test-validate: key-case shape=$shape unknown" >&2; exit 1 ;;
+  esac >"$d/$file"
+  case "$state" in
+    untracked) ;;
+    committed)
+      "${base_env[@]}" git -C "$d" add -- "$file"
+      "${base_env[@]}" git -C "$d" commit -q -m planted ;;
+    ignored) printf 'tmp/\n' >"$d/.gitignore" ;;
+    *) echo "test-validate: key-case state=$state unknown" >&2; exit 1 ;;
+  esac
   if [[ $want == 1 ]]; then
     row "a $name in $file is refused" "$d" 1 "" \
-      "validate: refused: private-key=1" "$file:1:$header"
+      "validate: refused: private-key=1" "$file:1:$header" '!BODYMARKER'
   else
-    row "a $name in $file passes" "$d" 0 "" "validate: no committed private key"
+    row "a $name in $file passes" "$d" 0 "" "validate: no private key in the tree"
   fi
 done
 
