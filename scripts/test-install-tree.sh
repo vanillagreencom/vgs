@@ -40,6 +40,9 @@ check "shell AGENTS.md is not installed" test ! -e "$dest/usr/share/vgs/shell/AG
 check "shell CLAUDE.md is not installed" test ! -e "$dest/usr/share/vgs/shell/CLAUDE.md"
 check "shell plugin README.md is not installed" test ! -e "$dest/usr/share/vgs/shell/plugins/vgs.bar/README.md"
 check "a plugin's other Markdown is not installed" test ! -e "$dest/usr/share/vgs/shell/plugins/vgs.updates/pipeline.md"
+check "Jarvis runtime guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/core.md"
+run_capture "$tmp/guidance.out" "$tmp/guidance.err" status env -i PATH=/usr/bin:/bin node "$repo/scripts/fixtures/jarvis-voice/installed.js" "$dest/usr/share/vgs"
+check "installed guidance composes every consumer without source-tree files" test "$status" = 0
 check "root README.md is installed under doc" test -e "$dest/usr/share/doc/vgs/README.md"
 check "LICENSE is installed under licenses" test -e "$dest/usr/share/licenses/vgs/LICENSE"
 
@@ -153,6 +156,29 @@ check "the markdown-dropping mutant still installs" test "$status" = 0
 run_capture "$tmp/mutant-check.out" "$tmp/mutant-check.err" status "$repo/scripts/check-install-tree.sh" "$mutant_dest" /usr
 check "the manifest catches a mutant that installs shell markdown" test "$status" = 1
 check "the mutant's shell AGENTS.md is reported as extra" grep_out "install-tree=extra entry=f share/vgs/shell/AGENTS.md" "$tmp/mutant-check.out"
+
+python3 - "$source_copy/packaging/install-system.sh" "$repo/packaging/install-system.sh" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = pathlib.Path(sys.argv[2]).read_text()
+needle = '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/voice/*.md ]] && return 1\n'
+if text.count(needle) != 1:
+    raise SystemExit("install-control: voice exception did not occur once")
+changed = text.replace(needle, '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/voice/*.md ]] && return 0\n')
+if changed == text:
+    raise SystemExit("install-control: voice exception did not change")
+path.write_text(changed)
+PY
+mutant_dest="$tmp/voice-mutant"
+run_capture "$tmp/voice-install.out" "$tmp/voice-install.err" status env DESTDIR="$mutant_dest" PREFIX=/usr "$source_copy/packaging/install-system.sh"
+check "the guidance-dropping mutant still installs" test "$status" = 0
+run_capture "$tmp/voice-check.out" "$tmp/voice-check.err" status "$repo/scripts/check-install-tree.sh" "$mutant_dest" /usr
+check "the manifest catches dropped runtime guidance" test "$status" = 1
+check "the dropped core layer is reported as missing" grep_out "install-tree=missing entry=f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/core.md" "$tmp/voice-check.out"
+run_capture "$tmp/voice-compose.out" "$tmp/voice-compose.err" status env -i PATH=/usr/bin:/bin node "$repo/scripts/fixtures/jarvis-voice/installed.js" "$mutant_dest/usr/share/vgs"
+check "the dropped-guidance mutant breaks the installed consumer" test "$status" = 1
 
 READ_ONLY_PREFIX_SOURCE_ONLY=true source "$repo/scripts/smoke/rows/read-only-prefix.sh"
 signal_dest="$tmp/signal-install"

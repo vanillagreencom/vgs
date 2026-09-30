@@ -55,6 +55,7 @@ signal_log="$sandbox/read-only-signal-calls.log"
 read_only_prefix_prepare_tree "$readonly_dest/usr" "$repo" "$signal_shim"
 "$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" "$source_repo" "$readonly_dest/usr/share/vgs" "$sandbox/jarvis-installed-world"
 chmod -R a-w -- "$readonly_dest/usr"
+expect "voice APIs work from the non-writable installed prefix" "jarvis-voice-installed=ok" env -i PATH=/usr/bin:/bin "$node_bin" "$source_repo/scripts/fixtures/jarvis-voice/installed.js" "$readonly_dest/usr/share/vgs"
 
 tree_snapshot() { # ROOT
   python3 - "$1" <<'PY'

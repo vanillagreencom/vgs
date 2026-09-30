@@ -1,0 +1,9 @@
+[
+  {"engine":"duplex","class":"duplex","language":"en","layers":["core-short.md","speech.md","turns.md","class/duplex.md"],"repeat":false},
+  {"engine":"duplex","class":"text","language":"es","layers":["core.md","speech.md","actions.md"],"repeat":false},
+  {"engine":"duplex","class":"local","language":"en","layers":["core.md","speech.md","actions.md"],"repeat":false},
+  {"engine":"chained","class":"text","language":"en","layers":["core.md","speech.md","turns.md","actions.md","lang/en.md"],"repeat":false},
+  {"engine":"chained","class":"text","language":"es","layers":["core.md","speech.md","turns.md","actions.md","lang/es.md"],"repeat":false},
+  {"engine":"chained","class":"local","language":"en","layers":["core.md","speech.md","turns.md","actions.md","class/local.md","lang/en.md"],"repeat":true},
+  {"engine":"chained","class":"local","language":"es","layers":["core.md","speech.md","turns.md","actions.md","class/local.md","lang/es.md"],"repeat":true}
+]

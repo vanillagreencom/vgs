@@ -8,6 +8,8 @@ The shared Jarvis test environment, its private services and its behavior contro
 
 The [Jarvis Session](jarvis.md#session) has pure reducer and effect-owner rows in the `logic` area. The protocol row also selects on the Session state judge it imports. The real daemon and nested service rows use the private Jarvis environment.
 
+The pure Jarvis guidance, speech text and language suites select from their modules, runtime assets and fixtures. Their [voice text contract](jarvis-voice.md) defines the consumer boundary and mutation evidence. The installed consumer runs in the install-tree suite and nested read-only prefix row.
+
 The standalone GPU instrument and passive-layer presentation checks are in [validation-shaders.md](validation-shaders.md).
 
 - `scripts/validate` owns the commands and their input globs. Local runs default to changes from the default branch's merge base, including staged, unstaged and untracked files. `--changed BASE` selects a fix round and its whitespace range; `--full` explicitly selects the whole area. Shared dependencies select every listed consumer; unknown source inputs or a failed diff select the full area. Documentation and harness-only changes run repository checks without the product smoke. A selector change runs its own control rather than every product suite. `scripts/test-validate.sh` checks selection and plants a forbidden import that escapes when its dependency edge is removed.

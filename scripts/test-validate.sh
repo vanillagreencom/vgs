@@ -253,6 +253,9 @@ jarvis_secrets_plan=$'node scripts/test-jarvis-secrets.js\n'"$repo_plan"
 jarvis_owner_plan="$jarvis_policy_rows"$'node scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\n'"$jarvis_helper_plan"
 jarvis_daemon_plan=$'node scripts/test-jarvis-daemon.js\n'"$repo_plan"
 jarvis_fixture_plan=$'node scripts/test-jarvis-protocol.js\n'"$jarvis_daemon_plan"
+jarvis_guidance_plan=$'node scripts/test-jarvis-guidance.js\n'"$repo_plan"
+jarvis_speakable_plan=$'node scripts/test-jarvis-speakable.js\n'"$repo_plan"
+jarvis_language_plan=$'node scripts/test-jarvis-guidance.js\nnode scripts/test-jarvis-speakable.js\nnode scripts/test-jarvis-speech-language.js\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\npython3 scripts/test-check-user-commands.py\n'"$repo_plan"
 session_plan=$'scripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\npython3 scripts/test-check-user-commands.py\n'"$repo_plan"$'\nscripts/qml-unit.sh\nscripts/test-qml-unit.sh\nscripts/test-session-lock.sh\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
@@ -326,6 +329,13 @@ cases=(
   "jarvis-owner-suite|scripts/test-jarvis-session-runner.js|offline|node scripts/test-jarvis-session-runner.js"$'\n'"$repo_plan"
   "jarvis-session|shell/plugins/vgs.jarvis/Session.js|logic|node scripts/test-jarvis-session.js"$'\nnode scripts/test-jarvis-session-runner.js\nnode scripts/test-jarvis-protocol.js'
   "jarvis-owner|shell/plugins/vgs.jarvis/backend/session-runner.js|logic|node scripts/test-jarvis-session-runner.js"
+  "jarvis-guidance-suite|scripts/test-jarvis-guidance.js|offline|$jarvis_guidance_plan"
+  "jarvis-guidance-fixture|scripts/fixtures/jarvis-voice/guidance.json|offline|$jarvis_guidance_plan"
+  "jarvis-speakable-suite|scripts/test-jarvis-speakable.js|offline|$jarvis_speakable_plan"
+  "jarvis-speakable-fixture|scripts/fixtures/jarvis-voice/speakable.json|offline|$jarvis_speakable_plan"
+  "jarvis-language-suite|scripts/test-jarvis-speech-language.js|offline|node scripts/test-jarvis-speech-language.js"$'\n'"$repo_plan"
+  "jarvis-voice-assertions|scripts/fixtures/jarvis-voice/assertions.js|offline|$jarvis_language_plan"
+  "jarvis-voice-installed|scripts/fixtures/jarvis-voice/installed.js|all|$install_plan"$'\nscripts/qml-smoke.sh'
   "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"
   "session|shell/Core/SessionLock.qml|all|$session_plan"
   "fixture|scripts/smoke/fixtures/plugins/acme.contention/Background.qml|all|$fixture_plan"

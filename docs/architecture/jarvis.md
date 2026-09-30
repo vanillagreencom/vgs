@@ -6,6 +6,8 @@ The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scop
 
 The service also owns a metadata-only key presence probe. Settings opens the masked Add key terminal. Storage, lookup and the reference contract for future adapters and the accounts picker are in [jarvis-secrets.md](jarvis-secrets.md). The daemon still opens no provider account.
 
+The [voice text contract](jarvis-voice.md) defines the shipped guidance and speech-text APIs for future engines. These modules do not start an engine or change the service's current behavior.
+
 ## Local speech inputs
 
 [jarvis-local.md](jarvis-local.md) defines the independent artifact declaration, bounded model inputs, measurement instrument and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the selected exports and caption path. These inputs register no plugin and do not implement the sidecar, setup or admission.
