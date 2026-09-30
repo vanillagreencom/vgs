@@ -18,15 +18,22 @@
 # wallpaper-browser. settings takes the automations' and the Jarvis
 # pages among the plugin pages, each when the tree ships its plugin. bar
 # is the bar with every first-party widget and each widget's tooltip or
-# hover; panels is the Agent Warden panel and the updates
-# flyout, each opened from its widget over planted status; devtools is the
+# hover; panels is the Agent Warden panel, the updates flyout and the
+# themes panel, each opened from its widget over planted status or
+# packages, the themes panel's apply held and answered by a stand-in
+# runner that changes no theme; devtools is the
 # Dev Tools window; dialog is the core's requirement notice; lock is the
 # vgs.lock screen, locked and after wrong attempts; polkit is the
 # vgs.polkit prompt, asking and after a failed attempt; narrow holds a
 # monitor 480 by 720 logical pixels and takes the bar, panels, devtools,
 # dialog, lock, launcher, notifications and the first gallery pages again, each
 # shot named <scene>-<mode>-narrow-*; theme-browser and wallpaper-browser
-# are the vgs.themes browsers, taken only when named. The default is every
+# are the vgs.themes browsers, taken only when named: the theme view
+# loaded, with the pointer on a card, with a filter no card matches, with
+# a refused card's failure line, on the chosen catalog card, on it
+# installed and with its wallpaper offer; the wallpaper view on its Theme
+# source, with the pointer on a card, on its download card and on All.
+# Each leaves vgs and the mode's theme applied. The default is every
 # other scene the tree ships, or gallery and the manager's scene with
 # --rev; the manager's scene is `settings` for a tree that ships
 # vgs.settings and `manager`, the bar's manager panel, for one that ships
@@ -184,6 +191,8 @@ devtools_hover=Install
 themes_entry_type=IconButton
 tree_has shell/plugins/vgs.themes/Widget.qml "BarItem {" && themes_entry_type=BarItem
 tree_has shell/plugins/vgs.devtools/ToolRow.qml '"Details"' && devtools_hover=Details
+card_hover_state=false
+tree_has shell/Ui/layout/AngledCard.qml "property bool hovered" && card_hover_state=true
 manager_scene=""
 if [[ -f $tree/shell/plugins/vgs.settings/manifest.json ]]; then manager_scene=settings
 elif [[ -f $tree/shell/plugins/vgs.bar/Manager.qml ]]; then manager_scene=manager
@@ -197,7 +206,7 @@ scene_ships() {
     gallery) ships_plugin vgs.gallery ;;
     launcher|notifications) ships_plugin "vgs.$1" ;;
     bar) ships_plugin vgs.bar vgs.launcher vgs.agent-warden vgs.updates vgs.themes ;;
-    panels) ships_plugin vgs.agent-warden vgs.updates ;;
+    panels) ships_plugin vgs.agent-warden vgs.updates vgs.themes ;;
     devtools) ships_plugin vgs.devtools ;;
     theme-browser|wallpaper-browser) ships_plugin vgs.themes ;;
     dialog) [[ -f $tree/shell/Hosts/NoticeHost.qml ]] ;;
@@ -699,6 +708,51 @@ scene_settings() { # MODE
   narrow_end
 }
 
+# The browsers' readings: the theme view's shown card count, whether it
+# names a problem, the card it offers wallpapers for, and the wallpaper
+# view's selected card kind.
+theme_view_count() { ipc smoke readDescendant overlay vgs.themes ThemeView shownCards | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
+theme_view_problem() { ipc smoke readDescendant overlay vgs.themes ThemeView problem | py_reply 'import json,sys; print(json.load(sys.stdin) != "")'; }
+theme_view_offer() { ipc smoke readDescendant overlay vgs.themes ThemeView offer | py_reply 'import json,sys; o=json.load(sys.stdin); print(json.dumps(None if o is None else o["name"]))'; }
+wallpaper_selected_kind() { ipc smoke readDescendant overlay vgs.themes WallpaperView selected | py_reply 'import json,sys; s=json.load(sys.stdin); print(json.dumps(None if s is None else s["kind"]))'; }
+# themes_restore MODE LABEL: vgs applied, which draws no background, then
+# the mode's theme, after a scene applied another package.
+themes_restore() {
+  "${shell_env[@]}" "$repo/bin/vgsh" theme apply vgs >/dev/null || fail "vgs applies after $2"
+  expect_poll "no background is drawn after $2" 0 layer_count vgs:background
+  set_mode "$1"
+}
+# browser_card_right: the centre of the card right of the selected one on
+# a browser's rail, the selected card being the largest, as `X Y`.
+browser_card_right() {
+  ipc smoke descendantGeometry overlay vgs.themes | py_reply 'import json,sys
+cards = [r["box"] for r in json.load(sys.stdin) if r["type"] == "AngledCard" and r["box"][2] > 0 and r["box"][3] > 0]
+selected = max(cards, key=lambda b: b[2] * b[3]) if cards else None
+right = [b for b in cards if selected is not None and b[0] > selected[0]]
+b = min(right, key=lambda b: b[0]) if right else None
+print("none" if b is None else "%d %d" % (b[0] + b[2] / 2, b[1] + b[3] / 2))'
+}
+rail_card_hovered() { ipc smoke itemValues overlay vgs.themes AngledCard hovered | py_reply 'import json,sys; print(any(v["hovered"] is True for v in json.load(sys.stdin)))'; }
+# hover_card LABEL: the pointer on that card, held until a card reports it
+# twice in a row. A tree whose cards draw no hover takes the shot once the
+# pointer is there.
+hover_card() {
+  local at x y i held=0
+  at="$(browser_card_right)" && [[ $at != none ]] || { fail "$1: no card right of the selected one"; return 1; }
+  read -r x y <<<"$at"
+  if ! "$card_hover_state"; then
+    hover "$x" "$y" || { fail "$1: the hover failed"; return 1; }
+    ok "$1 (the tree's cards draw no hover)"; return 0
+  fi
+  for i in $(seq 1 50); do
+    hover "$((x + i % 2))" "$y" || { fail "$1: the hover failed"; return 1; }
+    if [[ $(rail_card_hovered) == True ]]; then held=$((held + 1)); else held=0; fi
+    if (( held >= 2 )); then ok "$1"; return 0; fi
+    sleep 0.1
+  done
+  fail "$1: no card reported the pointer"
+  return 1
+}
 scene_theme-browser() { # MODE
   local selected preview_path
   selected_path() { ipc smoke readDescendant overlay vgs.themes ThemeView selected | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("sharpenedImage") or d.get("image") or d.get("previewImage") or "")'; }
@@ -707,12 +761,32 @@ scene_theme-browser() { # MODE
   card_image() { ipc smoke images overlay vgs.themes | python3 -c 'import json,sys; r=[i[1] for i in json.load(sys.stdin) if i[0]==sys.argv[1]]; print(r[0] if r else "none")' "$1"; }
   preview_path_of() { ipc smoke readDescendant overlay vgs.themes ThemeView previewCache | python3 -c 'import json,sys; t=sys.stdin.read(); d=json.loads(t) if t.startswith("{") else {}; print(d.get(sys.argv[1], ""))' "$1"; }
   wait_preview_cached() { local _; for _ in $(seq 1 50); do [[ $(preview_cached "$1") == True ]] && return 0; sleep 0.2; done; return 1; }
+  mkdir -p -- "$themes_mismatch"
+  printf '%s\n' '{ "schemaVersion": 1, "name": "other", "tokens": {} }' >"$themes_mismatch/theme.json"
   expect "vgs.themes enables for the theme browser shot" ok ipc shell setPluginEnabled vgs.themes true
   expect_poll "vgs.themes is built for the theme browser shot" True record_exists vgs.themes
   expect "the theme browser opens" ok ipc shell summon overlay vgs.themes '{"view":"themes"}'
   expect_poll "the theme browser maps" 1 layer_count vgs:overlay
   expect_poll "the theme browser holds the keyboard" true ipc smoke activeFocusIn overlay vgs.themes
   expect_poll "the theme browser reads its cards" true ipc smoke readDescendant overlay vgs.themes ThemeView loaded
+  park_pointer
+  take "theme-browser-$1-loaded"
+  hover_card "the pointer rests on the theme browser's next card" && take "theme-browser-$1-hover"
+  park_pointer
+  type_keys zzqx || fail "typing the theme browser's empty filter failed"
+  expect_poll "the theme browser's filter matches no card" 0 theme_view_count
+  take "theme-browser-$1-empty"
+  type_keys -k Escape || fail "clearing the theme browser's filter failed"
+  type_keys mismatch || fail "typing the refused package's name failed"
+  expect_poll "the theme browser selects the refused package" '"mismatch"' ipc smoke readDescendant overlay vgs.themes ThemeView selectedName
+  type_keys -k Return || fail "Enter on the refused package failed"
+  expect_poll "the theme browser names the refused package's problem" True theme_view_problem
+  take "theme-browser-$1-failure"
+  # A new open starts with no filter and no problem line.
+  expect "the theme browser hides before the catalog shot" ok ipc shell hide overlay vgs.themes
+  expect_poll "the theme browser is gone before the catalog shot" 0 layer_count vgs:overlay
+  expect "the theme browser opens for the catalog shot" ok ipc shell summon overlay vgs.themes '{"view":"themes"}'
+  expect_poll "the theme browser reads its cards for the catalog shot" true ipc smoke readDescendant overlay vgs.themes ThemeView loaded
   type_keys "$theme_card" || fail "typing the theme-browser card failed"
   expect_poll "the theme browser selects $theme_card" "\"$theme_card\"" ipc smoke readDescendant overlay vgs.themes ThemeView selectedName
   if wait_preview_cached "$theme_card"; then
@@ -724,8 +798,19 @@ scene_theme-browser() { # MODE
     expect_poll "the selected catalog image is ready" True selected_ready
     take "theme-browser-$1-catalog-$theme_card"
   fi
+  # Enter installs and applies the catalog card, whose wallpapers are not
+  # downloaded, so the view offers them; Not now declines, and vgs and
+  # the mode's theme are applied again before the installed shot.
+  type_keys -k Return || fail "Enter on the catalog theme-browser card failed"
+  expect_poll "the theme browser offers $theme_card's wallpapers" "\"$theme_card\"" theme_view_offer
+  park_pointer
+  take "theme-browser-$1-download"
+  click_item overlay vgs.themes Button "Not now" || fail "the click on Not now failed"
+  expect_poll "Not now declines the offer" null theme_view_offer
   expect "the theme browser hides before the installed shot" ok ipc shell hide overlay vgs.themes
   expect_poll "the theme browser is gone before the installed shot" 0 layer_count vgs:overlay
+  themes_restore "$1" "the theme browser's install"
+  rm -rf -- "${home:?}/.config/vgs/themes/${theme_card:?}"
   mkdir -p -- "$home/.config/vgs/themes/$theme_card/backgrounds"
   cp -- "$repo/themes/catalog/$theme_card/theme.json" "$home/.config/vgs/themes/$theme_card/theme.json"
   [[ ! -f $repo/themes/catalog/$theme_card/terminal.json ]] || cp -- "$repo/themes/catalog/$theme_card/terminal.json" "$home/.config/vgs/themes/$theme_card/terminal.json"
@@ -739,7 +824,7 @@ scene_theme-browser() { # MODE
   expect "the theme browser hides" ok ipc shell hide overlay vgs.themes
   expect_poll "the theme browser is gone" 0 layer_count vgs:overlay
   # The next mode's catalog shot must show the card as the catalog has it.
-  rm -rf -- "${home:?}/.config/vgs/themes/${theme_card:?}"
+  rm -rf -- "${home:?}/.config/vgs/themes/${theme_card:?}" "${themes_mismatch:?}"
 }
 
 # The wallpaper browser over nord, applied with two images, and a second
@@ -751,9 +836,11 @@ wallpaper_output="VGS-SHOT"
 overlays_on() { hypr -j layers | python3 -c 'import json,sys; m=json.load(sys.stdin).get(sys.argv[1]); print(0 if m is None else sum(1 for lv in m["levels"].values() for l in lv if l["namespace"]=="vgs:overlay" and l["pid"]!=-1))' "$1"; }
 scene_wallpaper-browser() { # MODE
   local theme_dir="$home/.config/vgs/themes/nord"
+  # The runner's install writes the catalog marker, with no wallpapers, so
+  # the Theme source ends on the download card.
+  rm -rf -- "${theme_dir:?}"
+  "${shell_env[@]}" "$repo/bin/vgsh" theme install nord >/dev/null || fail "nord installs for the wallpaper browser shot"
   mkdir -p -- "$theme_dir/backgrounds"
-  cp -- "$checkout/themes/catalog/nord/theme.json" "$theme_dir/theme.json"
-  cp -- "$checkout/themes/catalog/nord/terminal.json" "$theme_dir/terminal.json"
   cp -- "$checkout/themes/catalog/thumbnails/nord.jpg" "$theme_dir/backgrounds/a.jpg"
   cp -- "$checkout/themes/catalog/thumbnails/akane.jpg" "$theme_dir/backgrounds/b.jpg"
   "${shell_env[@]}" "$repo/bin/vgsh" theme apply nord >/dev/null || fail "nord applies for the wallpaper browser shot"
@@ -767,13 +854,23 @@ scene_wallpaper-browser() { # MODE
   expect_poll "the wallpaper browser reads its cards" true ipc smoke readDescendant overlay vgs.themes WallpaperView loaded
   expect_poll "the wallpaper browser is on $SHOT_OUTPUT" 1 overlays_on "$SHOT_OUTPUT"
   expect_poll "the wallpaper browser shows its monitor scope" true ipc smoke readDescendant overlay vgs.themes WallpaperView scoped
+  park_pointer
   take "wallpaper-browser-$1"
+  hover_card "the pointer rests on the wallpaper browser's next card" && take "wallpaper-browser-$1-hover"
+  park_pointer
+  type_keys -k End || fail "End in the wallpaper browser failed"
+  expect_poll "End selects the wallpaper download card" '"download"' wallpaper_selected_kind
+  take "wallpaper-browser-$1-download"
+  type_keys -M alt -k s -m alt || fail "Alt+S in the wallpaper browser failed"
+  expect_poll "Alt+S shows every source's images" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+  take "wallpaper-browser-$1-all"
   expect "the wallpaper browser hides" ok ipc shell hide overlay vgs.themes
   expect_poll "the wallpaper browser is gone" 0 layer_count vgs:overlay
   expect "the wallpaper browser shot's monitor is removed" ok hypr output remove "$wallpaper_output"
   # vgs has no backgrounds, so applying it removes nord's image.
   "${shell_env[@]}" "$repo/bin/vgsh" theme apply vgs >/dev/null || fail "vgs applies after the wallpaper browser shot"
   expect_poll "no background is drawn after the wallpaper browser shot" 0 layer_count vgs:background
+  rm -rf -- "${theme_dir:?}"
   set_mode "$1"
 }
 
@@ -997,6 +1094,60 @@ scene_panels() { # MODE
   expect "the updates flyout hides" ok ipc shell hide panel vgs.updates
   expect_poll "the updates flyout is gone" closed updates_flyout
   expect "the flyout started no check" False updates_checking
+  scene_themes_panel "$1"
+}
+
+# The themes panel opened from its widget over the shipped and catalog
+# packages and a refused one: its top, the pointer on a row, its catalog
+# scrolled into view, a click on the vgs row held behind a gate and the
+# partial result the gate lets through. The stand-in runner answers every
+# apply with that result, which changes no theme, polls the gate every
+# 50 ms for at most 10 s and hands every other command to the real runner.
+themes_mismatch="$home/.config/vgs/themes/mismatch"
+themes_gate="$sandbox/shots-themes-gate"
+themes_result='{"state":"partial","shell":"unchanged","targets":[{"name":"kitty","state":"failed","reason":"placeholder"}],"theme":"vgs","reason":null}'
+themes_panel_listed() { ipc smoke readInstance panel vgs.themes catalogEntries | py_reply 'import json,sys; t=sys.stdin.read(); print(t.startswith("[") and len(json.loads(t)) > 0)'; }
+themes_panel_shown() { [[ $(ipc smoke readInstance panel vgs.themes packages) != absent ]] && echo open || echo closed; }
+themes_panel_last() { ipc smoke readInstance panel vgs.themes last | py_reply 'import json,sys; l=json.load(sys.stdin); print("applying" if l["applying"] else "result" if l["result"] else "none")'; }
+themes_stand_in() {
+  cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real" || return 1
+  cat >"$repo/bin/vgsh.next" <<SH || return 1
+#!/usr/bin/env bash
+if [[ \${1:-} == theme && \${2:-} == apply ]]; then
+  for _ in \$(seq 1 200); do [[ -e $(printf %q "$themes_gate") ]] && break; sleep 0.05; done
+  printf '%s\n' $(printf %q "$themes_result")
+  exit 3
+fi
+exec $(printf %q "$repo/bin/vgsh.real") "\$@"
+SH
+  chmod 755 -- "$repo/bin/vgsh.next" && mv -T -- "$repo/bin/vgsh.next" "$repo/bin/vgsh"
+}
+scene_themes_panel() { # MODE
+  mkdir -p -- "$themes_mismatch"
+  printf '%s\n' '{ "schemaVersion": 1, "name": "other", "tokens": {} }' >"$themes_mismatch/theme.json"
+  click_centre "$(bar_key)" vgs.themes || fail "the click on the themes widget failed"
+  expect_poll "the widget opens the themes panel" True themes_panel_listed
+  park_pointer
+  take "panels-$1-themes"
+  hover_on "the pointer rests on the themes panel's vgs row" panel vgs.themes ListItem vgs && take "panels-$1-themes-hover"
+  park_pointer
+  ipc smoke scrollTo panel vgs.themes 100000 >/dev/null || fail "the themes panel did not scroll to its catalog"
+  take "panels-$1-themes-catalog"
+  ipc smoke scrollTo panel vgs.themes 0 >/dev/null || fail "the themes panel did not scroll to its top"
+  rm -f -- "$themes_gate"
+  themes_stand_in || fail "the themes panel's stand-in runner could not be written"
+  click_item panel vgs.themes ListItem vgs || fail "the click on the themes panel's vgs row failed"
+  expect_poll "the themes panel shows the held apply" applying themes_panel_last
+  park_pointer
+  take "panels-$1-themes-applying"
+  touch -- "$themes_gate"
+  expect_poll "the themes panel shows the partial result" result themes_panel_last
+  take "panels-$1-themes-failure"
+  mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh" || fail "the real runner could not be restored"
+  rm -f -- "$themes_gate"
+  expect "the themes panel hides" ok ipc shell hide panel vgs.themes
+  expect_poll "the themes panel is gone" closed themes_panel_shown
+  rm -rf -- "${themes_mismatch:?}"
 }
 
 # The Dev Tools window: its top, the pointer on an Install button, and one
@@ -1172,7 +1323,12 @@ PY2
         expect_poll "$id is built" True record_exists "$id"
       done
       expect_poll "the updates service reads the planted snapshot" 6 updates_pending
-      expect "the updates service runs no check" False updates_checking ;;
+      expect "the updates service runs no check" False updates_checking
+      # The themes widget: the sandbox starts vgs.themes enabled and
+      # unplaced, and enabling a plugin places its unplaced widget.
+      expect "disabling vgs.themes is allowed" ok ipc shell setPluginEnabled vgs.themes false
+      expect "enabling vgs.themes places its widget" ok ipc shell setPluginEnabled vgs.themes true
+      expect_poll "the themes widget is in the bar" placed themes_widget_placed ;;
     devtools)
       devtools_stand_ins
       expect "the Dev Tools stand-ins are scanned" ok ipc shell rescanPlugins
