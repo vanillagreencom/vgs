@@ -9,8 +9,8 @@ The standard every surface is judged against, and the evidence that proves a sur
 - Every layout dimension is a multiple of 4 px: a gap, a padding, an inset, a control's height and a row's height. The shipped scale moved onto this grid in [D063](../decisions/D063-design-scale-on-the-4-px-grid.md).
 - Inside one component a 2 px step is allowed: a segment's inset (`segmented.padding`), a switch knob's inset (`toggle.inset`), a focus ring's offset (`focusRing.offset`), a scroll bar's inset (`scrollArea.barInset`) and the gap between a title and its underline (`titleButton.underlineGap`). Inside a chip or a key cap, a 6 px side padding, `space.sm`, is allowed: `badge.size.sm.paddingX` and `kbd.paddingX`.
 - The grid does not govern type, strokes, icon and indicator drawing sizes (`icon.size`, `slider.handle`, `radio.dot`), motion distances or computed corner clearance. A font size and its line box follow § Type. An icon's painted bounds follow the glyph (`IconBounds.js`). A stroke is `border.thin` or `border.thick`. A corner clearance is `Inset.clearing` by `inset.cornerStep`.
-- The theme browser's reference geometry, the `carousel`, `angledCard` and `desktopPreview` groups, is not on the grid yet; VGS-596 owns it.
-- `scripts/test-theme-logic.js` walks every length token of the shipped table and fails on a value off the grid outside these named classes, with a control that moves `row.height` off it.
+- The theme browser's card geometry follows the grid: the `carousel` card is Omarchy's 768 by 475 at 476 tall, and its slices overlap by the card's 28 pixel lean where Omarchy's overlap by 30 ([components-media.md](components-media.md)). The desktop preview's reference display, 1600 by 900, is a length and on the grid; a share or a scale, such as `desktopPreview.terminalWidthShare` or `carousel.minScale`, is no length.
+- `scripts/test-theme-logic.js` walks every length token of the shipped table and fails on a value off the grid outside these named classes, with a control that moves `row.height` off it and one that puts the carousel back on Omarchy's 475 and 30.
 - A value off this grid is a defect in its token, never in the surface that reads it.
 
 ## Type
@@ -25,7 +25,7 @@ The standard every surface is judged against, and the evidence that proves a sur
 | `text.label`, `text.eyebrow`, `text.button` | 11 / line 1, mono, uppercase | a field label, a section heading, a button |
 | `text.tooltip` | 12 / 16 / 500 | a tooltip line |
 
-- A surface uses `h3` for its title. `h1` and `h2` are for documents.
+- A surface uses `h3` for its title. `h1` and `h2` are for documents. The full-screen theme and wallpaper browsers name their selected card in `text.display`, as Omarchy's picker does; no other surface uses it.
 - Reading text is at least 13 px and chrome at least 11 px. Reading text is a description, a message, a card's body and a list row's detail line; chrome is a label, a count, a button's text and a menu entry. A plugin that owns its look ([appearance.md](appearance.md)) meets the same floor.
 - A control's label, a checkbox's, a radio's and a switch's, draws in `item`, so its line centres on the control. An indicator centres on the label's capital centre on a whole pixel.
 
@@ -56,11 +56,12 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 | dialog | `inset.dialog` 16 | `h3` | `dialog.gap` 12 | content, to `dialog.maxHeightShare` |
 | panel (a summoned flyout) | `inset.panel` 12, on a `Surface` | `h3` | `stack.group` 12 | content, to `size.panel.maxHeight` and the output's room; refits when content changes |
 | popover (`qs.Ui` `Popover`) | `inset.popover` 12 | `h3` | `stack.group` 12, `popover.gap` 4 from its anchor | content, to `popover.maxHeightShare` |
+| overlay (a full-screen browser over a `Scrim`) | `inset.overlay` 32, no corner to clear | its tabs | `stack.group` 12 | content, centred, to the output's height |
 | menu | `menu.padding` 8 | none | none | entries, to `menu.maxHeight`, 160 to `menu.maxWidth` wide |
 | select list | `menu.padding` 8 | none | none | entries, to `menu.maxHeight`, the field's width |
 | tooltip | `tooltip.paddingX` 8 | none | none | wraps at `tooltip.maxWidth` 280 |
 
-- Every window, panel, popover and dialog composes `Pane` ([D050](../decisions/D050-container-layout-contract.md), [design-layout.md](design-layout.md)). Left and right insets are equal, and the scroll bar sits inside the right inset. The `vgs.themes` panel and its theme and wallpaper browsers are not on `Pane` yet; VGS-596 owns them.
+- Every window, panel, popover, dialog and overlay composes `Pane` ([D050](../decisions/D050-container-layout-contract.md), [design-layout.md](design-layout.md)). Left and right insets are equal, and the scroll bar sits inside the right inset.
 - A header row's height is its control size. Every item in it centres on the row, and a title centres by its capital height.
 - A back or close `IconButton` at the start or end of a header puts its glyph's painted bounds, not its box, on the content edge ([design-layout.md § Headers](design-layout.md#headers)).
 - A title that opens a menu draws its caret at rest and its underline on hover, on focus and while the menu is open.
@@ -75,7 +76,7 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 - A row whose actions take more than half its text's room moves them under the text.
 - A disclosure's content starts at its row's text column.
 - A section heading sits on the content edge.
-- An empty list shows an icon, one `hint` line and a recovery action, such as Clear search, centred in a box `3 × row.twoLineHeight` tall.
+- An empty list shows an icon, one `hint` line and a recovery action, such as Clear search, centred in a box `3 × row.twoLineHeight` tall: `EmptyState` in `qs.Ui`.
 - A long diagnostic shows one elided line and a control that shows it whole in a `CodeLine` to copy. A tooltip never holds the only copy.
 
 ## Bar

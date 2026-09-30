@@ -63,5 +63,6 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | the embedded scroll bar | the area's height; a thumb of at least 24 | 4 thick, 2 from the edge, in an 8 gutter | | round | `scrollArea.barWidth`, `scrollArea.barInset`, `scrollArea.gutter`, `scrollArea.minThumb` | none | | |
 | `TitleButton` | the role's line + 3 | 0 | 4 to the caret; the underline 2 below the text | | `titleButton.gap`, `titleButton.underline`, `titleButton.underlineGap` | none | | |
 | a window | half the monitor | 16 inset; 12 from a narrower monitor's sides | | | `size.window.width`, `size.window.heightShare`, `size.window.gutter`, `inset.window` | none | | 600 wide |
+| a full-screen overlay, such as the theme browser | its content, centred, to the output's height | 32 inset | 12 between the header, the rail and the footer | none drawn | `inset.overlay`, `stack.group` | Omarchy's image picker, `ImagePicker.qml` | 40 a side; the label 16 under the card | 32 a side and 12 under the rail, on the grid |
 | `BarItem`, a workspace pill | 24 | 8; square when icon-only | 4 between items | 0 | `bar.item.height`, `bar.item.paddingX`, `bar.item.gap`, `bar.item.icon` | `.market-nav a` | height 32, padding 0 10 | sized to the bar |
 | the bar | 28 | 12 | 8 | | `bar.height`, `bar.padding`, `bar.gap` | `.market-toolbar` | min-height 44 | 28 tall |
