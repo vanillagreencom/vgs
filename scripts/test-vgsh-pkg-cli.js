@@ -126,7 +126,7 @@ function verifyCli(texts, tmp) {
             { name: "org.freedesktop.Platform.GL.default", old: null, new: "24.08" }], checkedAt: "<time>", error: null }]);
 
     // Owner stubs answer as pacman and xbps-query do for one owned file,
-    // packages.md § Queries; any other call exits 99.
+    // docs/architecture/packages.md § Queries; any other call exits 99.
     const owned = "/usr/share/vgs/VERSION";
     const ownerPath = stubPath(tmp, "owner", {
         pacman: "case \"$1 $2 $3\" in\n  \"-Qoq " + owned + " \") echo vgs-git ;;\n  \"-Qoq \"*) echo \"error: No package owns $2\" >&2; exit 1 ;;\n" +

@@ -34,14 +34,17 @@ test_args=()
 ok() { printf '  ok    %s\n' "$*"; }
 fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 
-# A fresh scratch repository at $1: trunk holds the script, the loader, a
-# settings file naming trunk as the base branch and one clean file;
+# A fresh scratch repository at $1: trunk holds the script, the loader, the
+# md-refs checker with an exclusion list that keeps its own copy out of its
+# scope, a settings file naming trunk as the base branch and one clean file;
 # refs/remotes/origin/trunk points at it; HEAD is a feature branch on top.
 fresh() {
   local dir="$1"
-  mkdir -p "$dir/scripts" "$dir/.agents/skills/orch/scripts/lib"
+  mkdir -p "$dir/scripts" "$dir/.agents/skills/orch/scripts/lib" "$dir/.agents/skills/commit-guards" "$dir/tools"
   cp -- "$repo/scripts/validate" "$dir/scripts/validate"
   cp -- "$repo/.agents/skills/orch/scripts/lib/kendex-env.sh" "$dir/.agents/skills/orch/scripts/lib/kendex-env.sh"
+  cp -R -- "$repo/.agents/skills/commit-guards/scripts" "$dir/.agents/skills/commit-guards/"
+  printf '# kendex-guard-dialect: legacy-glob\n.agents/*\tcopies of checkers, whose citations name their own repository\n' >"$dir/tools/md-excludes"
   printf '[env]\nWORKTREE_DEFAULT_BRANCH = "trunk"\n' >"$dir/kendex.settings.toml"
   printf 'clean\n' >"$dir/clean.txt"
   "${base_env[@]}" git -C "$dir" init -q -b trunk
@@ -170,7 +173,7 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 
 # Selection is checked through the command the caller will run. Expected
 # plans name consumers independently of the dependency table under test.
-repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts'
+repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts\nmd_refs_check'
 install_plan=$'scripts/test-install-tree.sh\n'"$repo_plan"
 installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\nscripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 # The README check reads VERSION, bin/vgsh, install.sh, the Arch recipes,
@@ -320,6 +323,8 @@ cp -- "$repo/VERSION" "$repo/LICENSE" "$repo/README.md" "$d/"
 # The token check walks the skill templates beside the shell tree.
 mkdir -p "$d/.agents/skills/vgs-plugin"
 cp -R "$repo/.agents/skills/vgs-plugin/templates" "$d/.agents/skills/vgs-plugin/"
+# The copy carries none of the documents its citations name.
+printf '*\tproduct copy without docs/\n' >>"$d/tools/md-excludes"
 "${base_env[@]}" git -C "$d" add -A
 "${base_env[@]}" git -C "$d" commit -q -m fixture
 printf 'import "../plugins/vgs.bar"\nQtObject {}\n' >"$d/shell/Core/Bad.qml"
@@ -373,9 +378,8 @@ row "a validate without the marker export fails the planted row" "$d" 1 "" "vali
 doc_fixture() {
   local dir="$1"
   fresh "$dir"
-  mkdir -p "$dir/.agents/skills/doc-limits/scripts" "$dir/.agents/skills/commit-guards/scripts/lib"
+  mkdir -p "$dir/.agents/skills/doc-limits/scripts"
   cp -R "$repo/.agents/skills/doc-limits/scripts/." "$dir/.agents/skills/doc-limits/scripts/"
-  cp -- "$repo/.agents/skills/commit-guards/scripts/lib/generated-paths.sh" "$repo/.agents/skills/commit-guards/scripts/lib/messages.sh" "$dir/.agents/skills/commit-guards/scripts/lib/"
   printf '[env]\nWORKTREE_DEFAULT_BRANCH = "trunk"\nDOC_LIMITS_CLASSES = "*.md=1k"\nDOC_LIMITS_DEFAULT_CLASSES = ""\n' >"$dir/kendex.settings.toml"
   head -c 900 /dev/zero | tr '\0' x >"$dir/grown.md"
   "${base_env[@]}" git -C "$dir" add -A
@@ -478,12 +482,79 @@ PY
   "${base_env[@]}" git -C "$dir" commit -q -am control
   d="$dir"
 }
-doc_control scratch-index 'GIT_INDEX_FILE="$scratch" "$checker"' '"$checker"'
+doc_control scratch-index 'GIT_INDEX_FILE="$scratch" "$checker" --against' '"$checker" --against'
 head -c 2000 /dev/zero | tr '\0' x >"$d/big.md"
 row "control: on the real index an untracked document over its ceiling escapes" "$d" 0 "" "validate: ok"
 doc_control margin '"$checker" --against "$base"' '"$checker"'
 head -c 1010 /dev/zero | tr '\0' x >"$d/grown.md"
 row "control: without --against a growth into the margin escapes" "$d" 0 "" "validate: ok"
+
+# The markdown reference row. Its fixture commits an AGENTS.md that links
+# target.md and its Kept heading; each row plants one defect in the tree the
+# change will commit, and md-refs names it.
+refs_fixture() {
+  local dir="$1"
+  fresh "$dir"
+  printf '# Target\n\n## Kept\n' >"$dir/target.md"
+  printf 'See [target](target.md) and [kept](target.md#kept).\n' >"$dir/AGENTS.md"
+  "${base_env[@]}" git -C "$dir" add -A
+  "${base_env[@]}" git -C "$dir" commit -q -m refs
+  "${base_env[@]}" git -C "$dir" update-ref refs/remotes/origin/trunk HEAD
+}
+refs_failed="validate: failed=markdown references and source citations (exit 1)"
+test_area=repo
+test_args=()
+d="$tmp/refs-clean"; refs_fixture "$d"
+row "live references pass" "$d" 0 "" \
+  "md-refs: summary=violations=0 references=2 markdown=1 sources=1 decisions=0:docs/decisions skipped=0"
+d="$tmp/refs-untracked"; refs_fixture "$d"
+mkdir -p "$d/sub"; printf 'See [gone](gone.md).\n' >"$d/sub/AGENTS.md"
+row "a dead link in an untracked document fails" "$d" 1 "" \
+  "md-refs: link-target=sub/AGENTS.md:1:](gone.md):sub/gone.md" "$refs_failed"
+if [[ -z "$("${base_env[@]}" git -C "$d" ls-files -- sub/AGENTS.md)" ]] && "${base_env[@]}" git -C "$d" diff --cached --quiet; then
+  ok "the reference row leaves the real index as it was"
+else
+  fail "the reference row wrote the real index"
+fi
+d="$tmp/refs-heading"; refs_fixture "$d"
+printf '# Target\n' >"$d/target.md"
+row "an unstaged edit that removes a cited heading fails its unchanged caller" "$d" 1 "" \
+  "md-refs: anchor-missing=AGENTS.md:1:](target.md#kept):target.md:kept" "$refs_failed"
+d="$tmp/refs-deleted"; refs_fixture "$d"
+rm -- "$d/target.md"
+row "an unstaged deletion of a linked document fails its unchanged caller" "$d" 1 "" \
+  "md-refs: link-target=AGENTS.md:1:](target.md):target.md" "$refs_failed"
+d="$tmp/refs-source"; refs_fixture "$d"
+mkdir -p "$d/bin"; printf '#!/bin/sh\n# The rule is target.md § Gone.\n' >"$d/bin/tool.sh"
+row "a dead section citation in an untracked source file fails" "$d" 1 "" \
+  "md-refs: heading-prefix=bin/tool.sh:2:target.md § Gone.:target.md:Gone." "$refs_failed"
+d="$tmp/refs-config"; refs_fixture "$d"
+row "an md-refs configuration error fails the row, not a skip" "$d" 1 "COMMIT_GUARDS_MD_REFS_SOURCE_PATHS=" \
+  "md-refs: glob-empty=COMMIT_GUARDS_MD_REFS_SOURCE_PATHS" "md-refs: failed status=2" "$refs_failed"
+d="$tmp/refs-no-checker"; refs_fixture "$d"
+rm -rf -- "${d:?}/.agents/skills/commit-guards"
+row "a tree with no md-refs checker exits 77" "$d" 77 "" \
+  "md-refs: status=not-measured reason=checker-missing path=.agents/skills/commit-guards/scripts/md-refs" \
+  "validate: status=not-measured skipped=markdown references and source citations"
+d="$tmp/refs-unreadable"; refs_fixture "$d"
+printf 'x\n' >"$d/locked.txt"; chmod 000 "$d/locked.txt"
+row "a tree the scratch index cannot copy is not measured, not a pass" "$d" 1 "" \
+  "md-refs: status=not-measured reason=index-copy-failed path=$d/.git/index"
+# Control: a copy of validate that runs md-refs on the real index, committed
+# so the plan judges the planted document alone.
+d="$tmp/refs-control"; refs_fixture "$d"
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+old = 'GIT_INDEX_FILE="$scratch" "$checker" --all'
+assert source.count(old) == 1, old
+path.write_text(source.replace(old, '"$checker" --all'))
+PY
+"${base_env[@]}" git -C "$d" commit -q -am control
+mkdir -p "$d/sub"; printf 'See [gone](gone.md).\n' >"$d/sub/AGENTS.md"
+row "control: on the real index a dead link in an untracked document escapes" "$d" 0 "" "validate: ok"
 test_area=offline
 test_args=()
 

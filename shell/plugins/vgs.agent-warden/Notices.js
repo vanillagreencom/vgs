@@ -16,9 +16,10 @@
 // status that cannot tell, such as one with no lane listing or a stale
 // one, keeps what it cannot judge.
 //
-// The words are agent-warden.md § UX, with numbers from status.json and
-// the figures, names and lists written as the flyout writes them
-// (ViewLogic.js). No text names a process id or a scope unit.
+// The rules are docs/architecture/agent-warden.md § Notifications. The
+// words carry numbers from status.json and the figures, names and lists
+// written as the flyout writes them (ViewLogic.js). No text names a
+// process id or a scope unit.
 
 // The `notify` setting's values, least first: each sends what the one
 // before it sends and more.

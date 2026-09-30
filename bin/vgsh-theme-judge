@@ -126,11 +126,10 @@
 // 75 for `reason=busy`. Under `json`, apply prints its structured result
 // on stdout first, refusals included, and so do follow, reload, background,
 // install and both wallpapers commands, whose refusals are `wallpapers=<name>
-// reason=<key>`, each key in theme-wallpapers.md § Refusals. A partial
-// apply, follow or
-// reload prints one such line per failed or reload-pending target and
-// exits 3. A
-// malformed invocation exits 2.
+// reason=<key>`, each key in
+// docs/architecture/theme-wallpapers.md § Refusals. A partial apply, follow
+// or reload prints one such line per failed or reload-pending target and
+// exits 3. A malformed invocation exits 2.
 // docs/architecture/themes.md § Runner, theme-install.md, theme-apply.md,
 // theme-reload.md, theme-targets.md, theme-backgrounds.md, theme-catalog.md and
 // theme-wallpapers.md hold the

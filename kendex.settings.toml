@@ -143,6 +143,11 @@ COMMIT_GUARDS_MD_SCOPE = "touched"
 # included, not only the agent-loaded set.
 COMMIT_GUARDS_MD_REFS_PATHS = "*.md"
 
+# md-refs reads source comments for `<path>.md § Heading` citations. The
+# default list is extensions only, so this is that list plus the
+# extensionless scripts, whose grammar their `#!` line names.
+COMMIT_GUARDS_MD_REFS_SOURCE_PATHS = "*.rs *.go *.c *.h *.cc *.cpp *.hpp *.java *.kt *.kts *.swift *.wgsl *.js *.mjs *.cjs *.jsx *.ts *.tsx *.css *.scss *.less *.sh *.bash *.zsh *.py *.rb *.toml *.yml *.yaml *.sql *.lua *.html *.htm *.xml *.svg *.vue *.svelte Makefile */Makefile *.mk Dockerfile */Dockerfile bin/vgsh* shell/plugins/*/bin/* scripts/smoke/fixtures/updates-bin/* scripts/validate scripts/release scripts/vendor-lucide tools/convert-v1-themes"
+
 # Max re-review cycles per issue before the verdict pass; the re-review
 # re-entry refuses once cycles is past it.
 REVIEW_MAX_CYCLES = "4"

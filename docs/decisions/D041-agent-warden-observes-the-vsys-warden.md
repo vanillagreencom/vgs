@@ -31,7 +31,7 @@
 | C. Poll `agent-warden --status` | Rejected. It prints a text table and scans every process's environment on each call. |
 | D. Poll `vsys --once` from the bar | Rejected. It is a full collection with a scratch scan, and it exports no verdict. The flyout runs the cheap `--summary` once per open instead. |
 | E. Merge the warden into the vsys dashboard | Rejected. The dashboard's promise is read-only unless the user confirms an action, and an automatic corrector breaks it. |
-| F. Ship the warden from the vsys repository as a separate component | Taken with A. vsys observes and the warden corrects (vsys D004), with one agent-tool list and one install story. |
+| F. Ship the warden from the vsys repository as a separate component | Taken with A. vsys observes and the warden corrects (the vsys decision to ship the warden as a separate vsys component, in the [vsys decision log](https://github.com/vanillagreencom/vsys/blob/main/docs/decisions/INDEX.md)), with one agent-tool list and one install story. |
 
 **Rationale**:
 

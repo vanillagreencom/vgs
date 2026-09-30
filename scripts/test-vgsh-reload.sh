@@ -210,8 +210,8 @@ tinst "every is gone again" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk
 # Must-fail controls, each on a judge copy, one per rule. Each starts from
 # alpha landed with dusk, nothing pending. A copy without the descriptor
 # 9 slot alone stays green here: node marks its inherited descriptors 0 to
-# 16 close-on-exec at startup (runtime.md § Process), so the planted defect
-# hands the hook the lock descriptor instead.
+# 16 close-on-exec at startup (docs/architecture/runtime.md § Process), so
+# the planted defect hands the hook the lock descriptor instead.
 reset_alpha() { alpha_hook vgs-hook 3000; hook 0; unset THEME_BIN; rm -f -- "$pending"; tinst "$1: alpha lands with dusk" "$cfg" "$rt_empty" 0 "$any_out" "" theme apply dusk; fresh; }
 reset_alpha "every-landed control"
 judge_control every-landed 'return entry.state === "written" || before.includes(entry.name);' 'return true;'

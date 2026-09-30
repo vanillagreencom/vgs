@@ -5,8 +5,9 @@
 #   AREA is one of: logic, manifests, boundary, cli, tools, repo, offline,
 #   unit, package, qml, nix, all (default: all). One area per call.
 #   repo holds the checks this file makes itself, the whitespace
-#   row, the self-check that every scripts/test-* file has a row and the
-#   check that nothing under bin/ or shell/ loads a file under scripts/;
+#   row, the self-check that every scripts/test-* file has a row, the
+#   check that nothing under bin/ or shell/ loads a file under scripts/ and
+#   the md-refs check of every markdown reference and source citation;
 #   scripts/test-validate.sh, under tools, is their control. tools also
 #   holds the document byte ceiling check this file makes, selected, unlike
 #   a repo row, only when a Markdown file, a file under docs/ or the
@@ -207,6 +208,7 @@ rows=(
   "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"
   "repo|the runtime loads nothing under scripts/|runtime_reads_no_scripts|"
+  "repo|markdown references and source citations|md_refs_check|"
   "tools|document byte ceilings|doc_limits_check|*.md docs/* tools/doc-limits-excludes kendex.settings.toml .kendex/settings.toml .kendex-generated.json .agents/skills/doc-limits/scripts/* .agents/skills/commit-guards/scripts/lib/generated-paths.sh .agents/skills/commit-guards/scripts/lib/messages.sh"
   "tools|validate self-check controls|scripts/test-validate.sh|scripts/validate .agents/skills/orch/scripts/lib/kendex-env.sh bin/lib/check-manifests.js scripts/test-check-manifests.js bin/lib/qml-library.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/vgsh-scan scripts/smoke/fixtures/*"
   "tools|theme package judge controls|node scripts/test-vgsh-theme-judge.js|scripts/test-vgsh-theme-judge.js bin/vgsh-theme-judge bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js themes/*"
@@ -304,13 +306,36 @@ whitespace_check() {
   return "$status"
 }
 
+# A scratch copy of the index holding the tree the change will commit, for a
+# checker that reads index blobs: every tracked and untracked, non-ignored
+# file matching PATHSPEC... is added as the worktree holds it, a deleted
+# tracked file removed. A tracked file under an ignored directory is added
+# with --force; the list names no ignored untracked file. The real index is
+# never written. Prints the scratch path, which the caller removes; on
+# failure prints the real index path, or `unresolved`, and returns 1.
+scratch_index() { # PATHSPEC...
+  local index scratch
+  index="$(git rev-parse --path-format=absolute --git-path index)" || index=""
+  if [[ -z $index ]] || ! scratch="$(mktemp)"; then
+    echo "${index:-unresolved}"
+    return 1
+  fi
+  # With no index yet, git starts the scratch index empty.
+  [[ -e $index ]] || rm -f -- "$scratch"
+  if { [[ -e $index ]] && ! cp -- "$index" "$scratch"; } ||
+     ! git ls-files -z --cached --others --exclude-standard -- "$@" |
+       GIT_INDEX_FILE="$scratch" GIT_LITERAL_PATHSPECS=1 git add -A --force --pathspec-from-file=- --pathspec-file-nul; then
+    rm -f -- "$scratch" "$scratch.lock"
+    echo "$index"
+    return 1
+  fi
+  echo "$scratch"
+}
+
 # The document byte ceilings of the doc-limits skill, measured on the tree
 # the change will commit: doc-limits reads tracked documents and their index
-# blobs, so it runs on a scratch copy of the index into which every tracked
-# and untracked, non-ignored Markdown file and docs HTML file is added as
-# the worktree holds it. A tracked file under an ignored directory is
-# added with --force; the list names no ignored untracked file. The real
-# index is never written. --against the branch point adds the growth
+# blobs, so it runs on a scratch_index of every Markdown file and docs HTML
+# file. --against the branch point adds the growth
 # margin: a document the branch grows may not end within the margin under
 # its ceiling. The branch point is the doc-limits policy's REF for a local
 # run, so --changed, DEV_VALIDATE_BASE and VGS_VALIDATE_BASE, which choose
@@ -324,7 +349,7 @@ whitespace_check() {
 #   doc-limits: status=not-measured reason=checker-missing path=<file>
 #   doc-limits: status=not-measured reason=index-copy-failed path=<file>
 doc_limits_check() {
-  local base checker=".agents/skills/doc-limits/scripts/doc-limits" index scratch status=0
+  local base checker=".agents/skills/doc-limits/scripts/doc-limits" scratch status=0
   if [[ ! -x $checker ]]; then
     echo "doc-limits: status=not-measured reason=checker-missing path=$checker"
     return 77
@@ -335,15 +360,8 @@ doc_limits_check() {
     return 77
   fi
   echo "doc-limits: base=$base"
-  index="$(git rev-parse --path-format=absolute --git-path index)" || index=""
-  scratch="$(mktemp)" || return 1
-  # With no index yet, git starts the scratch index empty.
-  [[ -e $index ]] || rm -f -- "$scratch"
-  if [[ -z $index ]] || { [[ -e $index ]] && ! cp -- "$index" "$scratch"; } ||
-     ! git ls-files -z --cached --others --exclude-standard -- ':(glob)**/*.md' ':(glob)docs/**/*.html' |
-       GIT_INDEX_FILE="$scratch" GIT_LITERAL_PATHSPECS=1 git add -A --force --pathspec-from-file=- --pathspec-file-nul; then
-    rm -f -- "$scratch" "$scratch.lock"
-    echo "doc-limits: status=not-measured reason=index-copy-failed path=${index:-unresolved}"
+  if ! scratch="$(scratch_index ':(glob)**/*.md' ':(glob)docs/**/*.html')"; then
+    echo "doc-limits: status=not-measured reason=index-copy-failed path=$scratch"
     return 77
   fi
   GIT_INDEX_FILE="$scratch" "$checker" --against "$base" || status=$?
@@ -351,6 +369,36 @@ doc_limits_check() {
   case "$status" in
     0|1) ;;
     *) echo "doc-limits: failed status=$status"; status=1 ;;
+  esac
+  return "$status"
+}
+
+# The links, section routes, decision references and source citations the
+# commit-guards md-refs lane judges, on the tree the change will commit.
+# md-refs reads callers and targets from the index, so it runs --all on a
+# scratch_index of every file. Any tracked file can carry a citation or be
+# the target of one, and a removed heading breaks callers the change never
+# touched, so this is a repository check and runs on every change. md-refs
+# exit 2, a configuration or collection error, fails the row. First lines,
+# then md-refs' own output:
+#   md-refs: failed status=<n>
+#   md-refs: status=not-measured reason=checker-missing path=<file>
+#   md-refs: status=not-measured reason=index-copy-failed path=<file>
+md_refs_check() {
+  local checker=".agents/skills/commit-guards/scripts/md-refs" scratch status=0
+  if [[ ! -x $checker ]]; then
+    echo "md-refs: status=not-measured reason=checker-missing path=$checker"
+    return 77
+  fi
+  if ! scratch="$(scratch_index)"; then
+    echo "md-refs: status=not-measured reason=index-copy-failed path=$scratch"
+    return 77
+  fi
+  GIT_INDEX_FILE="$scratch" "$checker" --all || status=$?
+  rm -f -- "$scratch"
+  case "$status" in
+    0|1) ;;
+    *) echo "md-refs: failed status=$status"; status=1 ;;
   esac
   return "$status"
 }

@@ -343,7 +343,8 @@ const QUERY_ROWS = [
 ];
 
 // Answer rows: name, manager, query, what the query printed, the answer.
-// The formats are packages.md § Queries' sources.
+// The formats come from the sources docs/architecture/packages.md § Queries
+// names.
 const ANSWER_ROWS = [
     ["pacman -Qoq prints the name", "pacman", "owner", "vgs-git\n", "vgs-git"],
     ["pacman -Q drops the epoch and the pkgrel", "pacman", "installed", "vgs-git 1:0.1.0.r40.gabc1234-2\n", "0.1.0.r40.gabc1234"],

@@ -35,7 +35,7 @@ var PROGRESS_POLL_MS = 250;
 var MEGABYTE = 1000000;
 
 // The apply result states in which the package is the applied one:
-// docs/architecture/theme-apply.md § Result.
+// docs/architecture/theme-apply.md § Apply.
 var APPLIED_STATES = ["applied", "unchanged", "partial"];
 
 function hasOwn(obj, key) {
