@@ -183,13 +183,6 @@ class LocalContract(unittest.TestCase):
         self.assertEqual(self.command().returncode, 0)
 
     def test_consumer_decode_control(self):
-        def module():
-            loader = importlib.machinery.SourceFileLoader("local_measure", str(self.program))
-            spec = importlib.util.spec_from_loader(loader.name, loader)
-            value = importlib.util.module_from_spec(spec)
-            loader.exec_module(value)
-            return value
-
         class Recognizer:
             def create_stream(self):
                 class Stream:
@@ -201,7 +194,7 @@ class LocalContract(unittest.TestCase):
                 stream.result.text = "external recognizer result"
 
         artifact = {"engine": "parakeet", "id": "parakeet"}
-        self.assertEqual(module().infer(artifact, Recognizer(), [0.1], "", self.spec, None),
+        self.assertEqual(self.load_module().infer(artifact, Recognizer(), [0.1], "", self.spec, None),
                          {"text": "external recognizer result", "chunk_samples": [1], "input_samples": 1})
         text = SOURCE.read_text()
         needle = "            model.decode_stream(stream)\n            if not stream.result.text.strip():"
@@ -210,12 +203,14 @@ class LocalContract(unittest.TestCase):
         self.assertNotEqual(text, changed)
         self.program.write_text(changed)
         with self.assertRaisesRegex(ValueError, "inference=empty-transcript"):
-            module().infer(artifact, Recognizer(), [0.1], "", self.spec, None)
+            self.load_module().infer(artifact, Recognizer(), [0.1], "", self.spec, None)
 
-    def load_module(self):
+    def load_module(self, builtins_override=None):
         loader = importlib.machinery.SourceFileLoader("local_contract", str(self.program))
         spec = importlib.util.spec_from_loader(loader.name, loader)
         module = importlib.util.module_from_spec(spec)
+        if builtins_override is not None:
+            module.__dict__["__builtins__"] = builtins_override
         loader.exec_module(module)
         return module
 
@@ -332,6 +327,29 @@ class LocalContract(unittest.TestCase):
         self.mutant('if {name for _, name in socket.if_nameindex()} - {"lo"}:')
         module = instrument()
         with self.assertRaisesRegex(module.Unavailable, "runtime=version-mismatch"):
+            module.run(self.spec, [], self.models, "cpu", None, "probe")
+
+    def test_runtime_version_guard_control(self):
+        import builtins
+        from types import SimpleNamespace
+        def instrument():
+            original = builtins.__import__
+            def import_dependency(name, *args, **kwargs):
+                if name == "numpy":
+                    raise ImportError("control-reached-runtime-import")
+                return original(name, *args, **kwargs)
+            module = self.load_module(dict(vars(builtins), __import__=import_dependency))
+            missing = module.importlib.metadata.PackageNotFoundError
+            module.socket = SimpleNamespace(if_nameindex=lambda: [(1, "lo")])
+            module.importlib = SimpleNamespace(metadata=SimpleNamespace(
+                version=lambda name: "fixture-unavailable-version", PackageNotFoundError=missing))
+            return module
+        module = instrument()
+        with self.assertRaisesRegex(module.Unavailable, "runtime=version-mismatch"):
+            module.run(self.spec, [], self.models, "cpu", None, "probe")
+        self.mutant('if versions[name] not in runtime["versions"]:')
+        module = instrument()
+        with self.assertRaisesRegex(ImportError, "control-reached-runtime-import"):
             module.run(self.spec, [], self.models, "cpu", None, "probe")
 
 
