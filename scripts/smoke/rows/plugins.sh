@@ -32,7 +32,7 @@ expect "enabling the bare fixture is allowed" ok ipc shell setPluginEnabled acme
 # every sandbox's, `vgs-smoke-absent` on none. listPlugins carries the
 # states and `vgsh plugin list` names the missing one. It is optional, so
 # enabling the fixture raises no requirement notice over the later rows.
-bare_requirements() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([[r["command"], r["state"]] for p in json.load(sys.stdin)["plugins"] if p["id"] == "acme.bare" for r in p["requirements"]]))'; }
+bare_requirements() { ipc shell listPlugins | py_reply 'import json,sys; print(json.dumps([[r["command"], r["state"]] for p in json.load(sys.stdin)["plugins"] if p["id"] == "acme.bare" for r in p["requirements"]]))'; }
 expect_poll "listPlugins reports each declared command's state" '[["sh", "present"], ["vgs-smoke-absent", "missing"]]' bare_requirements
 bare_missing_line() { "${shell_env[@]}" "$repo/bin/vgsh" plugin list | grep -F 'missing acme.' || true; }
 expect "vgsh plugin list names the missing command" "missing acme.bare vgs-smoke-absent optional" bare_missing_line
@@ -50,7 +50,7 @@ if before="$(builds)"; then
 else
   fail "buildCount unreadable before the requirement rescan rows"
 fi
-service_built() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
+service_built() { ipc shell built | py_reply 'import json,sys; d=json.load(sys.stdin); print(any(r["id"]=="acme.probe" and r["kind"]=="service" for r in d.get("service",[])))'; }
 read_widget() { ipc smoke readInstance "$(bar_key)" acme.probe "$1"; }
 read_service() { ipc smoke readInstance service acme.probe "$1"; }
 read_clock() { ipc smoke readInstance "$(bar_key)" vgs.bar/center-clock "$1"; }
@@ -71,7 +71,7 @@ expect "the built-in clock reads the bar's clock format" '"ddd d MMM  HH:mm"' re
 
 # The built-in receives the bar's capability, independently of fixture grants.
 expect "the built-in workspaces receive a callable compositor action" true ipc smoke hasWorkspaceAction "$(bar_key)" vgs.bar/left-workspaces
-active_ws() { hypr -j activeworkspace | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'; }
+active_ws() { hypr -j activeworkspace | py_reply 'import json,sys; print(json.load(sys.stdin)["id"])'; }
 
 # A settings change reaches the running instance and builds nothing: the
 # service's plugins[] row, then the clock's layout entry.

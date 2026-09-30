@@ -4,7 +4,7 @@ expect "instance guard accepts the runner's shell" true ipc shell guarded
 # Plugins scan asynchronously; wait for the bundled bar and the placed widget.
 plugins_json=""
 for _ in $(seq 1 100); do
-  if plugins_json="$(ipc shell listPlugins)" && python3 -c 'import json,sys; d=json.load(sys.stdin); ids={p["id"] for p in d["plugins"]}; sys.exit(0 if {"vgs.bar","acme.tick"} <= ids else 1)' <<<"$plugins_json"; then break; fi
+  if plugins_json="$(ipc shell listPlugins)" && [[ $(py_reply 'import json,sys; ids={p["id"] for p in json.load(sys.stdin)["plugins"]}; print({"vgs.bar","acme.tick"} <= ids)' <<<"$plugins_json") == True ]]; then break; fi
   sleep 0.2
 done
 # A bundled plugin is enabled unless the harness's user file disables it.
@@ -101,7 +101,7 @@ if disable_reply="$(ipc shell setPluginEnabled acme.tick false)"; then
   done
 fi
 if [[ $disable_reply == ok ]]; then ok "disabling a widget is allowed"; else fail "disabling a widget is allowed: got $disable_reply"; fi
-tick_entry() { ipc shell listShellConfig | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="acme.tick"]))'; }
+tick_entry() { ipc shell listShellConfig | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([e for e in d["bar"]["layout"]["center"] if e["id"]=="acme.tick"]))'; }
 user_keys() { python3 -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$home/.config/vgs/shell.json"; }
 expect_widgets "the bar dropped the disabled widget" '[]'
 expect_builtins "the built-ins stay while a plugin widget leaves" '["vgs.bar/center-clock","vgs.bar/left-workspaces"]'
@@ -124,7 +124,7 @@ if [[ $bars_now == 0 ]]; then ok "the bar host destroyed its surface with no bar
 expect "no bar reserves no screen space" 0 reserved_total
 expect "re-enabling the bar is allowed" ok ipc shell setPluginEnabled vgs.bar true
 expect_widgets "the bar host rebuilt the re-enabled bar" '["acme.tick"]'
-monitor_size() { hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])'; }
+monitor_size() { hypr -j monitors | py_reply 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], m["reserved"][1])'; }
 expect_builtins "the re-enabled bar registered its built-ins again" '["vgs.bar/center-clock","vgs.bar/left-workspaces"]'
 for _ in $(seq 1 50); do
   if bars_now="$(bar_count)" && [[ $bars_now == "$monitors" ]]; then break; fi
@@ -143,7 +143,7 @@ if [[ -f "$home/.config/vgs/shell.json" ]]; then ok "manager wrote the user file
 # have read the write (the key is in the effective configuration) before
 # the build count is compared. Every write the smoke makes to the user file
 # is a rename, so the watching shell never reads half a file.
-unrelated_key() { ipc shell listShellConfig | python3 -c 'import json,sys; print(json.load(sys.stdin).get("unrelated"))'; }
+unrelated_key() { ipc shell listShellConfig | py_reply 'import json,sys; print(json.load(sys.stdin).get("unrelated"))'; }
 if before="$(builds)"; then
   python3 - "$home/.config/vgs/shell.json" <<'PY'
 import json, os, sys

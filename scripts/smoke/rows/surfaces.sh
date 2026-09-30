@@ -16,7 +16,7 @@ expect_poll "enabling the hosts fixture is allowed" ok ipc shell setPluginEnable
 screen_name="$(bar_key | sed 's/^bar://')"
 
 expect_poll "the background host draws one surface per screen" "$monitors" layer_count vgs:background
-expect "the background sits on the bottom layer" True python3 -c 'import json,subprocess,sys; print(any(l["namespace"]=="vgs:background" and l["pid"]!=-1 for m in json.loads(sys.stdin.read()).values() for l in m["levels"]["0"]))' < <(hypr -j layers)
+expect "the background sits on the bottom layer" True py_reply 'import json,subprocess,sys; print(any(l["namespace"]=="vgs:background" and l["pid"]!=-1 for m in json.loads(sys.stdin.read()).values() for l in m["levels"]["0"]))' < <(hypr -j layers)
 expect "the background receives its screen" "\"$screen_name\"" ipc smoke readInstance "background:$screen_name" acme.surfaces screenName
 
 expect "a panel summons over IPC" ok ipc shell summon panel acme.surfaces '{"n":1}'
@@ -117,7 +117,7 @@ placed = (w, h, y) == (200, 120, ay + ah) and ((x == centred) if fits else (0 <=
 print("placed" if placed else "popup=%s anchor=%s centred=%s fits=%s" % (sys.argv[1], sys.argv[2], centred, fits))
 PY
 }
-panel_origin() { layers_of vgs:panel | python3 -c 'import json,sys; l=json.load(sys.stdin)[0]; print(l[0], l[1])'; }
+panel_origin() { layers_of vgs:panel | py_reply 'import json,sys; l=json.load(sys.stdin)[0]; print(l[0], l[1])'; }
 expect "the widget summons its panel under itself" ok ipc smoke invokeInstance "bar:$screen_name" acme.surfaces summonHere ''
 geometry expect_poll "the popup panel sits under its widget" placed placed_below panel "bar:$screen_name" geometry
 expect "the anchored panel received the widget's payload" '"{\"from\":\"widget\"}"' ipc smoke readInstance panel acme.surfaces lastPayload

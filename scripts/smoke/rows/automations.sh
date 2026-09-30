@@ -67,12 +67,12 @@ automations() { "${shell_env[@]}" PATH="$shell_path" "$auto_engine" --tree "$rep
 # The last line a verb prints: a verb that syncs prints sync's line first.
 auto_last() { local out; out="$(automations "$@")" || return; printf '%s\n' "${out##*$'\n'}"; }
 auto_status() { ipc vgs.automations invoke status "" | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps(v.get(sys.argv[1], "unset")))' "$1"; }
-auto_lent() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d["status"].get("vgs.automations"); print(json.dumps([sorted(r["keys"]) if r else None, "vgs.automations" in d["ipcTargets"]]))'; }
+auto_lent() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin); r=d["status"].get("vgs.automations"); print(json.dumps([sorted(r["keys"]) if r else None, "vgs.automations" in d["ipcTargets"]]))'; }
 # The systemctl verbs logged since the row began, show-environment left out.
 auto_verbs() { if [[ -f $auto_stub/systemctl.calls ]]; then python3 -c 'import json,sys; print(json.dumps([c[1] for c in map(json.loads, open(sys.argv[1])) if c[1] != "show-environment"]))' "$auto_stub/systemctl.calls"; else echo '[]'; fi; }
 auto_units() { if [[ -d $home/.config/systemd/user ]]; then (cd -- "$home/.config/systemd/user" && ls | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))'); else echo '[]'; fi; }
 # The VGS hints of the last notification, as its x-vgs names and values.
-auto_hints() { if [[ -f $auto_stub/notify-send.calls ]]; then tail -n 1 -- "$auto_stub/notify-send.calls" | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps([h.split(":", 2)[1] + "=" + ("<path>" if h.split(":", 2)[1] == "x-vgs-open" else h.split(":", 2)[2]) for h in a if h.startswith("--hint=string:x-vgs-")]))'; else echo absent; fi; }
+auto_hints() { if [[ -f $auto_stub/notify-send.calls ]]; then tail -n 1 -- "$auto_stub/notify-send.calls" | py_reply 'import json,sys; a=json.load(sys.stdin); print(json.dumps([h.split(":", 2)[1] + "=" + ("<path>" if h.split(":", 2)[1] == "x-vgs-open" else h.split(":", 2)[2]) for h in a if h.startswith("--hint=string:x-vgs-")]))'; else echo absent; fi; }
 # resolved COMMAND PATH_LIST: the file COMMAND runs from on PATH_LIST, or
 # none. The harness's crontab stand-in stays for the whole run, since
 # crontab picks the caller's own table by user, not by HOME.

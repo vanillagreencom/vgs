@@ -631,11 +631,17 @@ ipc() {
 # through this, so it retries on the word rather than raising on it. A
 # word is lower-case letters joined by hyphens, with an optional `=N`;
 # true, false and null are JSON and parsed. An empty reply, what a failed
-# ipc call prints, is a failed read.
+# ipc call prints, is a failed read that answers the word `empty`, so a
+# poll's last reading names it. Every row reader that parses JSON from its
+# stdin runs through this: scripts/check-smoke-readers.py refuses one that
+# runs python3 itself.
 py_reply() { # PROGRAM [ARG...]
   local reply
   reply="$(cat)" || return
-  [[ -n $reply ]] || return 1
+  if [[ -z $reply ]]; then
+    echo empty
+    return 1
+  fi
   if [[ $reply =~ ^[a-z]+(-[a-z]+)*(=[0-9]+)?$ && $reply != true && $reply != false && $reply != null ]]; then
     printf '%s\n' "$reply"
     return 0

@@ -27,15 +27,15 @@ applied() { local out; out="$(vgsh_run theme apply "$1")" || return; printf '%s\
 # The binds whose description names a vgs shortcut, as [modmask, key,
 # dispatcher, description]: a Lua bind's dispatcher is `__lua`, so the
 # description is what names its shortcut.
-vgs_binds() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["dispatcher"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs."))))'; }
-config_errors() { hypr -j configerrors | python3 -c 'import json,sys; print(json.dumps([e for e in json.load(sys.stdin) if e]))'; }
+vgs_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["dispatcher"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs."))))'; }
+config_errors() { hypr -j configerrors | py_reply 'import json,sys; print(json.dumps([e for e in json.load(sys.stdin) if e]))'; }
 # A border option as the nested instance holds it, and what Hyprland prints
 # for a one-colour border of `#rrggbbaa` TOKEN_VALUE: hex aarrggbb with no
 # leading zeros, then the angle.
-hypr_gradient() { hypr -j getoption "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["gradient"])'; }
+hypr_gradient() { hypr -j getoption "$1" | py_reply 'import json,sys; print(json.load(sys.stdin)["gradient"])'; }
 gradient_of() { python3 -c 'import sys; h = sys.argv[1][1:]; print(format(int(h[6:8] + h[:6], 16), "x") + " 0deg")' "$1"; }
-hypr_option() { hypr -j getoption "$1" | python3 -c 'import json,sys; v=json.load(sys.stdin); print(v.get("int", v.get("float", v.get("str", v.get("set", v)))))'; }
-animation_leaf() { hypr -j animations | python3 -c '
+hypr_option() { hypr -j getoption "$1" | py_reply 'import json,sys; v=json.load(sys.stdin); print(v.get("int", v.get("float", v.get("str", v.get("set", v)))))'; }
+animation_leaf() { hypr -j animations | py_reply '
 import json, sys
 data = json.load(sys.stdin)
 rows = data[0] if data and isinstance(data[0], list) else data
@@ -45,7 +45,7 @@ if row is None:
 else:
     print(json.dumps({"bezier": row.get("bezier", ""), "enabled": row.get("enabled"), "overridden": row.get("overridden"), "speed": round(float(row.get("speed", 0)), 2), "style": row.get("style", "")}, sort_keys=True))
 ' "$1"; }
-animation_curve() { hypr -j animations | python3 -c '
+animation_curve() { hypr -j animations | py_reply '
 import json, sys
 def rows(node):
     if isinstance(node, dict):
@@ -94,7 +94,7 @@ close_tui() {
 }
 # The nested instance's client of pid PID as `<class> floating=<bool>`, its
 # size as `<w>x<h>`, or clients=<n> when that pid has not one client.
-tui_client() { hypr -j clients | python3 -c '
+tui_client() { hypr -j clients | py_reply '
 import json, sys
 cs = [c for c in json.load(sys.stdin) if c["pid"] == int(sys.argv[2])]
 if len(cs) != 1: print("clients=%d" % len(cs))
@@ -126,8 +126,8 @@ at_x, at_y = c["at"][0] + c["size"][0] / 2, c["at"][1] + c["size"][1] / 2
 print("centred" if abs(at_x - area_x) <= 1 and abs(at_y - area_y) <= 1 else "centre=%g,%g work-area-centre=%g,%g" % (at_x, at_y, area_x, area_y))' "$clients" "$monitors" "$gaps" "$1"
 }
 # listPlugins' Hyprland problems, sorted.
-hypr_problems() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps(sorted(e["error"] for e in json.load(sys.stdin)["errors"] if e["error"].startswith("hyprland: "))))'; }
-theme_switches() { ipc shell listShellConfig | python3 -c 'import json,sys; row=next((r for r in json.load(sys.stdin).get("plugins", []) if r.get("id") == "vgs.themes"), {}); print(json.dumps({k: row.get(k) for k in ("setWindowBorders", "setCornerRadius", "setWindowAnimations")}, sort_keys=True))'; }
+hypr_problems() { ipc shell listPlugins | py_reply 'import json,sys; print(json.dumps(sorted(e["error"] for e in json.load(sys.stdin)["errors"] if e["error"].startswith("hyprland: "))))'; }
+theme_switches() { ipc shell listShellConfig | py_reply 'import json,sys; row=next((r for r in json.load(sys.stdin).get("plugins", []) if r.get("id") == "vgs.themes"), {}); print(json.dumps({k: row.get(k) for k in ("setWindowBorders", "setCornerRadius", "setWindowAnimations")}, sort_keys=True))'; }
 inbox_mode() { ipc smoke readInstance service vgs.notifications panelMode; }
 press_super() { type_keys -M logo -k "$1" -m logo; }
 # Give plugins rows the `keys` JSON maps: { id: keys }, replaced whole.

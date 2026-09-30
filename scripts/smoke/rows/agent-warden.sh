@@ -71,10 +71,10 @@ PY
 warden_raw() { printf '%s' "$1" >"$warden_dir/status.tmp.raw" && mv -T -- "$warden_dir/status.tmp.raw" "$warden_dir/status.json"; }
 warden_values() { ipc vgs.agent-warden invoke status ''; }
 # warden_value KEY: one published value as JSON, `null` when unpublished.
-warden_value() { warden_values | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get(sys.argv[1])))' "$1"; }
+warden_value() { warden_values | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin).get(sys.argv[1])))' "$1"; }
 # The published detail's state and reason, and each item's kind and level.
-warden_state() { warden_values | python3 -c 'import json,sys; d=json.load(sys.stdin).get("detail"); print("unpublished" if d is None else json.dumps([d["state"], d["reason"], d["issues"], [[i["kind"], i["level"]] for i in d["items"]]]))'; }
-warden_lent() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.stdin)["status"].get("vgs.agent-warden"); print(json.dumps(r if r is None else r["keys"]))'; }
+warden_state() { warden_values | py_reply 'import json,sys; d=json.load(sys.stdin).get("detail"); print("unpublished" if d is None else json.dumps([d["state"], d["reason"], d["issues"], [[i["kind"], i["level"]] for i in d["items"]]]))'; }
+warden_lent() { ipc shell lent | py_reply 'import json,sys; r=json.load(sys.stdin)["status"].get("vgs.agent-warden"); print(json.dumps(r if r is None else r["keys"]))'; }
 warden_rows() { settings_rows | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.agent-warden"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))'; }
 # The answer the scan gives for vsys on the sandbox PATH.
 vsys_on_path() { if "${shell_env[@]}" PATH="$shim:$(dirname -- "$node_bin"):$PATH" bash -c 'command -v vsys' >/dev/null; then echo '"present"'; else echo '"absent"'; fi; }
@@ -139,7 +139,7 @@ print("fresh" if text.isdigit() and abs(int(text) / 1000 - now) < 10 and now - o
 PY
 }
 # The scan's answer for one of the plugin's requirement commands.
-warden_requirement() { ipc shell listPlugins | python3 -c 'import json,sys; p=[p for p in json.load(sys.stdin)["plugins"] if p["id"]=="vgs.agent-warden"][0]; print([r["state"] for r in p["requirements"] if r["command"]==sys.argv[1]][0])' "$1"; }
+warden_requirement() { ipc shell listPlugins | py_reply 'import json,sys; p=[p for p in json.load(sys.stdin)["plugins"] if p["id"]=="vgs.agent-warden"][0]; print([r["state"] for r in p["requirements"] if r["command"]==sys.argv[1]][0])' "$1"; }
 expected_errors+=('agent-warden: status=unreadable cause=json ' 'agent-warden: status=schema schema=2\.0 ' 'agent-warden: summary=failed ' 'plugins: hidden by a higher-precedence plugin with the same id: vgs\.agent-warden' 'agent-warden: notice=(tasks|memory) failed=')
 
 expect "a rescan after the notify-send stand-in arrives starts" ok ipc shell rescanPlugins
@@ -268,7 +268,7 @@ printf '%s\n' "\$*" >"$warden_systemctl_log"
 EOF
   chmod 755 "$shim/systemctl"
 }
-warden_section() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' vgs.agent-warden; }
+warden_section() { ipc shell listShellConfig | py_reply 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' vgs.agent-warden; }
 warden_tones="$(python3 -c 'import json,sys; print(json.dumps(dict(zip(["neutral", "accent", "warning", "danger"], [json.loads(v).lower() for v in sys.argv[1:]]))))' \
   "$(ipc smoke themeValue badge.tone.neutral.foreground)" "$(ipc smoke themeValue badge.tone.accent.foreground)" \
   "$(ipc smoke themeValue badge.tone.warning.foreground)" "$(ipc smoke themeValue badge.tone.danger.foreground)")" || fail "the badge tones are unreadable"
@@ -325,7 +325,7 @@ warden_summary_runs() { [[ -f $warden_vsys_log ]] || { echo 0; return; }; python
 warden_last_vsys() { [[ -f $warden_vsys_log ]] && tail -n 1 -- "$warden_vsys_log" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip("\n")))' || echo absent; }
 warden_systemctl_argv() { [[ -f $warden_systemctl_log ]] && cat -- "$warden_systemctl_log" || echo absent; }
 # The notice the core shows as [plugin, commands], or null.
-warden_notice() { notice_shown | python3 -c 'import json,sys; s=json.load(sys.stdin); print(json.dumps(None if s is None else s[:2]))'; }
+warden_notice() { notice_shown | py_reply 'import json,sys; s=json.load(sys.stdin); print(json.dumps(None if s is None else s[:2]))'; }
 # warden_open LABEL: a click on the shield opens the panel, which runs the
 # summary once while vsys is present and never without it.
 warden_open() {
@@ -448,7 +448,7 @@ PY
   expect_poll "the service reads notify: ${1:-problems}" "\"${1:-problems}\"" ipc smoke readInstance service vgs.agent-warden mode
 }
 # The toasts the plugin shows, as the lending record holds them.
-warden_toasts() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps([t for t in json.load(sys.stdin)["toasts"]["visible"] if t["plugin"] == "vgs.agent-warden"]))'; }
+warden_toasts() { ipc shell lent | py_reply 'import json,sys; print(json.dumps([t for t in json.load(sys.stdin)["toasts"]["visible"] if t["plugin"] == "vgs.agent-warden"]))'; }
 warden_near_notices='[["normal", "An agent is starting a lot of processes", true], ["normal", "An agent is using a lot of memory", true]]'
 warden_held_notice='["critical", "Agents are close to their memory limit", true]'
 
@@ -505,7 +505,7 @@ PY
 }
 # warden_offers_since N: the calls after the first N that offer Open vsys
 # and those that do not, as [with, without].
-warden_offers_since() { warden_notices_since "$1" | python3 -c 'import json,sys; c=json.load(sys.stdin); print(json.dumps([sum(1 for n in c if n[2]), sum(1 for n in c if not n[2])]))'; }
+warden_offers_since() { warden_notices_since "$1" | py_reply 'import json,sys; c=json.load(sys.stdin); print(json.dumps([sum(1 for n in c if n[2]), sum(1 for n in c if not n[2])]))'; }
 warden_waiting() { ipc smoke readInstance service vgs.agent-warden waiting; }
 warden_failed_lines() { log_lines 'agent-warden: notice=(tasks|memory) failed='; }
 # warden_failed_send: two failed runs for a lane near both ceilings, then
@@ -708,7 +708,7 @@ warden_uncontrol
 warden_control Notices.js "        if (next.indexOf(e.key) !== -1) return;
 " ""
 # Whether the lane's first notice went out more than once since MARK.
-warden_repeated() { warden_notices_since "$1" | python3 -c 'import json,sys; print(sum(1 for n in json.load(sys.stdin) if n[1] == "An agent is starting a lot of processes") >= 2)'; }
+warden_repeated() { warden_notices_since "$1" | py_reply 'import json,sys; print(sum(1 for n in json.load(sys.stdin) if n[1] == "An agent is starting a lot of processes") >= 2)'; }
 warden_mark="$(warden_sent_count)"
 warden_ticks
 expect_poll "the memory control sends the lane's first notice again on the next tick" True warden_repeated "$warden_mark"

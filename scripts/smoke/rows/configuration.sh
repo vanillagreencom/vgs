@@ -1,7 +1,7 @@
 # An unreadable user file settles, keeps the bar, and refuses every write
 # until it reads again.
 set -euo pipefail
-config_user_state() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["user"])'; }
+config_user_state() { ipc shell listPlugins | py_reply 'import json,sys; print(json.load(sys.stdin)["config"]["user"])'; }
 expected_errors+=('config: user file unreadable at ')
 chmod 000 "$home/.config/vgs/shell.json"
 expect "reloading an unreadable user file answers ok" ok ipc shell reloadConfig

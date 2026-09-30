@@ -16,7 +16,7 @@ launcher_rows() { ipc smoke launcherRows overlay vgs.launcher | py_reply 'import
 rows_of() { launcher_rows | py_reply 'import json,sys; print(json.dumps([[l, d] for k, l, d in json.load(sys.stdin) if k == sys.argv[1]]))' "$1"; }
 has_row() { launcher_rows | py_reply 'import json,sys; print(any(r[0] == sys.argv[1] and r[1] == sys.argv[2] for r in json.load(sys.stdin)))' "$1" "$2"; }
 first_row() { launcher_rows | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r[0][:2]) if r else "none")'; }
-lent_launcher() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.launcher")], [t for t in d["ipcTargets"] if t == "vgs.launcher"]]))'; }
+lent_launcher() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.launcher")], [t for t in d["ipcTargets"] if t == "vgs.launcher"]]))'; }
 file_text() { if [[ -f $1 ]]; then python3 -c 'import sys; print(repr(open(sys.argv[1]).read()))' "$1"; else echo absent; fi; }
 file_search_children() { ps -e -o ppid=,args= | python3 -c 'import sys; print(sum(1 for l in sys.stdin if l.split(None, 1)[0] == sys.argv[1] and "file-search.sh" in l))' "$shell_qs_pid"; }
 # The launcher's own look as the running instance holds it, one path.
@@ -399,7 +399,7 @@ expect_poll "the shortcut closed the launcher" 0 layer_count vgs:overlay
 
 # The bar entry: enabling placed it in the left section; a click opens the
 # launcher on its screen, and a click outside the card closes it.
-widget_placed() { bar_widget_ids | python3 -c 'import json,sys; print(all("vgs.launcher" in bar for bar in json.load(sys.stdin)))'; }
+widget_placed() { bar_widget_ids | py_reply 'import json,sys; print(all("vgs.launcher" in bar for bar in json.load(sys.stdin)))'; }
 expect_poll "the bar entry is placed" True widget_placed
 click_centre "$(bar_key)" vgs.launcher || fail "the click on the bar entry failed"
 expect_poll "the bar entry opened the launcher" 1 layer_count vgs:overlay

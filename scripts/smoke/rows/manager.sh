@@ -29,7 +29,7 @@ user_file="$home/.config/vgs/shell.json"
 # `absent` when the row holds no entry.
 user_key() { python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1])).get("plugins", []) if r["id"] == "vgs.settings"]; k=rows[0].get("keys", {}) if rows else {}; print(json.dumps(k["toggle"]) if "toggle" in k else "absent")' "$user_file"; }
 # The binds Hyprland holds for the Settings shortcut, as [modmask, key].
-settings_binds() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.settings:toggle")))'; }
+settings_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.settings:toggle")))'; }
 # window_fits MONITOR [MODE]: [] when the Settings window on MONITOR is
 # min(size.window.width, width - 2 * size.window.gutter) wide,
 # size.window.heightShare of the height tall and centred on the monitor's
@@ -77,15 +77,15 @@ for key, got, want in (("w", w, want_w), ("h", h, want_h), ("x", x, area_x + (ar
     if abs(got - want) > 1: out.append("%s=%s want=%s" % (key, got, want))
 print(json.dumps(out))' "$1" "${2:-}" "$shell_class" "$width" "$share" "$gutter"
 }
-first_monitor() { hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])'; }
+first_monitor() { hypr -j monitors | py_reply 'import json,sys; print(json.load(sys.stdin)[0]["name"])'; }
 
 # Enable: the gear joins every bar's right section, the service registers
 # its shortcut and IPC target, and the Hyprland layer binds SUPER+M.
 expect "enabling the Settings plugin is allowed" ok ipc shell setPluginEnabled vgs.settings true
 expect_poll "listPlugins reads the Settings plugin enabled" True plugin_enabled vgs.settings
-gear_placed() { bar_widget_ids | python3 -c 'import json,sys; b=json.load(sys.stdin); print(len(b) > 0 and all(ids[-1:] == ["vgs.settings"] for ids in b))'; }
+gear_placed() { bar_widget_ids | py_reply 'import json,sys; b=json.load(sys.stdin); print(len(b) > 0 and all(ids[-1:] == ["vgs.settings"] for ids in b))'; }
 expect_poll "enabling places the gear last in every bar" True gear_placed
-settings_lent() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin); print("vgs.settings:toggle" in d["shortcuts"] and "vgs.settings" in d["ipcTargets"])'; }
+settings_lent() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin); print("vgs.settings:toggle" in d["shortcuts"] and "vgs.settings" in d["ipcTargets"])'; }
 expect_poll "the Settings service registered its shortcut and IPC target" True settings_lent
 expect_poll "the Hyprland layer binds SUPER+M to the Settings shortcut" '[[64, "M"]]' settings_binds
 # The gear draws like the other bar icons: its button and its icon on the
@@ -267,7 +267,7 @@ section_names() { ipc smoke itemTexts window vgs.settings SectionHeader | py_rep
 expect_poll "the page draws one section per schema group, ungrouped first" '["Settings", "Layout", "Behaviour", "Look"]' section_names
 page_fields() { ipc smoke drawnFields window vgs.settings | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["acme.probe"], sum(v for k, v in d.items() if k != "acme.probe")]))'; }
 expect_poll "the page draws one field per schema entry and no other plugin's" '[9, 0]' page_fields
-sliders() { ipc smoke descendantGeometry window vgs.settings | python3 -c 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["type"] == "Slider"))'; }
+sliders() { ipc smoke descendantGeometry window vgs.settings | py_reply 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["type"] == "Slider"))'; }
 expect "the two bounded numbers draw sliders" 2 sliders
 # page_alignment SETTINGS KEYS: [] when the shown page draws SETTINGS
 # setting fields and KEYS key rows and every inline field, the details and
@@ -350,7 +350,7 @@ if area="$(page_scroll)" && [[ $area == \{* ]]; then
   drag "$tx" "$ty" "$tx" "$((ty + 40))" || fail "the drag on the page's thumb failed"
   dragged() { page_scroll | py_reply 'import json,sys; a=json.loads(sys.stdin.read()); moved=a["thumb"][1]-float(sys.argv[1]); travel=a["bar"][3]-a["thumb"][3]; want=moved/travel*(a["contentHeight"]-a["height"]) if travel > 0 else -1; print(a["contentY"] > 0 and abs(moved - 40) <= 2 and abs(a["contentY"] - want) <= 2)' "$thumb_top_before"; }
   geometry expect_poll "a drag on the thumb moves it and scrolls the content with it" True dragged
-  y_before="$(scroll_value contentY | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')"
+  y_before="$(scroll_value contentY | py_reply 'import json,sys; print(json.load(sys.stdin)[0])')"
   # A 2 px box on the track just under the thumb.
   area="$(page_scroll)"
   read -r bx by < <(at_centre window:Settings "$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); b=a["bar"]; t=a["thumb"]; print(json.dumps([b[0], t[1] + t[3] + 2, b[2], 2]))' "$area")")
@@ -373,7 +373,7 @@ terminal_ready "Settings' TUIs"
 # settings_button TEXT: whether the window draws a shown Button TEXT.
 settings_button() { ipc smoke windowGeometry window vgs.settings Button "$1" | py_reply 'import sys; print("absent" if sys.stdin.read().strip() == "absent" else "drawn")'; }
 # How many floating TUI windows the nested instance maps.
-tui_windows() { hypr -j clients | python3 -c 'import json,sys; print(sum(1 for c in json.load(sys.stdin) if c["class"].startswith("org.vgs.tui")))'; }
+tui_windows() { hypr -j clients | py_reply 'import json,sys; print(sum(1 for c in json.load(sys.stdin) if c["class"].startswith("org.vgs.tui")))'; }
 settings_focused="[\"$shell_class\", \"Settings\"]"
 # settings_show PAGE: the Settings window open on PAGE, "" for the list,
 # whose slide has ended once the list's Add plugin button is hidden. A
@@ -514,7 +514,7 @@ json.dump(doc, open(path + ".tmp", "w"), indent=2)
 os.replace(path + ".tmp", path)
 PY
 }
-listed_problem() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([e["error"] for e in json.load(sys.stdin)["errors"] if "vgs.settings" in e["error"]]))'; }
+listed_problem() { ipc shell listPlugins | py_reply 'import json,sys; print(json.dumps([e["error"] for e in json.load(sys.stdin)["errors"] if "vgs.settings" in e["error"]]))'; }
 settings_badge() { ipc smoke itemTexts window vgs.settings ListItem | py_reply 'import json,sys; print(json.dumps([t for t in json.load(sys.stdin) if t[0] == "Settings"]))'; }
 settings_keys_row '{"nope": "SUPER+F9"}'
 expect_poll "a keys name no bind declares is among the plugin's errors" '[["hyprland: shell.json keys.nope names no bind of vgs.settings"]]' row_of vgs.settings errors
@@ -617,7 +617,7 @@ expect "a deep link summons the Settings window" ok ipc shell summon window vgs.
 expect_poll "the deep link opens that plugin's page" '"acme.probe"' settings_page
 expect "a deep link to an id no plugin has is accepted" ok ipc shell summon window vgs.settings '{"plugin":"acme.nowhere"}'
 expect_poll "an unknown id opens the list" '""' settings_page
-notice_names() { ipc smoke readInstance window vgs.settings notice | python3 -c 'import json,sys; print("acme.nowhere" in json.load(sys.stdin))'; }
+notice_names() { ipc smoke readInstance window vgs.settings notice | py_reply 'import json,sys; print("acme.nowhere" in json.load(sys.stdin))'; }
 expect "the list's notice names the unknown id" True notice_names
 expected_errors+=('summon host: vgs\.settings open\(\) failed: payload key "page" unknown')
 expect "a payload key other than plugin refuses the summon" "refused: open-failed=vgs.settings" ipc shell summon window vgs.settings '{"page":"x"}'
@@ -643,12 +643,12 @@ narrow_mode=480x720
 main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
 hold_mode "the nested compositor makes its monitor narrower than the window" "$main_monitor" "$narrow_mode"
 expect_poll "the monitor is 480 logical pixels wide" 480 first_width
-bar_width() { one_layer vgs:bar | python3 -c 'import json,sys; print(json.load(sys.stdin)[2])'; }
+bar_width() { one_layer vgs:bar | py_reply 'import json,sys; print(json.load(sys.stdin)[2])'; }
 expect_poll "the bar follows the narrow monitor" 480 bar_width
 expect "the gear opens the window on the narrow monitor" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
 expect_poll "the window maps on the narrow monitor" 1 window_count Settings
 geometry expect_poll "a monitor narrower than the width token keeps the gutters, half its height, centred" '[]' window_fits "$main_monitor" "$narrow_mode"
-clamped_width() { settings_layer | python3 -c 'import json,sys; print(json.load(sys.stdin)[2])'; }
+clamped_width() { settings_layer | py_reply 'import json,sys; print(json.load(sys.stdin)[2])'; }
 gutter="$(ipc smoke themeValue size.window.gutter)" || fail "the gutter token is unreadable"
 geometry expect "the clamped window is the monitor's width less two gutters" "$((480 - 2 * gutter))" clamped_width
 # Control: the monitor's own mode comes back under the held row, as a host
@@ -697,7 +697,7 @@ expect "the window opens its own page" ok ipc smoke invokeInstance window vgs.se
 expect "the window disables its own plugin" ok ipc smoke invokeInstance window vgs.settings toggle vgs.settings
 expect_poll "listPlugins reads the Settings plugin disabled" False plugin_enabled vgs.settings
 expect_poll "the disabled plugin's window is gone" 0 window_count Settings
-gear_gone() { bar_widget_ids | python3 -c 'import json,sys; print(all("vgs.settings" not in ids for ids in json.load(sys.stdin)))'; }
+gear_gone() { bar_widget_ids | py_reply 'import json,sys; print(all("vgs.settings" not in ids for ids in json.load(sys.stdin)))'; }
 expect_poll "the disabled plugin's gear left every bar" True gear_gone
 expect "enabling the Settings plugin again is allowed" ok ipc shell setPluginEnabled vgs.settings true
 expect_poll "the gear is back in every bar" True gear_placed
@@ -749,7 +749,7 @@ bar_row left '["workspaces"]'
 # Each bar stays alive while its built-ins change. The pending callbacks
 # must describe only its current capability holds and live built-ins.
 bar_cleanup_balanced() {
-  ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); bars=[rows for key,rows in d.items() if key.startswith("bar:")]; print(len(bars)==int(sys.argv[1]) and all(len([r for r in rows if r["id"]=="vgs.bar"])==1 and all(r["pendingCleanups"]==len(r["capabilities"])+sum(b["origin"]=="plugin" for b in rows) for r in rows if r["id"]=="vgs.bar") for rows in bars))' "$monitors"
+  ipc shell built | py_reply 'import json,sys; d=json.load(sys.stdin); bars=[rows for key,rows in d.items() if key.startswith("bar:")]; print(len(bars)==int(sys.argv[1]) and all(len([r for r in rows if r["id"]=="vgs.bar"])==1 and all(r["pendingCleanups"]==len(r["capabilities"])+sum(b["origin"]=="plugin" for b in rows) for r in rows if r["id"]=="vgs.bar") for rows in bars))' "$monitors"
 }
 builtin_builds_before="$(builds)"
 for builtin_cycle in {1..12}; do

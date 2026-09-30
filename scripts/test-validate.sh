@@ -248,7 +248,7 @@ jarvis_env_plan=$'node scripts/test-jarvis-env.js\n'"$repo_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\n'"$repo_plan"
 session_plan=$'scripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\n'"$repo_plan"$'\nscripts/qml-unit.sh\nscripts/test-qml-unit.sh\nscripts/test-session-lock.sh\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
-smoke_plan="$repo_plan"$'\nscripts/qml-smoke.sh'
+smoke_plan=$'python3 scripts/check-smoke-readers.py\npython3 scripts/test-check-smoke-readers.py\n'"$repo_plan"$'\nscripts/qml-smoke.sh'
 fedora_plan=$'scripts/test-fedora-srpm.sh\n'
 version_plan=$'scripts/test-vgsh-version.sh\nscripts/test-install-tree.sh\n'"$fedora_plan"$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-release.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
 # A recipe change runs the recipe check and its controls, never the product

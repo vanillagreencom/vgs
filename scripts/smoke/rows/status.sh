@@ -18,9 +18,9 @@ cp -R "$repo/scripts/smoke/fixtures/plugins/acme.status/." "$status_dir/"
 publish() { ipc acme.status invoke "$1" "${2:-}"; }
 read_status() { ipc smoke readInstance "$1" acme.status "$2"; }
 # The fixture's entry in the lending record's status records, or null.
-lent_status() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.stdin)["status"].get("acme.status"); print(json.dumps(r if r is None else [r[k] for k in sys.argv[1:]]))' "$@"; }
-bar_keys() { ipc shell built | python3 -c 'import json,sys; print(" ".join(sorted(k for k in json.load(sys.stdin) if k.startswith("bar:"))))'; }
-status_widgets() { ipc shell built | python3 -c 'import json,sys; print(sum(1 for k, rows in json.load(sys.stdin).items() if k.startswith("bar:") for r in rows if r["id"] == "acme.status"))'; }
+lent_status() { ipc shell lent | py_reply 'import json,sys; r=json.load(sys.stdin)["status"].get("acme.status"); print(json.dumps(r if r is None else [r[k] for k in sys.argv[1:]]))' "$@"; }
+bar_keys() { ipc shell built | py_reply 'import json,sys; print(" ".join(sorted(k for k in json.load(sys.stdin) if k.startswith("bar:"))))'; }
+status_widgets() { ipc shell built | py_reply 'import json,sys; print(sum(1 for k, rows in json.load(sys.stdin).items() if k.startswith("bar:") for r in rows if r["id"] == "acme.status"))'; }
 # readers PROPERTY: the property as every instance reads it, as one JSON
 # list: the service first, then the widget on each bar, then the panel.
 readers() {
@@ -37,7 +37,7 @@ readers() {
 }
 # agreed PROPERTY: the one value every reader holds, or `readers=<list>`
 # while they differ.
-agreed() { readers "$1" | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r[0]) if len(r) >= 4 and all(v == r[0] for v in r) else "readers=" + json.dumps(r))'; }
+agreed() { readers "$1" | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r[0]) if len(r) >= 4 and all(v == r[0] for v in r) else "readers=" + json.dumps(r))'; }
 
 expect "rescan after adding the status fixture answers ok" ok ipc shell rescanPlugins
 expect_poll "the status fixture is discovered" True plugin_known acme.status
@@ -76,7 +76,7 @@ expect "a presence outside its set is refused" "refused: status=token reason=typ
 expect "values past the ceiling are refused" "refused: status=detail reason=size" publish big
 expect "the refusals change no value" "$before_values" agreed statusValues
 expect "the refusals change no revision" "$before_revision" agreed statusRevision
-tampered() { publish tamper | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+tampered() { publish tamper | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 expect "the published values do not change in place" "$before_values" tampered
 
 # Choices use the same one record and refusal path as other status types.

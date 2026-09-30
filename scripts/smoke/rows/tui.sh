@@ -25,8 +25,8 @@ cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tui/." "$tui_dir/"
 terminal_stand_in
 tui() { ipc acme.tui invoke "$1" "${2:-}"; }
 # Whether acme.tui holds the tui capability; the probe fixture may hold it too.
-tui_held() { lent holders.tui | python3 -c 'import json,sys; print("acme.tui" in (json.load(sys.stdin) or []))'; }
-respaced() { "$@" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+tui_held() { lent holders.tui | py_reply 'import json,sys; print("acme.tui" in (json.load(sys.stdin) or []))'; }
+respaced() { "$@" | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 
 expect "rescan after adding the tui fixture answers ok" ok ipc shell rescanPlugins
 expect_poll "the tui fixture is discovered" True plugin_known acme.tui
@@ -39,7 +39,7 @@ listed='[{"key": "acme.tui/hello", "plugin": "acme.tui", "name": "hello", "title
 expect "listTuis lists the fixture's script" "$listed" respaced ipc shell listTuis
 expect "the capability publishes the same list" "$listed" respaced tui entries
 
-revision="$(ipc shell listPlugins | python3 -c 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.tui"][0])')"
+revision="$(ipc shell listPlugins | py_reply 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.tui"][0])')"
 snapshot="$rt_dir/vgsh-sources-$shell_qs_pid/$revision"
 check_snapshot() { [[ -x $snapshot/tui/hello.sh && ! -L $snapshot/tui/hello.sh ]] && echo present || echo absent; }
 # The words the terminal is handed for the fixture's hello script with
@@ -158,14 +158,14 @@ expect_run_end "the hello run ends before the next request" acme.tui/hello
 tui_gate="$sandbox/tui-gate"
 tui_done() { tui dones; }
 # The fixture's state of its wait script as [running, code, ended].
-wait_state() { tui state | python3 -c 'import json,sys; s=json.load(sys.stdin)["wait"]; print(json.dumps([s["running"], s["code"], s["endedAt"] is not None]))'; }
-wait_window() { hypr -j clients | python3 -c 'import json,sys; print(sum(1 for c in json.load(sys.stdin) if c["class"]=="org.vgs.tui" and c["title"]=="VGS · Wait"))'; }
+wait_state() { tui state | py_reply 'import json,sys; s=json.load(sys.stdin)["wait"]; print(json.dumps([s["running"], s["code"], s["endedAt"] is not None]))'; }
+wait_window() { hypr -j clients | py_reply 'import json,sys; print(sum(1 for c in json.load(sys.stdin) if c["class"]=="org.vgs.tui" and c["title"]=="VGS · Wait"))'; }
 # The last ended code of the wait script's key the lending record holds.
-wait_ended_code() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["tui"]["runs"]["acme.tui/wait"]["ended"]["code"]))'; }
+wait_ended_code() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["tui"]["runs"]["acme.tui/wait"]["ended"]["code"]))'; }
 # How many `vgsh-tui wait` processes the core holds for the wait script's
 # key; the lending record names each as <key>|<run>.
-wait_waits() { lent tui.waits | python3 -c 'import json,sys; print(sum(1 for w in json.load(sys.stdin) or [] if w.split("|")[0] == "acme.tui/wait"))'; }
-active_class() { hypr -j activewindow | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get("class")))'; }
+wait_waits() { lent tui.waits | py_reply 'import json,sys; print(sum(1 for w in json.load(sys.stdin) or [] if w.split("|")[0] == "acme.tui/wait"))'; }
+active_class() { hypr -j activewindow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin).get("class")))'; }
 rm -f -- "$tui_gate"
 expect "the wait script's state before any run" '[false, null, false]' wait_state
 expect "a gated run with a done answers ok" ok tui run-done "wait|$tui_gate|3"

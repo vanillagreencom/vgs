@@ -59,7 +59,7 @@ print("shown" if not problems else " ".join(problems))' "$clients" "$monitors" "
 # `out` for a window in_view does not read as shown, else `shown`.
 out_of_view() { local v; v="$(in_view "$1")" || return 1; if [[ $v == shown ]]; then echo shown; else echo out; fi; }
 # Whether Hyprland draws the window: False for a background group tab.
-window_drawn() { hypr -j clients | python3 -c 'import json,sys; print(next(c["visible"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
+window_drawn() { hypr -j clients | py_reply 'import json,sys; print(next(c["visible"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
 reveal_other() {
   expect "the other window takes the focus before the $1 case" ok hypr dispatch "hl.dsp.focus({ window = \"address:$reveal_other_window\" })"
   expect_poll "the other window has the focus before the $1 case" '["smoke.other", "Other window"]' active_window
@@ -100,7 +100,7 @@ if open_other "$sandbox/toplevel-reveal-other.log"; then
     expect "the compositor switches to an empty workspace" ok hypr dispatch 'hl.dsp.focus({ workspace = "6" })'
     expect_poll "no window has the focus on the empty workspace" '[]' active_window
     expect "the window focused last starts out of view" out out_of_view "$reveal_window"
-    history_first() { hypr -j clients | python3 -c 'import json,sys; print(next(c["focusHistoryID"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
+    history_first() { hypr -j clients | py_reply 'import json,sys; print(next(c["focusHistoryID"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
     expect "control: the old rule would have read the window as focused and moved nothing" 0 history_first "$reveal_window"
     expect "the reveal of the window focused last is accepted" ok probe reveal "$reveal_window"
     expect_poll "the reveal shows its workspace and focuses it" shown in_view "$reveal_window"
@@ -132,7 +132,7 @@ if open_other "$sandbox/toplevel-reveal-other.log"; then
     expect "the window under it moves to workspace 3" ok move_to "$under" 3
     expect "the first window is focused on workspace 3" ok hypr dispatch "hl.dsp.focus({ window = \"address:$full\" })"
     expect "the first window goes fullscreen" ok hypr dispatch "hl.dsp.window.fullscreen({ window = \"address:$full\" })"
-    fullscreen_of() { hypr -j clients | python3 -c 'import json,sys; print(next(c["fullscreen"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
+    fullscreen_of() { hypr -j clients | py_reply 'import json,sys; print(next(c["fullscreen"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$1"; }
     expect_poll "the first window is fullscreen" 2 fullscreen_of "$full"
     reveal_other "under-fullscreen"
     expect "a window under a fullscreen one elsewhere starts out of view" out out_of_view "$under"
@@ -153,7 +153,7 @@ if open_other "$sandbox/toplevel-reveal-other.log"; then
     open_reveal tab-two; then
     tab_two_pid="$reveal_pid"
     tab_two="$reveal_window"
-    grouped() { hypr -j clients | python3 -c 'import json,sys; print(next(len(c["grouped"]) for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$tab_one"; }
+    grouped() { hypr -j clients | py_reply 'import json,sys; print(next(len(c["grouped"]) for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$tab_one"; }
     expect_poll "the group holds both windows" 2 grouped
     expect "the second window is the group's current tab" ok hypr dispatch "hl.dsp.focus({ window = \"address:$tab_two\" })"
     reveal_other "group-tab"
@@ -176,7 +176,7 @@ if open_other "$sandbox/toplevel-reveal-other.log"; then
   expect "the nested compositor adds a monitor for the reveal rows" ok hypr output create headless "$reveal_output"
   if open_reveal far; then
     expect "the window moves to the second monitor" ok hypr dispatch "hl.dsp.window.move({ monitor = \"$reveal_output\", window = \"address:$reveal_window\", follow = false })"
-    on_monitor() { hypr -j clients | python3 -c 'import json,sys; print(next(c["monitor"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$reveal_window"; }
+    on_monitor() { hypr -j clients | py_reply 'import json,sys; print(next(c["monitor"] for c in json.load(sys.stdin) if c["address"] == sys.argv[1]))' "$reveal_window"; }
     expect_poll "the window is on the second monitor" 1 on_monitor
     reveal_other "second-monitor"
     expect "a window on the second monitor starts out of the focus" out out_of_view "$reveal_window"

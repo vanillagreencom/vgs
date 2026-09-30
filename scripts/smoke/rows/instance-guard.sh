@@ -4,7 +4,7 @@
 set -euo pipefail
 spawn "$sandbox/bare.log" "${shell_env[@]}" qs -p "$repo/shell"
 bare_pid="$spawn_pid"
-instance_count() { "${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+instance_count() { "${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
 bare_ipc() { "${shell_env[@]}" qs ipc --pid "$bare_pid" call "$@" 2>/dev/null | tail -n 1; }
 bare_guarded=""
 for _ in $(seq 1 100); do
@@ -36,7 +36,7 @@ theme_file="$home/.config/vgs/theme.json"
 guard_pkg="$home/.config/vgs/themes/guardfollow"
 guard_doc() { printf '{ "schemaVersion": 1, "name": "guardfollow", "tokens": { "palette": { "accent": "%s" } } }\n' "$1" >"$guard_pkg/theme.json"; }
 same_bytes() { cmp -s -- "$1" "$2" && echo same || echo differ; }
-scanned_at() { "${shell_env[@]}" qs ipc --pid "$1" call shell listPlugins 2>/dev/null | tail -n 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["scanned"])'; }
+scanned_at() { "${shell_env[@]}" qs ipc --pid "$1" call shell listPlugins 2>/dev/null | tail -n 1 | py_reply 'import json,sys; print(json.load(sys.stdin)["scanned"])'; }
 # The unguarded qs's reply to an IPC call, for theme_idle.
 unguarded_call() { "${shell_env[@]}" qs ipc --pid "$unguarded_pid" call "$@" 2>/dev/null | tail -n 1; }
 # Start a qs on SHELL_DIR, logging to LOG, set unguarded_pid, and pass the

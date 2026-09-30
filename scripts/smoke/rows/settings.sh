@@ -20,7 +20,7 @@ click "$field_cx" "$field_cy" || fail "the click on the held field failed"
 held_state() { ipc smoke invokeInstance window vgs.settings heldFieldState ''; }
 # The click also puts the cursor where it landed; the state read after it
 # is what the unrelated changes must preserve.
-held_focused() { held_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["same"] and d["focus"] and d["activeFocus"] and d["text"] == "draft")'; }
+held_focused() { held_state | py_reply 'import json,sys; d=json.load(sys.stdin); print(d["same"] and d["focus"] and d["activeFocus"] and d["text"] == "draft")'; }
 expect_poll "the clicked field holds keyboard focus with its draft" True held_focused
 held_before="$(held_state)" || fail "held field state unreadable"
 expect "the window toggles the bare fixture off around the edit" ok ipc smoke invokeInstance window vgs.settings toggle acme.bare
@@ -65,7 +65,7 @@ fi
 fixture_command="secret-tool store --label='acme token' service acme account token"
 status_of() { settings_rows | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))' "$1"; }
 drawn_status() { ipc smoke itemTexts window vgs.settings StatusRow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
-page_fields_of() { ipc smoke drawnFields window vgs.settings | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[sys.argv[1]], sum(v for k, v in d.items() if k != sys.argv[1])]))' "$1"; }
+page_fields_of() { ipc smoke drawnFields window vgs.settings | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[sys.argv[1]], sum(v for k, v in d.items() if k != sys.argv[1])]))' "$1"; }
 # The drawn rows with the `Last check` value replaced by `time` when it
 # draws the fixture's moment as a local date and time: it names that
 # moment's hour and minute, in the 24-hour or the 12-hour form, and not the

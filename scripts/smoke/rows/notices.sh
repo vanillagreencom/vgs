@@ -50,7 +50,7 @@ pkg_stub() { # DETECT_JSON, or "" for a detection that fails
 }
 pkg_stub '{"primary":{"id":"pacman","binary":"pacman"},"overlays":[{"id":"aur","binary":"paru"}],"sources":[]}'
 
-notice_resting() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["resting"]))'; }
+notice_resting() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["resting"]))'; }
 drawn() { ipc smoke noticeDrawn | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d[sys.argv[1]]))' "$1"; }
 needs() { ipc acme.needs invoke "$1" "${2:-}"; }
 # `placed` when the notice's one surface is the focused monitor less the
@@ -62,7 +62,7 @@ notice_placed() {
   card="$(ipc smoke noticeWindowGeometry card)" || return 1
   [[ $card == \[* ]] || { echo "card=$card"; return; }
   margin="$(ipc smoke themeValue dialog.margin)" || return 1
-  hypr -j monitors | python3 -c '
+  hypr -j monitors | py_reply '
 import json, sys
 ls, card, margin = json.loads(sys.argv[1]), json.loads(sys.argv[2]), int(json.loads(sys.argv[3]))
 m = [m for m in json.load(sys.stdin) if m["focused"]]
@@ -193,8 +193,8 @@ expect "a refused offer raises no notice" 0 layer_count vgs:notice
 # (terminal_stand_in in harness.sh), and the notice has no surface, so the terminal shows
 # whole. The command stays missing after the run's rescan, so the notice
 # comes back with the keyboard.
-notice_waiting() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["waiting"]))'; }
-notice_front() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else s["plugin"]))'; }
+notice_waiting() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["waiting"]))'; }
+notice_front() { ipc shell lent | py_reply 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else s["plugin"]))'; }
 # `settled` once no install is in flight: the notice in front is not
 # installing, or none shows. After a run ends, Notices.qml starts one scan,
 # and that scan's end clears the install and settles the queue in one
@@ -204,8 +204,8 @@ notice_front() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.s
 # highest of 12 readings, 245 ms, from the six runs that measured
 # run_end_ceiling_ms in harness.sh.
 install_settle_ceiling_ms=500
-install_settled() { ipc shell lent | python3 -c 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print("settled" if s is None or not s["installing"] else "installing")'; }
-needs_state() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([r["state"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.needs" for r in p["requirements"]][0]))'; }
+install_settled() { ipc shell lent | py_reply 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print("settled" if s is None or not s["installing"] else "installing")'; }
+needs_state() { ipc shell listPlugins | py_reply 'import json,sys; print(json.dumps([r["state"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.needs" for r in p["requirements"]][0]))'; }
 expect "enabling the enabled fixture raises the notice again" ok ipc shell setPluginEnabled acme.needs true
 expect_poll "the notice is back" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
 expect_poll "the notice holds the keyboard for Install" true ipc smoke noticeFocused

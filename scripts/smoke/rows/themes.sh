@@ -15,7 +15,7 @@ installed="$home/.config/vgs/themes"
 applied() { read_service themeApplied | py_reply 'import json,sys; r=json.loads(json.load(sys.stdin)); print(r["state"], r["shell"], r["theme"], r["reason"])'; }
 # The [name, state, reason] rows of that result's targets whose name starts
 # with PREFIX.
-applied_targets() { read_service themeApplied | python3 -c 'import json,sys; r=json.loads(json.load(sys.stdin)); print(json.dumps([[t["name"], t["state"], t["reason"]] for t in r["targets"] if t["name"].startswith(sys.argv[1])]))' "$1"; }
+applied_targets() { read_service themeApplied | py_reply 'import json,sys; r=json.loads(json.load(sys.stdin)); print(json.dumps([[t["name"], t["state"], t["reason"]] for t in r["targets"] if t["name"].startswith(sys.argv[1])]))' "$1"; }
 # What the fixture's last list callback received: `packages` as
 # [name, source, state, reason] rows, `current` the rows marked current,
 # `file` its state, name and modified flag, `reason` the list's own.
@@ -32,10 +32,10 @@ else: print(r["reason"])' "$1"
 applies() { read_service themeApplies; }
 lists() { read_service themeLists; }
 theme_member() { probe theme "$1"; }
-last_part() { probe theme last | python3 -c 'import json,sys; v=json.load(sys.stdin)
+last_part() { probe theme last | py_reply 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v=v.get(k) if isinstance(v, dict) else None
 print(json.dumps(v))' "$1"; }
-swatch_accent() { probe theme "swatch=$1" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["accent"]))'; }
+swatch_accent() { probe theme "swatch=$1" | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["accent"]))'; }
 revision_rose() { local now; now="$(theme_member revision)" && [[ $now -gt $revision_before ]] && echo rose || echo same; }
 # The sandbox copy's vgsh runs BODY for a theme command and the real
 # runner for everything else, so the rows' own ipc calls keep working.
@@ -263,7 +263,7 @@ expect "disabling the fixture after the theme rows is allowed" ok ipc shell setP
 # from `smoke`, and a stand-in runner a target state the panel names
 # nowhere. The block leaves vgs applied and the widget placed
 # for the wallpaper block after it, which disables the plugin.
-layout_section_of() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' "$1"; }
+layout_section_of() { ipc shell listShellConfig | py_reply 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' "$1"; }
 theme_rows() { ipc smoke itemTexts panel vgs.themes ThemeRow | py_reply 'import json,sys; print(json.dumps(sorted(json.load(sys.stdin))))'; }
 # The rows whose name is NAME, in tree order.
 theme_row() { ipc smoke itemTexts panel vgs.themes ThemeRow | py_reply 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[0]==sys.argv[1]]))' "$1"; }
@@ -680,12 +680,12 @@ vgsh_theme() { "${shell_env[@]}" "$repo/bin/vgsh" theme "$@"; }
 # harness.sh reads it. background_covers: whether the image decoded to
 # cover its box and smaller than the 4000x2000 file.
 background_image() { background_image_on "$screen_name"; }
-background_covers() { ipc smoke images "background:$screen_name" vgs.themes | python3 -c 'import json,sys; _,_,box,size,*_=json.load(sys.stdin)[0]; print(box[0] > 0 and size[0] >= box[0] and size[1] >= box[1] and size[0] < 4000)'; }
+background_covers() { ipc smoke images "background:$screen_name" vgs.themes | py_reply 'import json,sys; _,_,box,size,*_=json.load(sys.stdin)[0]; print(box[0] > 0 and size[0] >= box[0] and size[1] >= box[1] and size[0] < 4000)'; }
 background_link() { if [[ -L $bg_state/background ]]; then readlink -- "$bg_state/background"; else echo absent; fi; }
 # The drawn image's decoded width over its height, to one decimal place;
 # `images=<n>` while the background draws other than one image.
 background_ratio() { ipc smoke images "background:$screen_name" vgs.themes | py_reply 'import json,sys; r=json.load(sys.stdin); print("%.1f" % (r[0][3][0] / r[0][3][1]) if len(r)==1 else "images=%d" % len(r))'; }
-screen_listed() { hypr -j monitors | python3 -c 'import json,sys; print(any(m["name"] == sys.argv[1] for m in json.load(sys.stdin)))' "$1"; }
+screen_listed() { hypr -j monitors | py_reply 'import json,sys; print(any(m["name"] == sys.argv[1] for m in json.load(sys.stdin)))' "$1"; }
 # The state file's current image and the image it remembers for scenic, as
 # JSON, null for none or no file.
 bg_current() { if [[ -e $bg_state/backgrounds.json ]]; then python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["current"]))' "$bg_state/backgrounds.json"; else echo null; fi; }
@@ -829,7 +829,7 @@ expect_poll "the themes panel closes after the wallpaper rows" closed panel_open
 # that is neither next nor previous is refused at once, a step's result is
 # the runner's JSON line, and a runner that prints no result is answered as
 # a failure.
-stepped() { read_service themeStepped | python3 -c 'import json,sys; r=json.loads(json.load(sys.stdin)); print(r["state"], r["background"], r["theme"], r["reason"])'; }
+stepped() { read_service themeStepped | py_reply 'import json,sys; r=json.loads(json.load(sys.stdin)); print(r["state"], r["background"], r["theme"], r["reason"])'; }
 expect "enabling the fixture for the wallpaper step rows is allowed" ok ipc shell setPluginEnabled acme.probe true
 expect_poll "the fixture service is back for the wallpaper step rows" True service_built
 expect "a malformed step is refused at once" 'refused: background="sideways" reason=malformed-step' probe theme-background sideways

@@ -5,7 +5,7 @@
 # files stay readable after the sources of others were replaced. Every
 # fixture write is a rename, so the scan never reads half a file.
 set -euo pipefail
-tick_revision() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.tick"][0])'; }
+tick_revision() { ipc shell listPlugins | py_reply 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.tick"][0])'; }
 write_tick() { # FILE CONTENT: replace one file of the placed widget whole
   printf '%s' "$2" >"$tick/$1.tmp" && mv -T -- "$tick/$1.tmp" "$tick/$1"
 }
@@ -85,7 +85,7 @@ d = json.load(open(p))
 json.dump(d, open(p + ".tmp", "w"), indent=2)
 os.replace(p + ".tmp", p)
 PY
-  tick_format_effective() { ipc shell listShellConfig | python3 -c 'import json,sys; print([e["format"] for e in json.load(sys.stdin)["bar"]["layout"]["center"] if e["id"]=="acme.tick"][0])'; }
+  tick_format_effective() { ipc shell listShellConfig | py_reply 'import json,sys; print([e["format"] for e in json.load(sys.stdin)["bar"]["layout"]["center"] if e["id"]=="acme.tick"][0])'; }
   expect_poll "the shell read the settings change for the broken widget" retry-check tick_format_effective
   expect "a settings change does not try the failed code again" "$((loads_before + monitors))" log_lines 'plugins: acme\.tick failed to load: '
   expect "a settings change builds nothing for the failed code" "$before" builds
@@ -121,10 +121,10 @@ expect "the running service kept its in-memory state across the rescans" 1 read_
 
 # The scanner's output is usable only after a successful exit. Each bad
 # scanner is installed in the sandbox copy, never in the live checkout.
-scan_error() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["scanError"])'; }
+scan_error() { ipc shell listPlugins | py_reply 'import json,sys; print(json.load(sys.stdin)["scanError"])'; }
 cp -p -- "$repo/bin/vgsh-scan" "$sandbox/vgsh-scan.good"
-scan_plugins_before="$(ipc shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["plugins"])')"
-scan_plugins() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.load(sys.stdin)["plugins"])'; }
+scan_plugins_before="$(ipc shell listPlugins | py_reply 'import json,sys; print(json.load(sys.stdin)["plugins"])')"
+scan_plugins() { ipc shell listPlugins | py_reply 'import json,sys; print(json.load(sys.stdin)["plugins"])'; }
 expected_errors+=('plugins: vgsh-scan exited 9 status=0' 'plugins: vgsh-scan did not start' 'plugins: scan output does not parse: ')
 printf '#!/bin/sh\nprintf "[]\\n"\nexit 9\n' >"$repo/bin/vgsh-scan"
 expect "a scanner that exits nonzero accepts the scan request" ok ipc shell rescanPlugins

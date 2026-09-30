@@ -50,9 +50,9 @@ IFS=$'\t' read -r agent_id agent_name agent_command agent_key < <(absent_agent) 
 devtools() { ipc vgs.devtools invoke "$1" "${2:-}"; }
 # Its arguments as one JSON list, written as row_texts writes one.
 texts() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))' "$@"; }
-dev_lent() { ipc shell lent | python3 -c 'import json,sys; r=json.load(sys.stdin)["status"].get("vgs.devtools"); print(json.dumps(r if r is None else r["keys"]))'; }
+dev_lent() { ipc shell lent | py_reply 'import json,sys; r=json.load(sys.stdin)["status"].get("vgs.devtools"); print(json.dumps(r if r is None else r["keys"]))'; }
 window_shown() { [[ $(ipc smoke instanceGeometry window vgs.devtools) != absent ]] && echo shown || echo hidden; }
-section_titles() { ipc smoke itemTexts window vgs.devtools SectionHeader | python3 -c 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin)]))'; }
+section_titles() { ipc smoke itemTexts window vgs.devtools SectionHeader | py_reply 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin)]))'; }
 # The texts the first row drawing NAME draws, as JSON, or null.
 row_texts() { ipc smoke itemTexts window vgs.devtools ToolRow | py_reply 'import json,sys; r=[t for t in json.load(sys.stdin) if t and t[0] == sys.argv[1]]; print(json.dumps(r[0] if r else None, ensure_ascii=False))' "$1"; }
 # The VGS row's texts with its error line, which names the sandbox's
@@ -148,8 +148,8 @@ expect "the doctor capability refuses a disabled plugin" "refused: owner=acme.st
 expect "the doctor capability refuses an unknown owner" "refused: owner=acme.gone reason=unknown" ipc smoke doctorOffer service vgs.devtools acme.gone x
 
 # Settings reads the status rows back, read-only.
-installed_count() { in_shell_env node "$repo/shell/plugins/vgs.devtools/bin/devtools" --tree "$repo" list --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for rows in d["sections"].values() for r in rows if r["installed"] is True) + sum(1 for r in d["other"] if r["installed"] is True))'; }
-missing_count() { in_shell_env "$repo/bin/vgsh" doctor --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for rows in [d["core"]] + list(d["plugins"].values()) for r in rows if r["state"] == "missing"))'; }
+installed_count() { in_shell_env node "$repo/shell/plugins/vgs.devtools/bin/devtools" --tree "$repo" list --json | py_reply 'import json,sys; d=json.load(sys.stdin); print(sum(1 for rows in d["sections"].values() for r in rows if r["installed"] is True) + sum(1 for r in d["other"] if r["installed"] is True))'; }
+missing_count() { in_shell_env "$repo/bin/vgsh" doctor --json | py_reply 'import json,sys; d=json.load(sys.stdin); print(sum(1 for rows in [d["core"]] + list(d["plugins"].values()) for r in rows if r["state"] == "missing"))'; }
 expect "enabling Settings is allowed" ok ipc shell setPluginEnabled vgs.settings true
 expect_poll "the Settings service is built" True record_exists vgs.settings
 expect "Settings opens the Dev Tools page" ok ipc vgs.settings invoke open '{"plugin":"vgs.devtools"}'

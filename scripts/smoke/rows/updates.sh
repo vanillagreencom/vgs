@@ -138,22 +138,22 @@ chmod 755 "$shim/xdg-terminal-exec"
 
 # The accepted status record, as every instance reads it.
 updates_values() { ipc vgs.updates invoke status ''; }
-updates_field() { updates_values | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).get(sys.argv[1])))' "$1"; }
-updates_sources() { updates_values | python3 -c 'import json,sys; print(json.dumps([[s["source"], s["count"], s["error"]] for s in json.load(sys.stdin).get("sources", [])]))'; }
-updates_source_names() { updates_values | python3 -c 'import json,sys; print(json.dumps([s["source"] for s in json.load(sys.stdin).get("sources", [])]))'; }
-updates_state_text() { updates_values | python3 -c 'import json,sys; print(json.load(sys.stdin).get("checkState", {}).get("text", ""))'; }
+updates_field() { updates_values | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin).get(sys.argv[1])))' "$1"; }
+updates_sources() { updates_values | py_reply 'import json,sys; print(json.dumps([[s["source"], s["count"], s["error"]] for s in json.load(sys.stdin).get("sources", [])]))'; }
+updates_source_names() { updates_values | py_reply 'import json,sys; print(json.dumps([s["source"] for s in json.load(sys.stdin).get("sources", [])]))'; }
+updates_state_text() { updates_values | py_reply 'import json,sys; print(json.load(sys.stdin).get("checkState", {}).get("text", ""))'; }
 # Whether the check state names the failing system source.
 updates_names_system_failure() { [[ $(updates_state_text) == "System: exit=1"* ]] && echo True || echo False; }
 # Whether the failing system row stays listed, with no count, beside AUR's.
-updates_keeps_failed_row() { updates_sources | python3 -c 'import json,sys; r=json.load(sys.stdin); print(any(s[0] == "pacman" and s[1] is None and s[2] for s in r) and ["aur", 1, None] in r)'; }
+updates_keeps_failed_row() { updates_sources | py_reply 'import json,sys; r=json.load(sys.stdin); print(any(s[0] == "pacman" and s[1] is None and s[2] for s in r) and ["aur", 1, None] in r)'; }
 # SOURCE's [count, listed packages, more] in the accepted record.
-updates_listed() { updates_values | python3 -c 'import json,sys; r=[s for s in json.load(sys.stdin).get("sources", []) if s["source"]==sys.argv[1]]; print(json.dumps([r[0]["count"], len(r[0]["packages"]), r[0]["more"]] if r else None))' "$1"; }
+updates_listed() { updates_values | py_reply 'import json,sys; r=[s for s in json.load(sys.stdin).get("sources", []) if s["source"]==sys.argv[1]]; print(json.dumps([r[0]["count"], len(r[0]["packages"]), r[0]["more"]] if r else None))' "$1"; }
 # SOURCE's [count, packages] in status.json on disk.
 updates_cached() { python3 -c 'import json,sys; r=[s for s in json.load(open(sys.argv[1]))["sources"] if s["source"]==sys.argv[2]]; print(json.dumps([r[0]["count"], len(r[0]["packages"])] if r else None))' "$home/.local/state/vgs/updates/status.json" "$1"; }
 updates_idle() { [[ $(updates_state_text) == Checking ]] && echo checking || echo idle; }
 updates_status_rows() { settings_rows | py_reply 'import json,sys; rows=[p for p in json.load(sys.stdin) if p["id"]=="vgs.updates"][0]["status"]; print(json.dumps([[r["key"], r["report"]] for r in rows]))'; }
-updates_widget_section() { ipc shell listShellConfig | python3 -c 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]=="vgs.updates" for e in l.get(s,[]))] + ["none"])[0])'; }
-updates_tui_running() { lent tui.runs | python3 -c 'import json,sys; r=(json.load(sys.stdin) or {}).get("vgs.updates/finish"); print(json.dumps(r is not None and r.get("running") is not None))'; }
+updates_widget_section() { ipc shell listShellConfig | py_reply 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]=="vgs.updates" for e in l.get(s,[]))] + ["none"])[0])'; }
+updates_tui_running() { lent tui.runs | py_reply 'import json,sys; r=(json.load(sys.stdin) or {}).get("vgs.updates/finish"); print(json.dumps(r is not None and r.get("running") is not None))'; }
 # Runs of one stand-in, from the log every stand-in appends to.
 runs_of() { python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); print(0 if not p.exists() else sum(1 for l in p.read_text().splitlines() if l.split(" ")[0] == sys.argv[2]))' "$updates_state/calls.log" "$1"; }
 package_queries() { echo "$(runs_of checkupdates) $(runs_of paru) $(runs_of flatpak) $(runs_of mise)"; }
@@ -177,7 +177,7 @@ expect_poll "the updates copy is discovered" True plugin_known vgs.updates
 expect_poll "the scan's theme follow ends before the first check" idle theme_idle
 expect "enabling the updates service is allowed" ok ipc shell setPluginEnabled vgs.updates true
 expect_poll "the updates service is built" True record_exists vgs.updates
-updates_tui_rows() { ipc shell listTuis | python3 -c 'import json,sys; print(json.dumps(sorted([r["key"], r["group"]] for r in json.load(sys.stdin) if r["plugin"] == "vgs.updates")))'; }
+updates_tui_rows() { ipc shell listTuis | py_reply 'import json,sys; print(json.dumps(sorted([r["key"], r["group"]] for r in json.load(sys.stdin) if r["plugin"] == "vgs.updates")))'; }
 expect "the pipeline is listed in the Update group and the one-source TUI is not listed" '[["vgs.updates/finish", "Smoke"], ["vgs.updates/update", "Update"]]' updates_tui_rows
 expect_poll "the first check publishes every source vgsh reports" \
   '[["pacman", 2, null], ["aur", 1, null], ["flatpak", 1, null], ["mise", 1, null], ["vgs", 1, null], ["plugins", 1, null], ["themes", 0, null]]' updates_sources
@@ -276,9 +276,9 @@ else:
 widget_visible() { ipc smoke readInstance "$widget_key" vgs.updates visible; }
 # The tooltip's lines but the last, the check's time, which moves; and
 # whether that last line names a time.
-widget_tip() { ipc smoke readInstance "$widget_key" vgs.updates tooltip | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin).split("\n")[:-1]))'; }
-widget_tip_line() { widget_tip | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)[int(sys.argv[1])]))' "$1"; }
-widget_tip_last() { ipc smoke readInstance "$widget_key" vgs.updates tooltip | python3 -c 'import json,re,sys; print(bool(re.fullmatch(r"Checked \S.*", json.load(sys.stdin).split("\n")[-1])))'; }
+widget_tip() { ipc smoke readInstance "$widget_key" vgs.updates tooltip | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin).split("\n")[:-1]))'; }
+widget_tip_line() { widget_tip | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)[int(sys.argv[1])]))' "$1"; }
+widget_tip_last() { ipc smoke readInstance "$widget_key" vgs.updates tooltip | py_reply 'import json,re,sys; print(bool(re.fullmatch(r"Checked \S.*", json.load(sys.stdin).split("\n")[-1])))'; }
 # hideWhenCurrent in the widget's layout entry of the user file, written
 # whole and moved into place.
 widget_hide_when_current() { # true|false
@@ -341,7 +341,7 @@ expect "a record that ends at its separator reads partial" partial launched
 : >"$tui_record"
 expect "an empty record reads partial" partial launched
 forget_record
-old_launched() { recorded | python3 -c 'import json,os,sys; w=json.load(sys.stdin); a=w[len(w) - 1 - w[::-1].index("--") + 1:]; print(json.dumps([os.path.basename(a[0])] + a[1:]))'; }
+old_launched() { recorded | py_reply 'import json,os,sys; w=json.load(sys.stdin); a=w[len(w) - 1 - w[::-1].index("--") + 1:]; print(json.dumps([os.path.basename(a[0])] + a[1:]))'; }
 old_reader_poll() { (failures=0 behaviour_failures=0; expect_poll "the old launch reader" '["update.sh"]' old_launched >"$sandbox/reader-traceback-control.log"; echo "$failures"); }
 expect "control: a poll whose reader raises on an absent record fails once" 1 old_reader_poll
 expect "control: the failed poll names the reader's traceback" 1 grep -c -F -- "the old launch reader: the reader raised a Python traceback" "$sandbox/reader-traceback-control.log"
@@ -357,10 +357,10 @@ expect "control: the failed poll prints the traceback under its row" 1 grep -c -
 row_plants="$sandbox/row-plants"
 mkdir -p -- "$row_plants"
 cat >"$row_plants/updates-traceback-plant.sh" <<'SH'
-updates_values | python3 -c 'import json,sys; print(json.load(sys.stdin)["no-such-field"])' || true
+updates_values | py_reply 'import json,sys; print(json.load(sys.stdin)["no-such-field"])' || true
 SH
 cat >"$row_plants/updates-traceback-clean.sh" <<'SH'
-updates_values | python3 -c 'import json,sys; print(json.load(sys.stdin).get("no-such-field", "absent"))' || true
+updates_values | py_reply 'import json,sys; print(json.load(sys.stdin).get("no-such-field", "absent"))' || true
 SH
 cat >"$row_plants/updates-undrained.sh" <<'SH'
 exec >/dev/null 2>&1
@@ -503,7 +503,7 @@ expect "the nested compositor adds a monitor for the control" ok hypr output cre
 expect_poll "the control monitor gets a bar" "$((monitors + 1))" bar_count
 before="$(checks)"
 expect "enabling the per-widget control is allowed" ok ipc shell setPluginEnabled acme.updates-control true
-control_widgets() { ipc shell built | python3 -c 'import json,sys; print(sum(1 for rows in json.load(sys.stdin).values() for r in rows if r["id"] == "acme.updates-control"))'; }
+control_widgets() { ipc shell built | py_reply 'import json,sys; print(sum(1 for rows in json.load(sys.stdin).values() for r in rows if r["id"] == "acme.updates-control"))'; }
 expect_poll "the control is built on every bar" "$((monitors + 1))" control_widgets
 expect_poll "the control probes once per widget, not once per check" "$((before + monitors + 1))" checks
 expect "disabling the per-widget control is allowed" ok ipc shell setPluginEnabled acme.updates-control false

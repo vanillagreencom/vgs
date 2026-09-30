@@ -9,11 +9,11 @@ layers_dir="$home/.config/vgs/plugins/acme.layers"
 mkdir -p "$layers_dir"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.layers/." "$layers_dir/"
 # JSON the shell answers, respaced as python prints it, so a row compares values.
-respaced() { "$@" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+respaced() { "$@" | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 built_screens() { respaced read_layers built; }
-lent_layers() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["layers"]))'; }
-on_overlay() { hypr -j layers | python3 -c 'import json,sys; print(sum(1 for m in json.load(sys.stdin).values() for l in m["levels"].get("3", []) if l["namespace"]=="vgs:layer" and l["pid"]!=-1))'; }
-screen_names() { hypr -j monitors | python3 -c 'import json,sys; print(json.dumps(sorted(m["name"] for m in json.load(sys.stdin))))'; }
+lent_layers() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["layers"]))'; }
+on_overlay() { hypr -j layers | py_reply 'import json,sys; print(sum(1 for m in json.load(sys.stdin).values() for l in m["levels"].get("3", []) if l["namespace"]=="vgs:layer" and l["pid"]!=-1))'; }
+screen_names() { hypr -j monitors | py_reply 'import json,sys; print(json.dumps(sorted(m["name"] for m in json.load(sys.stdin))))'; }
 
 expect "rescan after adding the layers fixture answers ok" ok ipc shell rescanPlugins
 expect_poll "the layers fixture is discovered" True plugin_known acme.layers

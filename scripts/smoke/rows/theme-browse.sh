@@ -20,16 +20,16 @@ answer() { # VERB KEY...
 }
 answers() { read_service themeAnswers | py_reply 'import json,sys; a=json.load(sys.stdin).get(sys.argv[1]); print(0 if a is None else a["count"])' "$1"; }
 # The last catalog's entry NAME: [installed, imageryInstalled].
-catalog_entry() { read_service themeAnswers | python3 -c 'import json,sys; e=[e for e in json.load(sys.stdin)["catalog"]["result"]["entries"] if e["name"]==sys.argv[1]]; print(json.dumps([e[0]["installed"], e[0]["imageryInstalled"]]) if len(e)==1 else "entries=%d" % len(e))' "$1"; }
+catalog_entry() { read_service themeAnswers | py_reply 'import json,sys; e=[e for e in json.load(sys.stdin)["catalog"]["result"]["entries"] if e["name"]==sys.argv[1]]; print(json.dumps([e[0]["installed"], e[0]["imageryInstalled"]]) if len(e)==1 else "entries=%d" % len(e))' "$1"; }
 # The last image list's images of package NAME: [background, path] rows.
-images_of() { read_service themeAnswers | python3 -c 'import json,sys; r=json.load(sys.stdin)["images"]["result"]; print(json.dumps([[i["background"], i["path"]] for i in r["images"] if i["theme"]==sys.argv[1]]))' "$1"; }
-image_count() { read_service themeAnswers | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["images"]["result"]["images"]))'; }
+images_of() { read_service themeAnswers | py_reply 'import json,sys; r=json.load(sys.stdin)["images"]["result"]; print(json.dumps([[i["background"], i["path"]] for i in r["images"] if i["theme"]==sys.argv[1]]))' "$1"; }
+image_count() { read_service themeAnswers | py_reply 'import json,sys; print(len(json.load(sys.stdin)["images"]["result"]["images"]))'; }
 # The download lane's job in the lending record: [verb, name, waiters], or
 # null.
 # The state file's `screens` map as JSON, {} for a file without it.
 bg_screens() { python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("screens", {})))' "$bg_state/backgrounds.json"; }
-theme_download() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin)["theme"]["download"]; print("null" if d is None else json.dumps([d["verb"], d["name"], d["waiters"]]))'; }
-theme_preview() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin)["theme"].get("preview"); print("null" if d is None else json.dumps([d["verb"], d["name"], d["waiters"]]))'; }
+theme_download() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin)["theme"]["download"]; print("null" if d is None else json.dumps([d["verb"], d["name"], d["waiters"]]))'; }
+theme_preview() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin)["theme"].get("preview"); print("null" if d is None else json.dumps([d["verb"], d["name"], d["waiters"]]))'; }
 
 expect "enabling the fixture for the browse rows is allowed" ok ipc shell setPluginEnabled acme.probe true
 expect_poll "the fixture service is back for the browse rows" True service_built

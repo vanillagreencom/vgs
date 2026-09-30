@@ -5,9 +5,9 @@
 # instance's teardown.
 set -euo pipefail
 toast() { ipc acme.probe invoke toast "$1"; }
-toast_titles() { ipc shell lent | python3 -c 'import json,sys; t=json.load(sys.stdin)["toasts"]; print(json.dumps([e["title"] for e in t[sys.argv[1]]]))' "$1"; }
-toast_screen() { ipc shell lent | python3 -c 'import json,sys; print(json.load(sys.stdin)["toasts"]["screen"])'; }
-toast_surface_height() { layers_of vgs:toast | python3 -c 'import json,sys; l=json.load(sys.stdin); print(l[0][3] if l else 0)'; }
+toast_titles() { ipc shell lent | py_reply 'import json,sys; t=json.load(sys.stdin)["toasts"]; print(json.dumps([e["title"] for e in t[sys.argv[1]]]))' "$1"; }
+toast_screen() { ipc shell lent | py_reply 'import json,sys; print(json.load(sys.stdin)["toasts"]["screen"])'; }
+toast_surface_height() { layers_of vgs:toast | py_reply 'import json,sys; l=json.load(sys.stdin); print(l[0][3] if l else 0)'; }
 settings_open() { [[ $(ipc smoke instanceGeometry window vgs.settings) != absent ]] && echo open || echo closed; }
 note_toast_bar_geometry() {
   local t
@@ -36,7 +36,7 @@ toast_card_rect_first() {
   python3 -c 'import json,sys; first=json.loads(sys.argv[1]); print(json.dumps(first)) if isinstance(first, list) else sys.exit(1)' "$first"
 }
 point_in_layer() { # X Y
-  layers_of vgs:toast | python3 -c 'import json,sys
+  layers_of vgs:toast | py_reply 'import json,sys
 layers = json.load(sys.stdin)
 x, y = map(int, sys.argv[1:3])
 print(any(l[0] <= x < l[0] + l[2] and l[1] <= y < l[1] + l[3] for l in layers))' "$1" "$2"
@@ -66,7 +66,7 @@ expect_poll "the fixture service is back" True record_exists acme.probe
 expect "no toast shows at first" '[]' toast_titles visible
 expect "the toast host has no surface at first" 0 layer_count vgs:toast
 expect "a service shows a toast" ok toast "Saved|success|0"
-expect "the shown toast is in the lending record under its plugin" '[{"plugin": "acme.probe", "title": "Saved", "tone": "success"}]' python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["toasts"]["visible"]))' < <(ipc shell lent)
+expect "the shown toast is in the lending record under its plugin" '[{"plugin": "acme.probe", "title": "Saved", "tone": "success"}]' py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["toasts"]["visible"]))' < <(ipc shell lent)
 expect_poll "the toast host maps one surface" 1 layer_count vgs:toast
 expect "the toast sits on the focused screen" "$(bar_key | sed 's/^bar://')" toast_screen
 toast_margin="$(ipc smoke themeValue toast.margin)"
@@ -108,8 +108,8 @@ expect "the record lost the disposed toast" '["Three", "Four"]' toast_titles vis
 # The close button runs the same release, through the compositor's pointer.
 # The button's rectangle is in its window's coordinates; the window's origin
 # comes from the compositor's layer list.
-read -r cx cy cw ch < <(ipc smoke toastCloseGeometry 0 | python3 -c 'import json,sys; print(*json.load(sys.stdin))')
-read -r lx ly < <(layers_of vgs:toast | python3 -c 'import json,sys; l=json.load(sys.stdin)[0]; print(l[0], l[1])')
+read -r cx cy cw ch < <(ipc smoke toastCloseGeometry 0 | py_reply 'import json,sys; print(*json.load(sys.stdin))')
+read -r lx ly < <(layers_of vgs:toast | py_reply 'import json,sys; l=json.load(sys.stdin)[0]; print(l[0], l[1])')
 click "$((lx + cx + cw / 2))" "$((ly + cy + ch / 2))" || fail "the click on the close button failed"
 expect_poll "the close button ends the first toast" '["Four"]' toast_titles visible
 
@@ -122,7 +122,7 @@ expect "a toast without a title is refused" "refused: toast=title must be a stri
 expect "a toast with an unknown tone is refused" "refused: toast=tone must be one of neutral, accent, success, warning, danger, info" toast "T|loud"
 for i in $(seq 1 22); do toast "Fill $i||0" >/dev/null; done
 expect "the stack past its ceiling refuses" "refused: toasts=full limit=23" toast "Over||0"
-expect "the ceiling holds the record at its limit" 20 python3 -c 'import json,sys; print(len(json.load(sys.stdin)["toasts"]["waiting"]))' < <(ipc shell lent)
+expect "the ceiling holds the record at its limit" 20 py_reply 'import json,sys; print(len(json.load(sys.stdin)["toasts"]["waiting"]))' < <(ipc shell lent)
 expect "the layer under the toasts is hidden after mask checks" ok layered undraw
 expect "disabling the layers fixture after toast mask checks is allowed" ok ipc shell setPluginEnabled acme.layers false
 expect_poll "the layers fixture after toast mask checks is gone" False record_exists acme.layers

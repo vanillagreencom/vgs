@@ -16,7 +16,7 @@ expect_widgets "the fixture widget left the bar" '["acme.tick"]'
 got=""
 for _ in $(seq 1 25); do if got="$(service_built)" && [[ $got == False ]]; then break; fi; sleep 0.2; done
 if [[ $got == False ]]; then ok "the service host destroyed the disabled service"; else fail "service still built: $got"; fi
-fixture_holds() { ipc shell lent | python3 -c 'import json,sys; print(sorted(k for k,v in json.load(sys.stdin)["holders"].items() if "acme.probe" in v))'; }
+fixture_holds() { ipc shell lent | py_reply 'import json,sys; print(sorted(k for k,v in json.load(sys.stdin)["holders"].items() if "acme.probe" in v))'; }
 expect_poll "disable released every capability hold" '[]' fixture_holds
 expect "disable released the fixture's shortcut" '[]' fixture_shortcuts
 expect "disable released the IPC target" '[]' lent ipcTargets
@@ -53,7 +53,7 @@ json.dump(data, open(p + ".tmp", "w"))
 os.replace(p + ".tmp", p)
 PY
 expect_log "a live hold refuses the other background before lending settles" 1 'plugins: acme\.contend-[ab] refused: capability=lock held-by=acme\.contend-[ab]'
-holder="$(lent holders.lock | python3 -c 'import json,sys; print(json.load(sys.stdin)[0])')"
+holder="$(lent holders.lock | py_reply 'import json,sys; print(json.load(sys.stdin)[0])')"
 case "$holder" in
   acme.contend-a) contender=acme.contend-b ;;
   acme.contend-b) contender=acme.contend-a ;;

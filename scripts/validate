@@ -204,6 +204,8 @@ rows=(
   "tools|memory sampler report|scripts/test-sample-shell-memory.sh|scripts/sample-shell-memory.sh bin/vgsh"
   "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py|scripts/attribute-heap-profile.py"
   "tools|smoke verdict controls|scripts/test-smoke-verdict.sh|scripts/smoke/verdict.sh"
+  "tools|smoke row readers|python3 scripts/check-smoke-readers.py|scripts/smoke/rows/*"
+  "tools|smoke row reader controls|python3 scripts/test-check-smoke-readers.py|scripts/check-smoke-readers.py scripts/smoke/rows/*"
   "tools|smoke teardown controls|scripts/test-smoke-teardown.sh|scripts/smoke/teardown.sh scripts/smoke/harness.sh scripts/smoke/rows/read-only-prefix.sh"
   "tools|sandbox shot controls|scripts/test-sandbox-shots.sh|scripts/smoke/shot.sh scripts/smoke/tree.sh scripts/sandbox-shots.sh"
   "tools|scratch directory guard controls|scripts/test-scratch-dirs.sh|scripts/vgsh-rows.sh scripts/test-launcher-file-search.sh scripts/test-notifications-images.sh scripts/test-notifications-token-status.sh scripts/test-sandbox-shots.sh scripts/test-smoke-verdict.sh scripts/test-smoke-teardown.sh"

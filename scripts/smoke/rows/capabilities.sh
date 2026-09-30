@@ -2,7 +2,7 @@
 # back from the fixture, the core's lending record and the compositor or bus
 # the capability reaches.
 set -euo pipefail
-lent() { ipc shell lent | python3 -c 'import json,sys; d=json.load(sys.stdin); v=d
+lent() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin); v=d
 for k in sys.argv[1].split("."): v=v.get(k) if isinstance(v, dict) else None
 print(json.dumps(v))' "$1"; }
 # qs ipc reads a bracketed argument as a list, so no argument here is JSON
@@ -11,12 +11,12 @@ print(json.dumps(v))' "$1"; }
 probe() { ipc acme.probe invoke "$1" "${2:-}"; }
 # The fixture holds every capability and the bare fixture none; another
 # plugin may hold a shared capability beside the fixture.
-lent_holds() { ipc shell lent | python3 -c 'import json,sys; h=json.load(sys.stdin)["holders"].get(sys.argv[1],[]); print("acme.probe" in h and "acme.bare" not in h)' "$1"; }
+lent_holds() { ipc shell lent | py_reply 'import json,sys; h=json.load(sys.stdin)["holders"].get(sys.argv[1],[]); print("acme.probe" in h and "acme.bare" not in h)' "$1"; }
 for cap in compositor configure ipc lock notifications polkit run screens shortcut toasts theme; do
   expect "the $cap capability is lent to the fixture and not the bare plugin" True lent_holds "$cap"
 done
 
-fixture_shortcuts() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps([s for s in json.load(sys.stdin)["shortcuts"] if s.startswith("acme.")]))'; }
+fixture_shortcuts() { ipc shell lent | py_reply 'import json,sys; print(json.dumps([s for s in json.load(sys.stdin)["shortcuts"] if s.startswith("acme.")]))'; }
 expect "the fixture's shortcut is registered under its id" '["acme.probe:ping"]' fixture_shortcuts
 count_lines() { python3 -c 'import sys; print(sum(1 for line in sys.stdin if sys.argv[1] in line))' "$1"; }
 hypr_shortcuts() { hypr globalshortcuts | count_lines 'acme.probe:ping'; }
@@ -61,7 +61,7 @@ json.dump(d, open(p + ".tmp", "w"), indent=2)
 os.replace(p + ".tmp", p)
 PY
 }
-probe_widgets() { ipc shell built | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d[sys.argv[1]] if r["id"]=="acme.probe"))' "$(bar_key)"; }
+probe_widgets() { ipc shell built | py_reply 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d[sys.argv[1]] if r["id"]=="acme.probe"))' "$(bar_key)"; }
 right_entries add
 expect_poll "the fixture widget is placed twice" 2 probe_widgets
 expect "a widget's configure writes only its own layout entry" ok ipc smoke invokeInstance "$(bar_key)" acme.probe setLabel only-first
@@ -126,7 +126,7 @@ expect "the fixture service sees every screen" "$monitors" read_service screenCo
 expect "a service draws on no screen" true read_service noCurrentScreen
 expect "the fixture widget draws on its bar's screen" "\"$(bar_key | sed 's/^bar://')\"" read_widget currentScreen
 
-special_ws() { hypr -j monitors | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["specialWorkspace"]["name"])'; }
+special_ws() { hypr -j monitors | py_reply 'import json,sys; print(json.load(sys.stdin)[0]["specialWorkspace"]["name"])'; }
 expect "the fixture toggles a special workspace" ok probe dispatch 'toggleSpecialWorkspace probe'
 expect_poll "the compositor shows the special workspace" "special:probe" special_ws
 expect_poll "the fixture closes the special workspace again" ok probe dispatch 'toggleSpecialWorkspace probe'

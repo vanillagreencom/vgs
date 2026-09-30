@@ -65,7 +65,7 @@ restart_over() { # TREE LOG [DISABLED_JSON BAR]
 # entries of that kind.
 start_order() { ipc smoke startOrder; }
 services_order() {
-  start_order | python3 -c '
+  start_order | py_reply '
 import json, sys
 order, bars = json.load(sys.stdin), int(sys.argv[1])
 presented = next((i for i, e in enumerate(order) if e[0] == "frame" and e[1] >= bars), None)
@@ -75,7 +75,7 @@ elif presented is None or service < presented: print("services-first")
 else: print("bars-first")' "$monitors"
 }
 follow_order() {
-  start_order | python3 -c '
+  start_order | py_reply '
 import json, sys
 order = json.load(sys.stdin)
 turn_end = next((i for i, e in enumerate(order) if e[0] == "scan-turn-end"), None)
@@ -84,7 +84,7 @@ if follow is None: print("no-follow")
 elif turn_end is None: print("no-scan")
 else: print("in-scan-turn" if follow < turn_end else "late")'
 }
-order_count() { start_order | python3 -c 'import json,sys; print(sum(1 for e in json.load(sys.stdin) if e[0] == sys.argv[1]))' "$1"; }
+order_count() { start_order | py_reply 'import json,sys; print(sum(1 for e in json.load(sys.stdin) if e[0] == sys.argv[1]))' "$1"; }
 # The follows the probe noted for one rescan, started once the theme
 # runner is idle. A scan's note and its follow come in one emission of
 # scanFinished, so the count read once the scan is noted is final.

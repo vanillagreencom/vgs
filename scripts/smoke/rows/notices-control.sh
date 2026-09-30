@@ -43,7 +43,7 @@ if stop_shell && start_shell "$mutant" "$sandbox/notice-mutant-qs.log"; then
   ok "the control copy starts as the guarded shell"
 fi
 expect "the control copy is the guarded shell" true ipc shell guarded
-needs_required_state() { ipc shell listPlugins | python3 -c 'import json,sys; print(json.dumps([r["state"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.needs" for r in p["requirements"] if r["command"]=="vgs-smoke-needs"]))'; }
+needs_required_state() { ipc shell listPlugins | py_reply 'import json,sys; print(json.dumps([r["state"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="acme.needs" for r in p["requirements"] if r["command"]=="vgs-smoke-needs"]))'; }
 expect_poll "the control copy's scan finds acme.needs missing the command it needs" '["missing"]' needs_required_state
 expect "no notice shows in the control copy before the enable" null notice_shown
 expect "control: enabling acme.needs in the copy without the trigger is allowed" ok ipc shell setPluginEnabled acme.needs true

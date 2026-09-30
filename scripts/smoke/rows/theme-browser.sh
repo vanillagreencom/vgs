@@ -21,8 +21,8 @@
 set -euo pipefail
 view_value() { ipc smoke readDescendant overlay vgs.themes ThemeView "$1"; }
 view_names() { view_value shownCards | py_reply 'import json,sys; print(json.dumps([c["name"] for c in json.load(sys.stdin)]))'; }
-view_count() { view_value shownCards | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
-has_card() { view_value shownCards | python3 -c 'import json,sys; print(sys.argv[1] in [c["name"] for c in json.load(sys.stdin)])' "$1"; }
+view_count() { view_value shownCards | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
+has_card() { view_value shownCards | py_reply 'import json,sys; print(sys.argv[1] in [c["name"] for c in json.load(sys.stdin)])' "$1"; }
 # The shown card at INDEX, or the last for -1.
 card_at() { view_value shownCards | py_reply 'import json,sys; print(json.load(sys.stdin)[int(sys.argv[1])]["name"])' "$1"; }
 job_step() { view_value job | py_reply 'import json,sys; j=json.load(sys.stdin); print("none" if j is None else j["step"] + " " + j["name"])'; }
@@ -38,10 +38,10 @@ card_image() { ipc smoke images overlay vgs.themes | py_reply 'import json,sys; 
 palette_card() { ipc smoke itemTexts overlay vgs.themes ThemeCard | py_reply 'import json,sys; print(any(sys.argv[1] in t for t in json.load(sys.stdin)))' "$1"; }
 theme_card_has_colour() { ipc smoke itemColours overlay vgs.themes ThemeCard Rectangle | py_reply 'import json,sys; print(any(sys.argv[1] in row for row in json.load(sys.stdin)))' "$1"; }
 has_badge() { ipc smoke itemTexts overlay vgs.themes Badge | py_reply 'import json,sys,re; print(any(re.fullmatch(sys.argv[1], x) for t in json.load(sys.stdin) for x in t))' "$1"; }
-lent_themes() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(sorted(s for s in json.load(sys.stdin)["shortcuts"] if s.startswith("vgs.themes"))))'; }
+lent_themes() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(sorted(s for s in json.load(sys.stdin)["shortcuts"] if s.startswith("vgs.themes"))))'; }
 # The binds of shortcut NAME, `themes` by default, as [modmask, key].
-themes_bind() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps([[b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.themes:" + sys.argv[1]]))' "${1:-themes}"; }
-catalog_imagery() { "${shell_env[@]}" "$repo/bin/vgsh" theme catalog --json | python3 -c 'import json,sys; print([e["imageryInstalled"] for e in json.load(sys.stdin)["entries"] if e["name"]==sys.argv[1]][0])' "$1"; }
+themes_bind() { hypr -j binds | py_reply 'import json,sys; print(json.dumps([[b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.themes:" + sys.argv[1]]))' "${1:-themes}"; }
+catalog_imagery() { "${shell_env[@]}" "$repo/bin/vgsh" theme catalog --json | py_reply 'import json,sys; print([e["imageryInstalled"] for e in json.load(sys.stdin)["entries"] if e["name"]==sys.argv[1]][0])' "$1"; }
 # Whether the first ready image drawing PATH asks to decode at its drawn size
 # times the CardCarousel's screen scale.
 card_source_size_matches() { # PATH
@@ -332,7 +332,7 @@ PY
 # its FILE, which must occur once, replaced by NEW; plugin_restore FILE
 # LABEL rescans it with the file put back. Each waits for the scan to
 # publish a new revision of the plugin and for the follow after it.
-themes_revision() { ipc shell listPlugins | python3 -c 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="vgs.themes"][0])'; }
+themes_revision() { ipc shell listPlugins | py_reply 'import json,sys; print([p["revision"] for p in json.load(sys.stdin)["plugins"] if p["id"]=="vgs.themes"][0])'; }
 themes_revised() { [[ $(themes_revision) != "$1" ]] && echo revised || echo same; }
 themes_rescan() { # LABEL
   local before
