@@ -451,11 +451,14 @@ function slackWorkspaceLabel(workspace) {
 
 // The Settings page's Slack token rows, a `presenceList`: one item per
 // workspace Slack's list names, in its order, carrying that workspace's own
-// account's state and the command that stores it; a workspace whose own
-// token is absent while the photo cache says the single-workspace token
-// serves it carries that token's state and says so. Then the
-// single-workspace token's own item, when no workspace is listed or it is
-// stored. `states` is slackTokenStates'; `teams` slackPhotos'. { ok: true,
+// account's state, the account as its `secret`, whose Connect and
+// Disconnect the page offers, and the command that stores it. A workspace
+// whose own token is absent while the photo cache says the single-workspace
+// token serves it carries that token's state and says so, with no account
+// and no command: its photos load, and a Disconnect of the single-workspace
+// token leaves it absent, to connect its own. Then the single-workspace
+// token's own item, when no workspace is listed or it is stored.
+// `states` is slackTokenStates'; `teams` slackPhotos'. { ok: true,
 // items }, or { ok: false, missing } naming an account the states lack,
 // while the probe has not yet answered for the list as it now stands.
 function slackTokenRows(workspaces, states, teams) {
@@ -470,12 +473,14 @@ function slackTokenRows(workspaces, states, teams) {
         if (states[account] === "absent" && served) {
             item.value = legacy;
             item.hint = "Served by the single-workspace token";
+        } else {
+            item.secret = account;
+            item.command = slackStoreCommand(workspaces[i].id);
         }
-        item.command = slackStoreCommand(workspaces[i].id);
         items.push(item);
     }
     if (workspaces.length === 0 || legacy !== "absent")
-        items.push({ label: "Single-workspace token", value: legacy, command: slackStoreCommand("") });
+        items.push({ label: "Single-workspace token", value: legacy, secret: SLACK_LEGACY_ACCOUNT, command: slackStoreCommand("") });
     return { ok: true, items: items };
 }
 

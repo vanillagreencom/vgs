@@ -112,7 +112,7 @@ function verify(logic) {
     const values = logic.statusValues({ catalog: ok(listed), updates: ok({ count: 3, packages: [] }), requirements: ok({ core: [requirement({})], plugins: { "acme.y": [requirement({ state: "present" })] } }) });
     same([values.mise, values.installed, values.outdated, values.missingRequirements], [{ tone: "ok", text: "2026.9.9" }, 2, 3, 1]);
     same(values.catalog.requirements, ok([{ owner: "core", command: "gum", purpose: "Draws the dialogs", optional: false, package: { manager: "pacman", name: "gum" } }]), "the catalog holds the missing requirements alone");
-    same(logic.statusValues({ catalog: ok(list({}, [], { present: false, version: null })) }).mise, { tone: "warning", text: "Not installed" });
+    same(logic.statusValues({ catalog: ok(list({}, [], { present: false, version: null })) }).mise, { tone: "warning", text: "Not installed", action: true }, "a missing mise offers Install mise");
     const failed = logic.statusValues({ catalog: { value: null, error: "mise=absent" }, updates: { value: null, error: "timeout=120" }, requirements: { value: null, error: "exit=1" } });
     same(failed.mise, { tone: "danger", text: "Unknown: the tool list failed: mise=absent" });
     same(["installed", "outdated", "missingRequirements"].filter(k => k in failed), [], "a failed query publishes no count");
@@ -212,6 +212,7 @@ verify(load(file));
 // Each control removes one rule from a copy of the logic and keeps the
 // text around it. The suite must fail on every copy.
 const CONTROLS = [
+    ["a missing mise offers no action", 'text: "Not installed", action: true }', 'text: "Not installed" }'],
     ["open skips a fresh remote", 'if (trigger !== "open" || !QUERIES[name].network) return true;', "return true;"],
     ["the list follows the launchers", 'return name === "launchers" ? "catalog" : "";', 'return "";'],
     ["a refusal line wins", 'if (at !== -1) return clip(lines[i].slice(at + "refused: ".length));', ""],

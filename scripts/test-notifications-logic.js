@@ -490,15 +490,15 @@ function verify(logic) {
         : "secret-tool store --label='VGS notifications Slack token " + id + "' service vgs-notifications account slack:" + id;
     const listedTwo = [{ id: "T1", domain: "acme", name: "Acme Corp" }, { id: "T2", domain: "globex", name: "" }];
     same(logic.slackTokenRows(listedTwo, { "slack:T1": "present", "slack:T2": "locked", slack: "absent" }, []), { ok: true, items: [
-        { label: "Acme Corp (acme)", value: "present", command: store("T1") },
-        { label: "globex", value: "locked", command: store("T2") }
+        { label: "Acme Corp (acme)", value: "present", secret: "slack:T1", command: store("T1") },
+        { label: "globex", value: "locked", secret: "slack:T2", command: store("T2") }
     ] }, "each workspace carries its own account's state and command; an absent single-workspace token shows no row");
     same(logic.slackTokenRows(listedTwo, { "slack:T1": "absent", "slack:T2": "absent", slack: "present" }, [{ id: "T1", account: "slack" }, { id: "T2", account: "slack:T2" }]), { ok: true, items: [
-        { label: "Acme Corp (acme)", value: "present", hint: "Served by the single-workspace token", command: store("T1") },
-        { label: "globex", value: "absent", command: store("T2") },
-        { label: "Single-workspace token", value: "present", command: store("") }
-    ] }, "a workspace the single-workspace token serves says so, and a stored single-workspace token shows its row");
-    same(logic.slackTokenRows([], { slack: "absent" }, []), { ok: true, items: [{ label: "Single-workspace token", value: "absent", command: store("") }] }, "with no workspace listed the single-workspace row shows");
+        { label: "Acme Corp (acme)", value: "present", hint: "Served by the single-workspace token" },
+        { label: "globex", value: "absent", secret: "slack:T2", command: store("T2") },
+        { label: "Single-workspace token", value: "present", secret: "slack", command: store("") }
+    ] }, "a workspace the single-workspace token serves says so, with no account to connect, and a stored single-workspace token shows its row");
+    same(logic.slackTokenRows([], { slack: "absent" }, []), { ok: true, items: [{ label: "Single-workspace token", value: "absent", secret: "slack", command: store("") }] }, "with no workspace listed the single-workspace row shows");
     same(logic.slackTokenRows(listedTwo, { "slack:T1": "present", slack: "absent" }, []), { ok: false, missing: "slack:T2" }, "a workspace the probe has not answered for waits");
     same(logic.slackTokenRows([], {}, []), { ok: false, missing: "slack" });
     for (const [label, workspace, want] of [
@@ -519,6 +519,11 @@ function verify(logic) {
     assert.equal(emojiRows.ok, true);
     assert.equal(emojiRows.items.every(item => item.label.length <= 60), true, "every label fits sixty code units");
     assert.equal(pluginLogic.statusValueFits("presenceList", JSON.parse(JSON.stringify(emojiRows.items))), true, "the core's judge takes the rows of long emoji names");
+    // The rows fit the plugin's own declaration: its `secrets` let each item
+    // name its account, so the core's write judge takes them.
+    const manifest = pluginLogic.validateManifest(JSON.parse(fs.readFileSync(path.join(__dirname, "..", "shell", "plugins", "vgs.notifications", "manifest.json"), "utf8")), "/x");
+    assert.equal(manifest.ok, true, "the notifications manifest is accepted");
+    assert.equal(pluginLogic.statusWrite(manifest.manifest, {}, "slackTokens", JSON.parse(JSON.stringify(emojiRows.items))).ok, true, "the core's write judge takes the rows with their accounts");
 
     // The photo helper's next run: [label, read, listed, want].
     const DAY = 24 * 60 * 60 * 1000, RETRY = 15 * 60 * 1000, NOW = 10 * DAY;

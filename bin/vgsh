@@ -47,6 +47,7 @@
 #   vgsh theme outdated [--json]   fetch every installed theme package and report how far it is behind its upstream
 #   vgsh theme browser-policy install
 #                                  install the Chromium-family colour writer and its sudoers rule, once; sudo asks for the password
+#   vgsh theme setup [--json]      each theme target's one-time setup and whether it is done
 #   vgsh hypr wire                 keep the line that loads the Hyprland layer first in hyprland.lua
 #   vgsh hypr unwire               remove that line from hyprland.lua
 #   vgsh hypr render               have the running shell write the Hyprland layer again and reload Hyprland
@@ -1934,6 +1935,10 @@ case "$cmd" in
       catalog)
         if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
         exec node "$theme_judge" catalog "$format" "$config_home/vgs"
+        ;;
+      setup)
+        if [[ $# -gt 0 ]]; then printf 'vgsh: refused: argument=%s\n' "$1" >&2; usage; exit 2; fi
+        exec node "$theme_judge" setup "$format"
         ;;
       install)
         name="${1:-}"

@@ -1072,7 +1072,8 @@ function formatWhen(ms) {
 // The values the service publishes from `list --json`'s document,
 // { scheduler, linger, automations }: which scheduler runs the timers,
 // whether they run while logged out, how many are scheduled, the next run
-// and the automations whose last run failed.
+// and the automations whose last run failed. Lingering off offers the
+// manifest's Enable while logged out action, the `linger` TUI.
 function statusValues(listed) {
     var rows = listed.automations;
     var next = null;
@@ -1091,7 +1092,7 @@ function statusValues(listed) {
     var linger;
     switch (listed.linger) {
     case "yes": linger = { tone: "ok", text: "Automations run while you are logged out" }; break;
-    case "no": linger = { tone: "warning", text: "Automations run only while you are logged in" }; break;
+    case "no": linger = { tone: "warning", text: "Automations run only while you are logged in", action: true }; break;
     case "unknown": linger = { tone: "info", text: "loginctl did not answer" }; break;
     default: throw new Error("automations: linger " + JSON.stringify(listed.linger) + " is not one of " + LINGER_STATES.join(", "));
     }

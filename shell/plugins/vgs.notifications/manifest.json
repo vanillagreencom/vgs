@@ -21,7 +21,8 @@
     "shortcut",
     "status",
     "toasts",
-    "tui"
+    "tui",
+    "secrets"
   ],
   "settings": {
     "duration": 8,
@@ -50,6 +51,10 @@
       "group": "Slack",
       "hint": "One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
     }
+  },
+  "secrets": {
+    "service": "vgs-notifications",
+    "label": "VGS notifications Slack token"
   },
   "tui": {
     "open": { "script": "tui/open.sh", "title": "Open a notification's file", "presentation": "plain" }

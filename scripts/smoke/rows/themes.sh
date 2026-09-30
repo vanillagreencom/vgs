@@ -323,6 +323,64 @@ if [[ "$(lent tui.launcher)" == '"missing"' ]]; then
 fi
 expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
 
+# Install browser theming, D056: the service publishes what `vgsh theme
+# setup` says of the Chromium-family writer. The sandbox tree ships no
+# target, so the row reads not shipped until the row copies the chromium
+# target in and the service starts again. On a host whose PATH holds a
+# Chromium-family browser and no writer, the Settings page then offers
+# Install browser theming, whose button opens the plugin's browser-policy
+# TUI. The stand-in terminal runs a plugin's TUI script for real, so the
+# sandbox tree's bin/vgsh-browser-policy is first replaced by a stand-in
+# that records its argv and puts a stand-in writer on the shell's PATH,
+# running no sudo and writing nothing outside the sandbox; the run's end
+# then reads Installed and withdraws the button. The control: the manager
+# refuses the act while the tree ships no target and once the writer is
+# there. The target leaves the tree before any apply.
+browser_theming() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[s for p in json.load(sys.stdin) if p["id"] == "vgs.themes" for s in p["status"] if s["key"] == "browserTheming"][0]; print(json.dumps([r["report"], r["tone"], r["action"]["offered"]]))'; }
+browser_text() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[s for p in json.load(sys.stdin) if p["id"] == "vgs.themes" for s in p["status"] if s["key"] == "browserTheming"][0]; print(json.dumps(r["value"]["text"] if r["value"] else None))'; }
+expected_errors+=('settings: vgs\.themes/browserTheming refused: action=browserTheming reason=not-offered')
+settings_page_open vgs.themes
+expect_poll "a tree that ships no target reads browser theming not shipped" '"Not shipped: this VGS themes no Chromium-family browser"' browser_text
+expect "the manager refuses the install while no target ships" "refused: action=browserTheming reason=not-offered" settings_act vgs.themes browserTheming
+cp -R -- "$source_repo/themes/targets/chromium" "$repo/themes/targets/chromium"
+expect "the themes plugin is disabled to read the shipped target" ok ipc shell setPluginEnabled vgs.themes false
+expect_poll "the themes service is gone" False record_exists vgs.themes
+expect "the themes plugin is enabled again with the target shipped" ok ipc shell setPluginEnabled vgs.themes true
+expect_poll "the themes service is built again" True record_exists vgs.themes
+# Each change of the plugin set queues a scan and a follow, which holds the
+# theme lock; the rows below apply only once it ends.
+expect "the follow after the themes restart ends" idle theme_idle
+settled_text() { browser_text | py_reply 'import json,sys; t=json.load(sys.stdin); print("settled" if t and not t.startswith("Not shipped") else json.dumps(t))'; }
+expect_poll "the service reads the shipped target's setup" settled settled_text
+first_setup="$(browser_theming)" || first_setup=unreadable
+case $first_setup in
+  '["reported", "warning", true]')
+    cp -p -- "$repo/bin/vgsh-browser-policy" "$sandbox/vgsh-browser-policy.real"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\nprintf "#!/bin/sh\\nexit 0\\n" >%q\nchmod 755 %q\n' \
+      "$sandbox/browser-policy.calls" "$shim/vgs-browser-policy" "$shim/vgs-browser-policy" >"$repo/bin/vgsh-browser-policy"
+    chmod 755 "$repo/bin/vgsh-browser-policy"
+    forget_record
+    settings_press "Install browser theming" || fail "the click on Install browser theming failed"
+    expect_poll "Install browser theming hands the terminal the browser-policy TUI" "$(words vgs.themes/browser-policy tui/browser-policy.sh)" recorded_tail
+    expect_run_end "the browser-policy run ends" vgs.themes/browser-policy
+    expect "the TUI ran the tree's writer install once, the stand-in" install cat "$sandbox/browser-policy.calls"
+    cp -p -- "$sandbox/vgsh-browser-policy.real" "$repo/bin/vgsh-browser-policy"
+    expect_poll "the run's end asks again: the writer reads installed, offering nothing" '["reported", "success", false]' browser_theming
+    forget_record
+    expect "the manager refuses the install once the writer is there" "refused: action=browserTheming reason=not-offered" settings_act vgs.themes browserTheming
+    expect "the refused install started no terminal" absent recorded
+    unlink -- "${shim:?}/vgs-browser-policy"
+    ;;
+  '["reported", "info", false]'|'["reported", "success", false]')
+    ok "a host with no Chromium-family browser, or with its writer, reads $first_setup, offering nothing"
+    ;;
+  *)
+    fail "the browser theming row reads $first_setup"
+    ;;
+esac
+rm -r -- "${repo:?}/themes/targets/chromium"
+settings_page_close vgs.themes
+
 cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real"
 catalog_installed="$sandbox/catalog-smoke-installed"
 catalog_wallpapers="$sandbox/catalog-smoke-wallpapers"

@@ -81,7 +81,8 @@
     "warden": {
       "type": "state",
       "label": "Warden",
-      "hint": "Keeps AI agents within their memory and task limits. Run this once to set it up.",
+      "hint": "Keeps AI agents within their memory and task limits",
+      "action": { "label": "Set up", "tui": "setup" },
       "command": "vsys warden install"
     },
     "agents": {
@@ -96,6 +97,7 @@
       "type": "presence",
       "label": "vsys",
       "hint": "The agent dashboard that ships the warden",
+      "action": { "label": "Install vsys", "install": ["vsys"] },
       "command": "curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash"
     },
     "detail": {

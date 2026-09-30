@@ -6,7 +6,8 @@ import qs.Ui
 // A one-line text input. `leadingIcon` and `trailingIcon` name Lucide
 // icons drawn inside the field; `actions` holds buttons drawn after the
 // trailing icon, such as a clear or a submit button; `error` colours the
-// outline with the error colour. The template owns the text, the cursor,
+// outline with the error colour; `password` masks what is typed, for a
+// secret the shell stores (D056), and Qt then keeps it off the clipboard. The template owns the text, the cursor,
 // the selection, `validator` and `acceptableInput`; the outline follows
 // hover, focus and error, in that order of precedence reversed, and the
 // focus ring of a field in error draws in the error colour, so the cue
@@ -18,6 +19,7 @@ T.TextField {
     property string leadingIcon: ""
     property string trailingIcon: ""
     property bool error: false
+    property bool password: false
     property alias actions: actionRow.data
     readonly property color outline: error ? Theme.textField.error : activeFocus ? Theme.textField.focus : hovered ? Theme.textField.hover : Theme.textField.borderColor
     readonly property real sidePadding: Theme.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, height), contentHeight)
@@ -27,6 +29,7 @@ T.TextField {
     leftPadding: sidePadding + (leadingIcon !== "" ? Theme.icon.size.md + Theme.textField.gap : 0)
     rightPadding: sidePadding + (trailing.width > 0 ? trailing.width + Theme.textField.gap : 0)
     verticalAlignment: TextInput.AlignVCenter
+    echoMode: password ? TextInput.Password : TextInput.Normal
     hoverEnabled: true
     opacity: enabled ? 1 : Theme.opacity.disabled
     color: Theme.color.text

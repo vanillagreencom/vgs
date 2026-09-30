@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""One planted violation per rule of check-user-commands.py, the text each
+rule must pass, the "Show command" disclosure's reach, the unreadable trees,
+and the repository's own shell/ against a coverage floor. Each row builds a
+throwaway shell/ holding one plugin, runs the check on it and asserts the
+rule key, the location and the exit status. The controls at the end run a
+copy of the check with one rule removed, and the rows must fail on it."""
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.realpath(os.path.join(HERE, ".."))
+CHECK = os.path.join(HERE, "check-user-commands.py")
+ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
+
+MANIFEST = '{ "schemaVersion": 1, "id": "acme.setup", "name": "Setup", "version": "1", "author": "a", "description": "Shows a token", "kinds": ["service"], "entryPoints": { "service": "Service.qml" } }\n'
+SERVICE = 'import QtQuick\nItem {\n    property string note: "Checks the token"\n}\n'
+FENCE = "```"
+
+
+def manifest(**extra):
+    text = MANIFEST.rstrip().rstrip("}")
+    for key, value in extra.items():
+        text += ', "' + key + '": ' + value
+    return text + " }\n"
+
+
+def qml(line):
+    return "import QtQuick\nItem {\n" + line + "\n}\n"
+
+
+# rows: name, { file in the plugin: text }, rule key or None, location.
+ROWS = [
+    ("a clean plugin", {}, None, None),
+    ("a README step to run a command", {"README.md": "# Setup\n\n1. Run `vsys warden install` once.\n"}, "instruction", "README.md:3"),
+    ("an instruction after a comma and or", {"README.md": "Open it from the launcher, or run `vgsh ipc call acme.setup invoke go \"\"`.\n"}, "instruction", "README.md:1"),
+    ("an instruction to type at a command's prompt", {"docs.md": "Type the token at `secret-tool`'s prompt.\n"}, "instruction", "docs.md:1"),
+    ("an instruction to paste a command", {"README.md": "Paste `sudo pacman -S gum` into a terminal.\n"}, "instruction", "README.md:1"),
+    ("an instruction whose code holds a dot", {"README.md": "Then run `vgsh plugin enable acme.setup` again.\n"}, "instruction", "README.md:1"),
+    ("an instruction past a dotted name", {"README.md": "Run the acme.setup step with `vgsh plugin enable acme.setup`.\n"}, "instruction", "README.md:1"),
+    ("a verb inside a word opens no clause", {"README.md": "Each open runs `vsys --once --summary` once.\n"}, None, None),
+    ("an instruction naming code that is no command", {"README.md": "Type a key such as `SUPER+SHIFT+M`.\n"}, None, None),
+    ("a command named without an instruction", {"README.md": "The service runs `vgsh doctor --json` at start.\n"}, None, None),
+    ("a noun run opens no clause", {"README.md": "A run that fails is logged as `agent-warden: summary=...`.\n"}, None, None),
+    ("a shell block of a command", {"README.md": "Store it with:\n\n" + FENCE + "bash\nsecret-tool store service acme account a\n" + FENCE + "\n"}, "shell-block", "README.md:3"),
+    ("an untagged block of a command", {"README.md": "Install:\n\n" + FENCE + "\n$ sudo pacman -S gum\n" + FENCE + "\n"}, "shell-block", "README.md:3"),
+    ("a block of a script that is no command", {"README.md": "A caller waits:\n\n" + FENCE + "bash\nuntil [[ -s $done ]]; do sleep 0.05; done\n" + FENCE + "\n"}, None, None),
+    ("a block of another language", {"README.md": "The layer writes:\n\n" + FENCE + "lua\nvgsh.rule()\n" + FENCE + "\n"}, None, None),
+    ("an instruction inside a code block is the block's", {"README.md": FENCE + "text\nRun `gum` now.\n" + FENCE + "\n"}, None, None),
+    ("the Show command disclosure", {"README.md": "Settings offers Set up.\n\n<details><summary>Show command</summary>\n\nRun `vsys warden install`.\n\n" + FENCE + "bash\nvsys warden install\n" + FENCE + "\n\n</details>\n"}, None, None),
+    ("a disclosure under another summary", {"README.md": "<details><summary>More</summary>\n\n" + FENCE + "bash\nvsys warden install\n" + FENCE + "\n\n</details>\n"}, "shell-block", "README.md:3"),
+    ("a manifest hint telling the user to run a command", {"manifest.json": manifest(capabilities='["status"]', status='{ "a": { "type": "text", "label": "A", "hint": "Run loginctl enable-linger once" } }')}, "instruction", "manifest.json:status.a.hint"),
+    ("a manifest description telling the user to run code", {"manifest.json": manifest(description='"Shows a token. Run `vgsh doctor` first"')}, "instruction", "manifest.json:description"),
+    ("a manifest status command is the disclosure", {"manifest.json": manifest(capabilities='["status"]', status='{ "a": { "type": "text", "label": "A", "command": "loginctl enable-linger" } }')}, None, None),
+    ("a drawn QML string naming a command", {"Service.qml": qml('    property string hint: "Off; `vgsh plugin enable " + id + "` brings it back"')}, "code-command", "Service.qml:3"),
+    ("a drawn text naming a command", {"Service.qml": qml('    Label { text: "Paste it with `secret-tool store`" }')}, "code-command", "Service.qml:3"),
+    ("a log line naming a command", {"Service.qml": qml('    Component.onCompleted: console.warn("acme: refused; start it with `vgsh run`")')}, None, None),
+    ("a log line telling the user to run a command", {"Service.qml": qml('    Component.onCompleted: console.warn("acme: refused: run vgsh doctor")')}, "instruction", "Service.qml:3"),
+    ("a JavaScript toast telling the user to run a command", {"Logic.js": '.pragma library\nvar TOAST = { title: "Token missing", message: "Run `secret-tool store` to add it" };\n'}, "instruction", "Logic.js:2"),
+    ("a command in a comment", {"Service.qml": qml('    // Run `vgsh doctor` to see it.')}, None, None),
+]
+
+
+def build(tmp, files):
+    plugin = os.path.join(tmp, "shell", "plugins", "acme.setup")
+    os.makedirs(plugin)
+    base = {"manifest.json": MANIFEST, "Service.qml": SERVICE}
+    base.update(files)
+    for name, text in base.items():
+        with open(os.path.join(plugin, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    return os.path.join(tmp, "shell")
+
+
+def run(check, root):
+    return subprocess.run([sys.executable, check, root], capture_output=True, text=True, env=ENV)
+
+
+def rows_hold(check):
+    """The failures of every row against CHECK, as lines."""
+    failures = []
+    for name, files, rule, where in ROWS:
+        with tempfile.TemporaryDirectory() as tmp:
+            done = run(check, build(tmp, files))
+        lines = done.stdout.splitlines()
+        if rule is None:
+            if done.returncode != 0 or not lines or not lines[-1].startswith("check-user-commands: ok "):
+                failures.append(f"{name}: want a pass, got exit {done.returncode}: {done.stdout.strip()} {done.stderr.strip()}")
+            continue
+        found = [line for line in lines if line.startswith(rule + " ") and (os.sep + "acme.setup" + os.sep + where) in line]
+        if done.returncode != 1 or len(found) != 1:
+            failures.append(f"{name}: want one {rule} at {where} and exit 1, got exit {done.returncode}: {done.stdout.strip()} {done.stderr.strip()}")
+    return failures
+
+
+failures = rows_hold(CHECK)
+
+# The repository's own shell/ passes, over a floor that proves the walk
+# read the tree: the plugins' Markdown and manifests and the shipped QML.
+done = run(CHECK, os.path.join(REPO, "shell"))
+summary = re.match(r"check-user-commands: ok files=(\d+) strings=(\d+) heads=(\d+)$", done.stdout.strip().splitlines()[-1] if done.stdout.strip() else "")
+if done.returncode != 0 or summary is None:
+    failures.append(f"the repository's shell/: want a pass, got exit {done.returncode}: {done.stdout.strip()}")
+elif int(summary.group(1)) < 150 or int(summary.group(2)) < 5000 or int(summary.group(3)) < 20:
+    failures.append(f"the repository's shell/: the walk read too little, files={summary.group(1)} strings={summary.group(2)} heads={summary.group(3)}: an extractor is broken")
+
+# Unreadable trees end the run with exit 2 and certify nothing.
+with tempfile.TemporaryDirectory() as tmp:
+    done = run(CHECK, build(tmp, {"manifest.json": "{ not json"}))
+    if done.returncode != 2 or "check-user-commands: unreadable: " not in done.stdout:
+        failures.append(f"a manifest that is no JSON: want unreadable and exit 2, got exit {done.returncode}: {done.stdout.strip()}")
+with tempfile.TemporaryDirectory() as tmp:
+    done = run(CHECK, os.path.join(tmp, "missing"))
+    if done.returncode != 2 or "check-user-commands: unreadable: " not in done.stdout:
+        failures.append(f"a root without plugins/: want unreadable and exit 2, got exit {done.returncode}: {done.stdout.strip()}")
+
+# One plugin directory alone, as `vgs-plugin check` passes it, is read the
+# same way.
+with tempfile.TemporaryDirectory() as tmp:
+    root = build(tmp, {"README.md": "Run `vsys warden install` once.\n"})
+    done = subprocess.run([sys.executable, CHECK, "--plugin", os.path.join(root, "plugins", "acme.setup")], capture_output=True, text=True, env=ENV)
+    if done.returncode != 1 or not re.search(r"^instruction \S*/acme\.setup/README\.md:1 ", done.stdout, re.M):
+        failures.append(f"--plugin: want the README's instruction and exit 1, got exit {done.returncode}: {done.stdout.strip()}")
+
+# Controls: a copy of the check with one rule removed, beside a copy of the
+# modules it loads, must fail the rows. The copy reads the heads from this
+# repository, as the check does.
+CONTROLS = [
+    ("the instruction rule", "        findings.append((\"instruction\", path, line_of(prose, index), excerpt))", "        pass"),
+    ("the shell-block rule", "if lang in SHELL_FENCES and body and first_word(body[0]) in heads:", "if False:"),
+    ("the code-command rule", "                        findings.append((\"code-command\", path, line, value[:120]))", "                        pass"),
+    ("the manifest strings", "            for _index, excerpt in instructions(text, heads, True):\n                findings.append((\"instruction\", path, where, excerpt))", "            pass"),
+    ("the disclosure's reach", "text = blank(read(path), DETAILS)", "text = read(path)"),
+    ("the drawn-property reach of code-command", "if DRAWN_BEFORE.search(code, start, literal.start()) is None:", "if False:"),
+    ("a clause after or", "|\\b(?:or|then)\\s+)(", ")("),
+    ("inline code past a dot", "[.!?;](?=[^\\s`])|", ""),
+    ("the heads floor", "if len(heads) < HEADS_FLOOR or any(h not in heads for h in REQUIRED_HEADS):", "if False:"),
+]
+source = open(CHECK, encoding="utf-8").read()
+with tempfile.TemporaryDirectory() as tmp:
+    scripts = os.path.join(tmp, "scripts")
+    os.makedirs(scripts)
+    os.makedirs(os.path.join(tmp, "bin"))
+    shutil.copy(os.path.join(HERE, "qml_source.py"), scripts)
+    os.symlink(os.path.join(REPO, "bin", "vgsh-scan"), os.path.join(tmp, "bin", "vgsh-scan"))
+    rooted = source.replace('REPO = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))', "REPO = " + repr(REPO))
+    if rooted == source:
+        failures.append("controls: the check's REPO line was not found to root the copies")
+    for label, needle, replacement in CONTROLS:
+        if rooted.count(needle) != 1:
+            failures.append(f"control {label}: the text to replace occurs {rooted.count(needle)} times, want 1")
+            continue
+        mutant = os.path.join(scripts, "check-user-commands.py")
+        with open(mutant, "w", encoding="utf-8") as fh:
+            fh.write(rooted.replace(needle, replacement))
+        if label == "the heads floor":
+            # A copy that reads no bin/ and no manager must be refused by
+            # the floor; without it, the copy passes on too few heads.
+            with open(mutant, encoding="utf-8") as fh:
+                text = fh.read()
+            text = text.replace("heads = set(manager_heads())", "heads = set()").replace('os.listdir(os.path.join(REPO, "bin"))', "[]")
+            with open(mutant, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            with tempfile.TemporaryDirectory() as tree:
+                done = run(mutant, build(tree, {}))
+            if done.returncode != 0:
+                failures.append(f"control {label}: the copy without the floor still refused a tree read against too few heads: {done.stdout.strip()}")
+            continue
+        if not rows_hold(mutant):
+            failures.append(f"control {label}: the rows passed on a copy without it")
+    # The floor itself: the unmodified check refuses a head set its
+    # extractors lost.
+    starved = rooted.replace("heads = set(manager_heads())", "heads = set()").replace('os.listdir(os.path.join(REPO, "bin"))', "[]")
+    with open(os.path.join(scripts, "check-user-commands.py"), "w", encoding="utf-8") as fh:
+        fh.write(starved)
+    with tempfile.TemporaryDirectory() as tree:
+        done = run(os.path.join(scripts, "check-user-commands.py"), build(tree, {}))
+    if done.returncode != 2 or "an extractor is broken" not in done.stdout:
+        failures.append(f"the heads floor: want unreadable with exit 2 on a lost extractor, got exit {done.returncode}: {done.stdout.strip()}")
+
+for line in failures:
+    print("FAIL " + line)
+if failures:
+    print(f"test-check-user-commands: failing={len(failures)}")
+    sys.exit(1)
+print(f"test-check-user-commands: ok rows={len(ROWS)} controls={len(CONTROLS)}")

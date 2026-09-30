@@ -197,6 +197,23 @@ function verify(logic) {
     const calm = logic.derive(read(logic, fixture("calm")), MS);
     same(logic.published(calm, []), { warden: { tone: "ok", text: "Checking" }, vsys: "present", detail: JSON.parse(JSON.stringify(calm)), agents: 1, lastCheck: MS });
     same(logic.published(calm, ["vsys"]).vsys, "absent");
+    // The warden row offers Set up exactly where the flyout's step is the
+    // setup TUI: a warden not set up or too old, with vsys present.
+    const stateOf = (state, reason) => Object.assign(logic.derive({ kind: "absent" }, MS), { state: state, reason: reason === undefined ? null : reason });
+    for (const [label, detail, missing, want] of [
+        ["not set up with vsys", stateOf("not-set-up"), [], { tone: "info", text: "Not set up", action: true }],
+        ["too old with vsys", stateOf("update-warden"), [], { tone: "warning", text: "Update the warden", action: true }],
+        ["not set up without vsys", stateOf("not-set-up"), ["vsys"], { tone: "info", text: "Not set up" }],
+        ["stopped checking", stateOf("not-checking", "stale"), [], { tone: "warning", text: "Stopped checking" }],
+    ]) same(logic.published(detail, missing).warden, want, "warden row, " + label);
+    for (const [label, detail, missing, want] of [
+        ["not set up with vsys", stateOf("not-set-up"), [], "setup"],
+        ["not set up without vsys", stateOf("not-set-up"), ["vsys"], "get-vsys"],
+        ["too old without vsys", stateOf("update-warden"), ["vsys"], "get-vsys"],
+        ["stopped checking", stateOf("not-checking", "stale"), [], "start"],
+        ["unreadable", stateOf("not-checking", "unreadable"), [], null],
+        ["checking", calm, [], null],
+    ]) assert.equal(logic.setupStep(detail, missing.indexOf("vsys") !== -1), want, "setup step, " + label);
     const unset = logic.derive({ kind: "absent" }, MS);
     same(Object.keys(logic.published(unset, ["vsys"])).sort(), ["detail", "vsys", "warden"], "an unset warden publishes no count and no time");
     const unlisted = logic.derive(read(logic, edited("calm", d => { d.lanes = null; })), MS);
@@ -228,7 +245,9 @@ const CONTROLS = [
     ["slowdown ignored", "slice.memory >= slice.high", "false"],
     ["a failed scan reads as checking", "return detail.items.some(function (i) { return i.kind === \"scan-failed\"; }) ?", "return false ?"],
     ["an unknown count is published", "if (detail.agents !== null) out.agents", "out.agents"],
-    ["GB always one decimal", "return value < 10 ?", "return true ?"]
+    ["GB always one decimal", "return value < 10 ?", "return true ?"],
+    ["the warden row never offers Set up", "if (setupStep(detail, vsysMissing) === \"setup\") warden.action = true;", ""],
+    ["Set up offered without vsys", "return vsysMissing ? \"get-vsys\" : \"setup\";", "return \"setup\";"]
 ];
 
 const source = fs.readFileSync(file, "utf8");

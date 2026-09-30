@@ -21,6 +21,7 @@ Singleton {
     SessionLock { id: sessionLock }
     ThemeRunner { id: themes }
     TuiRunner { id: tuis }
+    SecretWriter { id: secrets }
     readonly property alias sessionLock: sessionLock
     readonly property alias themes: themes
     readonly property alias tuis: tuis
@@ -125,7 +126,10 @@ Singleton {
             update: id => root.managerTui("update", id),
             remove: id => root.managerTui("remove", id),
             installRequirements: id => Notices.requested(id),
-            add: () => root.managerCoreTui("plugin-add", [])
+            add: () => root.managerCoreTui("plugin-add", []),
+            act: (id, key) => root.managerAct(id, key),
+            storeSecret: (id, key, account, secret, done) => root.managerSecret(ctx, "store", id, key, account, secret, done),
+            clearSecret: (id, key, account, done) => root.managerSecret(ctx, "clear", id, key, account, null, done)
         }),
         builtins: ctx => ({
             register: (name, item) => Plugins.recordBuiltin(ctx, name, item)
@@ -148,6 +152,7 @@ Singleton {
         }),
         theme: themes.provider,
         tui: tuis.provider,
+        secrets: secrets.provider,
         // `missing`: the plugin's own requirement commands the last scan did
         // not find, in declaration order, a copy per read; bindable.
         requirements: ctx => ({
@@ -167,6 +172,34 @@ Singleton {
         const source = typeof id === "string" && Registry.has(id) ? Registry.sourceOf(Registry.manifests[id]) : null;
         const request = Logic.managerTui(action, id, source);
         return request.ok ? root.managerCoreTui(request.name, request.args) : request.answer;
+    }
+
+    // The manager's act on plugin ID's status entry KEY (D056): the
+    // plugin's own declared TUI through TuiRunner.runFor, or its own
+    // requirement commands through the requirement notice, as
+    // PluginLogic.statusActionRequest decides from its published values.
+    function managerAct(id, key) {
+        const known = typeof id === "string" && Registry.has(id);
+        const request = Logic.statusActionRequest(known ? Registry.manifests[id] : null, id, known && Registry.isEnabled(id), known ? PluginStatus.valuesOf(id) : {}, key);
+        if (!request.ok) return request.answer;
+        switch (request.kind) {
+        case "tui": return tuis.runFor(id, request.name);
+        case "install": return Notices.acted(id, request.commands);
+        }
+        throw new Error("manager: action kind " + JSON.stringify(request.kind) + " is not one of tui, install");
+    }
+
+    // The manager's store or clear (VERB) of plugin ID's ACCOUNT, listed in
+    // its status entry KEY (D056), through the one SecretWriter, as
+    // PluginLogic.secretRequest decides; `done` belongs to CTX, the asking
+    // instance. SECRET never enters a log line or an answer.
+    function managerSecret(ctx, verb, id, key, account, secret, done) {
+        if (done !== undefined && typeof done !== "function")
+            throw new Error("refused: secret done=not-a-function");
+        const known = typeof id === "string" && Registry.has(id);
+        const request = Logic.secretRequest(known ? Registry.manifests[id] : null, id, known && Registry.isEnabled(id), known ? PluginStatus.valuesOf(id) : {}, key, account, verb, secret);
+        if (!request.ok) return request.answer;
+        return secrets.write(ctx, id, account, verb, request, done);
     }
 
     // Opens the core TUI `core/<name>` for the manager and returns the

@@ -8,7 +8,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 ## Features
 
-- A Themes button for the bar. The shipped bar does not show it: `bin/vgsh plugin enable vgs.themes` adds it to the right section.
+- A Themes button for the bar. The shipped bar does not show it: enabling the plugin on its Settings page adds it to the right section.
 - One row per package, shipped and installed, with its colours, the package the shell displays, and a package that is refused or hidden by an installed one of the same name.
 - A Catalog section with every catalog theme, its colours, mode and the same wallpaper archive size text as the browser. Install adds the theme definition. Download wallpapers fetches the archive for an installed catalog theme that has no wallpapers.
 - A catalog row shows Installing while an install runs. It shows the browser's progress text while a wallpaper download runs. A click on an installed catalog row applies it.
@@ -27,7 +27,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - A monitor shows its own image once `bin/vgsh theme background set <path> --screen <output>` names it, and every other monitor keeps the current image. `--every-screen` in place of `--screen` shows the image on every monitor and clears each monitor's own image. A monitor whose own image was deleted shows the current image. The next apply of a package clears every monitor's own image.
 - A Wallpaper section in the panel names the current image, and its Previous and Next buttons show the package's previous or next image and remember it for the package, as `bin/vgsh theme background previous` and `next` do. Applying the package again shows the remembered image.
 - `~/.local/state/vgs/background` links to the same image, for a lock screen or any other application that draws it.
-- `bin/vgsh plugin disable vgs.themes` turns off the button, the panel and the wallpaper.
+- Disabling the plugin on its Settings page turns off the button, the panel and the wallpaper.
+- Browser theming: Chromium, Google Chrome, Microsoft Edge and Brave take the theme's background colour through a managed policy, whose writer is installed once. The plugin's Settings page shows whether it is, and while a Chromium-family browser is found without it, **Install browser theming** opens a floating terminal where sudo asks for your password ([theme-browsers.md § Chromium](../../../docs/architecture/theme-browsers.md#chromium)).
 
 ## Keys
 

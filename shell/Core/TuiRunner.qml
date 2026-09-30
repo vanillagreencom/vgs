@@ -72,6 +72,17 @@ Scope {
         return start(Logic.tuiRun(ctx.manifest, Registry.isEnabled(ctx.id), Registry.sourceDir, runner(), name, args), ctx, done);
     }
 
+    // runFor: plugin ID's own declared script NAME, with no arguments and no
+    // `done`, for the `manager` capability's act on a status action (D056):
+    // judged as the plugin's own run, so a disabled plugin's or an
+    // undeclared script is refused. Answers `ok` when the request starts
+    // the TUI or focuses its live window, as PluginLogic.tuiShownAnswer
+    // decides. The plugin reads the run's end from its `state`.
+    function runFor(id, name) {
+        const answer = start(Logic.tuiRun(Registry.manifests[id], Registry.isEnabled(id), Registry.sourceDir, runner(), name, []), null, undefined);
+        return Logic.tuiShownAnswer(name, answer);
+    }
+
     // open: any listed TUI by key, with no arguments; the `openTui` IPC
     // function answers `ok` when the request starts the TUI or focuses its
     // live window.

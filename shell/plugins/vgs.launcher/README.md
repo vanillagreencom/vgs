@@ -11,7 +11,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 | Path | How |
 |---|---|
 | Shortcut | The service registers `vgs.launcher:toggle`, and the manifest binds it to `SUPER+SPACE` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, edit it under Keys on the plugin's Settings page, or give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.launcher", "keys": { "toggle": "SUPER+ALT+SPACE" } }`; `null` in place of the key unbinds it. |
-| Bar entry | `vgsh plugin enable vgs.launcher` places the magnifier in the bar's left section. A left click toggles the launcher on that screen; a right click runs `xdg-terminal-exec`. |
+| Bar entry | Enabling the plugin on its Settings page places the magnifier in the bar's left section. A left click toggles the launcher on that screen; a right click runs `xdg-terminal-exec`. |
 | IPC | `vgsh ipc call vgs.launcher invoke toggle '<payload>'` or `... invoke summon '<payload>'`, or the host's own `vgsh ipc call shell summon overlay vgs.launcher '<payload>'`. |
 
 A closed launcher holds no surface: the overlay host builds it on summon and destroys it on hide.

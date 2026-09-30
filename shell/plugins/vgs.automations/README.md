@@ -26,7 +26,7 @@ The plugin ships with VGS and is enabled by default. It needs `notify-send` (lib
 4. It saves a transcript, each output line with its time, and a record of the outcome under `~/.local/state/vgs/automations/runs/`.
 5. A failure sends a red notification with the last error lines. With "notify on every run" on, a start and a green finish notification come too. Under the VGS notifications, a click on a finish or failure notification opens the transcript in your `$EDITOR`, or with `xdg-open`.
 
-Timers stop when you log out unless systemd keeps your user manager running, which is called lingering. The Settings page shows whether it is on. To turn it on, open "Run automations while logged out" from the launcher, or run `vgsh ipc call vgs.automations invoke linger ""`.
+Timers stop when you log out unless systemd keeps your user manager running, which is called lingering. The plugin's Settings page shows whether it is on, and while it is off its **Enable while logged out** button opens a floating terminal that asks, then turns it on. The launcher lists the same step as "Run automations while logged out".
 
 ## The automations command
 

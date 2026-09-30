@@ -26,6 +26,7 @@ Badge 1.0 feedback/Badge.qml
 EmptyState 1.0 feedback/EmptyState.qml
 Kbd 1.0 feedback/Kbd.qml
 CodeLine 1.0 feedback/CodeLine.qml
+CommandDisclosure 1.0 feedback/CommandDisclosure.qml
 AvatarGroup 1.0 feedback/AvatarGroup.qml
 ScrollArea 1.0 layout/ScrollArea.qml
 SlimScrollBar 1.0 layout/SlimScrollBar.qml

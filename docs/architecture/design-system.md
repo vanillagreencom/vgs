@@ -52,6 +52,10 @@ What each component of `qs.Ui` guarantees is in [components.md](components.md).
 
 `VoiceOrb` publishes its palette-derived visual values through `Theme.voiceOrb`. Its timing tokens follow `motion.scale`, and its driver also checks that scale before ticking: [components-media.md § VoiceOrb](components-media.md#voiceorb).
 
+## Setup steps
+
+A step a user must take to set something up is automatic, or one click: a button on a Settings row, a notice or a dialog. A step that asks a question or needs a privilege opens in a floating TUI or the requirement notice from that button. A secret is typed into a `TextField` with `password` set and VGS stores it. A command a user could run by hand shows only in a `CommandDisclosure` beside that button, never as the instruction itself. The Settings page draws a manifest's status actions and secrets this way ([status.md § Shown](status.md#shown)), and `scripts/check-user-commands.py` fails text that tells the user to run a command: [D056](../decisions/D056-no-manual-commands.md).
+
 ## Text stack
 
 Reading text draws in `font.family.sans`, the bundled Inter; chrome draws in `font.family.mono`, the bundled JetBrains Mono, at 11 to 13 px. The base `font.size` is the reference's body size, and every role's size is a factor of it. A role's `lineHeight` is a multiple of its font size, as the reference stylesheet states it. `Label` rounds that product into a line box and floors it at the font's own line height, rounded up to a whole pixel, so every line box is a whole number of pixels. A single-line chrome role takes line height 1, so its line box is the font's own height. One line of text inside a fixed box, such as a badge, a key cap, a code line or an inline row, is placed by `Label`'s capital centre, so the centre of its capitals sits on the box centre on a whole-pixel baseline. `text.item`, `text.itemHint` and `text.itemCode` are `body`, `hint` and `code` at line height 1, for one line of text in a control's row: a menu entry, a list item's two lines, a value beside its label. `scripts/qml-tests/tst_label.qml` restates every role's family and metrics and reads them back from a drawn `Label`; it fails when the table gains a role it does not restate. The reference rule each role is read from is [design-values.md § Text roles](../reference/design-values.md#text-roles).
@@ -94,6 +98,7 @@ The grid, type scale, control sizes, container classes and states every surface 
 - Two bundled variable fonts, so the default theme draws the same on every machine: [D016](../decisions/D016-bundled-variable-font.md).
 - Controls extend `QtQuick.Templates` and icons are path data drawn with `QtQuick.Shapes`: [D017](../decisions/D017-templates-and-path-icons.md).
 - Overlays are Quickshell popup windows anchored to their item, not Qt window popups: [D018](../decisions/D018-overlays-are-quickshell-popups.md).
+- A setup step is automatic or one click, and a command only a "Show command" disclosure: [D056](../decisions/D056-no-manual-commands.md).
 - A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D023](../decisions/D023-plugin-owned-appearance.md).
 - Containers use one inset box, an inner scroll gutter and fitted popup height: [D050](../decisions/D050-container-layout-contract.md).
 - Every layout dimension sits on a 4 px grid, and row heights are their own tokens: [D063](../decisions/D063-design-scale-on-the-4-px-grid.md).

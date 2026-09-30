@@ -296,7 +296,8 @@ Singleton {
     // metadata, its icon, capabilities and source, whether it is enabled,
     // its settings schema, the settings it currently receives (a bar
     // widget's from its first layout entry), its Keys rows, its Status rows
-    // (PluginLogic.statusRows over the values it published), its setting
+    // (PluginLogic.statusRows over the values it published), the label of
+    // its `secrets`, "" without, its setting
     // choices (PluginLogic.settingChoices over those same values), its
     // requirements with their state and its errors:
     // each failed build of one of its kinds, once per cause, then each
@@ -335,6 +336,7 @@ Singleton {
                 settingChoices: Logic.settingChoices(m, values, settings),
                 binds: Logic.bindRows(config, m, descriptions),
                 status: Logic.statusRows(m, values),
+                secretLabel: m.secrets === undefined ? "" : m.secrets.label,
                 requirements: requirementsOf(id),
                 errors: errors
             };

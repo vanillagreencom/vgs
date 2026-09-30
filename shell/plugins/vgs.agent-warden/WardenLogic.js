@@ -374,14 +374,37 @@ function wardenRow(detail) {
     throw new Error("agent-warden: state=" + JSON.stringify(detail.state) + " unknown");
 }
 
+// The one setup step DETAIL calls for, or null for a state that needs
+// none: `setup`, the setup TUI, which runs vsys warden install for a warden
+// not set up or too old; `start`, the warden timer started again after it
+// stopped checking; `get-vsys`, vsys offered through the core's notice,
+// first whenever VSYS_MISSING, since every other step needs vsys. The flyout
+// and the Settings page offer the same step.
+function setupStep(detail, vsysMissing) {
+    switch (detail.state) {
+    case "not-set-up":
+    case "update-warden":
+        return vsysMissing ? "get-vsys" : "setup";
+    case "not-checking":
+        return detail.reason === "stale" ? "start" : null;
+    default:
+        return null;
+    }
+}
+
 // The status values the service publishes for DETAIL, derive's answer,
 // with MISSING, the plugin's requirement commands the last scan did not
 // find: key -> value for each key the manifest declares. `agents` and
-// `lastCheck` are left out while no status has told them.
+// `lastCheck` are left out while no status has told them. The warden row
+// offers the manifest's Set up action while setupStep answers `setup`; the
+// vsys row offers Install vsys while vsys is absent.
 function published(detail, missing) {
+    var vsysMissing = missing.indexOf("vsys") !== -1;
+    var warden = wardenRow(detail);
+    if (setupStep(detail, vsysMissing) === "setup") warden.action = true;
     var out = {
-        warden: wardenRow(detail),
-        vsys: missing.indexOf("vsys") === -1 ? "present" : "absent",
+        warden: warden,
+        vsys: vsysMissing ? "absent" : "present",
         detail: detail
     };
     if (detail.agents !== null) out.agents = detail.agents;

@@ -2,13 +2,19 @@
   "icon": "activity",
   "kinds": ["service", "bar-widget", "panel"], "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml", "panel": "Panel.qml" },
   "defaultSection": "right",
-  "capabilities": ["status", "ipc"],
+  "capabilities": ["status", "ipc", "tui"],
+  "requirements": [
+    { "command": "vgs-smoke-absent", "optional": true, "purpose": "A command no sandbox has" }
+  ],
+  "tui": {
+    "setup": { "script": "tui/setup.sh", "title": "Set up the token" }
+  },
   "settings": { "device": "" },
   "schema": { "device": { "type": "string", "label": "Device", "optionsFrom": "devices" } },
   "status": {
     "devices": { "type": "choices", "label": "Devices" },
-    "token": { "type": "presence", "label": "Token", "group": "Sync", "hint": "Needed for the fixture's sync", "command": "secret-tool store --label='acme token' service acme account token" },
-    "check": { "type": "state", "label": "Check" },
+    "token": { "type": "presence", "label": "Token", "group": "Sync", "hint": "Needed for the fixture's sync", "action": { "label": "Set up token", "tui": "setup" }, "command": "secret-tool store --label='acme token' service acme account token" },
+    "check": { "type": "state", "label": "Check", "action": { "label": "Install the tool", "install": ["vgs-smoke-absent"] } },
     "pending": { "type": "count", "label": "Pending", "group": "Sync" },
     "lastCheck": { "type": "time", "label": "Last check" },
     "note": { "type": "text", "label": "Note" },

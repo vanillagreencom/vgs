@@ -9,7 +9,7 @@ How `vgs.automations` turns a recurrence into systemd user timers, runs a comman
 - `AutomationsLogic.js` makes every decision: the store's schema, the recurrence model and its presets, the compiled calendars, the occurrences, the guard, the unit and crontab text, the records, the history rows, pruning, the notifications and the status. `bin/automations`, `Service.qml` and the tests load it; the engine loads it through `bin/lib/qml-library.js`.
 - `bin/automations` owns the store, the units, the crontab block, the runner and the run files. Its header lists every verb, its output and its refusals.
 - `Service.qml` asks the engine, one call at a time: `sync` at start, `prune` at start, on a `historyDays` change and once a day, and `list --json` after each run file comes or goes, after each change to the store, which a `WatchedFile` on the path `list --json` names reports, and a second after the next run is due. It writes every status value. The Engine status keeps each operation's last failure until the same operation succeeds (`AutomationsLogic.withOutcome`), so a list that succeeds after a failed sync leaves the sync failure shown.
-- `tui/linger.sh` shows whether lingering is on and turns it on with `loginctl enable-linger` after the user answers yes.
+- `tui/linger.sh` shows whether lingering is on and turns it on with `loginctl enable-linger` after the user answers yes. The launcher lists it, and the Settings page's Enable while logged out opens it while the `linger` status carries `action: true`, lingering off ([D056](../decisions/D056-no-manual-commands.md)). The service lists again when a run of it ends, whoever opened it, from `shell.tui.state`.
 
 ## Files
 

@@ -57,12 +57,15 @@ else
 fi
 # Status rows, D037: a page draws each status entry its manifest does not
 # keep from Settings, read-only, with its label, its value in the tone of
-# its type, its hint and the command it names, the entries without a group
-# first; `data` and hidden entries are not drawn, an entry nothing published
-# says so, and a disabled plugin's rows all say so. The status fixture,
+# its type, its hint and, behind Show command, the command it names, the
+# entries without a group first; `data` and hidden entries are not drawn,
+# an entry nothing published says so, and a disabled plugin's rows all say
+# so. The status fixture,
 # which rows/status.sh left disabled, publishes; the notifications, which
 # the harness starts disabled, have published nothing.
 fixture_command="secret-tool store --label='acme token' service acme account token"
+# The drawn texts of the Token row, the Sync group's first.
+token_drawn() { drawn_status | py_reply 'import json,sys; r=[r for r in json.load(sys.stdin) if r and r[0] == "Token"]; print(json.dumps(r[0] if len(r) == 1 else "rows=%d" % len(r)))'; }
 status_of() { settings_rows | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["label"], s["report"], s["value"], s["tone"], s["command"]] for s in r]))' "$1"; }
 drawn_status() { ipc smoke itemTexts window vgs.settings StatusRow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 page_fields_of() { ipc smoke drawnFields window vgs.settings | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d[sys.argv[1]], sum(v for k, v in d.items() if k != sys.argv[1])]))' "$1"; }
@@ -86,10 +89,52 @@ expect "the fixture publishes a time" ok ipc acme.status invoke set "lastCheck=$
 expect "the fixture publishes data" ok ipc acme.status invoke detail ''
 expect "the window opens the status fixture's page" ok ipc smoke invokeInstance window vgs.settings openPlugin acme.status
 expect_poll "the manager row lists each drawn entry in manifest order, with its value and tone" "$(python3 -c 'import json,sys; print(json.dumps([["Token", "reported", "present", "success", sys.argv[1]], ["Check", "reported", {"tone": "warning", "text": "Two sources failed"}, "warning", ""], ["Pending", "reported", 3, "", ""], ["Last check", "reported", int(sys.argv[2]), "", ""], ["Note", "unreported", None, "", ""]]))' "$fixture_command" "$fixture_time")" status_of acme.status
-expect_poll "the page draws the ungrouped entries, then each group's, read-only" "$(python3 -c 'import json,sys; print(json.dumps([["Check", "Two sources failed"], ["Last check", "time"], ["Note", "Not reported"], ["Token", "Present", "Needed for the fixture'"'"'s sync", sys.argv[1]], ["Pending", "3"]]))' "$fixture_command")" drawn_status_timeless
-expect_poll "the page heads the status sections before any other" '["Status", "Sync", "Settings"]' section_names
+expect_poll "the page draws the ungrouped entries, then each group's, read-only, the command behind Show command" '[["Check", "Two sources failed"], ["Last check", "time"], ["Note", "Not reported"], ["Token", "Present", "Needed for the fixture'"'"'s sync", "Show command"], ["Pending", "3"]]' drawn_status_timeless
+expect_poll "the page heads the status sections before any other" '["Status", "Sync", "Requirements", "Settings"]' section_names
 expect "no Status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs window vgs.settings
 expect "the page draws the choices setting only" '[1, 0]' page_fields_of acme.status
+# Show command: its click shows the entry's command in a CodeLine, and a
+# second hides it.
+settings_press "Show command" || fail "the click on Show command failed"
+expect_poll "the Token row draws its command" "$(python3 -c 'import json,sys; print(json.dumps(["Token", "Present", "Needed for the fixture'"'"'s sync", "Hide command", sys.argv[1]]))' "$fixture_command")" token_drawn
+settings_press "Hide command" || fail "the click on Hide command failed"
+expect_poll "the Token row hides its command" '["Token", "Present", "Needed for the fixture'"'"'s sync", "Show command"]' token_drawn
+
+# Status actions, D056: an entry's action is offered while its published
+# value calls for it, a presence while absent and a state while it says so,
+# and its button runs the step through the manager: the fixture's own TUI
+# in a floating terminal, or the requirement notice for its own command.
+# The control comes first: a value that does not call for the action draws
+# no button, and the manager refuses the act and starts nothing. The
+# presses after it succeed, which clears each refusal from its line.
+expected_errors+=('settings: acme\.status/(token|check) refused: action=(token|check) reason=not-offered')
+terminal_stand_in
+terminal_ready "the status actions"
+expect_poll "values that do not call for them offer no action" '[["token", "Set up token", false], ["check", "Install the tool", false]]' offered_actions acme.status
+expect_poll "the Token row draws no button but Show command" '["Token", "Present", "Needed for the fixture'"'"'s sync", "Show command"]' token_drawn
+forget_record
+expect "the manager refuses an act the token does not call for" "refused: action=token reason=not-offered" settings_act acme.status token
+expect "the manager refuses an act the check does not call for" "refused: action=check reason=not-offered" settings_act acme.status check
+expect "the refused acts started no terminal" absent recorded
+expect "the refused acts raised no notice" null notice_shown
+expect_poll "the refusal reads under the Token line" '["Token", "Present", "refused: action=token reason=not-offered", "Show command"]' token_drawn
+expect "the fixture publishes its token absent" ok ipc acme.status invoke set 'token="absent"'
+expect_poll "an absent token offers Set up token and the check offers nothing" '[["token", "Set up token", true], ["check", "Install the tool", false]]' offered_actions acme.status
+expect_poll "the Token row draws its Set up token button" '["Token", "Absent", "refused: action=token reason=not-offered", "Set up token", "Show command"]' token_drawn
+settings_press "Set up token" || fail "the click on Set up token failed"
+expect_poll "Set up token hands the terminal the fixture's setup TUI" "$(words acme.status/setup tui/setup.sh)" recorded_tail
+expect_poll "the step that ran clears the Token line's refusal" '["Token", "Absent", "Needed for the fixture'"'"'s sync", "Set up token", "Show command"]' token_drawn
+expect_run_end "the setup TUI's run ends" acme.status/setup
+expect_poll "the setup TUI's terminal closes" 0 tui_windows
+expect "the check publishes that its tool is missing" ok ipc acme.status invoke set 'check={"tone":"warning","text":"Tool missing","action":true}'
+expect_poll "the check offers Install the tool" '[["token", "Set up token", true], ["check", "Install the tool", true]]' offered_actions acme.status
+settings_press "Install the tool" || fail "the click on Install the tool failed"
+expect_poll "Install the tool shows the requirement notice for its own command" '["acme.status", ["vgs-smoke-absent"], ["vgs-smoke-absent"], false]' notice_shown
+expect "Install the tool leaves the Settings window open under the notice" 1 window_count Settings
+expect_poll "the action's notice holds the keyboard" true ipc smoke noticeFocused
+type_keys -k Escape || fail "sending Escape to the action's notice failed"
+expect_poll "Escape closes the action's notice" null notice_shown
+
 
 # The editor reads the service's choices, writes stable values rather than
 # labels, and never writes on a status refresh. A missing configured value
@@ -186,7 +231,7 @@ done
 expect "dropping the controls restores the Settings source revision" "$choice_revision_before" choice_source_revision
 expect "disabling the status fixture from its page is allowed" ok ipc smoke invokeInstance window vgs.settings toggle acme.status
 expect_poll "a disabled plugin's dynamic Select is read-only and has no offered choices" '[0, "First offered (none available)", "", false]' device_state
-expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "'"$fixture_command"'"], ["Pending", "Not reported"]]' drawn_status
+expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "Show command"], ["Pending", "Not reported"]]' drawn_status
 expect "the window opens the notifications' page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.notifications
 slack_tokens_hint="One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
 expect_poll "the disabled notifications list the Slack tokens row unreported" '[["Slack tokens", "unreported", null, "", ""]]' status_of vgs.notifications

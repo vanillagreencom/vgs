@@ -2,7 +2,7 @@
 
 `vgs.agent-warden` shows whether the agent warden keeps your AI agents within their memory and task limits. The warden ships with [vsys](https://github.com/vanillagreencom/vsys) and runs as a systemd user timer every 30 seconds, whether or not the shell runs. The plugin reads what the warden reports and never moves or stops an agent. It changes the warden only when you press a setup button in its panel. [D041](../../../docs/decisions/D041-agent-warden-observes-the-vsys-warden.md) records why.
 
-`bin/vgsh plugin enable vgs.agent-warden` puts the shield in the bar's right section.
+Enabling the plugin on its Settings page puts the shield in the bar's right section.
 
 ![The Agent Warden panel, open from its shield, reporting two problems](../../../docs/images/plugins/vgs.agent-warden-panel.webp)
 
@@ -10,10 +10,12 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 ## Setting up the warden
 
-1. Install vsys: `curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash`, or `paru -S vsys` on Arch Linux.
-2. Run `vsys warden install` once. It writes the warden's systemd user units and starts its timer.
+The plugin's Settings page and its panel offer each setup step as a button, shown while the step is needed:
 
-The plugin's Settings page shows both commands with a Copy button. The panel offers the same steps as buttons: Get vsys raises the shell's install notice for vsys, and Set up opens `vsys warden install` in a floating terminal.
+1. **Install vsys** raises the shell's install notice for the vsys package, which installs it in a floating terminal. The panel names it Get vsys.
+2. **Set up** opens a floating terminal that writes the warden's systemd user units and starts its timer. It asks for no password.
+
+Beside each button, Show command reveals the command it runs, for a system with no vsys package ([D056](../../../docs/decisions/D056-no-manual-commands.md)).
 
 ## The shield
 

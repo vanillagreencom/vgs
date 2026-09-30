@@ -17,7 +17,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "window", "service
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "requirements", "doctor"];
+var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "requirements", "doctor", "secrets"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -59,7 +59,7 @@ var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bo
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements", "status", "tui"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements", "status", "tui", "secrets"];
 
 // What one entry of a manifest's `requirements`, and of the core's own
 // config/requirements.json, may carry: an external command the plugin runs,
@@ -79,7 +79,7 @@ var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
 // Settings window draws every other type unless the entry is `hidden`;
 // `choices` feeds a setting's Select instead of a Status row.
 var STATUS_TYPES = ["presence", "presenceList", "state", "text", "count", "time", "data", "choices"];
-var STATUS_ENTRY_KEYS = ["type", "label", "group", "hint", "command", "hidden"];
+var STATUS_ENTRY_KEYS = ["type", "label", "group", "hint", "command", "hidden", "action"];
 // A status key names a value in `shell.status.values`, so it is a plain
 // identifier.
 var STATUS_KEY_PATTERN = /^[a-z][A-Za-z0-9]*$/;
@@ -100,16 +100,54 @@ var STATUS_MAX_BYTES = 65536;
 var STATUS_PRESENCE_TONES = { present: "success", absent: "warning", locked: "info", unavailable: "neutral", unsafe: "danger" };
 // A `state` value's `tone`, and the badge tone Settings draws it with.
 var STATUS_STATE_TONES = { ok: "success", info: "info", warning: "warning", danger: "danger" };
-// The keys a `state` value carries.
-var STATUS_STATE_KEYS = ["tone", "text"];
+// The keys a `state` value carries: `action`, true when the entry's declared
+// action applies to this value, is its writer's to decide (D056).
+var STATUS_STATE_KEYS = ["tone", "text", "action"];
 // A `presenceList` value is a list of at most STATUS_LIST_MAX items, each
 // carrying these keys: a printable `label` and a `presence` value, with an
-// optional printable `hint` and `command`, of the declaration's lengths.
+// optional printable `hint`, an optional `secret`, the account of the
+// plugin's declared `secrets` the item is the presence of, and an optional
+// printable `command`, of the declaration's lengths, which needs `secret`.
 var STATUS_LIST_MAX = 32;
-var STATUS_LIST_ITEM_KEYS = ["label", "value", "hint", "command"];
+var STATUS_LIST_ITEM_KEYS = ["label", "value", "hint", "command", "secret"];
 // Choice values are stable ids, not their display labels. Empty string is
 // reserved for a setting that follows the first offered value.
 var STATUS_CHOICE_KEYS = ["label", "value"];
+
+// A status entry's `action` (D056): the one-click setup step the Settings
+// page draws as a button beside the entry. It carries a printable `label`
+// and exactly one of `tui`, a name of the manifest's own `tui` key the core
+// opens in a floating terminal, or `install`, a list of the manifest's own
+// requirement commands the core offers through the requirement notice. An
+// entry of a type in STATUS_ACTION_TYPES takes one; a `command` is shown
+// only as the "Show command" disclosure beside it, so it needs one.
+var STATUS_ACTION_KEYS = ["label", "tui", "install"];
+var STATUS_ACTION_TYPES = ["presence", "state"];
+// The refusal reasons of the `manager` capability's `act`.
+var STATUS_ACTION_REASONS = ["undeclared", "disabled", "not-offered"];
+
+// A manifest's `secrets` (D056): the libsecret items the core stores and
+// clears for the plugin from a masked field on its Settings page, never
+// through a command the user types. `service` is the items' `service`
+// attribute; `label` leads each item's libsecret label.
+var SECRETS_KEYS = ["service", "label"];
+var SECRET_SERVICE_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+// An item's `account` attribute, as a `presenceList` item's `secret` names
+// it: letters and digits, then those and `:._-`.
+var SECRET_ACCOUNT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;
+// A secret the core stores is 1 to SECRET_VALUE_MAX characters with no
+// control character. secret-tool reads a secret from a stdin that is no
+// terminal up to its end, at most 8192 bytes, and keeps every byte
+// (libsecret tool/secret-tool.c, read_password_stdin), so the core writes the
+// value alone, with no newline, and closes stdin; 4096 characters of at
+// most two UTF-8 bytes each fit.
+var SECRET_VALUE_MAX = 4096;
+// What the Settings page offers a `presenceList` item with a `secret`, by
+// its presence: Connect while nothing is stored, Disconnect while something
+// is, and nothing while the store cannot be asked.
+var SECRET_ACCESS = { absent: "connect", present: "disconnect", locked: "disconnect", unsafe: "disconnect", unavailable: "" };
+var SECRET_VERBS = { store: "connect", clear: "disconnect" };
+var SECRET_REASONS = ["undeclared", "disabled", "unlisted", "not-offered", "value", "busy"];
 
 // A name a plugin registers a shortcut, an IPC target or a built-in widget
 // under, the name a manifest's Hyprland bind gives its shortcut, and the name
@@ -324,12 +362,15 @@ function isPrintableLine(text, max) {
 // The first defect of a manifest's `status` key, or "". An object keyed by
 // status key (STATUS_KEY_PATTERN), each entry naming a type from
 // STATUS_TYPES and a printable `label`, with an optional printable `group`
-// and `hint`, an optional printable `command` the Settings page shows as
-// text and never runs, and an optional boolean `hidden`. A `data` entry is
-// never drawn, so it carries none of `group`, `hint`, `command` or `hidden`.
-// A plugin publishes status only through its `status` capability, so the
-// key needs the capability, and the capability needs at least one entry.
-function statusError(status, capabilities) {
+// and `hint`, an optional `action` statusActionError admits, an optional
+// printable `command` the Settings page shows behind its "Show command"
+// disclosure and never runs, which needs the `action`, and an optional
+// boolean `hidden`. A `data` entry is never drawn, so it carries none of
+// `group`, `hint`, `command`, `hidden` or `action`. A plugin publishes status
+// only through its `status` capability, so the key needs the capability,
+// and the capability needs at least one entry. TUI is the manifest's `tui`
+// key or undefined, REQUIREMENTS its judged `requirements` list.
+function statusError(status, capabilities, tui, requirements) {
     if (!isPlainObject(status))
         return "status must be an object";
     var keys = Object.keys(status);
@@ -362,14 +403,85 @@ function statusError(status, capabilities) {
             return at + ".command must be a printable line of 1 to " + STATUS_COMMAND_MAX + " characters when present";
         if (entry.hidden !== undefined && typeof entry.hidden !== "boolean")
             return at + ".hidden must be a boolean when present";
+        if (entry.action !== undefined) {
+            var badAction = statusActionError(entry, at + ".action", tui, requirements);
+            if (badAction !== "")
+                return badAction;
+        }
+        if (entry.command !== undefined && entry.action === undefined && entry.type !== "data")
+            return at + ".command needs an action: a command is only the Show command disclosure beside a one-click action (D056)";
         if (entry.type === "data") {
-            var drawn = ["group", "hint", "command", "hidden"];
+            var drawn = ["group", "hint", "command", "hidden", "action"];
             for (var d = 0; d < drawn.length; d++) {
                 if (entry[drawn[d]] !== undefined)
                     return at + "." + drawn[d] + " needs a type Settings draws; data is never drawn";
             }
         }
     }
+    return "";
+}
+
+// The first defect of status entry ENTRY's `action`, AT its path, or "": an
+// object of STATUS_ACTION_KEYS on an entry whose type is in
+// STATUS_ACTION_TYPES, a printable `label` of at most STATUS_LABEL_MAX
+// characters, and exactly one of `tui`, a name the manifest's TUI key
+// declares, and `install`, a non-empty list of commands the manifest's
+// REQUIREMENTS declare, each once.
+function statusActionError(entry, at, tui, requirements) {
+    var action = entry.action;
+    if (STATUS_ACTION_TYPES.indexOf(entry.type) === -1)
+        return at + " needs a type whose value says when it applies, one of " + STATUS_ACTION_TYPES.join(", ");
+    if (!isPlainObject(action))
+        return at + " must be an object";
+    var keys = Object.keys(action);
+    for (var i = 0; i < keys.length; i++) {
+        if (STATUS_ACTION_KEYS.indexOf(keys[i]) === -1)
+            return at + " has unknown key " + JSON.stringify(keys[i]);
+    }
+    if (!isPrintableLine(action.label, STATUS_LABEL_MAX))
+        return at + ".label must be a printable line of 1 to " + STATUS_LABEL_MAX + " characters";
+    if ((action.tui === undefined) === (action.install === undefined))
+        return at + " must name exactly one of tui and install";
+    if (action.tui !== undefined) {
+        if (typeof action.tui !== "string" || !isPlainObject(tui) || !hasOwn(tui, action.tui))
+            return at + ".tui must name a script of the manifest's tui key, got " + JSON.stringify(action.tui);
+        return "";
+    }
+    if (!Array.isArray(action.install) || action.install.length === 0)
+        return at + ".install must be a non-empty list of the manifest's requirement commands";
+    var declared = requirements.map(function (r) { return r.command; });
+    for (var n = 0; n < action.install.length; n++) {
+        if (declared.indexOf(action.install[n]) === -1)
+            return at + ".install." + n + " must name a command of the manifest's requirements, got " + JSON.stringify(action.install[n]);
+        if (action.install.indexOf(action.install[n]) !== n)
+            return at + ".install." + n + " repeats " + JSON.stringify(action.install[n]);
+    }
+    return "";
+}
+
+// The first defect of a manifest's `secrets` key, or "": an object of
+// SECRETS_KEYS with a `service` of SECRET_SERVICE_PATTERN and a printable
+// `label` of at most STATUS_LABEL_MAX characters. The core writes the items
+// only for the plugin that declares them, whose instances learn of each
+// write through capability `secrets`, which the key needs and which needs
+// the key; a `presenceList` status entry is where its items are listed.
+function secretsError(secrets, capabilities, status) {
+    if (!isPlainObject(secrets))
+        return "secrets must be an object";
+    var keys = Object.keys(secrets);
+    for (var i = 0; i < keys.length; i++) {
+        if (SECRETS_KEYS.indexOf(keys[i]) === -1)
+            return "secrets has unknown key " + JSON.stringify(keys[i]);
+    }
+    if (typeof secrets.service !== "string" || !SECRET_SERVICE_PATTERN.test(secrets.service))
+        return "secrets.service must match " + SECRET_SERVICE_PATTERN.source + ", got " + JSON.stringify(secrets.service);
+    if (!isPrintableLine(secrets.label, STATUS_LABEL_MAX))
+        return "secrets.label must be a printable line of 1 to " + STATUS_LABEL_MAX + " characters";
+    if (capabilities.indexOf("secrets") === -1)
+        return "secrets needs capability secrets";
+    var lists = status === undefined ? [] : Object.keys(status).filter(function (key) { return isPlainObject(status[key]) && status[key].type === "presenceList"; });
+    if (lists.length === 0)
+        return "secrets needs a presenceList status entry to list its items";
     return "";
 }
 
@@ -402,8 +514,9 @@ function isPlainJson(value) {
 
 // Whether `value` fits a status entry of type `type`: `presence` a key of
 // STATUS_PRESENCE_TONES; `presenceList` a list statusListItemFits admits
-// item by item, at most STATUS_LIST_MAX long; `state` { tone, text } with a tone of
-// STATUS_STATE_TONES and a printable text; `text` a printable line; `count`
+// item by item, at most STATUS_LIST_MAX long; `state` { tone, text, action? }
+// with a tone of STATUS_STATE_TONES, a printable text and a boolean
+// `action` when present; `text` a printable line; `count`
 // a whole number from 0; `time` a whole number of milliseconds since the
 // Unix epoch, from 0; `data` plain JSON; `choices` a bounded list of labeled,
 // distinct, non-empty string ids.
@@ -434,7 +547,8 @@ function statusValueFits(type, value) {
         var keys = Object.keys(value);
         for (var i = 0; i < keys.length; i++)
             if (STATUS_STATE_KEYS.indexOf(keys[i]) === -1) return false;
-        return typeof value.tone === "string" && hasOwn(STATUS_STATE_TONES, value.tone) && isPrintableLine(value.text, STATUS_TEXT_MAX);
+        return typeof value.tone === "string" && hasOwn(STATUS_STATE_TONES, value.tone) && isPrintableLine(value.text, STATUS_TEXT_MAX)
+            && (value.action === undefined || typeof value.action === "boolean");
     }
     if (type === "text") return isPrintableLine(value, STATUS_TEXT_MAX);
     if (type === "count" || type === "time") return typeof value === "number" && isFinite(value) && value >= 0 && Math.floor(value) === value && value <= Number.MAX_SAFE_INTEGER;
@@ -445,8 +559,10 @@ function statusValueFits(type, value) {
 // Whether `item` is one item of a `presenceList` value: plain JSON holding
 // only STATUS_LIST_ITEM_KEYS, a printable `label` of at most
 // STATUS_LABEL_MAX characters, a `value` of STATUS_PRESENCE_TONES, and when
-// present a printable `hint` of at most STATUS_HINT_MAX and a printable
-// `command` of at most STATUS_COMMAND_MAX, as a declaration's are.
+// present a printable `hint` of at most STATUS_HINT_MAX, a `secret` of
+// SECRET_ACCOUNT_PATTERN and a printable `command` of at most
+// STATUS_COMMAND_MAX, as a declaration's are; a `command` needs the
+// `secret`, whose Connect it is the disclosure of (D056).
 function statusListItemFits(item) {
     if (!isPlainObject(item) || !isPlainJson(item)) return false;
     var keys = Object.keys(item);
@@ -455,7 +571,8 @@ function statusListItemFits(item) {
     return isPrintableLine(item.label, STATUS_LABEL_MAX)
         && typeof item.value === "string" && hasOwn(STATUS_PRESENCE_TONES, item.value)
         && (item.hint === undefined || isPrintableLine(item.hint, STATUS_HINT_MAX))
-        && (item.command === undefined || isPrintableLine(item.command, STATUS_COMMAND_MAX));
+        && (item.secret === undefined || (typeof item.secret === "string" && SECRET_ACCOUNT_PATTERN.test(item.secret)))
+        && (item.command === undefined || (item.secret !== undefined && isPrintableLine(item.command, STATUS_COMMAND_MAX)));
 }
 
 // The number of UTF-8 bytes that encode `text`. A lone surrogate counts as
@@ -508,7 +625,7 @@ function statusWrite(manifest, values, key, value) {
     var refused = function (reason) { return { ok: false, error: statusRefusal(key, reason) }; };
     if (typeof key !== "string" || !hasOwn(manifest.status, key))
         return refused("undeclared");
-    if (!statusValueFits(manifest.status[key].type, value))
+    if (!statusValueFits(manifest.status[key].type, value) || !statusDeclarationFits(manifest, manifest.status[key], value))
         return refused("type");
     var next = {};
     var keys = Object.keys(values);
@@ -518,6 +635,16 @@ function statusWrite(manifest, values, key, value) {
     if (bytes > STATUS_MAX_BYTES)
         return refused("size");
     return { ok: true, values: frozenJson(next), bytes: bytes };
+}
+
+// Whether VALUE, which statusValueFits admitted for ENTRY's type, also fits
+// what MANIFEST declares: a `state` value carries `action` only for an entry
+// that declares an action, and a `presenceList` item carries `secret` only
+// for a manifest that declares `secrets`.
+function statusDeclarationFits(manifest, entry, value) {
+    if (entry.type === "state") return value.action === undefined || entry.action !== undefined;
+    if (entry.type === "presenceList") return manifest.secrets !== undefined || value.every(function (item) { return item.secret === undefined; });
+    return true;
 }
 
 // Whether the Settings window draws status entry `entry`: every type but
@@ -555,9 +682,11 @@ function statusTone(type, value) {
 }
 
 // A reported value as a Status row carries it: a `presenceList`'s items
-// each as { label, value, hint, command, tone }, `hint` and `command` ""
-// when the item omits them and `tone` its presence's; any other value as
-// published.
+// each as { label, value, hint, command, tone, secret, access }, `hint`,
+// `command` and `secret` "" when the item omits them, `tone` its
+// presence's, and `access` what the page offers for its secret,
+// SECRET_ACCESS by its presence, "" for an item without one; any other
+// value as published.
 function statusRowValue(type, value) {
     if (type !== "presenceList") return value;
     return value.map(function (item) {
@@ -566,18 +695,33 @@ function statusRowValue(type, value) {
             value: item.value,
             hint: item.hint === undefined ? "" : item.hint,
             command: item.command === undefined ? "" : item.command,
-            tone: STATUS_PRESENCE_TONES[item.value]
+            tone: STATUS_PRESENCE_TONES[item.value],
+            secret: item.secret === undefined ? "" : item.secret,
+            access: item.secret === undefined ? "" : SECRET_ACCESS[item.value]
         };
     });
 }
 
+// Whether status entry ENTRY's declared action applies to its published
+// VALUE: a `presence` while nothing is there, `absent`; a `state` while its
+// writer says so, `action: true` (D056).
+function statusActionOffered(entry, value) {
+    switch (entry.type) {
+    case "presence": return value === "absent";
+    case "state": return value.action === true;
+    }
+    throw new Error("statusActionOffered: status type " + JSON.stringify(entry.type) + " takes no action");
+}
+
 // The Status rows the plugin manager shows for a plugin: one per entry
 // statusDisplayable admits, in manifest key order, as { key, type, label,
-// group, hint, command, report, value, tone }. `group`, `hint` and
-// `command` are "" when the manifest omits them. `report` is `reported`
-// with the published `value` (statusRowValue) and its `tone`, or
-// `unreported` with `value` null and `tone` "" while `values` holds nothing
-// for the key.
+// group, hint, command, action, report, value, tone }. `group`, `hint` and
+// `command` are "" when the manifest omits them. `action` is null for an
+// entry without one, else { label, offered }, `offered` whether
+// statusActionOffered holds for the reported value, false while
+// unreported. `report` is `reported` with the published `value`
+// (statusRowValue) and its `tone`, or `unreported` with `value` null and
+// `tone` "" while `values` holds nothing for the key.
 function statusRows(manifest, values) {
     return Object.keys(manifest.status).filter(function (key) {
         return statusDisplayable(manifest.status[key]);
@@ -591,11 +735,102 @@ function statusRows(manifest, values) {
             group: entry.group === undefined ? "" : entry.group,
             hint: entry.hint === undefined ? "" : entry.hint,
             command: entry.command === undefined ? "" : entry.command,
+            action: entry.action === undefined ? null : { label: entry.action.label, offered: reported && statusActionOffered(entry, values[key]) },
             report: reported ? "reported" : "unreported",
             value: reported ? statusRowValue(entry.type, values[key]) : null,
             tone: reported ? statusTone(entry.type, values[key]) : ""
         };
     });
+}
+
+// The one keyed line a refused status action answers:
+// `refused: action=<key> reason=<reason>`, REASON one of
+// STATUS_ACTION_REASONS, a key STATUS_KEY_PATTERN does not admit written as
+// JSON.
+function statusActionRefusal(key, reason) {
+    if (STATUS_ACTION_REASONS.indexOf(reason) === -1)
+        throw new Error("statusActionRefusal: reason " + JSON.stringify(reason) + " is not one of " + STATUS_ACTION_REASONS.join(", "));
+    var named = typeof key === "string" && STATUS_KEY_PATTERN.test(key) ? key : JSON.stringify(String(key));
+    return "refused: action=" + named + " reason=" + reason;
+}
+
+// What the `manager` capability's `act(id, key)` does for status entry KEY
+// of plugin MANIFEST, null for an id no plugin has, ENABLED and VALUES its
+// published values: { ok: true, kind: "tui", name } to open the plugin's own
+// TUI NAME, { ok: true, kind: "install", commands } to offer its own
+// requirement COMMANDS through the requirement notice, or { ok: false,
+// answer } with `unknown: <id>` or statusActionRefusal's line: `undeclared`
+// for an entry without an action, `disabled` for a disabled plugin and
+// `not-offered` while the published value does not call for it.
+function statusActionRequest(manifest, id, enabled, values, key) {
+    if (manifest === null)
+        return { ok: false, answer: "unknown: " + tuiLabel(id) };
+    if (typeof key !== "string" || !hasOwn(manifest.status, key) || manifest.status[key].action === undefined)
+        return { ok: false, answer: statusActionRefusal(key, "undeclared") };
+    if (!enabled)
+        return { ok: false, answer: statusActionRefusal(key, "disabled") };
+    var entry = manifest.status[key];
+    if (!hasOwn(values, key) || !statusActionOffered(entry, values[key]))
+        return { ok: false, answer: statusActionRefusal(key, "not-offered") };
+    if (entry.action.tui !== undefined)
+        return { ok: true, kind: "tui", name: entry.action.tui };
+    return { ok: true, kind: "install", commands: entry.action.install.slice() };
+}
+
+// The one keyed line a refused secret write answers:
+// `refused: secret=<account> reason=<reason>`, REASON one of
+// SECRET_REASONS, an account SECRET_ACCOUNT_PATTERN does not admit written
+// as JSON. No secret value enters it.
+function secretRefusal(account, reason) {
+    if (SECRET_REASONS.indexOf(reason) === -1)
+        throw new Error("secretRefusal: reason " + JSON.stringify(reason) + " is not one of " + SECRET_REASONS.join(", "));
+    var named = typeof account === "string" && SECRET_ACCOUNT_PATTERN.test(account) ? account : JSON.stringify(String(account));
+    return "refused: secret=" + named + " reason=" + reason;
+}
+
+// Whether SECRET is a value the core stores: 1 to SECRET_VALUE_MAX
+// characters, none a control character.
+function secretValueValid(secret) {
+    return typeof secret === "string" && secret.length > 0 && secret.length <= SECRET_VALUE_MAX && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(secret);
+}
+
+// What the `manager` capability's `storeSecret` (VERB `store`, with SECRET)
+// or `clearSecret` (VERB `clear`) does for account ACCOUNT of status entry
+// KEY of plugin MANIFEST, null for an id no plugin has, ENABLED and VALUES
+// its published values. The core writes only an account the plugin itself
+// lists: an item of the `presenceList` entry KEY whose `secret` is ACCOUNT,
+// and only the verb its access offers, `store` for `connect` and `clear` for
+// `disconnect`. { ok: true, argv, input } with the secret-tool argv and the
+// text for its stdin, the secret for a store and null for a clear, so no
+// secret reaches an argv; or { ok: false, answer } with `unknown: <id>` or
+// secretRefusal's line: `undeclared` for a manifest without `secrets` or a
+// KEY that is no `presenceList` entry, `disabled`, `unlisted` for an account
+// no published item of KEY names, `not-offered` for a verb its access does
+// not offer, `value` for a SECRET secretValueValid refuses.
+function secretRequest(manifest, id, enabled, values, key, account, verb, secret) {
+    if (!hasOwn(SECRET_VERBS, verb))
+        throw new Error("secretRequest: verb " + JSON.stringify(verb) + " is not one of " + Object.keys(SECRET_VERBS).join(", "));
+    if (manifest === null)
+        return { ok: false, answer: "unknown: " + tuiLabel(id) };
+    var refused = function (reason) { return { ok: false, answer: secretRefusal(account, reason) }; };
+    if (manifest.secrets === undefined || typeof key !== "string" || !hasOwn(manifest.status, key) || manifest.status[key].type !== "presenceList")
+        return refused("undeclared");
+    if (!enabled)
+        return refused("disabled");
+    var items = hasOwn(values, key) ? values[key] : [];
+    var item = null;
+    for (var i = 0; i < items.length; i++)
+        if (items[i].secret !== undefined && items[i].secret === account) item = items[i];
+    if (item === null)
+        return refused("unlisted");
+    if (SECRET_ACCESS[item.value] !== SECRET_VERBS[verb])
+        return refused("not-offered");
+    var attributes = ["service", manifest.secrets.service, "account", account];
+    if (verb === "clear")
+        return { ok: true, argv: ["secret-tool", "clear"].concat(attributes), input: null };
+    if (!secretValueValid(secret))
+        return refused("value");
+    return { ok: true, argv: ["secret-tool", "store", "--label=" + manifest.secrets.label + " " + account].concat(attributes), input: secret };
 }
 
 // A Hyprland key written `MOD+MOD+KEY`, such as `SUPER+SPACE`, normalised:
@@ -1856,8 +2091,14 @@ function validateManifest(raw, sourceDir) {
         return { ok: false, error: "settings must not carry a keys key: a plugins row's keys are its Hyprland keys" };
     if (hasOwn(settings, "placement") && PLACEMENTS.indexOf(settings.placement) === -1)
         return { ok: false, error: "settings.placement must be one of " + PLACEMENTS.join(", ") + ", got " + JSON.stringify(settings.placement) };
+    // The requirements first: a status action names the commands it
+    // installs from them.
+    var requirements = raw.requirements === undefined ? [] : raw.requirements;
+    var badRequirements = requirementsError(requirements);
+    if (badRequirements !== "")
+        return { ok: false, error: badRequirements };
     if (raw.status !== undefined) {
-        var badStatus = statusError(raw.status, capabilities);
+        var badStatus = statusError(raw.status, capabilities, raw.tui, requirements);
         if (badStatus !== "")
             return { ok: false, error: badStatus };
     } else if (capabilities.indexOf("status") !== -1) {
@@ -1880,14 +2121,17 @@ function validateManifest(raw, sourceDir) {
         if (badHyprland !== "")
             return { ok: false, error: badHyprland };
     }
-    var requirements = raw.requirements === undefined ? [] : raw.requirements;
-    var badRequirements = requirementsError(requirements);
-    if (badRequirements !== "")
-        return { ok: false, error: badRequirements };
     if (raw.tui !== undefined) {
         var badTui = tuiError(raw.tui, capabilities);
         if (badTui !== "")
             return { ok: false, error: badTui };
+    }
+    if (raw.secrets !== undefined) {
+        var badSecrets = secretsError(raw.secrets, capabilities, raw.status);
+        if (badSecrets !== "")
+            return { ok: false, error: badSecrets };
+    } else if (capabilities.indexOf("secrets") !== -1) {
+        return { ok: false, error: "capability secrets needs a secrets declaration" };
     }
     var manifest = clone(raw);
     manifest.capabilities = capabilities.slice();

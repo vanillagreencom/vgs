@@ -34,6 +34,7 @@ MANIFEST_CHECK = os.path.join(REPO, "bin", "lib", "check-manifests.js")
 BOUNDARY_CHECK = os.path.join(REPO, "scripts", "check-plugin-boundary.py")
 TOKEN_CHECK = os.path.join(REPO, "scripts", "check-design-tokens.py")
 POINTER_CHECK = os.path.join(REPO, "scripts", "check-pointer-cursor.py")
+COMMAND_CHECK = os.path.join(REPO, "scripts", "check-user-commands.py")
 # Every child runs under this environment and nothing inherited beyond it;
 # HOME stays because a version-managed node reads its configuration there.
 ENV = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""), "LC_ALL": "C"}
@@ -148,6 +149,7 @@ def cmd_check(args):
         [sys.executable, BOUNDARY_CHECK, "--shell", os.path.join(REPO, "shell"), target],
         [sys.executable, TOKEN_CHECK, "--repo", REPO, target],
         [sys.executable, POINTER_CHECK, target],
+        [sys.executable, COMMAND_CHECK, "--plugin", target],
     ):
         proc = subprocess.run(command, check=False, env=ENV)
         if proc.returncode != 0:

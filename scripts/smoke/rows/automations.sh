@@ -18,7 +18,9 @@
 # status after a list succeeds and clears once a sync succeeds; a
 # failing Run now goes through systemd-run, sends the error notification
 # with the VGS hints and reaches the Last runs status through the service's
-# runs listing; the linger TUI opens through the stand-in terminal; and the
+# runs listing; the linger TUI opens through the stand-in terminal, from
+# the IPC and from the Settings page's Enable while logged out, whose run's
+# end lists lingering again and withdraws the action; and the
 # control, a copy of the plugin whose service lists neither after a run
 # file lands nor after the store changes, leaves the count as it was after
 # the engine pauses the automation and Last runs as it was after the next
@@ -60,7 +62,7 @@ expect "the automations start disabled in the sandbox" False plugin_enabled vgs.
 expect "enabling the automations is allowed" ok ipc shell setPluginEnabled vgs.automations true
 expect_poll "the service holds its status record and IPC target" '[["active", "lastRuns", "linger", "nextRun", "problem", "scheduler"], true]' auto_lent
 expect_poll "the scheduler reads the stand-in's systemd user manager" '{"tone": "ok", "text": "systemd user timers"}' auto_status scheduler
-expect_poll "lingering reads off" '{"tone": "warning", "text": "Automations run only while you are logged in"}' auto_status linger
+expect_poll "lingering reads off, offering its action" '{"tone": "warning", "text": "Automations run only while you are logged in", "action": true}' auto_status linger
 expect "a start with no automation runs no systemctl verb" '[]' auto_verbs
 expect "no unit is written with no automation" '[]' auto_units
 expect "the shell's PATH resolves crontab to the harness's stand-in" "$shim/crontab" resolved crontab "$shell_path"
@@ -96,6 +98,28 @@ expect_poll "the run's records reach Last runs" '{"tone": "danger", "text": "Fai
 forget_record
 expect "the linger IPC opens its TUI" ok ipc vgs.automations invoke linger ""
 expect_poll "the terminal is handed the linger TUI" "$(words vgs.automations/linger tui/linger.sh)" recorded_tail
+expect_run_end "the linger IPC's run ends" vgs.automations/linger
+
+# Enable while logged out, D056: while lingering reads off, the Settings
+# page offers the manifest's action, and its button opens the linger TUI.
+# The run's end lists again, whoever opened it, and a loginctl that now
+# answers yes withdraws the action. The control: the manager refuses the
+# act once lingering is on, and starts nothing.
+expected_errors+=('settings: vgs\.automations/linger refused: action=linger reason=not-offered')
+settings_page_open vgs.automations
+expect_poll "lingering off offers Enable while logged out" '[["linger", "Enable while logged out", true]]' offered_actions vgs.automations
+forget_record
+printf '#!/usr/bin/env bash\necho yes\n' >"$shim/loginctl"
+settings_press "Enable while logged out" || fail "the click on Enable while logged out failed"
+expect_poll "Enable while logged out hands the terminal the linger TUI" "$(words vgs.automations/linger tui/linger.sh)" recorded_tail
+expect_run_end "the button's linger run ends" vgs.automations/linger
+expect_poll "the run's end lists again and lingering reads on" '{"tone": "ok", "text": "Automations run while you are logged out"}' auto_status linger
+expect_poll "lingering on offers no action" '[["linger", "Enable while logged out", false]]' offered_actions vgs.automations
+forget_record
+expect "the manager refuses the act while lingering is on" "refused: action=linger reason=not-offered" settings_act vgs.automations linger
+expect "the refused act started no terminal" absent recorded
+settings_page_close vgs.automations
+printf '#!/usr/bin/env bash\necho no\n' >"$shim/loginctl"
 
 # The control: a copy whose service lists neither after a run file lands
 # nor after the store changes, the one timer both watchers restart. It

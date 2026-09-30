@@ -524,6 +524,11 @@ automations_stand_ins_restore() { # STUB
 # as the photo helper reads it; `search` answers as libsecret's secret-tool
 # does, the item and an unlocked secret on stdout and the attributes and a
 # lock on stderr, for the token probe. Every token starts xoxp-smoke-.
+# `store` and `clear`, as the core's SecretWriter runs them for the
+# Settings page's Connect and Disconnect (D056), set the account's state to
+# `present` and `absent`, append their argv to $shim/secret-tool.calls, and
+# a store keeps its stdin, the secret, byte for byte in
+# $shim/secret-tool.stdin.<account>.
 # slack_states STATES: the states file rewritten from STATES, lines joined
 # by `;`. secret_tool_stand_in STATES: the stand-in written, with STATES.
 slack_states() { tr ';' '\n' <<<"$1" >"$shim/secret-tool.states"; }
@@ -531,6 +536,21 @@ secret_tool_stand_in() { # STATES
   slack_states "$1"
   cat >"$shim/secret-tool" <<SH
 #!/usr/bin/env bash
+states="$shim/secret-tool.states"
+set_state() { { grep -v -F -x -e "\$1 present" -e "\$1 absent" -e "\$1 locked" "\$states" || true; printf '%s %s\\n' "\$1" "\$2"; } >"\$states.next" && mv -f -- "\$states.next" "\$states"; }
+if [[ \${1:-} == store ]]; then
+  [[ \${2:-} == --label=* && \${3:-} == service && \${4:-} == vgs-notifications && \${5:-} == account && \$# -eq 6 ]] || exit 1
+  printf '%s\\n' "\$*" >>"$shim/secret-tool.calls"
+  cat >"$shim/secret-tool.stdin.\$6"
+  set_state "\$6" present
+  exit 0
+fi
+if [[ \${1:-} == clear ]]; then
+  [[ \${2:-} == service && \${3:-} == vgs-notifications && \${4:-} == account && \$# -eq 5 ]] || exit 1
+  printf '%s\\n' "\$*" >>"$shim/secret-tool.calls"
+  set_state "\$5" absent
+  exit 0
+fi
 [[ \${2:-} == service && \${3:-} == vgs-notifications && \${4:-} == account && \$# -eq 5 ]] || exit 1
 account="\$5" state=absent
 while read -r name answer; do [[ \$name == "\$account" ]] && state="\$answer"; done <"$shim/secret-tool.states"
@@ -1511,6 +1531,39 @@ click_in() {
   [[ $rect == \[* ]] || { echo "click_in: no $4 $5: $rect" >&2; return 1; }
   read -r x y < <(at_centre "$1" "$rect") || return 1
   click "$x" "$y"
+}
+# settings_page_open ID: the Settings plugin enabled and its window
+# summoned on plugin ID's page. settings_page_close: the window hidden and
+# the plugin disabled again, as the rows that open it leave it.
+settings_page_open() {
+  expect "enabling Settings for $1's steps is allowed" ok ipc shell setPluginEnabled vgs.settings true
+  expect_poll "the Settings service is built for $1's steps" True record_exists vgs.settings
+  expect "Settings is summoned on $1's page" ok ipc shell summon window vgs.settings "{\"plugin\":\"$1\"}"
+  expect_poll "the Settings window shows $1's page" "\"$1\"" ipc smoke readInstance window vgs.settings page
+}
+settings_page_close() {
+  expect "the Settings window is hidden after $1's steps" ok ipc shell hide window vgs.settings
+  expect "disabling Settings after $1's steps is allowed" ok ipc shell setPluginEnabled vgs.settings false
+  expect_poll "the Settings service is gone after $1's steps" False record_exists vgs.settings
+}
+# offered_actions ID: each status entry of plugin ID with an action as
+# [key, label, offered], from the manager row the Settings window draws.
+offered_actions() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == sys.argv[1]][0]["status"]; print(json.dumps([[s["key"], s["action"]["label"], s["action"]["offered"]] for s in r if s["action"] is not None]))' "$1"; }
+# settings_act ID KEY: the manager's answer to the step of ID's entry KEY,
+# as its button hands it on.
+settings_act() { ipc smoke invokeInstance window vgs.settings act "{\"id\":\"$1\",\"key\":\"$2\"}"; }
+# settings_press TEXT [SCOPE_TYPE SCOPE_TEXT]: a real click on the Settings
+# window's shown, enabled Button TEXT, inside the first shown SCOPE_TYPE
+# drawing SCOPE_TEXT when given, the page scrolled first so the button lies
+# in view, as a user scrolls to a step below the fold.
+settings_press() {
+  local shown
+  shown="$(ipc smoke revealText window vgs.settings Button "$1")" || return 1
+  [[ $shown =~ ^[0-9.]+$ ]] || { echo "settings_press: no Button $1 to reveal: $shown" >&2; return 1; }
+  sleep 0.2
+  if [[ $# -eq 3 ]]; then click_scoped_in window:Settings window vgs.settings "$2" "$3" Button "$1"
+  else click_in window:Settings window vgs.settings Button "$1"
+  fi
 }
 # click_scoped_in SURFACE HOST_KEY ID SCOPE_TYPE SCOPE_TEXT TYPE TEXT: the
 # same for the item of TYPE reading TEXT inside the first shown SCOPE_TYPE

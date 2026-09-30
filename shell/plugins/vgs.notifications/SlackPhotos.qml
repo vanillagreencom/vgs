@@ -10,9 +10,9 @@ import "NotificationLogic.js" as Logic
 // token-status.sh reports whether each token is stored, never reading it;
 // `tokenStates` holds its answer, account -> a `presence` status value,
 // and null before the first. Both run once `workspaces`, Slack's own list,
-// has been read, again when the list names other workspaces, the probe
-// after each helper run, and the helper at
-// NotificationLogic.slackPhotoDelay.
+// has been read, again when the list names other workspaces and after each
+// token write the core ends (`secretRevision`), the probe after each helper
+// run, and the helper at NotificationLogic.slackPhotoDelay.
 //
 // With `emojiEnabled`, the same run builds each listed team's custom emoji
 // from Slack's disk cache and emoji.list (slack-emoji.js), and the shell
@@ -45,6 +45,11 @@ Scope {
     // The team ids the running probe was asked about.
     property var probed: []
     property bool emojiEnabled: false
+    // The count of token writes the core ended for this plugin, the
+    // `secrets` capability's revision: a Connect or Disconnect on the
+    // Settings page probes and loads again at once, rather than at the next
+    // retry.
+    property int secretRevision: 0
     // Team id -> name -> file URL (NotificationLogic.slackEmojiLookups).
     property var emoji: Logic.slackEmojiLookups([], dir)
     // The emoji list last swapped in, as JSON, and how many swaps and
@@ -67,6 +72,7 @@ Scope {
     // The list's first read changes both at once; one start follows.
     onListedChanged: Qt.callLater(start)
     onTeamKeyChanged: Qt.callLater(start)
+    onSecretRevisionChanged: Qt.callLater(start)
     // Off clears the cards' emoji at once; the run then empties the index.
     onEmojiEnabledChanged: {
         if (!emojiEnabled) swapEmoji([]);

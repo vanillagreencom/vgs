@@ -20,27 +20,13 @@ The workspace icons come from Slack's own client, read-only and with no credenti
 
 Slack photos are optional. With no token, or with no `secret-tool` binary installed, the Slack rule keeps the initials faces and the disk-cache workspace icons above, and it prints no token-missing log line.
 
-Each workspace takes its own token, in libsecret under `service vgs-notifications` and `account slack:<team id>`, the team id Slack's workspace list gives it. Settings lists each workspace the list names, with its token's state and the command that stores it, such as:
+Each workspace takes its own token, in libsecret under `service vgs-notifications` and `account slack:<team id>`, the team id Slack's workspace list gives it. The plugin's Settings page lists each workspace the list names, with its token's state. **Connect** opens a masked field: paste the workspace's token and press Save. VGS stores it in your keyring through `secret-tool`, handing it over on stdin, never on a command line, and the photos load at once. **Disconnect** removes a stored token. Show command, beside each, reveals the `secret-tool` command that does the same by hand ([D056](../../../docs/decisions/D056-no-manual-commands.md)).
 
-```bash
-secret-tool store --label='VGS notifications Slack token T0123ABCD' service vgs-notifications account slack:T0123ABCD
-```
+A token is a Slack app's user token (`xoxp-`): create an app at api.slack.com/apps, add the user token scopes `users:read` and `team:read` under OAuth & Permissions, and `emoji:read` if you want custom emoji, then install it to the workspace.
 
-Type the token at `secret-tool`'s prompt. Do not put the token on the command line. A token is a Slack app's user token (`xoxp-`): create an app at api.slack.com/apps, add the user token scopes `users:read` and `team:read` under OAuth & Permissions, and `emoji:read` if you want custom emoji, then install it to the workspace.
+The single-workspace token of earlier versions, `account slack`, still works. It serves the one team its `team.info` names, unless that team has its own token, and Settings says which workspace it serves. Its line connects and disconnects the same way.
 
-The single-workspace token of earlier versions, `account slack`, still works. It serves the one team its `team.info` names, unless that team has its own token, and Settings says which workspace it serves. Store it with:
-
-```bash
-secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack
-```
-
-Settings shows a Slack tokens row: a line for each listed workspace, and a line for the single-workspace token when no workspace is listed or it is stored. Each reads Present, Absent, Locked or Unavailable (no `secret-tool`, or the keyring cannot be asked). The check runs at start, when the workspace list changes and after each photo refresh; it never reads a token or unlocks the keyring. A token stored for a listed workspace loads within 15 minutes.
-
-Remove a token with the same attributes:
-
-```bash
-secret-tool clear service vgs-notifications account slack:T0123ABCD
-```
+Settings shows a Slack tokens row: a line for each listed workspace, and a line for the single-workspace token when no workspace is listed or it is stored. Each reads Present, Absent, Locked or Unavailable (no `secret-tool`, or the keyring cannot be asked). Connect shows while a token is absent and Disconnect while one is stored; an Unavailable line offers neither, and the Requirements section offers to install `secret-tool`. The check runs at start, when the workspace list changes, after each Connect or Disconnect and after each photo refresh; it never reads a token or unlocks the keyring.
 
 The helper calls `team.info` and `users.list`. It stores only the team id, team names, the team icon, each user id, each user's display name, real name, Slack name and `image_48` photo, under `$XDG_CACHE_HOME/vgs/notifications/slack-photos/`. It does not read or store messages, channels, presence, email, profile text or tokens. Without a token, faces stay initials: no local Slack store maps a sender's name to a photo. [notification-senders.md](../../../docs/architecture/notification-senders.md) holds the cache, its refresh and its limits.
 

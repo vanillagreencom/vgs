@@ -8,8 +8,9 @@ import qs.Ui
 // whose menu lists every plugin, the current one checked, and opens the
 // chosen one's page. The body holds the description, the capabilities,
 // every error, the enabled switch, the listing metadata, the Update and
-// Remove buttons of an installed plugin, one read-only status section per
-// status group (entries without a group first, under `Status`), the
+// Remove buttons of an installed plugin, one status section per status
+// group (entries without a group first, under `Status`), whose values are
+// read-only and whose setup steps run through the manager (D056), the
 // Requirements section with an Install button while one is missing, one
 // settings section per schema group (entries without a group first, under
 // `Settings`) and the Keys section. A disabled plugin's fields are
@@ -170,10 +171,11 @@ FocusScope {
                 spacing: Theme.stack.row
 
                 Field {
+                    id: enabledField
                     width: parent.width
                     label: "Enabled"
                     inline: true
-                    hint: page.isSelf ? "Disabling Settings closes this window; `vgsh plugin enable " + page.row.id + "` brings it back." : page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to change its settings and keys." : ""
+                    hint: page.isSelf ? "Disabling Settings closes this window and takes its gear from the bar." : page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to change its settings and keys." : ""
                     Switch {
                         size: "sm"
                         checked: page.row !== null && page.row.enabled
@@ -182,6 +184,16 @@ FocusScope {
                             if (page.row !== null) page.panel.toggle(page.row.id);
                         }
                     }
+                }
+
+                // Once Settings is off no window is left to hold a button that
+                // turns it on, so its own page keeps the command that does,
+                // behind Show command (D056).
+                CommandDisclosure {
+                    x: enabledField.valueX
+                    width: parent.width - x - enabledField.rightPadding
+                    visible: page.isSelf
+                    command: page.row === null ? "" : "vgsh plugin enable " + page.row.id
                 }
 
                 Repeater {
@@ -242,6 +254,9 @@ FocusScope {
                             required property string modelData
                             width: statusSection.width
                             entry: page.statusEntry(modelData)
+                            panel: page.panel
+                            pluginId: page.row === null ? "" : page.row.id
+                            secretLabel: page.row === null ? "" : page.row.secretLabel
                         }
                     }
                 }

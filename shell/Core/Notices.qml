@@ -6,11 +6,12 @@ import "PluginLogic.js" as Logic
 
 // The requirement notice: which plugins' missing commands the user is
 // shown, in what order, on which screen, and the install the shown notice
-// runs (requirement-notice.md). Five triggers raise a notice: the
+// runs (requirement-notice.md). Six triggers raise a notice: the
 // pluginInstalled IPC function `vgsh plugin add` calls, Plugins.setEnabled
 // turning a plugin on, a plugin's own `requirements` capability, the
-// `manager` capability's installRequirements, and the `doctor` capability
-// asking for the core's or an enabled plugin's commands. A notice belongs
+// `manager` capability's installRequirements and its act on a status
+// action that installs, and the `doctor` capability asking for the core's
+// or an enabled plugin's commands. A notice belongs
 // to one owner, a plugin or the core, whose requirements and missing
 // commands Registry holds.
 // PluginLogic decides what each trigger asks for, whether it joins the
@@ -174,6 +175,17 @@ Singleton {
     // `refused: requirements=<id> reason=satisfied` for the page to show.
     function requested(id) {
         const answer = raise(id, "requested");
+        return answer === "satisfied" ? "refused: requirements=" + id + " reason=satisfied" : answer;
+    }
+
+    // The `manager` capability's act on a status action that installs
+    // plugin ID's own COMMANDS (D056), a press on the Settings page: the
+    // user chose them, so no offer's rest holds it back. The plugin's value
+    // said they were missing at the last scan, so no new scan waits first;
+    // commands that scan found answer
+    // `refused: requirements=<id> reason=satisfied`.
+    function acted(id, commands) {
+        const answer = raise(id, "chosen", commands);
         return answer === "satisfied" ? "refused: requirements=" + id + " reason=satisfied" : answer;
     }
 

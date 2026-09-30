@@ -308,13 +308,15 @@ function verify(logic) {
     const values = logic.statusValues({ scheduler: "cron", linger: "no", automations: listed });
     same(values, {
         scheduler: { tone: "warning", text: "cron: no systemd user manager answered" },
-        linger: { tone: "warning", text: "Automations run only while you are logged in" },
+        linger: { tone: "warning", text: "Automations run only while you are logged in", action: true },
         active: 1,
         nextRun: "Mon 2 Feb 2026 09:00",
         lastRuns: { tone: "danger", text: "Failing: Back up" }
     });
     assert.throws(() => logic.statusValues({ scheduler: "at", linger: "no", automations: [] }), /is not one of systemd, cron, none/);
     same(logic.statusValues({ scheduler: "systemd", linger: "yes", automations: [] }).lastRuns, { tone: "ok", text: "No automations" });
+    same(logic.statusValues({ scheduler: "systemd", linger: "yes", automations: [] }).linger, { tone: "ok", text: "Automations run while you are logged out" }, "lingering on offers no action");
+    same(logic.statusValues({ scheduler: "systemd", linger: "unknown", automations: [] }).linger, { tone: "info", text: "loginctl did not answer" }, "an unanswered loginctl offers no action");
     assert.equal(logic.refreshDelay({ automations: listed }, at("2026-02-02T08:00:00Z")), 3601000, "a second after the next run");
     assert.equal(logic.refreshDelay({ automations: [] }, 0), 24 * 60 * 60 * 1000, "at most a day");
     same(logic.changedKeys({ a: 1, b: { x: 1 } }, { a: 1, b: { x: 2 }, c: 3 }), ["b", "c"]);

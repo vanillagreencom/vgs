@@ -39,6 +39,12 @@ FocusScope {
     // plugin id -> the last refusal the manager answered for it, shown on
     // its page until a later call for that plugin succeeds.
     property var replies: ({})
+    // The last refusal or failure of a status step (D056), by
+    // `<id>/<key>` for an action and `<id>/<key>/<account>` for a secret,
+    // shown under that line until a later step there succeeds.
+    property var stepReplies: ({})
+    // The `<id>/<key>/<account>` of the secret write running, or "".
+    property string writing: ""
     // The page shown: "" for the list, else a plugin id.
     property string page: ""
     // The plugin page drawn, kept while it slides out on a pop.
@@ -141,6 +147,46 @@ FocusScope {
     function updatePlugin(id) { return keep(id, shell.manager.update(id)); }
     function removePlugin(id) { return keep(id, shell.manager.remove(id)); }
     function installRequirements(id) { return keep(id, shell.manager.installRequirements(id)); }
+
+    // Keep one step reply under STEP, a key of `stepReplies`, and answer it.
+    function keepStep(step, reply) {
+        const next = Object.assign({}, stepReplies);
+        if (Reply.isOk(reply)) delete next[step];
+        else {
+            next[step] = reply;
+            console.warn("settings: " + step + " " + reply);
+        }
+        stepReplies = next;
+        return reply;
+    }
+
+    // Run the action of plugin `id`'s status entry `key` through the
+    // manager: its floating TUI, which Hyprland focuses over this window,
+    // or the requirement notice; answers the manager's reply (D056).
+    function act(id, key) {
+        return keepStep(id + "/" + key, shell.manager.act(id, key));
+    }
+
+    // Store what the user typed as plugin `id`'s secret `account`, listed
+    // in its status entry `key`, or clear it, through the manager, which
+    // writes libsecret; each answers the manager's reply, and the write's
+    // end, a failure included, reads under the line. The secret goes to the
+    // manager alone: no reply, log line or property here holds it.
+    function storeSecret(id, key, account, secret) {
+        return secretStep(id + "/" + key + "/" + account, done => shell.manager.storeSecret(id, key, account, secret, done));
+    }
+    function clearSecret(id, key, account) {
+        return secretStep(id + "/" + key + "/" + account, done => shell.manager.clearSecret(id, key, account, done));
+    }
+
+    function secretStep(step, call) {
+        const reply = keepStep(step, call(result => {
+            if (root.writing === step) root.writing = "";
+            root.keepStep(step, result.ok ? "ok" : "refused: secret write failed " + result.reason);
+        }));
+        if (Reply.isOk(reply)) writing = step;
+        return reply;
+    }
 
     // Open the add of a plugin from a git URL in a floating terminal through
     // the manager; a refusal stays over the list until a later add opens.

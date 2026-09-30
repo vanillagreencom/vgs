@@ -332,6 +332,21 @@ Scope {
     function invoke(hostKey, id, name, arg) {
         const item = instance(hostKey, id);
         if (item === null) return "absent";
+        // A Settings step as its button hands it to the window (D056):
+        // `act` {id, key}, `storeSecret` {id, key, account, secret} and
+        // `clearSecret` {id, key, account}; each answers the manager.
+        if (name === "act") {
+            const a = JSON.parse(arg);
+            return item.act(a.id, a.key);
+        }
+        if (name === "storeSecret") {
+            const a = JSON.parse(arg);
+            return item.storeSecret(a.id, a.key, a.account, a.secret);
+        }
+        if (name === "clearSecret") {
+            const a = JSON.parse(arg);
+            return item.clearSecret(a.id, a.key, a.account);
+        }
         if (name === "applySetting") {
             const a = JSON.parse(arg);
             return root.answer(item.writeSetting(a.id, a.key, a.value));
@@ -604,6 +619,21 @@ Scope {
         // inside its content, so scripts/sandbox-shots.sh captures each
         // page of a scrolling panel. Answers [contentY, contentHeight,
         // height], or shown-scroll-areas=N when the target is ambiguous.
+        // Scrolls the shown ScrollArea holding the first shown, enabled
+        // item named `type` whose text is `text` under an instance so the
+        // item sits a third of the way down its view, for a real click on
+        // a control below the fold. Answers the new contentY, `absent` for
+        // no such item, or `unscrolled` for one no shown area holds.
+        function revealText(hostKey: string, id: string, type: string, text: string): string {
+            const target = root.textItem(hostKey, id, type, text);
+            if (target === null) return "absent";
+            const item = root.instance(hostKey, id);
+            const flick = root.shownScrollAreas(item).find(area => root.descendants(area).indexOf(target) !== -1);
+            if (flick === undefined) return "unscrolled";
+            const y = target.mapToItem(flick.contentItem, 0, 0).y - flick.height / 3;
+            flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+            return String(flick.contentY);
+        }
         function scrollTo(hostKey: string, id: string, y: int): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";

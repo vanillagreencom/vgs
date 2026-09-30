@@ -207,7 +207,8 @@ expect "the doctor capability refuses a command the core does not declare" "refu
 expect "the doctor capability refuses a disabled plugin" "refused: owner=acme.status reason=disabled" ipc smoke doctorOffer service vgs.devtools acme.status token
 expect "the doctor capability refuses an unknown owner" "refused: owner=acme.gone reason=unknown" ipc smoke doctorOffer service vgs.devtools acme.gone x
 
-# Settings reads the status rows back, read-only.
+# Settings reads the status rows back, read-only, each command behind Show
+# command.
 installed_count() { in_shell_env node "$repo/shell/plugins/vgs.devtools/bin/devtools" --tree "$repo" list --json | py_reply 'import json,sys; d=json.load(sys.stdin); print(sum(1 for rows in d["sections"].values() for r in rows if r["installed"] is True) + sum(1 for r in d["other"] if r["installed"] is True))'; }
 missing_count() { in_shell_env "$repo/bin/vgsh" doctor --json | py_reply 'import json,sys; d=json.load(sys.stdin); print(sum(1 for rows in [d["core"]] + list(d["plugins"].values()) for r in rows if r["state"] == "missing"))'; }
 expect "enabling Settings is allowed" ok ipc shell setPluginEnabled vgs.settings true
@@ -218,10 +219,18 @@ expect "Settings opens the Dev Tools page" ok ipc vgs.settings invoke open '{"pl
 checks_text="vgsh self status failed: method=unknown path=$(readlink -f -- "$repo"); a count a failed check feeds keeps its last answer"
 if dev_installed="$(installed_count)" && dev_missing="$(missing_count)"; then
   expect_poll "the manager row carries the published status" \
-    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "reported", {"tone": "ok", "text": "2026.9.9"}, "success", "vgsh pkg run install mise"], ["Checks", "reported", {"tone": "warning", "text": sys.argv[3]}, "warning", ""], ["Tools installed", "reported", int(sys.argv[1]), "", ""], ["Updates available", "reported", 0, "", ""], ["VGS requirements missing", "reported", int(sys.argv[2]), "", "vgsh doctor"]]))' "$dev_installed" "$dev_missing" "$checks_text")" status_of vgs.devtools
+    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "reported", {"tone": "ok", "text": "2026.9.9"}, "success", "vgsh pkg run install mise"], ["Checks", "reported", {"tone": "warning", "text": sys.argv[3]}, "warning", ""], ["Tools installed", "reported", int(sys.argv[1]), "", ""], ["Updates available", "reported", 0, "", ""], ["VGS requirements missing", "reported", int(sys.argv[2]), "", ""]]))' "$dev_installed" "$dev_missing" "$checks_text")" status_of vgs.devtools
   expect_poll "the page draws each status row, the catalog data not" \
-    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools window lists", "vgsh pkg run install mise"], ["Checks", sys.argv[3], "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH", "vgsh doctor"]]))' "$dev_installed" "$dev_missing" "$checks_text")" drawn_status
+    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools window lists", "Show command"], ["Checks", sys.argv[3], "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH; the VGS section of the Dev Tools window installs each"]]))' "$dev_installed" "$dev_missing" "$checks_text")" drawn_status
   expect "no Dev Tools status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs window vgs.settings
+  # Install mise, D056: the entry declares the action, which a present
+  # mise does not call for, so the page draws no button and the manager
+  # refuses the act, the control. The absent case's button is the shared
+  # install action rows/settings.sh presses on the status fixture.
+  expect_poll "a present mise offers no Install mise" '[["mise", "Install mise", false]]' offered_actions vgs.devtools
+  expected_errors+=('settings: vgs\.devtools/mise refused: action=mise reason=not-offered')
+  expect "the manager refuses Install mise while mise is present" "refused: action=mise reason=not-offered" settings_act vgs.devtools mise
+  expect "the refused act raised no notice" null notice_shown
 else
   fail "the list or the doctor report is unreadable for the status counts"
 fi

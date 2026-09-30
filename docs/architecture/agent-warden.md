@@ -22,14 +22,14 @@ The state is also derived again, with no file change, at the moment `WardenLogic
 
 ## Published status
 
-The service publishes these values through the core `status` capability ([status.md](status.md)). The first four are the plugin's read-only rows on its Settings page.
+The service publishes these values through the core `status` capability ([status.md](status.md)). The first four are the plugin's rows on its Settings page, where the warden and vsys rows offer their setup step as a button ([D056](../decisions/D056-no-manual-commands.md)).
 
 | Key | Type | Value |
 |---|---|---|
-| `warden` | state | Checking, Last scan failed, Stopped checking, Status unreadable, Status format not supported, Not set up, or Update the warden. The row shows `vsys warden install` to copy. |
+| `warden` | state | Checking, Last scan failed, Stopped checking, Status unreadable, Status format not supported, Not set up, or Update the warden. While `WardenLogic.setupStep` answers `setup`, a warden not set up or too old with vsys present, the value carries `action: true` and the row offers Set up, the `setup` TUI, the step the panel offers; `vsys warden install` shows behind Show command. |
 | `agents` | count | The agents running at the last check: lanes with an identified agent that are not leftover work. Not reported until a status lists them. |
 | `lastCheck` | time | The time of the last status the warden wrote. |
-| `vsys` | presence | `present` or `absent`, as the shell's last plugin scan found `vsys` on PATH. The row shows the vsys installer to copy. |
+| `vsys` | presence | `present` or `absent`, as the shell's last plugin scan found `vsys` on PATH. While absent the row offers Install vsys, the requirement notice for the `vsys` package; the vsys installer shows behind Show command for a system with no package. |
 | `detail` | data | `{ state, reason, checkedAt, agents, issues, items, memory }`, which the plugin's widget and flyout read: the state and its reason, the check time in milliseconds, the agent count, the number of `problem` and `look` items, the items most serious first, and the agent group's memory in bytes, `{ used, high, max }`, or null when unknown. Each item is `{ kind, level, ... }` with numbers and tool names, and never a process id or a scope name. `WardenLogic.itemsOf` lists the kinds. |
 
 `WardenLogic.gib` turns a byte count into the figure the plugin's copy shows with "GB": gibibytes, one decimal below 10 and whole from 10.

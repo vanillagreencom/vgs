@@ -47,6 +47,7 @@
       "type": "state",
       "label": "mise",
       "hint": "Installs, updates and removes every tool the Dev Tools window lists",
+      "action": { "label": "Install mise", "install": ["mise"] },
       "command": "vgsh pkg run install mise"
     },
     "checks": {
@@ -66,8 +67,7 @@
     "missingRequirements": {
       "type": "count",
       "label": "VGS requirements missing",
-      "hint": "Commands VGS or an enabled plugin runs that are not on PATH",
-      "command": "vgsh doctor"
+      "hint": "Commands VGS or an enabled plugin runs that are not on PATH; the VGS section of the Dev Tools window installs each"
     },
     "catalog": {
       "type": "data",

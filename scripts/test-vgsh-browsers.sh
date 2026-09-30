@@ -166,6 +166,20 @@ tinst "browser-policy without install is refused" "$cfg" "$rt_empty" 2 "" "vgsh:
 tinst "browser-policy with an extra argument is refused" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=now" theme browser-policy install now
 check "a refused browser-policy runs no writer" ran ""
 cp -- "$repo/bin/vgsh-browser-policy" "$tree/bin/vgsh-browser-policy"
+
+# `vgsh theme setup` reports the chromium target's one-time setup as apply's
+# enablement judges it, which the vgs.themes Settings page offers as a
+# button: not-detected without a browser, absent without the writer, done
+# with it.
+setup_row() { printf '{"setups":[{"name":"chromium","app":"Chromium, Google Chrome, Microsoft Edge and Brave","setup":"vgs-browser-policy","state":"%s"}]}' "$1"; }
+THEME_PATH="$stubs:$theme_path"
+tinst "setup without a Chromium-family browser reads not-detected" "$cfg" "$rt_empty" 0 "$(setup_row not-detected)" "" theme setup --json
+THEME_PATH="$without_setup"
+tinst "setup with a browser and no writer reads absent" "$cfg" "$rt_empty" 0 "$(setup_row absent)" "" theme setup --json
+tinst "the text form names the command and the state" "$cfg" "$rt_empty" 0 "setup=chromium command=vgs-browser-policy state=absent" "" theme setup
+THEME_PATH="$with_setup"
+tinst "setup with the writer on PATH reads done" "$cfg" "$rt_empty" 0 "$(setup_row done)" "" theme setup --json
+tinst "setup with an argument is refused" "$cfg" "$rt_empty" 2 "" "vgsh: refused: argument=now" theme setup now
 THEME_PATH="$stubs:$theme_path"
 
 # Must-fail controls, each on a copy of the tree whose target.json breaks
@@ -195,6 +209,9 @@ THEME_PATH="$without_setup"; cfg="$tmp/cfg-setup-ignored"; mkdir -p "$cfg/vgs"
 apply_json "the setup-ignoring apply mutant runs the hook" 3 "vgsh: refused: target=chromium reason=reload-failed command=sh status=127" dusk
 judge_control setup-ignored-reload 'if (!setup.value) return skipped("setup-absent");' ''
 tinst "the setup-ignoring reload mutant runs the hook" "$cfg" "$rt_empty" 3 "$any_out" "vgsh: refused: target=chromium reason=reload-failed command=sh status=127" theme reload --json
+judge_control setup-ignores-detect 'const state = !render.detected(detect, onPath) ? "not-detected" : render.setupDone' 'const state = false ? "not-detected" : render.setupDone'
+THEME_PATH="$stubs:$theme_path"
+tinst "the detect-ignoring setup mutant offers the setup with no browser" "$cfg" "$rt_empty" 0 "$(setup_row absent)" "" theme setup --json
 unset THEME_BIN THEME_PATH
 
 rows_done test-vgsh-browsers

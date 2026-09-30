@@ -259,21 +259,19 @@ function idle(detail) {
 }
 
 // The one setup button the flyout offers in place of its items for DETAIL,
-// { label, action }, or null for a state that needs none. An action is
-// `setup`, the setup TUI; `start`, START_ARGV; or `get-vsys`, vsys offered
-// through the core's notice; `link` adds `open`, the vsys TUI. Every setup
-// step needs vsys, so a missing vsys offers it first.
+// { label, action }, or null for a state that needs none: the step
+// WardenLogic.setupStep names. An action is `setup`, the setup TUI; `start`,
+// START_ARGV; or `get-vsys`, vsys offered through the core's notice; `link`
+// adds `open`, the vsys TUI.
 function setup(detail, vsysMissing) {
-    switch (detail.state) {
-    case "not-set-up":
-        return vsysMissing ? { label: "Get vsys", action: "get-vsys" } : { label: "Set up", action: "setup" };
-    case "update-warden":
-        return vsysMissing ? { label: "Get vsys", action: "get-vsys" } : { label: "Update", action: "setup" };
-    case "not-checking":
-        return detail.reason === "stale" ? { label: "Start it", action: "start" } : null;
-    default:
-        return null;
+    var step = WardenLogic.setupStep(detail, vsysMissing);
+    switch (step) {
+    case null: return null;
+    case "get-vsys": return { label: "Get vsys", action: "get-vsys" };
+    case "setup": return { label: detail.state === "update-warden" ? "Update" : "Set up", action: "setup" };
+    case "start": return { label: "Start it", action: "start" };
     }
+    throw new Error("agent-warden: setup step " + JSON.stringify(step) + " unknown");
 }
 
 // The flyout's footer link: Open vsys, or Get vsys while the last scan did

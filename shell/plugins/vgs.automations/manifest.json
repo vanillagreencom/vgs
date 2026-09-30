@@ -26,7 +26,7 @@
   ],
   "status": {
     "scheduler": { "type": "state", "label": "Scheduler", "hint": "systemd user timers when a systemd user manager answers, else the crontab" },
-    "linger": { "type": "state", "label": "While logged out", "hint": "User timers run while you are logged out only with lingering on", "command": "loginctl enable-linger" },
+    "linger": { "type": "state", "label": "While logged out", "hint": "User timers run while you are logged out only with lingering on", "action": { "label": "Enable while logged out", "tui": "linger" }, "command": "loginctl enable-linger" },
     "active": { "type": "count", "label": "Scheduled automations" },
     "nextRun": { "type": "text", "label": "Next run" },
     "lastRuns": { "type": "state", "label": "Last runs", "hint": "Automations whose last run failed; each failure also sends a notification whose click opens its transcript" },

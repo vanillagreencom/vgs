@@ -254,7 +254,7 @@ function statusValues(answers) {
         if (tools.value === null) {
             out.mise = { tone: "danger", text: clip("Unknown: the tool list failed: " + tools.error) };
         } else {
-            out.mise = tools.value.mise.present ? { tone: "ok", text: clip(tools.value.mise.version) } : { tone: "warning", text: "Not installed" };
+            out.mise = tools.value.mise.present ? { tone: "ok", text: clip(tools.value.mise.version) } : { tone: "warning", text: "Not installed", action: true };
             out.installed = listedRows(tools.value).filter(function (row) { return row.installed === true; }).length;
         }
     }

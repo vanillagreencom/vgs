@@ -18,7 +18,8 @@ import "AutomationsLogic.js" as Logic
 //     status    the published values, JSON
 //     sync      sync, then list; `ok`
 //     refresh   list; `ok`
-//     linger    opens the linger TUI; shell.tui.run's reply
+//     linger    opens the linger TUI; shell.tui.run's reply. Its end
+//               lists again, as every run of it does.
 Item {
     id: root
 
@@ -37,7 +38,14 @@ Item {
     readonly property string runsFolder: listed === null ? "" : "file://" + listed.runsDir
     readonly property string storeFile: listed === null ? "" : listed.storeFile
 
+    // The end of the linger TUI's last run, whoever opened it: the
+    // launcher, this plugin's IPC or the Settings page's Enable while logged
+    // out action. Each new end lists again, since lingering is no file the
+    // service watches.
+    readonly property var lingerEnd: shell === null || !shell.tui.state.linger ? null : shell.tui.state.linger.endedAt
+
     onShellChanged: start()
+    onLingerEndChanged: if (registered && lingerEnd !== null) request(["list", "--json"])
     onHistoryDaysChanged: if (registered) request(["prune", "--days", String(historyDays)])
 
     function start() {
@@ -53,7 +61,7 @@ Item {
             root.request(["list", "--json"]);
             return "ok";
         });
-        shell.ipc.handle("linger", () => shell.tui.run("linger", [], () => root.request(["list", "--json"])));
+        shell.ipc.handle("linger", () => shell.tui.run("linger", []));
         request(["sync"]);
         request(["prune", "--days", String(historyDays)]);
         request(["list", "--json"]);

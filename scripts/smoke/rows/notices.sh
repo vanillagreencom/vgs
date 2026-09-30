@@ -162,8 +162,9 @@ expect "the plugin landed disabled" False plugin_enabled acme.needs
 type_keys -k Escape || fail "sending Escape failed"
 expect_poll "Escape closes the notice" null notice_shown
 expect_poll "the closed notice leaves no surface" 0 layer_count vgs:notice
-# acme.bare rests from the notice rows/manager.sh raised from Settings.
-expect "the plugin's offers rest after Not now" '["acme.bare", "acme.needs"]' notice_resting
+# acme.bare rests from the notice rows/manager.sh raised from Settings, and
+# acme.status from the one its status action raised in rows/settings.sh.
+expect "the plugin's offers rest after Not now" '["acme.bare", "acme.needs", "acme.status"]' notice_resting
 
 # setPluginEnabled: enabling the plugin raises the notice again, whatever
 # the rest, since the user asked.

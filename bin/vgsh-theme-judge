@@ -2608,6 +2608,34 @@ async function wallpapersLand(format, configDir, stage, lock, name, mode) {
     else console.log("ok wallpapers=" + name + " state=" + result.wallpapers + " images=" + result.images + " archive=" + result.sha256.slice(0, 12));
 }
 
+// `vgsh theme setup`: every shipped target with a one-time owner step, its
+// `setup` command, in name order, as { name, app, setup, state }. `state`
+// is `not-detected` while none of the target's applications is on PATH,
+// `absent` while they are and the setup command is not, and `done` once it
+// is, as apply's enablement decides (render.detected, render.setupDone). A
+// shipped target.json the judge refuses refuses the report, since its
+// setup is then unknown. The vgs.themes Settings page reads the JSON form
+// and offers each `absent` step as a button (D056).
+function setups(format) {
+    const base = path.join(SHIPPED, TARGETS);
+    const names = childDirs(base);
+    if (names === null) unreadable(base, "ENOENT");
+    const rows = [];
+    for (const name of names) {
+        const verdict = readTarget(path.join(base, name)).verdict;
+        if (!verdict.ok) refuse("setup target=" + name + " reason=" + verdict.reason, verdict.reason, 1, render.refusalLine(name, verdict));
+        const { app, detect, setup } = verdict.target;
+        if (setup === undefined) continue;
+        const state = !render.detected(detect, onPath) ? "not-detected" : render.setupDone(verdict.target, onPath) ? "done" : "absent";
+        rows.push({ name, app, setup, state });
+    }
+    if (format === "json") {
+        process.stdout.write(JSON.stringify({ setups: rows }) + "\n");
+        return;
+    }
+    for (const row of rows) console.log("setup=" + row.name + " command=" + row.setup + " state=" + row.state);
+}
+
 // The download lock's file, which `vgsh theme wallpapers` holds for the
 // fetch: the one place its path is decided.
 function assetLock() {
@@ -2692,6 +2720,10 @@ main(() => {
     case "preview":
         if (args.length !== 3 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[1])) usage("arguments=" + command);
         return previewFetch(...args);
+    case "setup":
+        if (args.length !== 1 || !FORMATS.includes(args[0])) usage("arguments=" + command);
+        setups(args[0]);
+        break;
     case "asset-lock":
         if (args.length !== 0) usage("arguments=" + command);
         assetLock();

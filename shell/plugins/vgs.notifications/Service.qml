@@ -110,15 +110,17 @@ Item {
         workspaces: root.slackSource === null ? [] : root.slackSource.known
         listed: root.slackSource !== null && root.slackSource.listRead
         emojiEnabled: root.shell !== null && root.shell.settings.customEmoji === true
+        secretRevision: root.shell === null ? 0 : root.shell.secrets.revision
         onTokenStatesChanged: root.publishTokens()
         onTeamsChanged: root.publishTokens()
         onWorkspacesChanged: root.publishTokens()
     }
 
     // The Slack token rows of the plugin's status, a `presenceList`: each
-    // listed workspace's token state and the command that stores it, as the
-    // probe last found them (NotificationLogic.slackTokenRows). No token
-    // enters status. While the probe has not answered for the list as it
+    // listed workspace's token state, its libsecret account, which the
+    // Settings page's Connect and Disconnect write through the core, and the
+    // command that stores it, as the probe last found them
+    // (NotificationLogic.slackTokenRows). No token enters status. While the probe has not answered for the list as it
     // now stands, the rows wait for its next answer.
     function publishTokens() {
         if (shell === null || slackPhotos.tokenStates === null) return;

@@ -1483,12 +1483,20 @@ def command(account):
         return "secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
     team = account.split(":")[1]
     return "secret-tool store --label='VGS notifications Slack token %s' service vgs-notifications account %s" % (team, account)
+# A line offers Connect while its token is absent and Disconnect while one
+# is stored, and keeps its command behind Show command; a served line
+# offers neither and names no command.
+steps = {"present": "Disconnect", "absent": "Connect", "locked": "Disconnect"}
+accesses = {"present": "disconnect", "absent": "connect", "locked": "disconnect"}
 rows, drawn = [], ["Slack tokens", hint]
 for item in items.split(";"):
     account, state, *served = item.split(",")
-    served_hint = "Served by the single-workspace token" if served else ""
-    rows.append({"label": labels[account], "value": state, "hint": served_hint, "command": command(account), "tone": tones[state]})
-    drawn += [labels[account], words[state]] + ([served_hint] if served else []) + [command(account)]
+    if served:
+        rows.append({"label": labels[account], "value": state, "hint": "Served by the single-workspace token", "command": "", "tone": tones[state], "secret": "", "access": ""})
+        drawn += [labels[account], words[state], "Served by the single-workspace token"]
+    else:
+        rows.append({"label": labels[account], "value": state, "hint": "", "command": command(account), "tone": tones[state], "secret": account, "access": accesses[state]})
+        drawn += [labels[account], words[state], steps[state], "Show command"]
 print(json.dumps([["Slack tokens", "reported", "", "", rows]]) if what == "rows" else json.dumps([drawn]))
 PY
 }
@@ -1503,7 +1511,7 @@ expect_poll "the Settings service is built for the token rows" True record_exist
 expect "the notifications' Settings page opens" ok ipc shell summon window vgs.settings '{"plugin":"vgs.notifications"}'
 first_items="slack:T0ACME,present;slack:T0GLOBEX,present,served;slack,present"
 expect_poll "the page reads each workspace's token, globex served by the single-workspace one" "$(want_rows rows "$first_items")" token_row
-expect_poll "the page draws a line per account with the command that stores it" "$(want_rows drawn "$first_items")" drawn_token_row
+expect_poll "the page draws a line per account with its step, the command behind Show command" "$(want_rows drawn "$first_items")" drawn_token_row
 # Flips: label | the stub's states | the items the page reads.
 flips=(
   "locked|slack:T0ACME locked;slack:T0GLOBEX locked;slack present|slack:T0ACME,locked;slack:T0GLOBEX,locked;slack,present"
@@ -1515,8 +1523,60 @@ for flip in "${flips[@]}"; do
   slack_states "$states"
   restart_notes "$label"
   expect_poll "the page reads the tokens $label" "$(want_rows rows "$items")" token_row
-  expect_poll "the page draws the tokens $label with the commands that store them" "$(want_rows drawn "$items")" drawn_token_row
+  expect_poll "the page draws the tokens $label with their steps" "$(want_rows drawn "$items")" drawn_token_row
 done
+
+# Connect and Disconnect, D056: an absent token's Connect opens one masked
+# field on its line, and Enter hands what was typed to the core, which
+# runs `secret-tool store` with the account on its argv and the token on
+# stdin alone, whole and with no newline. The write's end probes again, so
+# the line reads Present and offers Disconnect, which runs `secret-tool
+# clear`, and the line reads Absent again. The controls: the manager
+# refuses a clear the absent line does not offer, a store the stored line
+# does not offer and an account the plugin does not list, and none
+# reaches secret-tool; each step that then succeeds on the line clears its
+# refusal; the typed token enters no argv, status record, manager row or
+# log line.
+typed_token="xoxp-smoke-typed-$SRANDOM"
+expected_errors+=('settings: vgs\.notifications/slackTokens/slack:T0(ACME|NOPE) refused: secret=slack:T0(ACME|NOPE) reason=(not-offered|unlisted)')
+secret_calls() { if [[ -e $shim/secret-tool.calls ]]; then wc -l <"$shim/secret-tool.calls"; else echo 0; fi; }
+last_secret_call() { if [[ -e $shim/secret-tool.calls ]]; then tail -n 1 -- "$shim/secret-tool.calls"; else echo none; fi; }
+acme_stdin() { python3 -c 'import os,sys; p=sys.argv[1]; print(repr(open(p, "rb").read()) if os.path.exists(p) else "absent")' "$shim/secret-tool.stdin.slack:T0ACME"; }
+row_inputs() { ipc smoke statusRowInputs window vgs.settings; }
+calls_before="$(secret_calls)"
+expect "the absent Acme line takes no edit before Connect" '[[]]' row_inputs
+expect "the manager refuses a clear the absent line does not offer" "refused: secret=slack:T0ACME reason=not-offered" ipc smoke invokeInstance window vgs.settings clearSecret '{"id":"vgs.notifications","key":"slackTokens","account":"slack:T0ACME"}'
+settings_press "Connect" StatusLine "Acme Corp (acme)" || fail "the click on Acme's Connect failed"
+expect_poll "Connect opens one masked field on the line" '[["TextField"]]' row_inputs
+masked() { ipc smoke itemTexts window vgs.settings StatusRow | py_reply 'import json,sys; print(json.dumps([t for r in json.load(sys.stdin) for t in r if t in ("Save", "Cancel")]))'; }
+expect_poll "the field's Save and Cancel are drawn" '["Save", "Cancel"]' masked
+type_keys "$typed_token" || fail "typing the token failed"
+type_keys -k Return || fail "sending Enter to the field failed"
+expect_poll "Save stores the token through secret-tool store, naming the account" "store --label=VGS notifications Slack token slack:T0ACME service vgs-notifications account slack:T0ACME" last_secret_call
+expect "the token reached secret-tool on stdin alone, whole, with no newline" "b'$typed_token'" acme_stdin
+# The write's end runs the photo helper at once, with no restart: the
+# token rows left no cache, so it asks Slack, which the stand-in curl
+# refuses.
+expected_errors+=('notifications-slack-photos: account=slack:T0ACME api=team\.info curl=failed status=19' 'notifications-slack-photos: emoji team=T0ACME api=emoji\.list curl=failed status=19' 'notifications-slack-photos: recovered')
+expect_log "the stored token runs the photo helper at once" 1 'notifications-slack-photos: account=slack:T0ACME api=team\.info curl=failed'
+expect_poll "the write's end probes again: Acme reads Present with Disconnect" "$(want_rows drawn "slack:T0ACME,present;slack:T0GLOBEX,absent")" drawn_token_row
+expect "the closed field leaves no input on the line" '[[]]' row_inputs
+expect "the manager refuses a store the stored line does not offer" "refused: secret=slack:T0ACME reason=not-offered" ipc smoke invokeInstance window vgs.settings storeSecret '{"id":"vgs.notifications","key":"slackTokens","account":"slack:T0ACME","secret":"xoxp-smoke-refused"}'
+expect "the manager refuses an account the plugin does not list" "refused: secret=slack:T0NOPE reason=unlisted" ipc smoke invokeInstance window vgs.settings storeSecret '{"id":"vgs.notifications","key":"slackTokens","account":"slack:T0NOPE","secret":"xoxp-smoke-refused"}'
+expect "of the steps so far only the Connect reached secret-tool" "$((calls_before + 1))" secret_calls
+settings_press "Disconnect" StatusLine "Acme Corp (acme)" || fail "the click on Acme's Disconnect failed"
+expect_poll "Disconnect clears the account through secret-tool clear" "clear service vgs-notifications account slack:T0ACME" last_secret_call
+expect_poll "the write's end probes again: Acme reads Absent with Connect" "$(want_rows drawn "slack:T0ACME,absent;slack:T0GLOBEX,absent")" drawn_token_row
+typed_in_argv() { grep -c -F -- "$typed_token" "$shim/secret-tool.calls" || true; }
+expect "no secret-tool argv holds the typed token" 0 typed_in_argv
+typed_leaks() {
+  local text
+  text="$(ipc shell lent)" && text+="$(ipc smoke readInstance window vgs.settings plugins)" && text+="$(ipc smoke readInstance window vgs.settings stepReplies)" || return
+  grep -c -F -- "$typed_token" <<<"$text" || true
+}
+expect "no status record, manager row or reply holds the typed token" 0 typed_leaks
+typed_in_log() { log_lines "$typed_token"; }
+expect "the shell's log holds no typed token" 0 typed_in_log
 # The lending record and the manager rows, read whole, hold the plugin's
 # record and row and nowhere a token.
 leaks() {

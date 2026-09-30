@@ -146,15 +146,18 @@ expect_poll "the agent warden's service is built" True record_exists vgs.agent-w
 expect_poll "no warden directory reads as not set up" '["not-set-up", null, 0, []]' warden_state
 expect "no status leaves the heartbeat alone" absent warden_heartbeat
 expect "an absent status logs nothing" 0 log_lines 'agent-warden: status='
-expect "the warden row says it is not set up" '{"tone": "info", "text": "Not set up"}' warden_value warden
+vsys_first="$(vsys_on_path)"
+# A warden row that offers Set up while vsys is present, D056: VALUE with
+# `action: true` added then.
+warden_setup_row() { python3 -c 'import json,sys; v=json.loads(sys.argv[1]); v.update({"action": True} if sys.argv[2] == "\"present\"" else {}); print(json.dumps(v))' "$1" "$vsys_first"; }
+expect "the warden row says it is not set up" "$(warden_setup_row '{"tone": "info", "text": "Not set up"}')" warden_value warden
 expect "no agent count is published before a status" null warden_value agents
 expect "the lending record holds the published keys" '["detail", "vsys", "warden"]' warden_lent
-vsys_first="$(vsys_on_path)"
 expect "vsys reads as the scan finds it on the sandbox PATH" "$vsys_first" warden_value vsys
 
 cp -- "$warden_fixtures/state.json" "$warden_dir/state.json"
 expect_poll "an older warden's state.json alone reads as update the warden" '["update-warden", null, 0, []]' warden_state
-expect "the warden row asks for an update" '{"tone": "warning", "text": "Update the warden"}' warden_value warden
+expect "the warden row asks for an update" "$(warden_setup_row '{"tone": "warning", "text": "Update the warden"}')" warden_value warden
 
 calm_time="$(warden_put calm 0)"
 expect_poll "a fresh calm status reads as calm" '["calm", null, 0, []]' warden_state
@@ -215,6 +218,16 @@ expect "enabling the Settings plugin for the warden's rows is allowed" ok ipc sh
 expect_poll "the Settings service is built" True record_exists vgs.settings
 expect "the Settings window is summoned" ok ipc shell summon window vgs.settings '{}'
 expect_poll "the Settings rows show the warden, the agents, the last check and vsys" "$(python3 -c 'import json,sys; print(json.dumps([["Warden", "reported", {"tone": "ok", "text": "Checking"}, "success", "vsys warden install"], ["Agents running", "reported", 1, "", ""], ["Last check", "reported", int(sys.argv[1]) * 1000, "", ""], ["vsys", "reported", json.loads(sys.argv[2]), {"present": "success", "absent": "warning"}[json.loads(sys.argv[2])], "curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash"]]))' "$calm_time" "$vsys_first")" warden_rows
+# The control of Set up and Install vsys, D056: a warden that checks
+# offers no Set up, a vsys the scan finds offers no Install vsys, and the
+# manager refuses each act then.
+expect_poll "a checking warden offers no Set up" "$(python3 -c 'import json,sys; print(json.dumps([["warden", "Set up", False], ["vsys", "Install vsys", sys.argv[1] == "\"absent\""]]))' "$vsys_first")" offered_actions vgs.agent-warden
+expected_errors+=('settings: vgs\.agent-warden/(warden|vsys) refused: action=(warden|vsys) reason=not-offered')
+expect "the manager refuses Set up for a checking warden" "refused: action=warden reason=not-offered" settings_act vgs.agent-warden warden
+if [[ $vsys_first == '"present"' ]]; then
+  expect "the manager refuses Install vsys while vsys is present" "refused: action=vsys reason=not-offered" settings_act vgs.agent-warden vsys
+fi
+expect "the refused acts raised no notice" null notice_shown
 expect "the Settings window is hidden" ok ipc shell hide window vgs.settings
 expect "disabling the Settings plugin after the rows is allowed" ok ipc shell setPluginEnabled vgs.settings false
 
@@ -362,6 +375,16 @@ click_item panel vgs.agent-warden Button "Set up" || fail "the click on Set up f
 expect_poll "Set up hands the terminal the setup TUI" "$(words vgs.agent-warden/setup tui/setup.sh)" recorded_tail
 expect_poll "the Set up hand-off closes the panel" hidden warden_panel_shown
 expect_run_end "the setup run ends" vgs.agent-warden/setup
+
+# Set up from the Settings page, D056: a warden not set up, with vsys
+# present, offers Set up, and its button opens the same setup TUI.
+settings_page_open vgs.agent-warden
+expect_poll "a warden not set up offers Set up, and a present vsys no install" '[["warden", "Set up", true], ["vsys", "Install vsys", false]]' offered_actions vgs.agent-warden
+forget_record
+settings_press "Set up" || fail "the click on the Settings page's Set up failed"
+expect_poll "the Settings page's Set up hands the terminal the setup TUI" "$(words vgs.agent-warden/setup tui/setup.sh)" recorded_tail
+expect_run_end "the Settings page's setup run ends" vgs.agent-warden/setup
+settings_page_close vgs.agent-warden
 
 cp -- "$warden_fixtures/state.json" "$warden_dir/state.json"
 expect_poll "the shield reads an older warden" '["shield-alert", "warning", "", "Agent Warden needs an update"]' warden_shield
@@ -605,6 +628,16 @@ rm -f -- "$shim/vsys" "$warden_dir/status.json"
 expect "a rescan after the stand-in vsys goes starts" ok ipc shell rescanPlugins
 expect_poll "vsys reads as the host PATH gives it" "$vsys_first" warden_value vsys
 if [[ $vsys_first == '"absent"' ]]; then
+  # Install vsys from the Settings page, D056: vsys absent offers it, and
+  # its button raises the core's notice for vsys, closed here unanswered.
+  settings_page_open vgs.agent-warden
+  expect_poll "an absent vsys offers Install vsys" '[["warden", "Set up", false], ["vsys", "Install vsys", true]]' offered_actions vgs.agent-warden
+  settings_press "Install vsys" || fail "the click on Install vsys failed"
+  expect_poll "Install vsys raises the notice for vsys" '["vgs.agent-warden", ["vsys"]]' warden_notice
+  expect_poll "the Install vsys notice holds the keyboard" true ipc smoke noticeFocused
+  type_keys -k Escape || fail "sending Escape to the Install vsys notice failed"
+  expect_poll "Escape closes the Install vsys notice" null warden_notice
+  settings_page_close vgs.agent-warden
   warden_open "without vsys"
   expect_poll "the panel without vsys offers Get vsys once" "$(words Agents "Agent Warden comes with vsys, which isn't installed." "Get vsys")" warden_panel
   click_item panel vgs.agent-warden Button "Get vsys" || fail "the click on Get vsys failed"

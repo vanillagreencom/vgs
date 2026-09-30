@@ -56,6 +56,7 @@ f share/vgs/shell/Core/PluginLogic.js
 f share/vgs/shell/Core/PluginStatus.qml
 f share/vgs/shell/Core/Plugins.qml
 f share/vgs/shell/Core/Registry.qml
+f share/vgs/shell/Core/SecretWriter.qml
 f share/vgs/shell/Core/ServiceGate.qml
 f share/vgs/shell/Core/SessionLock.qml
 f share/vgs/shell/Core/ShortcutRegistry.qml
@@ -96,6 +97,7 @@ f share/vgs/shell/Ui/feedback/AvatarFace.qml
 f share/vgs/shell/Ui/feedback/AvatarGroup.qml
 f share/vgs/shell/Ui/feedback/Badge.qml
 f share/vgs/shell/Ui/feedback/CodeLine.qml
+f share/vgs/shell/Ui/feedback/CommandDisclosure.qml
 f share/vgs/shell/Ui/feedback/Dialog.qml
 f share/vgs/shell/Ui/feedback/EmptyState.qml
 f share/vgs/shell/Ui/feedback/Kbd.qml
@@ -271,6 +273,7 @@ f share/vgs/shell/plugins/vgs.themes/DesktopPreview.qml
 f share/vgs/shell/plugins/vgs.themes/Files.js
 f share/vgs/shell/plugins/vgs.themes/KeyHints.qml
 f share/vgs/shell/plugins/vgs.themes/Service.qml
+f share/vgs/shell/plugins/vgs.themes/SetupLogic.js
 f share/vgs/shell/plugins/vgs.themes/ThemeCard.qml
 f share/vgs/shell/plugins/vgs.themes/ThemePaletteStrip.qml
 f share/vgs/shell/plugins/vgs.themes/ThemeRow.qml
@@ -281,6 +284,7 @@ f share/vgs/shell/plugins/vgs.themes/WallpaperState.qml
 f share/vgs/shell/plugins/vgs.themes/WallpaperView.qml
 f share/vgs/shell/plugins/vgs.themes/Widget.qml
 f share/vgs/shell/plugins/vgs.themes/manifest.json
+f share/vgs/shell/plugins/vgs.themes/tui/browser-policy.sh
 f share/vgs/shell/plugins/vgs.updates/NormalizeCheck.js
 f share/vgs/shell/plugins/vgs.updates/Panel.qml
 f share/vgs/shell/plugins/vgs.updates/Service.qml

@@ -274,6 +274,8 @@ has_agent_warden=false
 has_bar_plugin=false
 has_automations=false
 has_jarvis=false
+has_setup_steps=false
+[[ -f $tree/shell/Ui/feedback/CommandDisclosure.qml ]] && has_setup_steps=true
 [[ -f $tree/shell/plugins/vgs.agent-warden/manifest.json ]] && has_agent_warden=true
 [[ -f $tree/shell/plugins/vgs.automations/manifest.json ]] && has_automations=true
 [[ -f $tree/shell/plugins/vgs.jarvis/manifest.json ]] && has_jarvis=true
@@ -486,17 +488,23 @@ settings_close() {
 }
 # The single-workspace token's store command: the last line of the Slack
 # section, on the page of this checkout and of a revision before per-workspace
-# tokens alike.
+# tokens alike. A tree that keeps the command behind Show command (D056)
+# ends the section with that line's Show command button instead.
 slack_legacy_command="secret-tool store --label='VGS notifications Slack token' service vgs-notifications account slack"
-# settings_section HEADING TYPE TEXT: the page's section headed HEADING,
-# through the item TYPE TEXT, in its scroll area's content coordinates, as
+# settings_section HEADING [SCOPE_TYPE SCOPE_TEXT] TYPE TEXT: the page's
+# section headed HEADING, through the item TYPE TEXT, inside the first
+# shown SCOPE_TYPE that draws SCOPE_TEXT when one is named, in its scroll
+# area's content coordinates, as
 # `START END HEIGHT`: the heading's top, that item's bottom, and the area's
 # height. The bar spans the area, so its top is the area's.
 settings_section() {
   local area header last
   area="$(settings_scroll)" && [[ $area == \{* ]] || { echo "area=${area:-unread}"; return 1; }
   header="$(ipc smoke windowGeometry "$settings_kind" vgs.settings SectionHeader "$1")" && [[ $header == \[* ]] || { echo "heading=${header:-unread}"; return 1; }
-  last="$(ipc smoke windowGeometry "$settings_kind" vgs.settings "$2" "$3")" && [[ $last == \[* ]] || { echo "last-line=${last:-unread}"; return 1; }
+  if [[ $# -eq 5 ]]; then last="$(ipc smoke scopedWindowGeometry "$settings_kind" vgs.settings "$2" "$3" "$4" "$5")"
+  else last="$(ipc smoke windowGeometry "$settings_kind" vgs.settings "$2" "$3")"
+  fi
+  [[ $last == \[* ]] || { echo "last-line=${last:-unread}"; return 1; }
   python3 -c 'import json,sys
 a, h, l = (json.loads(v) for v in sys.argv[1:4])
 top, y = a["bar"][1], a["contentY"]
@@ -528,6 +536,60 @@ page_reported() { # ID
 jarvis_started() { ipc smoke jarvisProcess | py_reply 'import json,sys; d=json.load(sys.stdin); print("ready" if d["retries"] == 0 and d["lifetime"]["kind"] == "ready" else "retries=%d kind=%s" % (d["retries"], d["lifetime"]["kind"]))'; }
 # Whether the Jarvis page's Status rows draw its Daemon row as ready.
 jarvis_page_ready() { ipc smoke itemTexts "$settings_kind" vgs.settings StatusRow | py_reply 'import json,sys; print(any("Daemon" in r and "Ready; no capture" in r for r in json.load(sys.stdin)))'; }
+# slack_section: the Slack section through its last line: on a tree with
+# the setup steps of D056, the single-workspace token's Show command, else
+# the command that line draws.
+slack_section() {
+  if "$has_setup_steps"; then settings_section Slack StatusLine "Single-workspace token" Button "Show command"
+  else settings_section Slack CodeLine "$slack_legacy_command"
+  fi
+}
+# The setup steps of D056 on the open Settings window: Globex's Connect with
+# its masked field typed into, Acme's command behind Show command, the
+# status fixture's Set up token and Install the tool, Automations' Enable
+# while logged out, Themes' Install browser theming once the chromium
+# target ships, and Settings' own page with its command revealed.
+automations_offers() { ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; print(str(any(s["action"] and s["action"]["offered"] for p in json.load(sys.stdin) if p["id"] == "vgs.automations" for s in p["status"])).lower())'; }
+scene_setup_steps() { # MODE
+  local section start end height
+  if section="$(slack_section)"; then
+    read -r start end height <<<"$section"
+    settings_scroll_to "$((start - 12))" || fail "the scroll to the Slack section failed"
+  fi
+  settings_press "Connect" StatusLine "Globex" || fail "the click on Globex's Connect failed"
+  type_keys "xoxp-shot-token" || fail "typing into the masked field failed"
+  park_pointer
+  take "setup-$1-slack-connect"
+  type_keys -k Escape || fail "sending Escape to the masked field failed"
+  settings_press "Show command" StatusLine "Acme Corp (acme)" || fail "the click on Acme's Show command failed"
+  park_pointer
+  take "setup-$1-slack-show-command"
+  expect "the status fixture publishes its token absent" ok ipc acme.status invoke set 'token="absent"'
+  expect "the status fixture publishes a check that offers its install" ok ipc acme.status invoke set 'check={"tone":"warning","text":"Tool missing","action":true}'
+  expect "the window opens the status fixture's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin acme.status
+  expect_poll "the status fixture's page is shown" '"acme.status"' settings_page
+  settings_press "Show command" || fail "the click on the Token's Show command failed"
+  park_pointer
+  take "setup-$1-actions"
+  expect "the window opens the Automations page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.automations
+  expect_poll "the Automations page is shown" '"vgs.automations"' settings_page
+  expect_poll "Automations offers Enable while logged out" true automations_offers
+  settings_scroll_to 0 >/dev/null || fail "the Automations page did not scroll to the top"
+  expect_poll "the Automations page is at its top" True settings_at_top
+  park_pointer
+  take "setup-$1-automations"
+  expect "the window opens the Themes page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.themes
+  expect_poll "the Themes page is shown" '"vgs.themes"' settings_page
+  settings_scroll_to 0 >/dev/null || fail "the Themes page did not scroll to the top"
+  expect_poll "the Themes page is at its top" True settings_at_top
+  park_pointer
+  take "setup-$1-browser-theming"
+  expect "the window opens its own page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.settings
+  expect_poll "its own page is shown" '"vgs.settings"' settings_page
+  settings_press "Show command" || fail "the click on the own page's Show command failed"
+  park_pointer
+  take "setup-$1-settings-command"
+}
 # The Settings window: the list opened from the gear, the pointer on the
 # gear; a search nothing matches; a plugin page with many grouped settings at its top, dragged down
 # its scroll bar, and with its Mode select open; a plugin with keys; the
@@ -681,7 +743,7 @@ scene_settings() { # MODE
   # The Slack section in view: its heading at the top, and, when the
   # section is taller than the area, a second shot with its last line at
   # the bottom, so every line and command shows across the two.
-  if section="$(settings_section Slack CodeLine "$slack_legacy_command")"; then
+  if section="$(slack_section)"; then
     read -r start end height <<<"$section"
     settings_scroll_to "$((start - margin))" || fail "the scroll to the Slack section failed"
     park_pointer
@@ -694,6 +756,7 @@ scene_settings() { # MODE
   else
     fail "the notifications' Slack section is unreadable: $section"
   fi
+  if "$has_setup_steps"; then scene_setup_steps "$1"; fi
   settings_close
   # The monitor made narrower than the window (narrow_begin): the gear
   # opens the window on its bar's monitor, the list first and then a page.
@@ -1388,7 +1451,10 @@ PY
       # lookup finds no token, so the photo helper calls nothing.
       mkdir -p -- "$home/.config/Slack"
       cp -R -- "$checkout/scripts/smoke/fixtures/slack/." "$home/.config/Slack/"
-      printf '%s\n' "slack:T0ACME present" "slack:T0GLOBEX locked" "slack present" >"$shim/secret-tool.states"
+      # A tree with the setup steps of D056 holds globex's token absent, so
+      # its line offers Connect.
+      if "$has_setup_steps"; then globex_state=absent; else globex_state=locked; fi
+      printf '%s\n' "slack:T0ACME present" "slack:T0GLOBEX $globex_state" "slack present" >"$shim/secret-tool.states"
       cat >"$shim/secret-tool" <<SH
 #!/usr/bin/env bash
 [[ \${1:-} == search && \${2:-} == service && \${3:-} == vgs-notifications && \${4:-} == account && \$# -eq 5 ]] || exit 1
@@ -1405,7 +1471,29 @@ SH
       for id in acme.probe vgs.launcher vgs.notifications vgs.settings; do
         expect "enabling $id is allowed" ok ipc shell setPluginEnabled "$id" true
         expect_poll "$id is built" True record_exists "$id"
-      done ;;
+      done
+      if "$has_setup_steps"; then
+        # The setup steps' pages: the status fixture, Automations over
+        # stand-ins that answer lingering off and reach no systemd, and
+        # Themes with the chromium target shipped, so a host with a
+        # Chromium-family browser and no writer offers its install.
+        mkdir -p "$home/.config/vgs/plugins/acme.status"
+        cp -R -- "$fixtures/acme.status/." "$home/.config/vgs/plugins/acme.status/"
+        printf '#!/usr/bin/env bash\necho no\n' >"$shim/loginctl"
+        printf '#!/usr/bin/env bash\nexit 0\n' >"$shim/systemctl"
+        chmod 755 "$shim/loginctl" "$shim/systemctl"
+        cp -R -- "$checkout/themes/targets/chromium" "$repo/themes/targets/chromium"
+        expect "the status fixture is scanned" ok ipc shell rescanPlugins
+        expect_poll "the status fixture is listed" True plugin_known acme.status
+        for id in acme.status vgs.automations; do
+          expect "enabling $id is allowed" ok ipc shell setPluginEnabled "$id" true
+          expect_poll "$id is built" True record_exists "$id"
+        done
+        expect "the themes plugin is disabled to read the shipped target" ok ipc shell setPluginEnabled vgs.themes false
+        expect_poll "the themes service is gone" False record_exists vgs.themes
+        expect "the themes plugin is enabled with the target shipped" ok ipc shell setPluginEnabled vgs.themes true
+        expect_poll "the themes service is built" True record_exists vgs.themes
+      fi ;;
   esac
 done
 
