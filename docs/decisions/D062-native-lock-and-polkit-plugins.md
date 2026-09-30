@@ -1,4 +1,4 @@
-# D058: A native lock plugin on the core's session lock, and a native polkit agent
+# D062: A native lock plugin on the core's session lock, and a native polkit agent
 
 [← Decision Index](INDEX.md)
 

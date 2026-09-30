@@ -64,4 +64,4 @@ To let VGS own an appearance group, remove the user's own later lines for that g
 
 ## Decisions
 
-[D028](../decisions/D028-one-generated-hyprland-layer.md), [D044](../decisions/D044-application-windows-are-hyprland-toplevels.md), [D048](../decisions/D048-theme-owned-hyprland-appearance.md), [D067](../decisions/D067-overlay-keyboard-capture.md), [D058](../decisions/D058-native-lock-and-polkit-plugins.md), [D021](../decisions/D021-theme-apply-writes-beside-each-destination.md).
+[D028](../decisions/D028-one-generated-hyprland-layer.md), [D044](../decisions/D044-application-windows-are-hyprland-toplevels.md), [D048](../decisions/D048-theme-owned-hyprland-appearance.md), [D067](../decisions/D067-overlay-keyboard-capture.md), [D062](../decisions/D062-native-lock-and-polkit-plugins.md), [D021](../decisions/D021-theme-apply-writes-beside-each-destination.md).

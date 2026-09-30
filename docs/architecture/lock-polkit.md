@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.lock/**, shell/plugins/vgs.polkit/**, shell/Core/IdleRegistry.qml, bin/vgsh-lock, scripts/smoke/lock/**, scripts/test-lock-model.js, scripts/test-lock-sleep-watch.sh, scripts/test-vgsh-lock.sh, scripts/test-polkit-model.js, scripts/smoke/rows/lock.sh, scripts/smoke/rows/polkit.sh
 
-How a VGS session locks and how it answers polkit. Both are native plugins on objects the core owns: [D058](../decisions/D058-native-lock-and-polkit-plugins.md). The core's `lock`, `polkit` and `idle` capabilities are [capabilities.md](capabilities.md).
+How a VGS session locks and how it answers polkit. Both are native plugins on objects the core owns: [D062](../decisions/D062-native-lock-and-polkit-plugins.md). The core's `lock`, `polkit` and `idle` capabilities are [capabilities.md](capabilities.md).
 
 ## Lock
 

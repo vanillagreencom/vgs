@@ -11,7 +11,7 @@ import "LockModel.js" as LockModel
 // and the compositor keeps it locked when the shell dies. Within the shell,
 // only a password PAM accepts, checked through this plugin's own stack in
 // pam/, unlocks; with the restore option on, another client of the session
-// can take the lock over and release it (D058).
+// can take the lock over and release it (D062).
 //
 // Entry points: the shortcut `lock` (SUPER+L in the manifest), the IPC
 // function `vgsh ipc call vgs.lock invoke lock ''`, which `vgsh lock`
