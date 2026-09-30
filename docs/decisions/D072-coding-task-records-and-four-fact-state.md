@@ -17,7 +17,7 @@
 **Rationale**:
 - A Stop changes the turn fact, not the question or permission fact. A turn failure remains until the producer reports a new working turn.
 - Only the agent's explicit outcome report supplies reported success. Neither Stop nor exit code zero supplies it.
-- Whole-file rename publishes each record without a partial read. A separate dropped-event marker preserves overflow evidence without exceeding the event ceiling.
+- Whole-file rename publishes each record without a partial read. A separate dropped-event marker preserves overflow evidence without exceeding the event ceiling. It retains one raw terminal process observation so a capped task remains eligible for ended-task pruning after restart.
 - Replay from disk removes dependence on the daemon's previous memory. The writer lock releases on process death.
 - The data copy follows D052's engine lifetime. [D014](D014-source-revisions-are-published-snapshots.md) permits deletion of a task's original plugin snapshot.
 

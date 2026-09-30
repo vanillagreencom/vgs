@@ -5,6 +5,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const cp = require("node:child_process");
 
+// Synthetic Tasks.js v1 records from the Jarvis plan, 2026-09-30.
+function seedTaskEvents(folder, count) {
+    for (let seq = 1; seq <= count; seq++)
+        fs.writeFileSync(path.join(folder, String(seq).padStart(4, "0") + ".json"),
+            JSON.stringify({ v: 1, seq, at: seq, kind: "working", data: {} }) + "\n", { mode: 0o600 });
+}
+
 // Run the real suite and a missing-parent control in a private source export.
 // The export owns its tmp directory; no existing worktree tmp is removed.
 function freshSuite(tree, suite, root) {
@@ -130,7 +137,7 @@ function service(sourceTree, tree, root) {
     fs.writeFileSync(keys, keysSource.replace(keysNeedle, keysCommand));
 }
 
-module.exports = { freshSuite };
+module.exports = { freshSuite, seedTaskEvents };
 if (require.main === module) {
     if (process.argv[2] === "--gate-daemon") {
         assert.equal(process.argv.length, 6);

@@ -119,6 +119,10 @@ function eventRecord(record, seq) {
     return record;
 }
 
+function terminalKind(kind) {
+    return kind === "exited" || kind === "lost";
+}
+
 function metadata(record, id) {
     if (!shape(record, ["v", "id", "goal", "cwd", "agent", "account", "createdAt", "engine"]) || record.v !== 1
         || record.id !== id || typeof record.goal !== "string" || record.goal.length === 0 || !text(record.agent)
@@ -146,12 +150,12 @@ function stateOf(facts, noisy) {
 }
 
 // Replay is the sole state judge for the daemon and later task consumers.
-function derive(events, noisy = false) {
+function derive(events, noisy = false, terminal = null) {
     const facts = { process: { kind: "starting" }, turn: { kind: "working" },
         wait: { kind: "none" }, outcome: { kind: "none" } };
     let endedAt = null;
     let identity = null;
-    for (const event of events) {
+    function apply(event) {
         switch (event.kind) {
         case "started":
             identity = { ...event.data };
@@ -171,6 +175,8 @@ function derive(events, noisy = false) {
         default: fail("event-kind");
         }
     }
+    for (const event of events) apply(event);
+    if (terminal !== null) apply(terminal);
     return { ...facts, state: stateOf(facts, noisy), identity, endedAt };
 }
 
@@ -237,17 +243,23 @@ class Store {
             if (events.length > MAX_EVENTS) fail("event-count", eventDir);
         }
         let dropped = 0;
+        let terminal = null;
         const marker = path.join(folder, "noisy.json");
         let markerStat = null;
         try { markerStat = fs.lstatSync(marker); }
         catch (error) { if (error.code !== "ENOENT") fail("stat:" + error.code, marker); }
         if (markerStat !== null) {
             const value = json(marker);
-            if (!shape(value, ["v", "dropped"]) || value.v !== 1
+            if (!shape(value, ["v", "dropped", "terminal"]) || value.v !== 1
                 || !Number.isSafeInteger(value.dropped) || value.dropped < 1) fail("noisy-record", marker);
             dropped = value.dropped;
+            if (value.terminal !== null) {
+                if (events.length !== MAX_EVENTS) fail("terminal-count", marker);
+                terminal = eventRecord(value.terminal, events.length + 1);
+                if (!terminalKind(terminal.kind)) fail("terminal-kind", marker);
+            }
         }
-        return { ...record, ...derive(events, dropped > 0), events, noisy: dropped > 0, dropped };
+        return { ...record, ...derive(events, dropped > 0, terminal), events, terminal, noisy: dropped > 0, dropped };
     }
 
     list() {
@@ -287,7 +299,12 @@ class Store {
         const reason = oversized || Buffer.byteLength(JSON.stringify(event) + "\n") > MAX_BYTES
             ? "record-bytes" : current.events.length >= MAX_EVENTS ? "event-count" : null;
         if (reason !== null) {
-            atomic(path.join(folder, "noisy.json"), { v: 1, dropped: Math.min(Number.MAX_SAFE_INTEGER, current.dropped + 1) });
+            const terminal = reason === "event-count" && terminalKind(kind)
+                ? eventRecord(event, event.seq) : current.terminal;
+            atomic(path.join(folder, "noisy.json"), {
+                v: 1, dropped: Math.min(Number.MAX_SAFE_INTEGER, current.dropped + 1), terminal
+            });
+            if (terminal === event) this.prune();
             return { accepted: false, id, noisy: true, reason };
         }
         eventRecord(event, event.seq);

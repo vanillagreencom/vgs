@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const cp = require("node:child_process");
 const { once } = require("node:events");
+const { seedTaskEvents } = require("./fixtures/jarvis/prepare.js");
 const tree = path.resolve(__dirname, "..");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const Tasks = require(path.join(backend, "Tasks.js"));
@@ -63,8 +64,8 @@ async function inside() {
     fs.rmSync(snapshot, { recursive: true });
 
     let cases = 0, controls = 0;
-    function run(file, id, kind, input = "", expectedCode = 0) {
-        const result = cp.spawnSync("node", [file, "--state", state, id, ...(kind === undefined ? [] : [kind])], {
+    function run(file, id, kind, input = "", expectedCode = 0, targetState = state) {
+        const result = cp.spawnSync("node", [file, "--state", targetState, id, ...(kind === undefined ? [] : [kind])], {
             env, input, encoding: "utf8", timeout: 10000
         });
         if (result.error) throw result.error;
@@ -146,6 +147,45 @@ async function inside() {
         fs.writeFileSync(copy, changed);
         assert.throws(() => check(copy), assert.AssertionError, name + " must turn red");
         controls++;
+    }
+    function cappedTerminal(file, kind) {
+        const capState = fs.mkdtempSync(path.join(root, "producer-cap-" + kind + "-"));
+        const owner = new Tasks.Store(capState, () => Number.MAX_SAFE_INTEGER);
+        for (const id of ["capped", "second", "active"]) owner.create(id, goal, engine);
+        for (let n = 0; n < 49; n++) {
+            owner.create("ended-" + n, goal, engine);
+            owner.append("ended-" + n, "exited", { code: 0 });
+        }
+        for (const id of ["capped", "second"]) seedTaskEvents(path.join(owner.root, id, "events"), 2000);
+        const payload = kind === "exited" ? { code: 0 } : {};
+        const result = run(file, "capped", kind, JSON.stringify(payload), 75, capState);
+        assert.deepEqual(JSON.parse(result.stdout), { accepted: false, id: "capped", noisy: true, reason: "event-count" });
+        assert.equal(result.stderr.trim(), "jarvis: task-event=overflow id=capped reason=event-count");
+        const restarted = new Tasks.Store(capState);
+        const record = restarted.read("capped");
+        assert.equal(record.process.kind, kind);
+        if (kind === "exited") assert.equal(record.process.code, 0);
+        assert.equal(record.noisy, true);
+        assert.equal(record.state, "noisy");
+        assert.equal(record.events.length, 2000);
+        assert.equal(record.outcome.kind, "none");
+        assert.equal(record.endedAt, record.terminal.at);
+        run(file, "capped", "outcome", '{"kind":"reported-ok"}', 75, capState);
+        const afterDrop = restarted.read("capped");
+        assert.equal(afterDrop.endedAt, record.endedAt);
+        assert.deepEqual(afterDrop.process, record.process);
+        assert.equal(afterDrop.outcome.kind, "none");
+        assert.equal(afterDrop.state, "noisy");
+        run(file, "second", kind, JSON.stringify(payload), 75, capState);
+        assert.equal(fs.existsSync(path.join(owner.root, "capped")), false, "the producer must prune the oldest capped task");
+        assert.equal(restarted.list().filter(task => task.endedAt !== null).length, 50);
+        assert.equal(restarted.read("second").events.length, 2000);
+        assert.equal(restarted.read("active").endedAt, null);
+    }
+    for (const kind of ["exited", "lost"]) {
+        cappedTerminal(engine, kind);
+        control("capped-forward-" + kind, "store.append(id, kind, data, oversized)",
+            'store.append(id, "working", {}, oversized)', file => cappedTerminal(file, kind));
     }
     control("overflow-exit", "return result.accepted ? 0 : 75;", "return 0;",
         file => run(file, "one", "working", "x".repeat(8193), 75));

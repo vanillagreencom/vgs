@@ -48,9 +48,11 @@ Startup runs the same lock-held producer's prune command. It reads the metadata,
 
 The state directory holds `tasks.lock` and `tasks/<id>/`. Each task holds `task.json`, numbered files under `events/`, and an optional `noisy.json`. Only the writer's private temporary names are uncommitted. Readers ignore them after an interrupted publication.
 
-`Store.append` enforces the [plan's bounds table](../plans/v2-jarvis-plan.md#311-bounds). A dropped event leaves the retained facts unchanged, increments the noisy marker and returns an explicit overflow refusal. Consumers must expose `noisy` and `dropped`; lost evidence cannot certify a task outcome. The derived display state is noisy until the task's record is removed.
+`Store.append` enforces the [plan's bounds table](../plans/v2-jarvis-plan.md#311-bounds). A dropped event increments the noisy marker and returns an explicit overflow refusal. At the event ceiling, the marker also retains the latest valid exited or lost observation as one bounded raw event. Other dropped events leave the retained facts unchanged. Consumers must expose `noisy` and `dropped`; lost evidence cannot certify a task outcome. The derived display state is noisy until the task's record is removed.
 
-`Store.prune` removes the oldest tasks whose process is exited or lost, by the recorded end time. It does not prune a task just because a turn or outcome ended. Active records stay. Task creation and event writes run pruning under the same writer lock.
+`Store.read` validates the marker's terminal observation through the existing event judge and replays it through the same four-fact reducer after the retained events. It returns that raw observation as `terminal`. The event files stay at the hard ceiling. Process and end time remain derived independently of noisy state. An overflow does not produce or overwrite an outcome.
+
+`Store.prune` removes the oldest tasks whose process is exited or lost, by the recorded end time. This includes capped tasks with terminal evidence in the noisy marker. It does not prune a task just because a turn or outcome ended. Active records stay. Task creation, accepted event writes and capped terminal observations run pruning under the same writer lock.
 
 Records are whole-file writes followed by rename. Directories use private mode 0700 and records use 0600. The helper itself has mode 0600 because producers invoke it through Node. `flock` is a declared requirement with packages for the manifest's supported managers.
 

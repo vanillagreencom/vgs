@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const cp = require("node:child_process");
-const { freshSuite } = require("./fixtures/jarvis/prepare.js");
+const { freshSuite, seedTaskEvents } = require("./fixtures/jarvis/prepare.js");
 const tree = path.resolve(__dirname, "..");
 const file = path.join(tree, "shell/plugins/vgs.jarvis/backend/Tasks.js");
 const Tasks = require(file);
@@ -97,9 +97,7 @@ function inside() {
     // Reach the retained event ceiling without running a process per record.
     create("full");
     const eventDir = path.join(store.root, "full/events");
-    for (let seq = 1; seq <= 2000; seq++)
-        fs.writeFileSync(path.join(eventDir, String(seq).padStart(4, "0") + ".json"),
-            JSON.stringify({ v: 1, seq, at: seq, kind: "working", data: {} }) + "\n", { mode: 0o600 });
+    seedTaskEvents(eventDir, 2000);
     assert.deepEqual(append("full", "turn-ended"), { accepted: false, id: "full", noisy: true, reason: "event-count" });
     assert.equal(store.read("full").events.length, 2000);
     assert.equal(store.read("full").noisy, true);
@@ -110,6 +108,81 @@ function inside() {
     control("event-ceiling", "const MAX_EVENTS = 2000;", "const MAX_EVENTS = 2001;",
         logic => assert.equal(new logic.Store(state).append("full", "turn-ended", {}).accepted, false));
     fs.rmSync(path.join(eventDir, "2001.json"), { force: true });
+
+    function cappedTerminal(logic, kind) {
+        const stateRoot = fs.mkdtempSync(path.join(root, "capped-" + kind + "-"));
+        const owner = new logic.Store(stateRoot, () => 5000);
+        owner.create("capped", data, engine);
+        owner.create("second", data, engine);
+        owner.create("active", data, engine);
+        const later = new logic.Store(stateRoot, () => 10000);
+        for (let n = 0; n < 49; n++) {
+            later.create("ended-" + n, data, engine);
+            later.append("ended-" + n, "exited", { code: 0 });
+        }
+        for (const id of ["capped", "second"]) seedTaskEvents(path.join(owner.root, id, "events"), 2000);
+        const payload = kind === "exited" ? { code: 0 } : {};
+        assert.deepEqual(owner.append("capped", kind, payload),
+            { accepted: false, id: "capped", noisy: true, reason: "event-count" });
+        const restarted = new logic.Store(stateRoot);
+        const record = restarted.read("capped");
+        assert.deepEqual(record.process, kind === "exited" ? { kind: "exited", code: 0 } : { kind: "lost" });
+        assert.equal(record.endedAt, 5000);
+        assert.equal(record.state, "noisy");
+        assert.equal(record.noisy, true);
+        assert.equal(record.outcome.kind, "none");
+        assert.equal(record.events.length, 2000);
+        assert.equal(record.dropped, 1);
+        assert.deepEqual(record.terminal, { v: 1, seq: 2001, at: 5000, kind, data: payload });
+        const marker = path.join(owner.root, "capped/noisy.json");
+        assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(marker))).sort(), ["dropped", "terminal", "v"]);
+        assert.equal(fs.statSync(marker).mode & 0o777, 0o600);
+        assert.ok(fs.statSync(marker).size <= 8192);
+        owner.append("capped", "outcome", { kind: "reported-ok" });
+        const afterDrop = restarted.read("capped");
+        assert.deepEqual(afterDrop.process, record.process);
+        assert.equal(afterDrop.endedAt, 5000);
+        assert.equal(afterDrop.outcome.kind, "none");
+        assert.equal(afterDrop.dropped, 2);
+        assert.equal(restarted.list().filter(task => task.endedAt !== null).length, 50);
+        later.append("second", kind, payload);
+        assert.equal(fs.existsSync(path.join(owner.root, "capped")), false, "oldest capped task must be pruned");
+        assert.equal(restarted.list().filter(task => task.endedAt !== null).length, 50);
+        assert.equal(restarted.read("active").process.kind, "starting");
+        assert.equal(restarted.read("second").process.kind, kind);
+        assert.equal(restarted.read("second").events.length, 2000);
+    }
+    for (const kind of ["exited", "lost"]) {
+        cappedTerminal(Tasks, kind);
+        control("capped-" + kind, 'reason === "event-count" && terminalKind(kind)', "false && terminalKind(kind)",
+            logic => cappedTerminal(logic, kind));
+    }
+    control("terminal-replay", "if (terminal !== null) apply(terminal);", "if (false) apply(terminal);",
+        logic => cappedTerminal(logic, "exited"));
+    control("terminal-prune", "if (terminal === event) this.prune();", "if (false) this.prune();",
+        logic => cappedTerminal(logic, "lost"));
+
+    function terminalMarker(logic, id, terminal, reason) {
+        const marker = path.join(store.root, id, "noisy.json");
+        const previous = fs.existsSync(marker) ? fs.readFileSync(marker) : null;
+        fs.writeFileSync(marker, JSON.stringify({ v: 1, dropped: 1, terminal }), { mode: 0o600 });
+        try { assert.throws(() => new logic.Store(state).read(id), { message: "jarvis: tasks=" + reason + (reason.startsWith("terminal-") ? " path=" + marker : "") }); }
+        finally {
+            if (previous === null) fs.rmSync(marker);
+            else fs.writeFileSync(marker, previous);
+        }
+    }
+    const premature = { v: 1, seq: 1, at: 5000, kind: "exited", data: { code: 0 } };
+    terminalMarker(Tasks, "starting", premature, "terminal-count");
+    control("terminal-count", 'if (events.length !== MAX_EVENTS) fail("terminal-count", marker);',
+        'if (false) fail("terminal-count", marker);', logic => terminalMarker(logic, "starting", premature, "terminal-count"));
+    const nonterminal = { v: 1, seq: 2001, at: 5000, kind: "working", data: {} };
+    terminalMarker(Tasks, "full", nonterminal, "terminal-kind");
+    control("terminal-kind", 'if (!terminalKind(terminal.kind)) fail("terminal-kind", marker);',
+        'if (false) fail("terminal-kind", marker);', logic => terminalMarker(logic, "full", nonterminal, "terminal-kind"));
+    terminalMarker(Tasks, "full", { ...premature, seq: 2001, data: { code: null } }, "exit-code");
+    terminalMarker(Tasks, "full", { ...premature, seq: 2002 }, "event-record");
+    terminalMarker(Tasks, "full", { ...premature, seq: 2001, at: -1 }, "event-record");
 
     create("large");
     assert.equal(append("large", "turn-failed", { kind: "é".repeat(4096) }).accepted, false);
@@ -245,7 +318,7 @@ function inside() {
     fs.writeFileSync(corrupt, "x".repeat(8193));
     assert.throws(() => store.read("starting"), /tasks=record-bytes/);
     fs.rmSync(corrupt);
-    fs.writeFileSync(path.join(store.root, "starting/noisy.json"), '{"v":1,"dropped":0}');
+    fs.writeFileSync(path.join(store.root, "starting/noisy.json"), '{"v":1,"dropped":0,"terminal":null}');
     assert.throws(() => store.read("starting"), /tasks=noisy-record/);
     control("noisy-record", "value.dropped < 1", "false",
         logic => assert.throws(() => new logic.Store(state).read("starting"), /tasks=noisy-record/));
