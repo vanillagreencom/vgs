@@ -12,6 +12,10 @@ it is cut from, and the crop, one of CROPS. An image is a markdown
 Rules, each a finding key:
   readme-missing      a plugin directory has no README.md.
   no-image            a plugin README shows no image.
+  no-own-image        a plugin README shows images, and none of them is
+                      its own: a file with a table row whose name starts
+                      with the plugin's id and `-`, the longest id that
+                      fits naming the owner, as for row-unreferenced.
   image-form          an image is a reference-style `![alt][ref]`, which
                       this check does not resolve; write it inline.
   image-not-relative  an image path has a scheme or a leading `/`.
@@ -165,6 +169,14 @@ def plugins():
     return found
 
 
+def owner(image, ids):
+    """The plugin id IMAGE's name starts with, followed by `-`: the longest
+    when ids share a prefix, so vgs.one-two-shot.webp is vgs.one-two's.
+    None when no id fits."""
+    owners = [plugin for plugin in ids if image.startswith(plugin + "-")]
+    return max(owners, key=len) if owners else None
+
+
 def judge_image(path, findings):
     """Findings for the image file at PATH, repository-relative."""
     data = read(path)
@@ -207,6 +219,7 @@ def check():
             continue
         if COMMAND not in text:
             findings.append(("command-unnamed", readme))
+        own = False
         for target in paths:
             where = "%s:%s" % (readme, target)
             if SCHEME.match(target) or target.startswith("/"):
@@ -219,17 +232,21 @@ def check():
             if not os.path.isfile(os.path.join(ROOT, resolved)):
                 findings.append(("image-missing", where))
                 continue
-            shown.setdefault(os.path.basename(resolved), set()).add(plugin)
+            name = os.path.basename(resolved)
+            shown.setdefault(name, set()).add(plugin)
+            own = own or (name in listed and owner(name, ids) == plugin)
+        if not own:
+            findings.append(("no-own-image", readme))
     for image, _scene, _shot, _crop in rows:
         path = "%s/%s" % (IMAGES, image)
-        owners = [plugin for plugin in ids if image.startswith(plugin + "-")]
         if not os.path.isfile(os.path.join(ROOT, path)):
             findings.append(("row-image-missing", path))
             continue
         judge_image(path, findings)
-        if not owners:
+        image_owner = owner(image, ids)
+        if image_owner is None:
             findings.append(("row-plugin", path))
-        elif max(owners, key=len) not in shown.get(image, set()):
+        elif image_owner not in shown.get(image, set()):
             findings.append(("row-unreferenced", path))
     for name in listdir(IMAGES):
         if name != os.path.basename(TABLE) and name not in listed:
