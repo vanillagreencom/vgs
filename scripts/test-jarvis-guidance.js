@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Synthetic fixtures from the voice class contract in v2-jarvis-plan.md § 5,
-// authored 2026-09-30. They have no provider wire or recording.
+// Source: docs/plans/v2-jarvis-plan.md § 5. Voice-agent skill
+// Synthetic fixtures authored 2026-09-30. No provider wire or recording.
 "use strict";
 const { assert, fs, path, backend, world, control } = require("./fixtures/jarvis-voice/assertions.js");
 const Guidance = require(path.join(backend, "Guidance.js"));
