@@ -25,7 +25,7 @@ The list motion every list of rows shares: one cursor that travels between the r
 
 ## A plugin that owns its look
 
-- The launcher owns its look ([appearance.md](appearance.md)). It hands `ListCursor` and `ListEntrance` its own `motion`, in the shape of `motion.list`, and its own glass plate as the cursor's `background`. Each step there is `Easing.BezierSpline` with the launcher's curve, which `ListAnimation` reads, and every duration comes from the launcher's table, so the theme reaches it through `motion.scale` alone ([D053](../decisions/D053-list-motion-is-one-cursor-in-qs-ui.md)).
+- The launcher owns its look ([appearance.md](appearance.md)). It hands `ListCursor` and `ListEntrance` its own `motion`, in the shape of `motion.list`, and its own glass plate as the cursor's `background`. Each step there is `Easing.BezierSpline` with the launcher's curve, which `ListAnimation` reads, and every duration comes from the launcher's table, so the theme reaches it through `motion.scale` alone ([D054](../decisions/D054-list-motion-is-one-cursor-in-qs-ui.md)).
 - The launcher keeps four parts of its own. These are its timings and curves, the slide in from the side a menu change came from (`shift`), and which rows count as new: a row that stays across a rebuild shows at once. The fourth is the edge light, which lights the card, not a row.
 
 ## Omarchy
@@ -40,4 +40,4 @@ Omarchy (`basecamp/omarchy`, branch `quattro` at `8b4eae6`, read 2026-09-29) kee
 
 ## Decisions
 
-- The list motion is one cursor in `qs.Ui`, and a plugin that owns its look hands it its own timings: [D053](../decisions/D053-list-motion-is-one-cursor-in-qs-ui.md).
+- The list motion is one cursor in `qs.Ui`, and a plugin that owns its look hands it its own timings: [D054](../decisions/D054-list-motion-is-one-cursor-in-qs-ui.md).
