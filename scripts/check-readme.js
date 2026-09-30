@@ -137,7 +137,7 @@ const installAutostart = (() => {
 
 const runtimeAutostart = (() => {
     const rel = "docs/architecture/runtime.md";
-    const m = /Autostart is `(hl\.on\([^`\n]*\))`/.exec(readText(rel));
+    const m = /Autostart is \x60(hl\.on\([^\x60\n]*\))\x60/.exec(readText(rel));
     if (m === null) unreadable(rel, "no `Autostart is `hl.on(...)`` sentence");
     return m[1];
 })();
@@ -188,7 +188,7 @@ function fences(sec) {
     const found = [];
     let open = null;
     for (const line of sec.lines) {
-        const m = /^```(\S*)\s*$/.exec(line.text);
+        const m = /^\x60\x60\x60(\S*)\s*$/.exec(line.text);
         if (open === null && m !== null) open = { lang: m[1], n: line.n, lines: [] };
         else if (open !== null && line.text.trim() === "```") {
             found.push(open);
@@ -345,7 +345,7 @@ function checkPlugins(shipped) {
 
 function checkLicence(licence) {
     for (const line of licence.lines) {
-        const m = /The package licence is `([^`]+)`/.exec(line.text);
+        const m = /The package licence is \x60([^\x60]+)\x60/.exec(line.text);
         if (m === null) continue;
         if (m[1] !== pkgbuildLicence) finding("licence", line.n, `have=${m[1]} want=${pkgbuildLicence}`);
         return;
