@@ -33,7 +33,9 @@ set -euo pipefail
 ipc() {
   "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1
 }
-stop_shell
+# stop_shell fails the row itself when the instance lock stays held; the
+# start below then fails on the held lock too, and the row goes on.
+stop_shell || :
 
 # screen_scale NAME: the screen the background on NAME was handed, as
 # `WxH ratio=R`, the size in logical pixels.
@@ -113,7 +115,7 @@ PY
       fi
       check_unexpected_log "the scale-2 shell's log" "$instance_log"
     fi
-    stop_shell
+    stop_shell || :
     if [[ -e $sandbox/hidpi-backgrounds.json ]]; then
       mv -T -- "$sandbox/hidpi-backgrounds.json" "$bg_state/backgrounds.json"
     else
