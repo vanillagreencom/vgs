@@ -7,7 +7,6 @@ const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { once } = require("node:events");
-const { helper } = require("./fixtures/jarvis/prepare.js");
 const tree = path.resolve(__dirname, "..");
 const daemon = path.join(tree, "shell/plugins/vgs.jarvis/backend/jarvisd.js");
 const source = fs.readFileSync(daemon, "utf8");
@@ -88,9 +87,11 @@ async function main() {
     if (process.argv[2] === "--inside") return inside();
     const root = fs.mkdtempSync(path.join(tree, "tmp/jarvis-daemon-"));
     try {
-        const launcher = helper(tree, root);
+        const launcher = path.join(tree, "scripts/lib/jarvis-env.sh");
+        fs.mkdirSync(path.join(root, "standins"));
         const result = cp.spawnSync("/bin/bash", [launcher, path.join(root, "standins"), "--", "node", __filename, "--inside"],
-            { env: { PATH: "/usr/bin:/bin", HOME: root }, encoding: "utf8", timeout: 30000 });
+            { env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
+                encoding: "utf8", timeout: 30000 });
         process.stdout.write(result.stdout || "");
         process.stderr.write(result.stderr || "");
         if (result.error) throw result.error;

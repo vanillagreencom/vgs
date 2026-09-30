@@ -1,24 +1,12 @@
-// Test-only instrumentation. Both daemon tests and nested smoke use the
-// J09 owner unchanged except for scratch allocation inside their own world.
+// Test-only service instrumentation. The shared J09 helper runs directly.
 "use strict";
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-function helper(sourceTree, root) {
-    fs.mkdirSync(root, { recursive: true });
-    fs.mkdirSync(path.join(root, "standins"), { recursive: true });
-    const source = fs.readFileSync(path.join(sourceTree, "scripts/lib/jarvis-env.sh"), "utf8");
-    const needle = 'root="$(mktemp -d)"';
-    assert.equal(source.split(needle).length - 1, 1, "J09 scratch allocation match");
-    const copy = path.join(root, "jarvis-env.sh");
-    const allocation = 'root="' + path.join(sourceTree, "tmp", "jw-$$") + '"\n  mkdir -m 700 -- "$root"';
-    fs.writeFileSync(copy, source.replace(needle, () => allocation), { mode: 0o700 });
-    return copy;
-}
-
 function service(sourceTree, tree, root) {
-    const launcher = helper(sourceTree, root);
+    fs.mkdirSync(path.join(root, "standins"), { recursive: true });
+    const launcher = path.join(sourceTree, "scripts/lib/jarvis-env.sh");
     const lease = path.join(root, "lease.sh");
     // Bash gives an asynchronous command /dev/null on stdin. J09 starts
     // its namespace supervisor asynchronously, so carry the service pipe
@@ -36,7 +24,6 @@ function service(sourceTree, tree, root) {
     fs.writeFileSync(file, source.replace(needle, replacement));
 }
 
-module.exports = { helper, service };
 if (require.main === module) {
     assert.equal(process.argv.length, 5);
     service(...process.argv.slice(2));

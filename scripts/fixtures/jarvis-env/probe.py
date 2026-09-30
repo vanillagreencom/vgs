@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 
 
 def child(args):
@@ -84,6 +85,7 @@ elif mode == "namespace":
     assert result.stdout.splitlines() == mine
 elif mode == "environment":
     assert "JARVIS_PARENT_ONLY" not in os.environ
+    assert "JARVIS_TEST_SCRATCH_ROOT" not in os.environ
     assert not set(os.environ).intersection({
         "TMUX", "DISPLAY", "WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE",
         "VGSH_RUNNER_PID", "SSH_AUTH_SOCK", "NODE_OPTIONS", "BASH_ENV", "ENV",
@@ -92,6 +94,15 @@ elif mode == "environment":
     assert os.environ["VGS_TEST_RUN"] == "1"
     assert os.environ["LC_ALL"] == "C"
     assert os.environ["TZ"] == "UTC"
+elif mode == "scratch-parent":
+    root = Path(os.environ["JARVIS_TEST_ROOT"])
+    assert root.is_absolute() and root == root.resolve()
+    assert root.is_dir() and not root.is_symlink()
+    assert root.stat().st_mode & 0o777 == 0o700
+    assert root.parent == Path(sys.argv[2]).resolve()
+    assert "JARVIS_TEST_SCRATCH_ROOT" not in os.environ
+    assert os.environ["TMPDIR"] == str(root / "tmp")
+    print(root)
 elif mode == "directory":
     key, suffix = sys.argv[2:]
     root = Path(os.environ["JARVIS_TEST_ROOT"])
@@ -136,7 +147,7 @@ elif mode == "buses":
     ids = []
     for kind in ("session", "system"):
         address = os.environ["DBUS_" + kind.upper() + "_BUS_ADDRESS"]
-        assert address.startswith("unix:path=" + os.environ["XDG_RUNTIME_DIR"] + "/" + kind + ".bus,")
+        assert address.startswith("unix:path=" + quote(os.environ["XDG_RUNTIME_DIR"] + "/" + kind + ".bus", safe="/") + ",")
         result = bus_call(kind, "GetId")
         assert result.returncode == 0, result.stderr
         ids.append(result.stdout)

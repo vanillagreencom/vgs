@@ -47,7 +47,7 @@ J13 owns audio process lifetime, forced daemon death ending its children, and ca
 - `scripts/test-jarvis-daemon.js` runs the real daemon and lease controls through the [J09 test world](validation-jarvis.md). Its fixture parameters enter as arguments. No caller environment reaches the world.
 - `scripts/smoke/rows/jarvis.sh` reads a real answer, disables the service, reads both owned PIDs gone, and exhausts the restart allowance. Its disposable six-retry copy breaks the five-retry assertion.
 - `scripts/smoke/rows/read-only-prefix.sh` adds the shared test observer to its disposable installed tree, then starts the installed service and gets its answer with the prefix non-writable. The existing tree snapshot assertion checks that startup changes no installed file.
-- Smoke instruments only disposable service copies to launch the child through J09. `scripts/fixtures/jarvis/prepare.js` keeps that instrumentation in one place. Its helper copy changes only scratch allocation to the test's worktree-local directory. A fixture launcher carries the stdin pipe through a descriptor, because Bash replaces stdin with `/dev/null` for the helper's asynchronous namespace supervisor. It restores stdin inside the namespace before executing the real daemon.
+- Smoke instruments only disposable service copies to launch the child through the real J09 helper. `scripts/fixtures/jarvis/prepare.js` keeps that instrumentation in one place. The helper itself owns worktree-local scratch allocation. A fixture launcher carries the stdin pipe through a descriptor, because Bash replaces stdin with `/dev/null` for the helper's asynchronous namespace supervisor. It restores stdin inside the namespace before executing the real daemon.
 
 ## Omarchy comparison
 

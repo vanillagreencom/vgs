@@ -9,7 +9,6 @@ const assert = require("node:assert/strict");
 const cp = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
-const os = require("node:os");
 const path = require("node:path");
 
 const helper = path.join(__dirname, "lib/jarvis-env.sh");
@@ -28,7 +27,7 @@ function run(command, args, env, timeout = 60000) {
 
 function explicitEnv(root) {
     return { PATH: systemPath, HOME: path.join(root, "parent-home"), TMPDIR: root, LC_ALL: "C",
-        JARVIS_PARENT_ONLY: "scrub-me", VGS_TEST_RUN: "1" };
+        JARVIS_TEST_SCRATCH_ROOT: root, JARVIS_PARENT_ONLY: "scrub-me", VGS_TEST_RUN: "1" };
 }
 
 // This is the suite's namespace supervisor, not a CLI world owner with TERM
@@ -60,7 +59,9 @@ async function main() {
         return;
     }
     if (process.argv[2] !== "--inside") {
-        const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "test-jarvis-env-")));
+        const parent = path.resolve(__dirname, "../tmp");
+        fs.mkdirSync(parent, { recursive: true });
+        const root = fs.realpathSync(fs.mkdtempSync(path.join(parent, "je-")));
         fs.mkdirSync(path.join(root, "parent-home"));
         try {
             const result = runNamespace([process.execPath, __filename, "--inside", root], explicitEnv(root));
@@ -140,6 +141,21 @@ async function main() {
     function refusal(directory, key, file = helper) {
         const result = cli(file, directory, "true");
         assert.equal(result.status, 1, result.stderr);
+        assert.equal(result.stderr.trim(), key);
+    }
+    function scratchLocation(file, parent, overrides = {}) {
+        const result = run("/bin/bash", [file, standins, "--", "python3", probe, "scratch-parent", parent],
+            { ...env, ...overrides });
+        assert.equal(result.status, 0, result.stderr);
+        const allocated = result.stdout.trim();
+        assert.equal(path.dirname(allocated), fs.realpathSync(parent));
+        assert.equal(fs.existsSync(allocated), false, "owner removes the allocated world");
+    }
+    function scratchRefusal(file, parent, key) {
+        const result = run("/bin/bash", [file, standins, "--", "true"],
+            { ...env, JARVIS_TEST_SCRATCH_ROOT: parent });
+        assert.equal(result.status, 1, result.stderr);
+        assert.equal(result.stdout, "");
         assert.equal(result.stderr.trim(), key);
     }
 
@@ -223,6 +239,41 @@ async function main() {
 
     try {
         const standinResult = cli(helper, standins, "jarvis-standin");
+        scratchLocation(helper, root);
+        const defaultEnv = { ...env };
+        delete defaultEnv.JARVIS_TEST_SCRATCH_ROOT;
+        const defaultResult = run("/bin/bash",
+            [helper, standins, "--", "python3", probe, "scratch-parent", path.resolve(__dirname, "../tmp")], defaultEnv);
+        assert.equal(defaultResult.status, 0, defaultResult.stderr);
+        assert.equal(fs.existsSync(defaultResult.stdout.trim()), false);
+        const alias = path.join(root, "alias");
+        fs.symlinkSync(root, alias);
+        scratchLocation(helper, root, { JARVIS_TEST_SCRATCH_ROOT: alias });
+        const special = path.join(root, "space & parent");
+        scratchLocation(helper, special, { JARVIS_TEST_SCRATCH_ROOT: special });
+        scratchRefusal(helper, "", "jarvis-env: scratch-parent=empty");
+        const parentFile = path.join(root, "parent-file");
+        fs.writeFileSync(parentFile, "");
+        scratchRefusal(helper, parentFile, "jarvis-env: scratch-parent=create-failed path=" + parentFile);
+        mutation("scratch-parent", 'scratch="${JARVIS_TEST_SCRATCH_ROOT-${self%/*}/../../tmp}"',
+            'scratch="' + path.join(root, "other") + '"', file => scratchLocation(file, root));
+        mutation("scratch-empty", '[[ -n $scratch ]]', '[[ -n $scratch ]] || true',
+            file => scratchRefusal(file, "", "jarvis-env: scratch-parent=empty"));
+        const allocatedTarget = path.join(root, "allocated-real");
+        const allocatedAlias = path.join(root, "allocated-alias");
+        fs.mkdirSync(allocatedTarget);
+        fs.symlinkSync(allocatedTarget, allocatedAlias);
+        const allocation = 'print(tempfile.mkdtemp(prefix="jv-", dir=sys.argv[1]))';
+        const linked = mutationFile("allocated-link", allocation, 'print(sys.argv[1] + "/allocated-alias")');
+        const linkedKey = "jarvis-env: scratch=not-a-directory value=[" + allocatedAlias + "]";
+        scratchRefusal(linked, root, linkedKey);
+        const linkGuard = "[[ -d $root && ! -L $root ]]";
+        const linkSource = fs.readFileSync(linked, "utf8");
+        assert.equal(linkSource.split(linkGuard).length - 1, 1);
+        const acceptedLink = path.join(root, "accepted-link.sh");
+        fs.writeFileSync(acceptedLink, linkSource.replace(linkGuard, linkGuard + " || [[ -d $root ]]"));
+        assert.throws(() => scratchRefusal(acceptedLink, root, linkedKey), assert.AssertionError);
+        controls++;
         assert.equal(standinResult.status, 0, standinResult.stderr);
         assert.equal(standinResult.stdout, "standin=ok\n");
         const sourced = run("/bin/bash", ["--noprofile", "--norc", "-c",
@@ -276,6 +327,8 @@ async function main() {
             assert.equal(result.status, status, result.stderr);
         }
         mutation("scrub", "/usr/bin/env -i\n", "/usr/bin/env\n", file => good(file, "environment"));
+        mutation("scratch-setting-leak", 'JARVIS_TEST_ROOT="$root")',
+            'JARVIS_TEST_ROOT="$root" JARVIS_TEST_SCRATCH_ROOT="$scratch")', file => good(file, "environment"));
         for (const [key, suffix] of directories) {
             // All substituted paths remain inside the outer scratch world.
             mutation("scratch-" + key, key + '="$root/' + suffix + '"',
@@ -292,7 +345,7 @@ async function main() {
             'export DBUS_SESSION_BUS_ADDRESS="$DBUS_SYSTEM_BUS_ADDRESS"', file => good(file, "buses"));
         mutation("system-bus", 'export DBUS_SYSTEM_BUS_ADDRESS="$address"',
             'export DBUS_SYSTEM_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"', file => good(file, "buses"));
-        mutation("bus-activation", "'</busconfig>'", "'<standard_session_servicedirs/>' '</busconfig>'",
+        mutation("bus-activation", "</policy></busconfig>", "</policy><standard_session_servicedirs/></busconfig>",
             file => good(file, "activation"));
         mutation("tmux-socket", '-S "$JARVIS_TEST_TMUX_SOCKET"', '-S "$JARVIS_TEST_ROOT/run/wrong.sock"',
             file => good(file, "tmux"));

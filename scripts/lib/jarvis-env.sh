@@ -9,6 +9,9 @@
 # JARVIS_TEST_ROOT and JARVIS_TEST_TMUX_SOCKET name this invocation's scratch
 # world. No caller environment entries pass through. Fixture parameters are
 # command arguments or scratch files, never inherited environment variables.
+# JARVIS_TEST_SCRATCH_ROOT selects the parent directory for fresh worlds.
+# Default: this helper's worktree tmp/. The launcher resolves it physically;
+# this parent setting and the caller's TMPDIR never enter the child.
 
 _jarvis_env_error() {
   printf 'jarvis-env: %s\n' "$*" >&2
@@ -30,14 +33,30 @@ _jarvis_env_run() {
   if [[ $# -lt 3 || $2 != -- || -z $3 ]]; then
     _jarvis_env_error 'refused=arguments'; return 2
   fi
-  local standins self root tool real entry name owner="" status=0
+  local standins self scratch allocator root tool real entry name owner="" status=0
   standins="$(cd -- "$1" && pwd -P)" || { _jarvis_env_error "standins=unreadable path=$1"; return 1; }
   shift 2
   self="$(readlink -f -- "${BASH_SOURCE[0]}")" || return 1
-  # A short system temporary path fits Unix socket addresses and contains
-  # no caller-supplied XML characters in the private bus configuration.
+  scratch="${JARVIS_TEST_SCRATCH_ROOT-${self%/*}/../../tmp}"
+  [[ -n $scratch ]] || { _jarvis_env_error 'scratch-parent=empty'; return 1; }
+  umask 077
+  if ! mkdir -p -- "$scratch" 2>/dev/null; then
+    _jarvis_env_error "scratch-parent=create-failed path=$scratch"; return 1
+  fi
+  scratch="$(cd -- "$scratch" && pwd -P)" ||
+    { _jarvis_env_error "scratch-parent=resolve-failed path=$scratch"; return 1; }
+  allocator="$(PATH=/usr/bin:/usr/sbin:/bin:/sbin type -P -- python3)" ||
+    { _jarvis_env_error 'status=not-measured missing=python3'; return 77; }
   unset TMPDIR
-  root="$(mktemp -d)" || { _jarvis_env_error 'scratch=mktemp-failed'; return 1; }
+  root="$(/usr/bin/env -i LC_ALL=C "$allocator" -I - "$scratch" <<'PY'
+import sys, tempfile
+try:
+    print(tempfile.mkdtemp(prefix="jv-", dir=sys.argv[1]))
+except OSError as error:
+    print(f"jarvis-env: scratch=create-failed parent={sys.argv[1]} error={error}", file=sys.stderr)
+    sys.exit(1)
+PY
+)" || return 1
   [[ -d $root && ! -L $root ]] || { _jarvis_env_error "scratch=not-a-directory value=[$root]"; return 1; }
   root="$(cd -- "$root" && pwd -P)" || { _jarvis_env_error 'scratch=resolve-failed'; return 1; }
   _jarvis_env_cleanup() {
@@ -131,12 +150,22 @@ _jarvis_env_inside() {
   for bus in system session; do
     # No includes, servicedir or standard_session_servicedirs: a request on
     # either bus cannot activate a service from the host or a fixture.
-    printf '%s\n' '<busconfig>' '<type>session</type>' \
-      "<listen>unix:path=$root/run/$bus.bus</listen>" '<auth>EXTERNAL</auth>' \
-      '<policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy>' \
-      '</busconfig>' >"$root/$bus.conf"
+    local expected
+    expected="$("$root/tools/python3" -I - "$root/$bus.conf" "$root/run/$bus.bus" <<'PY'
+from pathlib import Path
+import sys
+from urllib.parse import quote
+address = "unix:path=" + quote(sys.argv[2], safe="/")
+Path(sys.argv[1]).write_text(
+    '<busconfig><type>session</type><listen>' + address +
+    '</listen><auth>EXTERNAL</auth><policy context="default">'
+    '<allow user="*"/><allow own="*"/><allow send_destination="*"/>'
+    '<allow receive_sender="*"/></policy></busconfig>')
+print(address)
+PY
+)" || return 1
     address="$("$root/bootstrap/dbus-daemon" --fork --print-address --config-file="$root/$bus.conf")" || return 1
-    [[ $address == "unix:path=$root/run/$bus.bus,"* ]] ||
+    [[ $address == "$expected,"* ]] ||
       { _jarvis_env_error "bus=unexpected-address kind=$bus"; return 1; }
     case "$bus" in
       session) export DBUS_SESSION_BUS_ADDRESS="$address" ;;
