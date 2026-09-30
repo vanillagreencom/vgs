@@ -40,7 +40,10 @@ open_browser_for_capture() {
 helper_events() { local status=0; grep -cE -- "$2" "$1" || status=$?; [[ $status -le 1 ]]; }
 
 capture_typing_probe() {
-  local label="$1" outcome="$2" log="$sandbox/overlay-capture-${label//[^A-Za-z0-9]/-}-helper.log" helper_pid before
+  # bash expands every word of a `local` before it assigns any, so log is
+  # declared after label holds its value.
+  local label="$1" outcome="$2" helper_pid before
+  local log="$sandbox/overlay-capture-${label//[^A-Za-z0-9]/-}-helper.log"
   if open_toplevel "$log" "smoke.overlay-capture-helper" "Overlay capture helper"; then
     helper_pid="$toplevel_pid"
   else
