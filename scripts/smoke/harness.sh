@@ -141,29 +141,6 @@ if [[ -e $repo/bin/vgsh-browser-policy ]]; then
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "vgsh-browser-policy $*" >>%q\nexit 1\n' "$auth_log" >"$repo/bin/vgsh-browser-policy"
   chmod 755 "$repo/bin/vgsh-browser-policy"
 fi
-# Every bundled plugin's TUI script in the sandbox tree is a sentinel for
-# the whole run as well: it logs `tui-script <id>/<script> <argv>` to the
-# one log and exits 1. The stand-in terminal refuses every script that is
-# no smoke fixture (terminal_stand_in), so a sentinel call is a script some
-# path ran past that gate. $tree_tui_sentinels lists each file, one path
-# per line, for rows/auth-sentinel.sh to read back.
-tree_tui_sentinels="$sandbox/tree-tui-sentinels"
-python3 - "$repo/shell/plugins" "$auth_log" "$tree_tui_sentinels" <<'PY'
-import json, pathlib, shlex, sys
-plugins, log, listing = pathlib.Path(sys.argv[1]), sys.argv[2], pathlib.Path(sys.argv[3])
-files = []
-for manifest in sorted(plugins.glob("*/manifest.json")):
-    doc = json.loads(manifest.read_text())
-    for row in (doc.get("tui") or {}).values():
-        script = manifest.parent / row["script"]
-        assert script.is_file(), script
-        name = doc["id"] + "/" + row["script"]
-        script.write_text("#!/usr/bin/env bash\nprintf '%%s\\n' %s\"$*\" >>%s\nexit 1\n" % (shlex.quote("tui-script " + name + " "), shlex.quote(log)))
-        script.chmod(0o755)
-        files.append(str(script))
-assert files, "no bundled plugin declares a TUI"
-listing.write_text("".join(f + "\n" for f in files))
-PY
 
 cat >"$home/.config/hypr/hyprland.lua" <<'LUA'
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
@@ -546,11 +523,13 @@ EOF
 # STUB/<name>.calls: a systemctl that answers every verb and fails
 # daemon-reload while STUB/fail-reload exists, a systemd-run that runs the
 # argv after `--` with its --setenv words exported, a notify-send that
-# prints an id, and a loginctl that answers `no`. A shim file one of them
-# covers is kept under STUB/saved until automations_stand_ins_restore STUB
-# puts it back and removes the stand-ins. rows/automations.sh and the
+# prints an id. loginctl stays the harness's sentinel, which answers
+# show-user with lingering off, the read the engine makes, and logs any
+# other verb. A shim file one of them covers is kept under STUB/saved until
+# automations_stand_ins_restore STUB puts it back and removes the
+# stand-ins. rows/automations.sh and the
 # Settings scene of scripts/sandbox-shots.sh enable the plugin over them.
-automations_stand_in_names=(systemctl systemd-run notify-send loginctl)
+automations_stand_in_names=(systemctl systemd-run notify-send)
 automations_stand_ins() { # STUB
   local stub="$1" name
   mkdir -p -- "$stub/saved"
@@ -578,8 +557,7 @@ EOF
 python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "\$@" >>"$stub/notify-send.calls"
 echo 7
 EOF
-  printf '#!/usr/bin/env bash\necho no\n' >"$shim/loginctl"
-  chmod 755 "$shim/systemctl" "$shim/systemd-run" "$shim/notify-send" "$shim/loginctl"
+  chmod 755 "$shim/systemctl" "$shim/systemd-run" "$shim/notify-send"
 }
 automations_stand_ins_restore() { # STUB
   local name
@@ -1706,118 +1684,51 @@ record_exists() { ipc shell built | python3 -c 'import json,sys; print(any(r["id
 # it was handed as the window, and runs the real presenter with no terminal
 # behind it, so the presenter writes its exit records and no terminal
 # starts. The argv is written whole and moved into place, so a row never
-# reads half a record. The window lives as long as the presenter.
-#
-# The stand-in runs no script a user's system could be changed by. A core
-# command, such as the sudo grant or a plugin update, runs nothing. A
-# plugin's script runs as it is only when it is a smoke fixture: its
-# plugin's directory under scripts/smoke/fixtures/plugins in the checkout
-# holds the same file, byte for byte. A row may register a script of its
-# own for a plugin's script with tui_script_stand_in, which then runs in its
-# place. Any other plugin script, every bundled plugin's among them, is
-# refused: the presenter runs a staged copy of the plugin's snapshot whose
-# script is replaced by one that runs nothing. Each plugin request appends
-# `<fixture|stand-in|refused> <id> <script> [<arg>...]` to $tui_log;
-# tui_decision reads the last one for a script. A row reads what a press
-# asked for from $tui_record and $tui_log, never from a real script's
-# effects; the real scripts have offline tests.
-#
-# While the file $sandbox/core-hold exists, a core command and a refused
-# script wait for it to go, polled every 0.05 s, so a row can read the
-# shell while a run is live. The wait ends after 2400 polls, 120 s,
-# whatever the file does: a ceiling well past the longest held section's
-# polls, not a measurement, so a run interrupted before its row removes
-# the file leaves no presenter behind, since bin/vgsh-tui starts the
-# stand-in outside the harness's groups. Writing it again changes nothing.
+# reads half a record. The window lives as long as the presenter. The
+# presenter runs a plugin's script as it is and any other command as
+# `true`, so no core command, such as the sudo grant or a plugin update,
+# runs in the sandbox. While the file $sandbox/core-hold exists, a core
+# command's `true` waits for it to go, polled every 0.05 s, so a row can
+# read the shell while a core run is live. The wait ends after 2400 polls,
+# 120 s, whatever the file does: a ceiling well past the longest held
+# section's polls, not a measurement, so a run interrupted before its row
+# removes the file leaves no presenter behind, since bin/vgsh-tui starts
+# the stand-in outside the harness's groups. Writing it again changes
+# nothing.
 tui_record="$sandbox/tui-argv"
-tui_log="$sandbox/tui-stand-in.log"
-tui_stand_ins="$sandbox/tui-stand-ins"
-tui_fixtures="$source_repo/scripts/smoke/fixtures/plugins"
 tui_self="$(readlink -f -- "$repo/bin/vgsh-tui")"
 terminal_stand_in() {
-  {
-    printf '#!/usr/bin/env bash\n'
-    printf 'record=%q log=%q stand_ins=%q fixtures=%q hold=%q toplevel=%q stages=%q\n' \
-      "$tui_record" "$tui_log" "$tui_stand_ins" "$tui_fixtures" "$sandbox/core-hold" "$sandbox/toplevel" "$sandbox"
-    cat <<'EOF'
-: >"$record.next"
-for a; do printf '%s\n' "$a" >>"$record.next"; done
-mv -f -- "$record.next" "$record"
+  cat >"$shim/xdg-terminal-exec" <<EOF
+#!/usr/bin/env bash
+: >"$tui_record.next"
+for a; do printf '%s\n' "\$a" >>"$tui_record.next"; done
+mv -f -- "$tui_record.next" "$tui_record"
 app_id="" title=""
-while [[ $# -gt 0 && $1 != -- ]]; do
-  case "$1" in
-    --app-id=*) app_id="${1#*=}" ;;
-    --title=*) title="${1#*=}" ;;
+while [[ \$# -gt 0 && \$1 != -- ]]; do
+  case "\$1" in
+    --app-id=*) app_id="\${1#*=}" ;;
+    --title=*) title="\${1#*=}" ;;
   esac
   shift
 done
 shift
-presenter=() plugin="" dir_at=-1
-while [[ $# -gt 0 && $1 != -- ]]; do
-  case "$1" in
-    --plugin) plugin="${2:-}" ;;
-    --dir) dir_at=$((${#presenter[@]} + 1)) ;;
-  esac
-  presenter+=("$1")
+presenter=() fixture=no
+while [[ \$# -gt 0 && \$1 != -- ]]; do
+  [[ \$1 == --plugin ]] && fixture=yes
+  presenter+=("\$1")
   shift
 done
-[[ $# -gt 0 ]] && shift
-held="n=0; while [ -e $(printf %q "$hold") ] && [ \"\$n\" -lt 2400 ]; do sleep 0.05; n=\$((n + 1)); done"
-stage=""
-if [[ -z $plugin ]]; then
-  set -- -- sh -c "$held"
-else
-  dir="${presenter[dir_at]:-}" rel="${1:-}"
-  [[ $# -gt 0 ]] && shift
-  kind=refused
-  if [[ $plugin =~ ^[a-z0-9][a-z0-9.-]*$ && $rel =~ ^tui/[A-Za-z0-9._/-]+$ && $rel != *..* && $dir == /* ]]; then
-    if [[ -f $stand_ins/$plugin/$rel ]]; then
-      kind=stand-in
-    elif [[ -f $fixtures/$plugin/$rel && -f $dir/$rel ]] && cmp -s -- "$dir/$rel" "$fixtures/$plugin/$rel"; then
-      kind=fixture
-    fi
-  else
-    rel=tui/refused.sh
-  fi
-  printf '%s\n' "$kind $plugin $rel${*:+ $*}" >>"$log"
-  if [[ $kind != fixture ]]; then
-    stage="$(mktemp -d -- "$stages/tui-stage.XXXXXX")"
-    [[ ! -d $dir ]] || cp -R -- "$dir/." "$stage/"
-    mkdir -p -- "$(dirname -- "$stage/$rel")"
-    if [[ $kind == stand-in ]]; then
-      cp -- "$stand_ins/$plugin/$rel" "$stage/$rel"
-    else
-      printf '#!/bin/sh\n%s\n' "$held" >"$stage/$rel"
-    fi
-    chmod 755 "$stage/$rel"
-    presenter[dir_at]="$stage"
-  fi
-  set -- -- "$rel" "$@"
+if [[ \$fixture != yes ]]; then
+  if [[ -e "$sandbox/core-hold" ]]; then set -- -- sh -c 'n=0; while [ -e "\$1" ] && [ "\$n" -lt 2400 ]; do sleep 0.05; n=\$((n + 1)); done' sh "$sandbox/core-hold"; else set -- -- true; fi
 fi
-"$toplevel" "$app_id" "$title" >/dev/null 2>&1 &
-window=$!
-"${presenter[@]}" "$@" </dev/null >/dev/null 2>&1
-kill "$window" 2>/dev/null
-wait "$window"
-[[ -z $stage ]] || rm -rf -- "${stage:?}"
+"$sandbox/toplevel" "\$app_id" "\$title" >/dev/null 2>&1 &
+window=\$!
+"\${presenter[@]}" "\$@" </dev/null >/dev/null 2>&1
+kill "\$window" 2>/dev/null
+wait "\$window"
 EOF
-  } >"$shim/xdg-terminal-exec"
   chmod 755 "$shim/xdg-terminal-exec"
 }
-# tui_script_stand_in ID SCRIPT: the script on stdin runs in place of
-# plugin ID's SCRIPT, a path under tui/, until tui_script_forget ID SCRIPT.
-tui_script_stand_in() {
-  mkdir -p -- "$(dirname -- "$tui_stand_ins/$1/$2")"
-  cat >"$tui_stand_ins/$1/$2"
-}
-tui_script_forget() { rm -f -- "${tui_stand_ins:?}/${1:?}/${2:?}"; }
-# tui_decision ID SCRIPT: the stand-in's last decision on plugin ID's
-# SCRIPT with its arguments, as one JSON list, or `absent`.
-tui_decision() { python3 -c '
-import json, os, sys
-lines = open(sys.argv[1]).read().split("\n")[:-1] if os.path.exists(sys.argv[1]) else []
-hits = [l.split(" ") for l in lines if l.split(" ")[1:3] == sys.argv[2:4]]
-print(json.dumps([hits[-1][0]] + hits[-1][3:]) if hits else "absent")' "$tui_log" "$1" "$2"; }
 # Hold a core TUI stand-in open while a row checks a busy key.
 hold_core() { : >"$sandbox/core-hold"; }
 release_core() { rm -f -- "$sandbox/core-hold"; }

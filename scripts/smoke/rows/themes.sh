@@ -329,12 +329,12 @@ expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
 # target in and the service starts again. On a host whose PATH holds a
 # Chromium-family browser and no writer, the Settings page then offers
 # Install browser theming, whose button opens the plugin's browser-policy
-# TUI. The stand-in terminal refuses the bundled script, whose own controls
-# are scripts/test-themes-browser-policy-tui.sh's, and the tree's
-# bin/vgsh-browser-policy stays the harness's sentinel throughout. The row
-# reads the request, and stands a writer on the shell's PATH before the
-# press, as a finished install leaves it, so the run's end, which asks
-# again, reads Installed and withdraws the button. The control: the manager
+# TUI. The stand-in terminal runs a plugin's TUI script for real, and the
+# harness has made the sandbox tree's bin/vgsh-browser-policy a sentinel;
+# for the press the row swaps in a stand-in that records its argv and puts
+# a stand-in writer on the shell's PATH, running no sudo and writing
+# nothing outside the sandbox, then puts the sentinel back. The run's end
+# then reads Installed and withdraws the button. The control: the manager
 # refuses the act while the tree ships no target and once the writer is
 # there. The target leaves the tree before any apply.
 browser_theming() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[s for p in json.load(sys.stdin) if p["id"] == "vgs.themes" for s in p["status"] if s["key"] == "browserTheming"][0]; print(json.dumps([r["report"], r["tone"], r["action"]["offered"]]))'; }
@@ -356,15 +356,19 @@ expect_poll "the service reads the shipped target's setup" settled settled_text
 first_setup="$(browser_theming)" || first_setup=unreadable
 case $first_setup in
   '["reported", "warning", true]')
+    cp -p -- "$repo/bin/vgsh-browser-policy" "$sandbox/vgsh-browser-policy.sentinel"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\nprintf "#!/bin/sh\\nexit 0\\n" >%q\nchmod 755 %q\n' \
+      "$sandbox/browser-policy.calls" "$shim/vgs-browser-policy" "$shim/vgs-browser-policy" >"$repo/bin/vgsh-browser-policy"
+    chmod 755 "$repo/bin/vgsh-browser-policy"
     tree_writer_is() { if grep -q -F -- "$1" "$repo/bin/vgsh-browser-policy"; then echo yes; else echo no; fi; }
-    printf '#!/bin/sh\nexit 0\n' >"$shim/vgs-browser-policy"
-    chmod 755 "$shim/vgs-browser-policy"
+    expect "the sandbox tree's writer is the row's stand-in for the press" yes tree_writer_is "$sandbox/browser-policy.calls"
     forget_record
     settings_press "Install browser theming" || fail "the click on Install browser theming failed"
     expect_poll "Install browser theming hands the terminal the browser-policy TUI" "$(words vgs.themes/browser-policy tui/browser-policy.sh)" recorded_tail
     expect_run_end "the browser-policy run ends" vgs.themes/browser-policy
-    expect "the stand-in terminal refused the bundled browser-policy script" '["refused"]' tui_decision vgs.themes tui/browser-policy.sh
-    expect "the sandbox tree's writer is still the sentinel" yes tree_writer_is "$auth_log"
+    expect "the TUI ran the tree's writer install once, the stand-in" install cat "$sandbox/browser-policy.calls"
+    cp -p -- "$sandbox/vgsh-browser-policy.sentinel" "$repo/bin/vgsh-browser-policy"
+    expect "the sandbox tree's writer is the sentinel again" yes tree_writer_is "$auth_log"
     expect_poll "the run's end asks again: the writer reads installed, offering nothing" '["reported", "success", false]' browser_theming
     forget_record
     expect "the manager refuses the install once the writer is there" "refused: action=browserTheming reason=not-offered" settings_act vgs.themes browserTheming

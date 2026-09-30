@@ -253,7 +253,7 @@ expect_poll "an empty directory reads as not set up again" '["not-set-up", null,
 # records each call's arguments and answers `--once --summary` with one
 # warning, and a systemctl that records its arguments, so Start it never
 # reaches a user manager. The terminal is harness.sh's recording stand-in,
-# which runs neither of the plugin's scripts.
+# written again over the one rows/updates.sh left.
 warden_key="$(bar_key)"
 warden_vsys_log="$sandbox/warden-vsys-calls"
 warden_systemctl_log="$sandbox/warden-systemctl-argv"
@@ -332,6 +332,7 @@ print(hits[0] if hits else "clean")
 PY
 }
 warden_summary_runs() { [[ -f $warden_vsys_log ]] || { echo 0; return; }; python3 -c 'import sys; print(sum(1 for l in open(sys.argv[1]) if l == "--once --summary\n"))' "$warden_vsys_log"; }
+warden_last_vsys() { [[ -f $warden_vsys_log ]] && tail -n 1 -- "$warden_vsys_log" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip("\n")))' || echo absent; }
 warden_systemctl_argv() { [[ -f $warden_systemctl_log ]] && cat -- "$warden_systemctl_log" || echo absent; }
 # The notice the core shows as [plugin, commands], or null.
 warden_notice() { notice_shown | py_reply 'import json,sys; s=json.load(sys.stdin); print(json.dumps(None if s is None else s[:2]))'; }
@@ -380,14 +381,13 @@ expect_run_end "the setup run ends" vgs.agent-warden/setup
 settings_page_open vgs.agent-warden
 expect_poll "a warden not set up offers Set up, and a present vsys no install" '[["warden", "Set up", true], ["vsys", "Install vsys", false]]' offered_actions vgs.agent-warden
 forget_record
-# The stand-in terminal runs no bundled plugin script: it records the
-# request and refuses it. What setup.sh runs is scripts/test-agent-warden-tui.sh's.
+# The setup TUI runs for real under the stand-in terminal, so vsys must be
+# the stand-in on the PATH every process of the shell starts with.
+expect "vsys resolves to the row's stand-in on the shell's PATH" "$shim/vsys" shell_resolves vsys
 settings_press "Set up" || fail "the click on the Settings page's Set up failed"
 expect_poll "the Settings page's Set up hands the terminal the setup TUI" "$(words vgs.agent-warden/setup tui/setup.sh)" recorded_tail
 expect_run_end "the Settings page's setup run ends" vgs.agent-warden/setup
-expect "the stand-in terminal refused the bundled setup script" '["refused"]' tui_decision vgs.agent-warden tui/setup.sh
-warden_installs() { if [[ -f $warden_vsys_log ]]; then grep -c -x -F -- "warden install" "$warden_vsys_log" || true; else echo 0; fi; }
-expect "no vsys warden install ran" 0 warden_installs
+expect "the setup ran the stand-in vsys's warden install" '"warden install"' warden_last_vsys
 settings_page_close vgs.agent-warden
 
 cp -- "$warden_fixtures/state.json" "$warden_dir/state.json"
@@ -431,7 +431,7 @@ click_item panel vgs.agent-warden Button "Open vsys" || fail "the click on Open 
 expect_poll "Open vsys hands the terminal the vsys TUI" "$(words vgs.agent-warden/vsys tui/vsys.sh)" recorded_tail
 expect_poll "the Open vsys hand-off closes the panel" hidden warden_panel_shown
 expect_run_end "the vsys run ends" vgs.agent-warden/vsys
-expect "the stand-in terminal refused the bundled vsys script" '["refused"]' tui_decision vgs.agent-warden tui/vsys.sh
+expect "the vsys TUI runs vsys with no arguments" '""' warden_last_vsys
 
 # Notices, with the stand-in vsys present. A calm status first clears every
 # episode the rows above opened. warden_ticks: a lane near both ceilings,

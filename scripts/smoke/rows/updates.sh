@@ -115,10 +115,6 @@ assert len(hits) == 1, hits
 lines[hits[0]] = "    readonly property string vgshPath: " + json.dumps(vgsh)
 service.write_text("\n".join(lines) + "\n")
 PY
-# The copy's finish.sh, which runs until the row opens its gate. The
-# harness's stand-in terminal runs no script that is not a smoke fixture,
-# so the row registers the same script as its stand-in; the copy's other
-# scripts are refused and run nothing, as the ones above would.
 mkdir -p "$updates_dir/tui"
 cat >"$updates_dir/tui/finish.sh" <<'TUI'
 #!/usr/bin/env bash
@@ -127,8 +123,18 @@ gate="${XDG_STATE_HOME:?}/vgs/updates-smoke/tui-gate"
 while [[ ! -e $gate ]]; do sleep 0.05; done
 TUI
 chmod 755 "$updates_dir/tui/finish.sh"
-tui_script_stand_in vgs.updates tui/finish.sh <"$updates_dir/tui/finish.sh"
-terminal_stand_in
+
+# A terminal stand-in that runs the presenter with no window;
+# rows/agent-warden.sh writes harness.sh's recording one over it.
+cat >"$shim/xdg-terminal-exec" <<'EOF'
+#!/usr/bin/env bash
+while [[ $# -gt 0 && $1 != -- ]]; do shift; done
+shift
+presenter=()
+while [[ $# -gt 0 && $1 != -- ]]; do presenter+=("$1"); shift; done
+"${presenter[@]}" "$@" </dev/null >/dev/null 2>&1
+EOF
+chmod 755 "$shim/xdg-terminal-exec"
 
 # The accepted status record, as every instance reads it.
 updates_values() { ipc vgs.updates invoke status ''; }
