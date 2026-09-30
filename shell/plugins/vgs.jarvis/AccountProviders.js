@@ -19,14 +19,18 @@ var PROVIDERS = [
 ];
 
 // Only booleans cross into the helper. No key value enters its environment.
+function keyProvider(row) {
+    return row.kind === "key" || row.kind === "speech-key";
+}
+
 function keyPresence(read) {
     var result = {};
     for (var i = 0; i < PROVIDERS.length; i++) {
         var row = PROVIDERS[i];
-        if (row.kind === "key" || row.kind === "speech-key")
+        if (keyProvider(row))
             result[row.variable] = Boolean(read(row.variable));
     }
     return result;
 }
 
-if (typeof module !== "undefined") module.exports = { PROVIDERS: PROVIDERS, keyPresence: keyPresence };
+if (typeof module !== "undefined") module.exports = { PROVIDERS: PROVIDERS, keyPresence: keyPresence, keyProvider: keyProvider };

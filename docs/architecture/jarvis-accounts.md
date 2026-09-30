@@ -20,6 +20,8 @@ Local-server discovery reads listening-port metadata through `ss`. It makes no c
 
 Remembered references use the same `Secrets::presence` result as the key status reader. A locked item produces Locked. Missing and failed presence checks produce Unavailable. Discovery does not call lookup or `secret-tool search`.
 
+Add key permits a custom provider label. Accounts keeps an unsupported label visible as Unavailable and offers no brain choice for it. Verify refuses it before the request port. It never assigns a known driver's origin or behavior to that reference. Labels and attribute values can contain Unicode; control characters remain invalid.
+
 ## Account state and verification
 
 Each account holds one tagged state. Vendor login status can produce Signed in but never Verified. The model also keeps identity metadata outside that state so a Verify failure does not erase the identity hint. A reported email different from a non-default directory label produces Identity mismatch.

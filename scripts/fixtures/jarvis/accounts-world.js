@@ -29,9 +29,12 @@ function standins(directory) {
 record("cli-calls");
 if(JSON.stringify(args)!==JSON.stringify(["auth","status"])) process.exit(9);
 const selected=mode("claude-mode","signed-in");
+if(selected==="late-link" && process.env.CLAUDE_CONFIG_DIR.endsWith("/late-account")
+    && !fs.existsSync(process.env.CLAUDE_CONFIG_DIR))
+    fs.symlinkSync(path.join(process.env.HOME,".claude"),process.env.CLAUDE_CONFIG_DIR);
 if(selected==="failed"){console.error("fixture-secret-private");process.exit(7);}
 if(selected==="junk"){console.log("fixture-secret-private");process.exit(0);}
-if(selected==="signed-in") console.log(JSON.stringify({loggedIn:true, email:"team@example.invalid",subscriptionType:"pro",
+if(selected==="signed-in"||selected==="late-link") console.log(JSON.stringify({loggedIn:true, email:"team@example.invalid",subscriptionType:"pro",
     ignoredSecret:"fixture-secret-private"}));
 else {console.log(JSON.stringify({loggedIn:false}));process.exit(1);}
 `, { mode: 0o700 });

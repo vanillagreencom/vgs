@@ -4,7 +4,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const cp = require("node:child_process");
 const { Secrets, childEnvironment } = require("./Secrets.js");
-const { PROVIDERS, keyPresence } = require("../AccountProviders.js");
+const { PROVIDERS, keyPresence, keyProvider } = require("../AccountProviders.js");
 const MAX_ENTRIES = 200;
 const MAX_ROWS = 32; // The core's presenceList and choices ceiling.
 const MAX_BYTES = 64 * 1024;
@@ -15,11 +15,14 @@ function printable(value, max) {
 }
 function provider(id) {
     const row = PROVIDERS.find(item => item.id === id);
-    if (!row) fail("provider=unknown");
-    return row;
+    // Add key permits custom provider labels. Keep their references visible
+    // but unavailable; an unknown label must never select another driver.
+    return row || { id, label: id, kind: "unsupported" };
 }
 function identity(kind, values) {
-    return kind + ":" + crypto.createHash("sha256").update(JSON.stringify(values)).digest("hex").slice(0, 32);
+    const canonical = JSON.stringify(values, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) : value);
+    return kind + ":" + crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
 
 // lstat each component, including explicit and hand-added paths. An absent
@@ -108,7 +111,7 @@ class Accounts {
         this.explicit = {};
         for (const row of PROVIDERS) if (row.kind === "cli" && env[row.variable])
             this.explicit[row.id] = env[row.variable];
-        const expected = PROVIDERS.filter(row => ["key", "speech-key"].includes(row.kind)).map(row => row.variable).sort();
+        const expected = PROVIDERS.filter(keyProvider).map(row => row.variable).sort();
         if (!presence || Object.keys(presence).sort().join(",") !== expected.join(",")
             || Object.values(presence).some(value => typeof value !== "boolean")) fail("key-presence=shape");
         this.presence = { ...presence };
@@ -227,11 +230,12 @@ class Accounts {
         // Fallback metadata only. No marker is opened, even when mode 000.
         let marker = "absent";
         try {
-            const markerPath = opened.kind === "directory" ? "/proc/self/fd/" + opened.fd + "/" + row.marker
-                : path.join(candidate.directory, row.marker);
-            const stat = fs.lstatSync(markerPath);
-            if (stat.isSymbolicLink()) fail("marker=link");
-            marker = stat.isFile() ? "present" : "absent";
+            if (opened.kind === "directory") {
+                const markerPath = "/proc/self/fd/" + opened.fd + "/" + row.marker;
+                const stat = fs.lstatSync(markerPath);
+                if (stat.isSymbolicLink()) fail("marker=link");
+                marker = stat.isFile() ? "present" : "absent";
+            }
         } catch (error) {
             if (error.code !== "ENOENT") {
                 state = { kind: "unavailable", reason: error.message.startsWith("jarvis-accounts:") ? "marker-link" : "marker-unreadable" };
@@ -255,13 +259,16 @@ class Accounts {
     }
 
     vendorLogin(item) {
+        // Add key is the producer of this service's API-key attributes.
+        // A user's account alias is not a vendor credential-store label.
+        if (item.attributes.service === "vgs-jarvis") return false;
         const text = JSON.stringify([item.label, item.attributes]).toLowerCase();
         return /(claude[ -]?code|codex|copilot|oauth|refresh[ _-]?token|access[ _-]?token)/.test(text);
     }
 
     remember(itemPath, providerId, label) {
         const row = provider(providerId);
-        if (!["key", "speech-key"].includes(row.kind)) fail("reference=provider");
+        if (!keyProvider(row)) fail("reference=provider");
         const item = this.keyItems().find(value => value.path === itemPath);
         if (!item) fail("reference=item-unavailable");
         this.secrets.remember({ provider: row.id, account: label, origin: row.origin, attributes: item.attributes });
@@ -295,12 +302,17 @@ class Accounts {
         const candidates = this.candidates();
         if (candidates.length > MAX_ROWS) fail("discovery=account-limit");
         const result = candidates.map(item => this.cliAccount(item)).filter(Boolean);
-        for (const row of PROVIDERS) if (["key", "speech-key"].includes(row.kind) && this.presence[row.variable])
+        for (const row of PROVIDERS) if (keyProvider(row) && this.presence[row.variable])
             result.push(this.account(row, "environment", { kind: "found" }, { kind: "variable", name: row.variable, origin: row.origin }));
         for (const ref of this.secrets.references()) {
             const row = provider(ref.provider);
-            if (!["key", "speech-key"].includes(row.kind) || this.vendorLogin({ label: ref.account, attributes: ref.attributes }))
+            if (this.vendorLogin({ label: ref.account, attributes: ref.attributes }))
                 fail("reference=vendor-login-or-provider");
+            if (!keyProvider(row)) {
+                result.push(this.account(row, ref.account, { kind: "unavailable", reason: "provider-unsupported" },
+                    { kind: "keyring", reference: ref }));
+                continue;
+            }
             const present = this.secrets.presence(ref);
             const state = present.value === "present" ? { kind: "found" } : present.value === "locked"
                 ? { kind: "locked" } : { kind: "unavailable", reason: present.value === "absent" ? "key-absent" : "keyring-unavailable" };
@@ -321,6 +333,9 @@ class Accounts {
         if (initiation !== "user") fail("verify=explicit-user-required");
         const account = this.accounts.find(item => item.id === id);
         if (!account) fail("verify=account-unavailable");
+        const row = provider(account.provider);
+        if (row.kind === "unsupported" || (account.source.kind === "keyring" && !keyProvider(row)))
+            fail("verify=provider-unsupported");
         if (account.state.kind === "verifying") fail("verify=busy");
         if (account.state.kind === "locked") fail("verify=keyring-locked");
         const epoch = this.epoch, operation = ++this.operation;

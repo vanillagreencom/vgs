@@ -3,7 +3,7 @@
 "use strict";
 const path = require("node:path");
 const { Accounts } = require("./Accounts.js");
-const { PROVIDERS } = require("../AccountProviders.js");
+const { PROVIDERS, keyProvider } = require("../AccountProviders.js");
 
 async function main() {
     const args = process.argv.slice(2);
@@ -23,7 +23,7 @@ async function main() {
         break;
     case "providers":
         if (args.length !== 2 || !["cli", "key"].includes(args[1])) throw new Error("jarvis-accounts: arguments=providers");
-        value = PROVIDERS.filter(row => args[1] === "cli" ? row.kind === "cli" : ["key", "speech-key"].includes(row.kind))
+        value = PROVIDERS.filter(row => args[1] === "cli" ? row.kind === "cli" : keyProvider(row))
             .map(row => row.id);
         break;
     case "items":

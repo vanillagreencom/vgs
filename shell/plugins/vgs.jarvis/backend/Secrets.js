@@ -18,7 +18,7 @@ function fields(value, expected) {
 }
 function line(value, max) {
     return typeof value === "string" && value.length > 0 && value.length <= max
-        && /^[\x20-\x7e]+$/.test(value);
+        && !/[\x00-\x1f\x7f]/.test(value);
 }
 
 // Metadata only. Existing items keep their own attributes; never a CLI token.

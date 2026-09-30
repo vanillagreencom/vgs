@@ -8,20 +8,24 @@ world(async () => {
     const env = environment();
     const directory = path.join(env.XDG_STATE_HOME, "vgs/jarvis");
     const { Accounts } = require(path.join(plugin, "backend/Accounts.js"));
-    const { Secrets } = require(path.join(plugin, "backend/Secrets.js"));
+    const { Secrets, ownReference } = require(path.join(plugin, "backend/Secrets.js"));
     const { keyPresence } = require(path.join(plugin, "AccountProviders.js"));
     const mode = (name, value) => fs.writeFileSync(path.join(env.XDG_STATE_HOME, name + "-mode"), value);
     const calls = name => fs.existsSync(path.join(env.XDG_STATE_HOME, name))
         ? fs.readFileSync(path.join(env.XDG_STATE_HOME, name), "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [];
     const safe = value => assert.equal(JSON.stringify(value).includes(privateValue), false, "no secret in metadata, status or diagnosis");
     const markerReads = [];
+    const markerChecks = [];
     let markerOrder = null;
     const originalStat = fs.lstatSync;
     fs.lstatSync = function (file, ...args) {
-        if (markerOrder !== null && typeof file === "string" && [".credentials.json", "auth.json"].includes(path.basename(file))) {
-            const count = calls("cli-calls").length;
-            assert.ok(count > markerOrder.value, "each marker check follows its candidate's vendor account command");
-            markerOrder.value = count;
+        if (typeof file === "string" && [".credentials.json", "auth.json"].includes(path.basename(file))) {
+            markerChecks.push(file);
+            if (markerOrder !== null) {
+                const count = calls("cli-calls").length;
+                assert.ok(count > markerOrder.value, "each marker check follows its candidate's vendor account command");
+                markerOrder.value = count;
+            }
         }
         return originalStat.call(fs, file, ...args);
     };
@@ -136,6 +140,46 @@ world(async () => {
     assert.deepEqual(items.map(item => item.label), ["Other tool API key"]);
     store.remember(items[0].path, "anthropic", "chosen label");
     assert.deepEqual(references.references()[1].attributes, { application: "other-tool", id: "api-key" });
+    const unicodeRef = { provider: "custom-tool", account: "clé", origin: "https://custom.invalid",
+        attributes: { application: "other-tool", user: "développeur" } };
+    references.remember(unicodeRef);
+    assert.deepEqual(references.references()[2], unicodeRef);
+    const ownedAlias = ownReference("anthropic", "Claude Code", "https://api.anthropic.com");
+    references.remember(ownedAlias);
+    assert.equal(store.discover().find(item => item.source.reference?.account === "Claude Code").state.kind, "found");
+    const stableReference = Judge => {
+        const original = references.references().find(ref => ref.account === "other");
+        const before = new Judge(directory, env).discover().find(item => item.source.reference?.account === "other").id;
+        try {
+            references.remember({ ...original, attributes: Object.fromEntries(Object.entries(original.attributes).reverse()) });
+            const after = new Judge(directory, env).discover().find(item => item.source.reference?.account === "other").id;
+            assert.equal(after, before, "dictionary order is not account identity");
+        } finally { references.remember(original); }
+    };
+    stableReference(Accounts);
+    await mutant("backend/Accounts.js", "stable-reference-id",
+        'Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))',
+        "value", folder => stableReference(require(path.join(folder, "backend/Accounts.js")).Accounts));
+    controls++;
+    cases++;
+    const unknown = store.discover().find(item => item.provider === "custom-tool");
+    assert.deepEqual(unknown.state, { kind: "unavailable", reason: "provider-unsupported" });
+    assert.equal(store.status().brains.some(choice => choice.value === unknown.id), false);
+    let unknownRequests = 0;
+    await assert.rejects(() => store.verify(unknown.id, "user", async () => {
+        unknownRequests++; return { kind: "inference", text: "OK" };
+    }), /verify=provider-unsupported/);
+    assert.equal(unknownRequests, 0);
+    await mutant("backend/Accounts.js", "unknown-provider-verify",
+        'fail("verify=provider-unsupported");',
+        'void 0;', async folder => {
+            const judge = new (require(path.join(folder, "backend/Accounts.js")).Accounts)(directory, env);
+            const item = judge.discover().find(row => row.provider === "custom-tool");
+            await assert.rejects(() => judge.verify(item.id, "user", async () => ({ kind: "inference", text: "OK" })),
+                /verify=provider-unsupported/);
+        });
+    controls++;
+    cases++;
     safe(fs.readFileSync(references.file, "utf8"));
     assert.throws(() => store.remember("/org/freedesktop/secrets/collection/test/cli", "openai", "login"), /reference=item-unavailable/);
     assert.throws(() => store.remember(items[0].path, "claude", "login"), /reference=provider/);
@@ -239,6 +283,27 @@ world(async () => {
         accountBound(require(path.join(folder, "backend/Accounts.js")).Accounts));
     controls++;
     fs.rmSync(many, { recursive: true });
+    const late = path.join(env.HOME, "late-account");
+    const lateLink = Judge => {
+        mode("claude", "late-link");
+        const before = markerChecks.length;
+        try {
+            const judge = new Judge(directory, { ...env, CLAUDE_CONFIG_DIR: late });
+            const item = judge.discover().find(row => row.source.directory === late);
+            assert.equal(item.marker, "absent", "an absent directory has no held marker parent");
+            assert.equal(markerChecks.slice(before).some(file => file.startsWith(late + "/")), false,
+                "a new link cannot become a marker's parent");
+        } finally {
+            mode("claude", "signed-in");
+            if (fs.existsSync(late)) fs.unlinkSync(late);
+        }
+    };
+    lateLink(Accounts);
+    await mutant("backend/Accounts.js", "late-marker-link", 'if (opened.kind === "directory") {\n                const markerPath',
+        'if (opened.kind !== "directory") fs.lstatSync(path.join(candidate.directory, row.marker));\n            if (opened.kind === "directory") {\n                const markerPath',
+        folder => lateLink(require(path.join(folder, "backend/Accounts.js")).Accounts));
+    controls++;
+    cases++;
     const boundRoot = path.join(process.env.JARVIS_TEST_ROOT, "exact-bound");
     const boundEnv = { ...env, HOME: path.join(boundRoot, "home"), XDG_CONFIG_HOME: path.join(boundRoot, "config"),
         XDG_DATA_HOME: path.join(boundRoot, "data") };
