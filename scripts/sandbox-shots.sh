@@ -807,6 +807,7 @@ scene_theme-browser() { # MODE
   take "theme-browser-$1-download"
   click_item overlay vgs.themes Button "Not now" || fail "the click on Not now failed"
   expect_poll "Not now declines the offer" null theme_view_offer
+  park_pointer
   expect "the theme browser hides before the installed shot" ok ipc shell hide overlay vgs.themes
   expect_poll "the theme browser is gone before the installed shot" 0 layer_count vgs:overlay
   themes_restore "$1" "the theme browser's install"
