@@ -7,27 +7,38 @@ check fails where user-facing text tells the user to run a command:
   instruction   a clause that opens with an imperative verb of VERBS and
                 names a command: inline code whose first word is a command
                 head, or, outside Markdown, a command head as the verb's
-                object. A clause opens at the start of the text, after
-                `.`, `!`, `?`, `:` or `;`, after a comma, and after `or` or
-                `then`.
+                object; or a clause whose subject is inline code naming a
+                command, followed by a verb of SUBJECT_VERBS, as in
+                "`vgsh plugin enable x` brings it back". A clause opens at
+                the start of the text, after `.`, `!`, `?`, `:` or `;`,
+                after a comma, and after `or` or `then`. A first word that
+                is a path names the command its last part does, so
+                `bin/vgsh` is `vgsh`.
   shell-block   a fenced code block of Markdown, untagged or tagged with a
                 shell of SHELL_FENCES, whose first command word is a command
                 head.
-  code-command  inline code whose first word is a command head inside a
-                string literal of shipped QML or JavaScript bound to a
-                property of DRAWN on its line, the text a page, a notice or
-                a toast draws: a command there is copied off a label, where
-                the one route is a CommandDisclosure. A log line is read by
-                `instruction` alone.
+  code-command  a command inside a string literal of shipped QML or
+                JavaScript bound to a property of DRAWN, the text a page, a
+                notice, a toast or a CodeLine draws: inline code whose first
+                word is a command head, or a literal that opens with a head
+                and an argument, as "vgsh plugin enable x" does. A command
+                there is copied off a label, where the one route is a
+                CommandDisclosure. A log line is read by `instruction`
+                alone. A binding reaches back over the lines its statement
+                wraps across, so `text: ready` then `? "..."` on the next
+                line is bound to `text`.
   drawn-command-line  a property of DRAWN bound, on its line, to an
                 expression naming COMMAND_LINE, the name a judge gives a
                 value that holds a whole command a reader could run, such
                 as PluginLogic.noticeView's `commandLine`: that value
                 reaches the screen only as a CommandDisclosure's `command`,
                 which DRAWN does not hold.
+A string literal is a quoted one or a template literal, whose `${...}`
+parts read as the argument $ARG.
 The text read is every Markdown file and every manifest.json of each plugin
 directory under the root's plugins/, the user-facing strings of each
-manifest (FIELDS), and every string literal of every `.qml` and `.js` file
+manifest (FIELDS, each key the judge admits named there or in EXEMPT), and
+every string literal of every `.qml` and `.js` file
 under the root, comments blanked through scripts/qml_source.py. A
 `<details>` block of Markdown whose `<summary>` reads "Show command" is the
 disclosure and is not read; a manifest's status `command` is the
@@ -61,19 +72,46 @@ from qml_source import Unreadable, blank_comments, source_texts
 
 REPO = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-VERBS = ("run", "type", "paste", "execute", "enter")
+VERBS = ("run", "type", "paste", "execute", "enter", "use", "call", r"install\s+with")
+# What inline code does as the subject of a clause that tells the reader
+# to run it.
+SUBJECT_VERBS = ("brings", "fixes", "installs", "enables", "restores", "repairs", "sets", "turns", "adds", "starts", "connects", "stores")
 SHELL_FENCES = ("", "bash", "sh", "shell", "console", "zsh", "fish")
 HEADS_FLOOR = 20
 # Members the head extractors must yield: the core's own command and an
 # elevator. A set without them came from a broken extractor.
 REQUIRED_HEADS = ("vgsh", "sudo")
 
-# The manifest keys a user reads, by where they sit.
-FIELDS = "description, schema.*.label, schema.*.description, status.*.label, status.*.group, status.*.hint, status.*.action.label, requirements.*.purpose, tui.*.title, tui.*.entry.label, tui.*.entry.group, secrets.label"
+# The manifest keys a user reads, each a path whose `*` is any key of a
+# table or index of a list.
+FIELDS = (
+    ("name",), ("description",), ("author",),
+    ("schema", "*", "label"), ("schema", "*", "description"), ("schema", "*", "group"), ("schema", "*", "options", "*"),
+    ("status", "*", "label"), ("status", "*", "group"), ("status", "*", "hint"), ("status", "*", "action", "label"),
+    ("requirements", "*", "purpose"),
+    ("tui", "*", "title"), ("tui", "*", "entry", "label"), ("tui", "*", "entry", "group"),
+    ("secrets", "label"),
+)
+# The keys the judge admits that the check does not read, and why: an
+# identifier, a path or a value no one reads as prose, or the Show command
+# disclosure itself.
+EXEMPT = (
+    ("schemaVersion",), ("id",), ("version",), ("license",), ("icon",), ("kinds",), ("entryPoints",),
+    ("capabilities",), ("settings",), ("defaultSection",), ("appearance",),
+    ("schema", "*", "type"), ("schema", "*", "optionsFrom"), ("schema", "*", "min"), ("schema", "*", "max"), ("schema", "*", "step"),
+    ("status", "*", "type"), ("status", "*", "hidden"), ("status", "*", "command"),
+    ("status", "*", "action", "tui"), ("status", "*", "action", "install"),
+    ("requirements", "*", "command"), ("requirements", "*", "packages"), ("requirements", "*", "optional"),
+    ("tui", "*", "script"), ("tui", "*", "size"), ("tui", "*", "presentation"), ("tui", "*", "entry", "icon"),
+    ("secrets", "service"),
+    ("hyprland", "binds", "*", "shortcut"), ("hyprland", "binds", "*", "key"), ("hyprland", "appearance"),
+    ("hyprland", "layerRules", "*", "namespace"), ("hyprland", "layerRules", "*", "blur"), ("hyprland", "layerRules", "*", "ignoreAlpha"),
+)
 
 # A clause's rest runs to its sentence's end: a `.`, `!`, `?` or `;` that
 # ends a word, never one inside inline code or a dotted name.
 CLAUSE = re.compile(r"(?:^|[.!?:;]\s+|,\s*|\b(?:or|then)\s+)(" + "|".join(VERBS) + r")\b((?:`[^`\n]*`|[.!?;](?=[^\s`])|[^.!?;`\n])*)", re.I | re.M)
+SUBJECT = re.compile(r"(?:^|[.!?:;]\s+|,\s*|\b(?:or|then)\s+)`([^`\n]+)`\s+(" + "|".join(SUBJECT_VERBS) + r")\b", re.I | re.M)
 INLINE_CODE = re.compile(r"`([^`\n]+)`")
 # In a string literal, code may run past its end into the next literal a
 # concatenation adds, as `"`vgsh plugin enable " + id + "`"` does.
@@ -86,9 +124,16 @@ DETAILS = re.compile(r"<details>\s*<summary>\s*Show command\s*</summary>.*?</det
 DRAWN = ("text", "hint", "error", "description", "placeholderText", "title", "message", "label", "secondary", "body", "summary")
 DRAWN_BEFORE = re.compile(r"\b(?:" + "|".join(DRAWN) + r")\s*:")
 COMMAND_LINE = "commandLine"
-DRAWN_BINDING = re.compile(r"\b(?:" + "|".join(DRAWN) + r")\s*:([^\n]*)")
 STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'')
-WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+# A quoted literal or a template literal, the quoted ones first, so a
+# backtick inside a quoted literal opens no template.
+LITERAL = re.compile(STRING.pattern + r"|`(?:[^`\\]|\\.)*`", re.S)
+TEMPLATE_PART = re.compile(r"\$\{[^{}]*\}")
+WORD = re.compile(r"[A-Za-z0-9./~][A-Za-z0-9._+/~-]*")
+# A line that carries its statement on from the one before: it opens with
+# an operator, or the line before ends with one.
+CONTINUES = re.compile(r"[ \t]*(?:[?:+.)]|&&|\|\|)")
+CONTINUED = re.compile(r"(?:[?:+(,=]|&&|\|\|)\s*$")
 
 
 def unreadable(what, why):
@@ -158,11 +203,53 @@ def first_word(code):
     if text.startswith("$ "):
         text = text[2:].lstrip()
     match = WORD.match(text)
-    return match.group(0) if match else ""
+    return os.path.basename(match.group(0).rstrip("/")) if match else ""
 
 
 def line_of(text, index):
     return text.count("\n", 0, index) + 1
+
+
+def statement_start(code, index):
+    """Where the statement holding INDEX of CODE starts: the start of its
+    line, moved back over each line it wraps from."""
+    start = code.rfind("\n", 0, index) + 1
+    while start > 0:
+        before = code.rfind("\n", 0, start - 1) + 1
+        if not (CONTINUES.match(code, start) or CONTINUED.search(code[before:start - 1])):
+            break
+        start = before
+    return start
+
+
+def enclosing_type(code, index):
+    """The QML type whose `{` block holds INDEX of CODE, or ""."""
+    depth = 0
+    for at in range(index - 1, -1, -1):
+        if code[at] == "}":
+            depth += 1
+        elif code[at] == "{":
+            if depth == 0:
+                match = re.search(r"([A-Z][A-Za-z0-9_]*)\s*$", code[:at])
+                return match.group(1) if match else ""
+            depth -= 1
+    return ""
+
+
+def opens_with_command(value, heads, copied):
+    """Whether VALUE reads as a command line: a head, then an argument. A
+    CodeLine's text (COPIED) is one whatever its words; drawn prose that
+    opens with a command's name, as "vsys sees nothing wrong." does, is
+    one only when it ends with no sentence stop and one of its arguments
+    reads as a flag, a path, a dotted name, an assignment or a template
+    literal's `${...}`, read as $ARG."""
+    text = value.strip()
+    if text.startswith("$ "):
+        text = text[2:].lstrip()
+    parts = text.split()
+    if len(parts) < 2 or first_word(parts[0]) not in heads or parts[0] != WORD.match(parts[0]).group(0):
+        return False
+    return copied or (not text.endswith((".", "!", "?")) and any(re.search(r"^-|[./=:$]", word) for word in parts[1:]))
 
 
 def blank(text, pattern):
@@ -182,7 +269,10 @@ def instructions(text, heads, bare):
             named = first_word(rest.lstrip("`\"' ")) in heads
         if named:
             out.append((match.start(1), (match.group(1) + match.group(2)).strip()[:120]))
-    return out
+    for match in SUBJECT.finditer(text):
+        if first_word(match.group(1)) in heads:
+            out.append((match.start(), match.group(0).strip(" ,.;:!?")[:120]))
+    return sorted(out)
 
 
 def check_markdown(path, heads, findings):
@@ -197,33 +287,23 @@ def check_markdown(path, heads, findings):
         findings.append(("instruction", path, line_of(prose, index), excerpt))
 
 
+def resolve(node, pattern, where=()):
+    """(where, value) of each value of NODE at PATTERN, a FIELDS path."""
+    if not pattern:
+        yield ".".join(where), node
+        return
+    head, rest = pattern[0], pattern[1:]
+    if head == "*":
+        items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else []
+        for key, child in items:
+            yield from resolve(child, rest, where + (str(key),))
+    elif isinstance(node, dict) and head in node:
+        yield from resolve(node[head], rest, where + (head,))
+
+
 def manifest_strings(doc):
     """(where, text) of every user-facing string of manifest DOC (FIELDS)."""
-    out = []
-    add = lambda where, value: out.append((where, value)) if isinstance(value, str) else None
-    add("description", doc.get("description"))
-    for key, entry in (doc.get("schema") or {}).items() if isinstance(doc.get("schema"), dict) else []:
-        if isinstance(entry, dict):
-            add(f"schema.{key}.label", entry.get("label"))
-            add(f"schema.{key}.description", entry.get("description"))
-    for key, entry in (doc.get("status") or {}).items() if isinstance(doc.get("status"), dict) else []:
-        if isinstance(entry, dict):
-            for field in ("label", "group", "hint"):
-                add(f"status.{key}.{field}", entry.get(field))
-            if isinstance(entry.get("action"), dict):
-                add(f"status.{key}.action.label", entry["action"].get("label"))
-    for n, req in enumerate(doc.get("requirements") or []) if isinstance(doc.get("requirements"), list) else []:
-        if isinstance(req, dict):
-            add(f"requirements.{n}.purpose", req.get("purpose"))
-    for key, entry in (doc.get("tui") or {}).items() if isinstance(doc.get("tui"), dict) else []:
-        if isinstance(entry, dict):
-            add(f"tui.{key}.title", entry.get("title"))
-            if isinstance(entry.get("entry"), dict):
-                add(f"tui.{key}.entry.label", entry["entry"].get("label"))
-                add(f"tui.{key}.entry.group", entry["entry"].get("group"))
-    if isinstance(doc.get("secrets"), dict):
-        add("secrets.label", doc["secrets"].get("label"))
-    return out
+    return [(where, value) for pattern in FIELDS for where, value in resolve(doc, pattern) if isinstance(value, str)]
 
 
 def main(argv):
@@ -262,22 +342,25 @@ def main(argv):
         for path, text in source_texts(root):
             code_files += 1
             code = blank_comments(text)
-            bare = STRING.sub(lambda m: '""', code)
-            for binding in DRAWN_BINDING.finditer(bare):
-                if re.search(r"\b" + COMMAND_LINE + r"\b", binding.group(1)):
-                    findings.append(("drawn-command-line", path, line_of(bare, binding.start()), binding.group(0).strip()[:120]))
-            for literal in STRING.finditer(code):
+            masked = blank(code, LITERAL)
+            for use in re.finditer(r"\b" + COMMAND_LINE + r"\b(?![ \t]*:)", masked):
+                start = statement_start(masked, use.start())
+                if DRAWN_BEFORE.search(masked, start, use.start()) is not None:
+                    end = masked.find("\n", use.end())
+                    findings.append(("drawn-command-line", path, line_of(masked, use.start()), masked[start:end if end != -1 else len(masked)].strip()[:120]))
+            for literal in LITERAL.finditer(code):
                 strings += 1
-                value = literal.group(0)[1:-1]
+                token = literal.group(0)
+                value = TEMPLATE_PART.sub("$ARG", token[1:-1]) if token.startswith("`") else token[1:-1]
                 line = line_of(code, literal.start())
                 for _index, excerpt in instructions(value, heads, True):
                     findings.append(("instruction", path, line, excerpt))
-                start = code.rfind("\n", 0, literal.start()) + 1
-                if DRAWN_BEFORE.search(code, start, literal.start()) is None:
+                start = statement_start(masked, literal.start())
+                if DRAWN_BEFORE.search(masked, start, literal.start()) is None:
                     continue
-                for inline in LITERAL_CODE.findall(value):
-                    if first_word(inline) in heads:
-                        findings.append(("code-command", path, line, value[:120]))
+                inline_named = not token.startswith("`") and any(first_word(inline) in heads for inline in LITERAL_CODE.findall(value))
+                if inline_named or opens_with_command(value, heads, enclosing_type(masked, literal.start()) == "CodeLine"):
+                    findings.append(("code-command", path, line, value.strip()[:120]))
     except Unreadable as exc:
         unreadable(exc.path, exc.strerror)
     files = len(markdown) + len(manifests) + code_files

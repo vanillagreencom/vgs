@@ -5,12 +5,15 @@ and the repository's own shell/ against a coverage floor. Each row builds a
 throwaway shell/ holding one plugin, runs the check on it and asserts the
 rule key, the location and the exit status. The controls at the end run a
 copy of the check with one rule removed, and the rows must fail on it."""
+import importlib.machinery
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.realpath(os.path.join(HERE, ".."))
@@ -67,6 +70,20 @@ ROWS = [
     ("a command line behind Show command", {"Service.qml": qml('    CommandDisclosure { command: view.commandLine }')}, None, None),
     ("a judge naming its command line", {"Logic.js": '.pragma library\nvar VIEW = { commandLine: "vgsh pkg run install a" };\n'}, None, None),
     ("a drawn string that only says commandLine", {"Service.qml": qml('    Label { text: "commandLine" }')}, None, None),
+    ("a command named by its path", {"README.md": "Run `bin/vgsh plugin enable acme.setup` once.\n"}, "instruction", "README.md:1"),
+    ("a command as the clause's subject", {"README.md": "Turn it off in Settings; `bin/vgsh plugin enable acme.setup` brings it back.\n"}, "instruction", "README.md:1"),
+    ("a step that says use", {"README.md": "Use `vgsh doctor` to see what is missing.\n"}, "instruction", "README.md:1"),
+    ("a step that says install with", {"README.md": "Install with `paru -S acme-tool` first.\n"}, "instruction", "README.md:1"),
+    ("a step that says call", {"Logic.js": '.pragma library\nvar NOTE = "Call vgsh ipc call acme.setup invoke go";\n'}, "instruction", "Logic.js:2"),
+    ("a bare command in a drawn string", {"Service.qml": qml('    Label { text: "vgsh plugin enable acme.setup" }')}, "code-command", "Service.qml:3"),
+    ("a bare command as a CodeLine's text", {"Service.qml": qml('    CodeLine { text: "vgsh doctor" }')}, "code-command", "Service.qml:3"),
+    ("drawn prose that opens with a command's name", {"Service.qml": qml('    Label { text: "vsys sees nothing wrong on this computer." }')}, None, None),
+    ("a drawn state that opens with a command's name", {"Service.qml": qml('    Label { text: "loginctl did not answer" }')}, None, None),
+    ("a template literal telling the user to run a command", {"Logic.js": '.pragma library\nvar TOAST = { title: "Missing", message: `Run vgsh doctor for ${name}` };\n'}, "instruction", "Logic.js:2"),
+    ("a drawn template literal holding a command", {"Service.qml": qml('    Label { text: `vgsh plugin enable ${id}` }')}, "code-command", "Service.qml:3"),
+    ("a drawn binding wrapped over lines", {"Service.qml": qml('    Label {\n        text: ready\n            ? "Done"\n            : "`vgsh doctor` shows it"\n    }')}, "code-command", "Service.qml:6"),
+    ("a command line bound to a drawn property over lines", {"Service.qml": qml('    Label {\n        text: shown\n            ? shown.commandLine\n            : ""\n    }')}, "drawn-command-line", "Service.qml:5"),
+    ("a secrets label telling the user to run a command", {"manifest.json": manifest(capabilities='["secrets"]', secrets='{ "service": "acme", "label": "Run `vgsh doctor` first" }')}, "instruction", "manifest.json:secrets.label"),
 ]
 
 
@@ -102,7 +119,66 @@ def rows_hold(check):
     return failures
 
 
-failures = rows_hold(CHECK)
+# Where the judge's key lists sit in a manifest: a path, whether a `*`
+# key or index comes between it and the keys, and the list. A key whose path
+# is here is a table of keys, not a value.
+NESTED = {
+    ("schema",): (True, "SCHEMA_ENTRY_KEYS"),
+    ("status",): (True, "STATUS_ENTRY_KEYS"),
+    ("status", "*", "action"): (False, "STATUS_ACTION_KEYS"),
+    ("requirements",): (True, "REQUIREMENT_KEYS"),
+    ("tui",): (True, "TUI_KEYS"),
+    ("tui", "*", "entry"): (False, "TUI_ENTRY_KEYS"),
+    ("secrets",): (False, "SECRETS_KEYS"),
+    ("hyprland",): (False, "HYPRLAND_KEYS"),
+    ("hyprland", "binds"): (True, "HYPRLAND_BIND_KEYS"),
+    ("hyprland", "layerRules"): (True, "HYPRLAND_RULE_KEYS"),
+}
+
+
+def admitted_paths():
+    """Every leaf path of a manifest PluginLogic admits, from its key lists."""
+    names = ["MANIFEST_KEYS"] + sorted({name for _star, name in NESTED.values()})
+    script = "const m = require(process.argv[1]).load(process.argv[2]); const out = {}; for (const n of process.argv.slice(3)) out[n] = m[n]; process.stdout.write(JSON.stringify(out));"
+    done = subprocess.run(["node", "-e", script, os.path.join(REPO, "bin", "lib", "qml-library.js"), os.path.join(REPO, "shell", "Core", "PluginLogic.js")] + names, capture_output=True, text=True, env=ENV)
+    lists = json.loads(done.stdout)
+    missing = [n for n in names if not isinstance(lists.get(n), list)]
+    if done.returncode != 0 or missing:
+        return None, f"the judge's key lists did not load: exit {done.returncode} missing={missing} {done.stderr.strip()}"
+    leaves = []
+
+    def expand(path):
+        if path in NESTED:
+            star, name = NESTED[path]
+            for key in lists[name]:
+                expand(path + (("*",) if star else ()) + (key,))
+        else:
+            leaves.append(path)
+    for key in lists["MANIFEST_KEYS"]:
+        expand((key,))
+    return leaves, ""
+
+
+def fields_unclassified(check):
+    """Each admitted leaf path CHECK names in neither FIELDS nor EXEMPT, as
+    lines; a pattern that runs on past a leaf, as schema.*.options.* does,
+    names it."""
+    loader = importlib.machinery.SourceFileLoader("check_user_commands_" + str(abs(hash(check))), check)
+    module = types.ModuleType(loader.name)
+    module.__file__ = check
+    sys.path.insert(0, os.path.dirname(check))
+    try:
+        loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
+    leaves, error = admitted_paths()
+    if leaves is None:
+        return [error]
+    named = list(module.FIELDS) + list(module.EXEMPT)
+    return [".".join(leaf) + ": named in neither FIELDS nor EXEMPT" for leaf in leaves if not any(tuple(p[:len(leaf)]) == leaf for p in named)]
+
+
+failures = rows_hold(CHECK) + fields_unclassified(CHECK)
 
 # The repository's own shell/ passes, over a floor that proves the walk
 # read the tree: the plugins' Markdown and manifests and the shipped QML.
@@ -137,12 +213,23 @@ with tempfile.TemporaryDirectory() as tmp:
 CONTROLS = [
     ("the instruction rule", "        findings.append((\"instruction\", path, line_of(prose, index), excerpt))", "        pass"),
     ("the shell-block rule", "if lang in SHELL_FENCES and body and first_word(body[0]) in heads:", "if False:"),
-    ("the code-command rule", "                        findings.append((\"code-command\", path, line, value[:120]))", "                        pass"),
+    ("the code-command rule", "                    findings.append((\"code-command\", path, line, value.strip()[:120]))", "                    pass"),
     ("the manifest strings", "            for _index, excerpt in instructions(text, heads, True):\n                findings.append((\"instruction\", path, where, excerpt))", "            pass"),
     ("the disclosure's reach", "text = blank(read(path), DETAILS)", "text = read(path)"),
-    ("the drawn-property reach of code-command", "if DRAWN_BEFORE.search(code, start, literal.start()) is None:", "if False:"),
-    ("the drawn-command-line rule", "if re.search(r\"\\b\" + COMMAND_LINE + r\"\\b\", binding.group(1)):", "if False:"),
-    ("a string literal names no command line", "bare = STRING.sub(lambda m: '\"\"', code)", "bare = code"),
+    ("the drawn-property reach of code-command", "if DRAWN_BEFORE.search(masked, start, literal.start()) is None:", "if False:"),
+    ("the drawn-command-line rule", "if DRAWN_BEFORE.search(masked, start, use.start()) is not None:", "if False:"),
+    ("a string literal names no command line", "masked = blank(code, LITERAL)", "masked = code"),
+    ("a command named by its path", 'return os.path.basename(match.group(0).rstrip("/")) if match else ""', 'return match.group(0) if match else ""'),
+    ("a command as the clause's subject", "    for match in SUBJECT.finditer(text):\n", "    for match in []:\n"),
+    ("the verbs use, call and install with", ', "use", "call", r"install\\s+with")', ")"),
+    ("a bare command in a drawn string", "if inline_named or opens_with_command(", "if inline_named or False and opens_with_command("),
+    ("a CodeLine's text is copied", 'enclosing_type(masked, literal.start()) == "CodeLine"', "False"),
+    ("drawn prose is no command line", "    return copied or (not text.endswith(", "    return True or (not text.endswith("),
+    ("template literals", 'LITERAL = re.compile(STRING.pattern + r"|`(?:[^`\\\\]|\\\\.)*`", re.S)', "LITERAL = re.compile(STRING.pattern, re.S)"),
+    ("a literal's binding reaches back over wrapped lines", "                start = statement_start(masked, literal.start())\n", "                start = masked.rfind(\"\\n\", 0, literal.start()) + 1\n"),
+    ("a command line's binding reaches back over wrapped lines", "                start = statement_start(masked, use.start())\n", "                start = masked.rfind(\"\\n\", 0, use.start()) + 1\n"),
+    ("a user-facing manifest key is read", '    ("secrets", "label"),\n)', ")"),
+    ("every admitted manifest key is classified", '("license",), ("icon",), ("kinds",)', '("license",), ("kinds",)'),
     ("a clause after or", "|\\b(?:or|then)\\s+)(", ")("),
     ("inline code past a dot", "[.!?;](?=[^\\s`])|", ""),
     ("the heads floor", "if len(heads) < HEADS_FLOOR or any(h not in heads for h in REQUIRED_HEADS):", "if False:"),
@@ -177,7 +264,7 @@ with tempfile.TemporaryDirectory() as tmp:
             if done.returncode != 0:
                 failures.append(f"control {label}: the copy without the floor still refused a tree read against too few heads: {done.stdout.strip()}")
             continue
-        if not rows_hold(mutant):
+        if not rows_hold(mutant) and not fields_unclassified(mutant):
             failures.append(f"control {label}: the rows passed on a copy without it")
     # The floor itself: the unmodified check refuses a head set its
     # extractors lost.
