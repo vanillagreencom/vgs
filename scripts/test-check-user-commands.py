@@ -15,6 +15,9 @@ import sys
 import tempfile
 import types
 
+# A check loaded to read its lists compiles no bytecode into the tree.
+sys.dont_write_bytecode = True
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.realpath(os.path.join(HERE, ".."))
 CHECK = os.path.join(HERE, "check-user-commands.py")
