@@ -50,7 +50,7 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 
 What each component of `qs.Ui` guarantees is in [components.md](components.md).
 
-`VoiceOrb` publishes its palette-derived visual values through `Theme.voiceOrb`. Its timing tokens follow `motion.scale`, and its driver also checks that scale before ticking: [components.md § VoiceOrb](components.md#voiceorb).
+`VoiceOrb` publishes its palette-derived visual values through `Theme.voiceOrb`. Its timing tokens follow `motion.scale`, and its driver also checks that scale before ticking: [components-media.md § VoiceOrb](components-media.md#voiceorb).
 
 ## Text stack
 
