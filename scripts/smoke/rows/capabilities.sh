@@ -143,8 +143,10 @@ idle_watches() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(
 expect "an idle watch of zero seconds is refused" "refused: idle-timeout=0 want=1..86400" probe idle-watch 0
 expect "the fixture watches for one second without input" ok probe idle-watch 1
 expect "the lending record lists the watch" '[["acme.probe", 1]]' idle_watches
-expect_poll "the watch reports idle after a second without input" '["idle"]' read_service idleChanges
+# The first two changes: the seat goes idle again a second after the key.
+idle_changes() { read_service idleChanges | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)[:2]))'; }
+expect_poll "the watch reports idle after a second without input" '["idle"]' idle_changes
 type_keys -k Shift_L || fail "typing a key for the idle watch failed"
-expect_poll "a key reports the seat active again" '["idle", "active"]' read_service idleChanges
+expect_poll "a key reports the seat active again" '["idle", "active"]' idle_changes
 expect "the disposer drops the watch" ok probe idle-unwatch
 expect "the lending record lists no watch after the disposer" '[]' idle_watches

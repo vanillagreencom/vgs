@@ -22,9 +22,8 @@ polkit_lent() { ipc shell lent | python3 -c 'import json,sys; v=json.load(sys.st
 for k in sys.argv[1].split("."): v=v.get(k) if isinstance(v, dict) else None
 print(json.dumps(v))' "$1"; }
 polkit_status() { ipc smoke statusValues vgs.polkit | py_reply 'import json,sys; v=json.load(sys.stdin).get("agent"); print(json.dumps(v if v is None else [v["tone"], v["text"]]))'; }
-# The summon a request would make, with no request live: the host's answer
-# and the prompt surfaces mapped after it.
-flowless_summon() { local reply; reply="$(ipc shell summon overlay vgs.polkit '{}')" || return; printf '%s %s\n' "$reply" "$(layer_count vgs:overlay)"; }
+# The summon a request would make, with no request live: the host's answer.
+flowless_summon() { ipc shell summon overlay vgs.polkit '{}'; }
 unregistered='["warning", "Not registered with polkitd: another polkit agent holds this session, or polkitd is not running"]'
 
 expect "the polkit plugin starts disabled in the sandbox" False plugin_enabled vgs.polkit
@@ -44,7 +43,8 @@ expect "the agent is not registered on a bus without polkitd" false polkit_lent 
 expect_poll "the service publishes that polkitd did not accept the agent" "$unregistered" polkit_status
 expect "no prompt surface exists without a flow" 0 layer_count vgs:overlay
 expected_errors+=('summon host: vgs\.polkit open\(\) failed: polkit: refused: flow=none')
-expect "a summon with no flow is refused and maps nothing" "refused: open-failed=vgs.polkit 0" flowless_summon
+expect "a summon with no flow is refused" "refused: open-failed=vgs.polkit" flowless_summon
+expect "the refused summon maps no prompt surface" 0 layer_count vgs:overlay
 
 # Control: the same reading over a prompt that opens with no flow.
 control_dir="$home/.config/vgs/plugins/vgs.polkit"
@@ -64,7 +64,8 @@ control_dir_of() { ipc shell listPlugins | python3 -c 'import json,sys; print([p
 expect_poll "the control copy is the plugin the shell runs" "$control_dir" control_dir_of
 expect_poll "the control copy's agent is lent" true polkit_lent polkitAgent
 got="$(flowless_summon)" || got="unreadable"
-if [[ $got == "ok 1" ]]; then ok "control: a prompt that opens with no flow is summoned and maps"; else fail "control: the flowless summon reading got [$got] over a prompt that opens with no flow"; fi
+if [[ $got == ok ]]; then ok "control: a prompt that opens with no flow is summoned"; else fail "control: the flowless summon reading got [$got] over a prompt that opens with no flow"; fi
+expect_poll "control: the prompt that opened with no flow maps a surface" 1 layer_count vgs:overlay
 expect "the control copy's prompt hides" ok ipc shell hide overlay vgs.polkit
 rm -r -- "$control_dir"
 expect "rescan after removing the control copy answers ok" ok ipc shell rescanPlugins
