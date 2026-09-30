@@ -46,9 +46,11 @@ Item {
 
     function open() {
         typed = "";
-        currentIndex = items().findIndex(item => reachable(item) && item.checked);
+        // The cursor lands on the opening entry rather than travelling
+        // from where the last opening left it.
         plate.disarm();
         plate.snap();
+        currentIndex = items().findIndex(item => reachable(item) && item.checked);
         window.visible = true;
         scope.forceActiveFocus();
         scroll.contentY = 0;

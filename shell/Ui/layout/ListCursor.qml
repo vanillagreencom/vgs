@@ -22,8 +22,11 @@ import "ListCursorLogic.js" as Logic
 // Declare the cursor in the item that holds the rows, or in any item above
 // them that is not a positioner, such as a view's contentItem. It follows
 // the row through every item between, by their positions, so it ignores a
-// row's transform, such as its entrance. `enterSlot()` places a row that
-// arrives among the others of its turn, for ListEntrance.
+// row's transform, such as its entrance. It draws at z -1, under every
+// sibling, the rows among them, and so under anything its parent draws
+// itself: its parent must draw nothing, and a parent that paints a fill is
+// refused with an error. `enterSlot()` places a row that arrives among the
+// others of its turn, for ListEntrance.
 //
 // Every timing and distance is `motion`, `Theme.motion.list` by default. A
 // plugin that owns its look hands its own, in the same shape, and its own
@@ -180,5 +183,13 @@ Item {
         background.anchors.fill = root;
     }
     onBackgroundChanged: adopt()
+
+    // Qt draws a child at a negative z under its parent's own paint, so a
+    // parent's fill, such as a surface's, would hide the plate.
+    function checkParent() {
+        if (parent !== null && parent.color !== undefined && parent.color.a > 0)
+            console.error("ListCursor: parent " + parent + " paints a fill over the plate; declare the cursor in an item that draws nothing, around the rows");
+    }
+    onParentChanged: checkParent()
     Component.onCompleted: adopt()
 }

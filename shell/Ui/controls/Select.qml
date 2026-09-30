@@ -51,9 +51,11 @@ T.AbstractButton {
 
     function openList() {
         if (count === 0) return;
-        entries.currentIndex = currentIndex;
+        // The cursor lands on the choice rather than travelling from where
+        // the last opening left it.
         plate.disarm();
         plate.snap();
+        entries.currentIndex = currentIndex;
         list.visible = true;
         entries.forceActiveFocus();
     }

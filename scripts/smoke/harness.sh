@@ -475,6 +475,7 @@ cpu_some_us() {
 # Each prints nothing on success; a row reads its status.
 click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/null; }
 hover() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" move >/dev/null; }
+right_click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" right >/dev/null; }
 drag() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" drag "$3" "$4" >/dev/null; }
 type_keys() { "${shell_env[@]}" wtype "$@"; }
 # compositor_logs_on: the nested compositor logs from here to the end of

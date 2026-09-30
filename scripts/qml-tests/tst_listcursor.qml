@@ -73,6 +73,28 @@ Item {
         Item { id: ownRow; width: 300; height: 30 }
     }
 
+    // A surface that paints a fill, with the rows and their cursor in an
+    // item inside it, as the launcher's flyout holds them: the plate draws
+    // over the fill and under the row's content.
+    Rectangle {
+        id: painted
+        x: 320
+        width: 60
+        height: 80
+        color: "#ff0000"
+        Item {
+            anchors.fill: parent
+            ListCursor { id: paintedPlate; background: Rectangle { color: "#0000ff" } }
+            Item {
+                id: paintedRow
+                y: 20
+                width: 60
+                height: 30
+                Rectangle { width: 20; height: 30; color: "#00ff00" }
+            }
+        }
+    }
+
     SignalSpy { id: pointed; signalName: "pointed" }
 
     TestCase {
@@ -232,6 +254,21 @@ Item {
             compare(entrance.x, -18);
             compare(entrance.y, 0);
             entrance.destroy();
+        }
+
+        // expected-log: paints a fill over the plate -- the planted cursor sits directly in a surface that paints
+        function test_a_cursor_in_a_painting_parent_is_refused() {
+            const direct = Qt.createQmlObject("import qs.Ui\nListCursor {}", painted);
+            direct.destroy();
+        }
+
+        function test_the_plate_draws_over_the_surface_and_under_the_rows() {
+            paintedPlate.follow(paintedRow, true);
+            tryCompare(paintedPlate, "opacity", 1);
+            const image = grabImage(painted);
+            verify(Qt.colorEqual(image.pixel(40, 35), "#0000ff"), "the plate draws over the parent's fill, got " + image.pixel(40, 35));
+            verify(Qt.colorEqual(image.pixel(10, 35), "#00ff00"), "the row's content draws over the plate, got " + image.pixel(10, 35));
+            verify(Qt.colorEqual(image.pixel(40, 5), "#ff0000"), "the parent's fill shows around the plate, got " + image.pixel(40, 5));
         }
 
         function test_a_plugin_look_brings_its_background_and_bezier_steps() {

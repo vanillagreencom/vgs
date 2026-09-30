@@ -399,6 +399,16 @@ scene_manager() { # MODE
 }
 
 launcher_rows() { ipc smoke launcherRows overlay vgs.launcher; }
+# settled_box HOST ID TYPE TEXT: `same` when two readings of that item's box
+# a frame apart agree, `moving` when they differ.
+settled_box() {
+  local first second
+  first="$(ipc smoke itemGeometry "$@")" || return 1
+  sleep 0.05
+  second="$(ipc smoke itemGeometry "$@")" || return 1
+  [[ $first == \[* && $first == "$second" ]] && echo same || echo moving
+}
+launcher_file_listed() { launcher_rows | python3 -c 'import json,sys; t=sys.stdin.read(); print(t.startswith("[") and any(r[0] == "file" and r[1] == sys.argv[1] for r in json.loads(t)))' "$1"; }
 launcher_listed() { launcher_rows | python3 -c 'import json,sys; t=sys.stdin.read(); print(t.startswith("[") and len(json.loads(t)) > 2)'; }
 scene_launcher() { # MODE
   local second
@@ -417,8 +427,20 @@ scene_launcher() { # MODE
   take "launcher-$1-selected"
   second="$(launcher_rows | python3 -c 'import json,sys; print(json.load(sys.stdin)[2][1])')" || second=""
   hover_on "the pointer rests on the launcher's third row" overlay vgs.launcher QQuickText "$second" && take "launcher-$1-hover"
+  # The file flyout: a right click on a file hit, then the pointer on one of
+  # its entries, whose highlight draws over the flyout's glass.
+  touch -- "$home/shots-flyout.txt"
+  type_keys "f:shots-flyout" || fail "typing a file search failed"
+  expect_poll "the file search lists the planted file" True launcher_file_listed shots-flyout.txt
+  if file_at="$(centre_of "$(ipc smoke itemGeometry overlay vgs.launcher QQuickText shots-flyout.txt)")" && [[ $file_at != none ]] && read -r fx fy <<<"$file_at" && hover "$fx" "$fy" && right_click "$fx" "$fy"; then
+    # The flyout grows in from the click; its entries hold still once it has.
+    expect_poll "the flyout has opened" same settled_box overlay vgs.launcher QQuickText "Copy path"
+    hover_on "the pointer rests on the flyout's Copy path" overlay vgs.launcher QQuickText "Copy path" && take "launcher-$1-flyout"
+  else
+    fail "the right click on the planted file failed"
+  fi
   park_pointer
-  type_keys -k Escape -k Escape || fail "sending Escape failed"
+  type_keys -k Escape -k Escape -k Escape || fail "sending Escape failed"
   expect_poll "the launcher closes" 0 layer_count vgs:overlay
 }
 

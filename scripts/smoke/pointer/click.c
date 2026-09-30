@@ -3,11 +3,13 @@
  * nested compositor's and never the live session's: the helper connects to
  * the socket it is given and to nothing else.
  *
- *   click X Y WIDTH HEIGHT [move | drag X2 Y2]
+ *   click X Y WIDTH HEIGHT [move | right | drag X2 Y2]
  *
  * Moves the pointer to (X, Y) on a layout WIDTH by HEIGHT, presses and
  * releases the left button, and prints `clicked X Y`. With `move` it only
  * moves the pointer and prints `moved X Y`, so a row can hover an item.
+ * With `right` it clicks the right button, as a context menu wants, and
+ * prints `clicked X Y`.
  * With `drag X2 Y2` it presses at (X, Y), moves to (X2, Y2) in ten steps
  * with the button held, releases there and prints `dragged X Y X2 Y2`.
  * Exit 2 on a bad invocation, 1 when the display cannot be opened or lacks
@@ -21,6 +23,7 @@
 #include "wlr-virtual-pointer-unstable-v1-client-protocol.h"
 
 #define BTN_LEFT 0x110
+#define BTN_RIGHT 0x111
 
 static struct wl_seat *seat = NULL;
 static struct zwlr_virtual_pointer_manager_v1 *manager = NULL;
@@ -59,10 +62,12 @@ static int number(const char *text, uint32_t *out) {
 int main(int argc, char **argv) {
     uint32_t x, y, width, height, x2 = 0, y2 = 0;
     int move_only = argc == 6 && strcmp(argv[5], "move") == 0;
+    int right = argc == 6 && strcmp(argv[5], "right") == 0;
     int drag = argc == 8 && strcmp(argv[5], "drag") == 0;
-    if ((argc != 5 && !move_only && !drag) || !number(argv[1], &x) || !number(argv[2], &y) || !number(argv[3], &width) || !number(argv[4], &height) || width == 0 || height == 0
+    uint32_t button = right ? BTN_RIGHT : BTN_LEFT;
+    if ((argc != 5 && !move_only && !right && !drag) || !number(argv[1], &x) || !number(argv[2], &y) || !number(argv[3], &width) || !number(argv[4], &height) || width == 0 || height == 0
         || (drag && (!number(argv[6], &x2) || !number(argv[7], &y2)))) {
-        fprintf(stderr, "click: refused: usage=X Y WIDTH HEIGHT [move | drag X2 Y2]\n");
+        fprintf(stderr, "click: refused: usage=X Y WIDTH HEIGHT [move | right | drag X2 Y2]\n");
         return 2;
     }
     struct wl_display *display = wl_display_connect(NULL);
@@ -83,7 +88,7 @@ int main(int argc, char **argv) {
     zwlr_virtual_pointer_v1_frame(pointer);
     wl_display_roundtrip(display);
     if (!move_only) {
-        zwlr_virtual_pointer_v1_button(pointer, now_ms(), BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+        zwlr_virtual_pointer_v1_button(pointer, now_ms(), button, WL_POINTER_BUTTON_STATE_PRESSED);
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);
         for (int step = 1; drag && step <= 10; step++) {
@@ -93,7 +98,7 @@ int main(int argc, char **argv) {
             zwlr_virtual_pointer_v1_frame(pointer);
             wl_display_roundtrip(display);
         }
-        zwlr_virtual_pointer_v1_button(pointer, now_ms(), BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+        zwlr_virtual_pointer_v1_button(pointer, now_ms(), button, WL_POINTER_BUTTON_STATE_RELEASED);
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);
     }

@@ -43,6 +43,20 @@ render expect "the Settings list's cursor travels to the next row under a slowed
 write_motion_theme '{ "schemaVersion": 1, "name": "still", "tokens": { "motion": { "scale": 0 } } }'
 expect_poll "motion scale 0 reaches the list motion" 0 ipc smoke themeValue motion.list.travel.duration
 expect "at motion scale 0 the Settings list's cursor lands on the row at once" still glide_seen window vgs.settings Up
+# A filter moves rows under a resting pointer: the list disarms the pointer
+# first, so a row that lands under it takes nothing from the keyboard. The
+# pointer arrives on the second row by two motions, which arm it.
+settings_second="$(ipc smoke itemTexts window vgs.settings ListItem | py_reply 'import json,sys; print(json.load(sys.stdin)[1][0])')" || settings_second=""
+settings_row_box="$(ipc smoke windowGeometry window vgs.settings ListItem "$settings_second")" || settings_row_box=""
+if read -r row_x row_y < <(at_centre window:Settings "$settings_row_box") && hover "$((row_x - 6))" "$row_y" && hover "$row_x" "$row_y"; then
+  expect_poll "a moving pointer arms the Settings list" true ipc smoke readShownDescendant window vgs.settings ListCursor armed
+  type_keys e || fail "typing a filter into the Settings search failed"
+  expect_poll "the filter reaches the Settings list" '"e"' ipc smoke readShownDescendant window vgs.settings ListPage query
+  expect "a filter disarms the pointer resting over the Settings list" false ipc smoke readShownDescendant window vgs.settings ListCursor armed
+  rest_pointer || fail "moving the pointer off the Settings list failed"
+else
+  fail "the pointer did not reach the Settings list's row ${settings_second:-unread}"
+fi
 expect "hiding the Settings window after the list motion is allowed" ok ipc shell hide window vgs.settings
 expect_poll "the Settings window is gone" 0 window_count Settings
 expect "disabling the Settings plugin after the list motion is allowed" ok ipc shell setPluginEnabled vgs.settings false

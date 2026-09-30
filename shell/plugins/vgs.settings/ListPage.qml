@@ -28,7 +28,13 @@ FocusScope {
     }
     readonly property alias scrollArea: layout.scrollArea
 
-    onShownChanged: current = Math.max(0, Math.min(current, shown.length - 1))
+    // The rows change under a resting pointer: it takes no row until it
+    // moves, and the cursor lands on the row the keyboard keeps.
+    onShownChanged: {
+        plate.disarm();
+        plate.snap();
+        current = Math.max(0, Math.min(current, shown.length - 1));
+    }
 
     function focusSearch() { search.forceActiveFocus(); }
 

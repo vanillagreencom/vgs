@@ -182,6 +182,47 @@ Item {
             root.chosen = 4;
         }
 
+        // A highlight moved and dismissed without a choice: the next opening
+        // lands the cursor on the checked entry at once, with motion on.
+        function test_a_reopened_menu_lands_on_its_checked_entry() {
+            compare(UnitTheme.override({ motion: { list: { travel: { duration: 2000 } } } }), "ok");
+            long.open();
+            const items = long.items();
+            const plate = items[0].cursor;
+            compare(long.currentIndex, 4);
+            tryCompare(plate, "opacity", 1);
+            long.move(1);
+            long.move(1);
+            compare(long.currentIndex, 6);
+            // The cursor is on its way to the moved highlight.
+            wait(200);
+            verify(plate.y > items[4].y, "the cursor left the checked entry, at " + plate.y);
+            long.close();
+            long.open();
+            compare(long.currentIndex, 4);
+            compare(plate.y, items[4].y, "the cursor lands on the checked entry at once");
+            long.close();
+        }
+
+        function test_a_reopened_select_list_lands_on_the_choice() {
+            compare(UnitTheme.override({ motion: { list: { travel: { duration: 2000 } } } }), "ok");
+            select.openList();
+            const list = selectList(select);
+            tryVerify(() => list.itemAtIndex(2) !== null, 1000, "the list builds its entries");
+            const plate = list.contentItem.children.find(child => child.follow !== undefined);
+            tryCompare(plate, "opacity", 1);
+            list.currentIndex = 2;
+            // The cursor is on its way to the moved highlight.
+            wait(200);
+            verify(plate.y > list.itemAtIndex(0).y, "the cursor left the choice, at " + plate.y);
+            list.Window.window.visible = false;
+            compare(select.listOpen, false);
+            select.openList();
+            compare(list.currentIndex, 0);
+            compare(plate.y, list.itemAtIndex(0).y, "the cursor lands on the choice at once");
+            select.choose(0);
+        }
+
         function test_typing_jumps_to_the_entry_starting_with_the_letters() {
             compare(UnitTheme.override({ menu: { typeahead: 200 } }), "ok");
             root.chosen = -1;

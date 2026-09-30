@@ -80,107 +80,113 @@ Item {
             onEntered: menu.hovered = -1
         }
 
-        ListCursor {
-            id: plate
-            motion: menu.motion
-            background: Highlight { look: menu.look; radius: menu.look.radius.sm }
-        }
+        // The entries and their cursor, in an item that draws nothing:
+        // the glass body paints its fill, which would cover the cursor.
+        Item {
+            anchors.fill: parent
 
-        Column {
-            id: column
-            x: menu.look.flyout.padding
-            y: menu.look.flyout.padding
-            width: parent.width - 2 * menu.look.flyout.padding
+            ListCursor {
+                id: plate
+                motion: menu.motion
+                background: Highlight { look: menu.look; radius: menu.look.radius.sm }
+            }
 
-            Repeater {
-                model: menu.items
+            Column {
+                id: column
+                x: menu.look.flyout.padding
+                y: menu.look.flyout.padding
+                width: parent.width - 2 * menu.look.flyout.padding
 
-                Item {
-                    id: entry
-                    required property var modelData
-                    required property int index
-                    readonly property bool separator: !!modelData.separator
-                    readonly property bool hasIcon: !separator && (!!modelData.icon || !!modelData.glyph)
-                    readonly property bool hasCursor: menu.hovered === index
-                    onHasCursorChanged: plate.follow(entry, hasCursor)
-
-                    width: column.width
-                    height: separator ? menu.look.flyout.separatorHeight : menu.look.flyout.rowHeight
-
-                    Rectangle {
-                        visible: entry.separator
-                        anchors.centerIn: parent
-                        width: parent.width - menu.look.flyout.separatorInset
-                        height: menu.look.glass.hairlineWidth
-                        color: menu.look.glass.divider
-                    }
+                Repeater {
+                    model: menu.items
 
                     Item {
-                        id: iconBox
-                        visible: entry.hasIcon
-                        anchors.left: parent.left
-                        anchors.leftMargin: menu.look.flyout.iconInset
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: menu.look.flyout.iconSize
-                        height: menu.look.flyout.iconSize
+                        id: entry
+                        required property var modelData
+                        required property int index
+                        readonly property bool separator: !!modelData.separator
+                        readonly property bool hasIcon: !separator && (!!modelData.icon || !!modelData.glyph)
+                        readonly property bool hasCursor: menu.hovered === index
+                        onHasCursorChanged: plate.follow(entry, hasCursor)
 
-                        Image {
-                            anchors.fill: parent
-                            visible: !!entry.modelData.icon
-                            sourceSize.width: width * Screen.devicePixelRatio
-                            sourceSize.height: height * Screen.devicePixelRatio
-                            source: entry.modelData.icon || ""
-                            asynchronous: true
-                        }
-                        Icon {
+                        width: column.width
+                        height: separator ? menu.look.flyout.separatorHeight : menu.look.flyout.rowHeight
+
+                        Rectangle {
+                            visible: entry.separator
                             anchors.centerIn: parent
-                            visible: !entry.modelData.icon && !!entry.modelData.glyph
-                            name: entry.modelData.glyph || ""
-                            size: menu.look.flyout.iconSize
-                            stroke: menu.look.tile.stroke
-                            color: menu.look.text.foreground
+                            width: parent.width - menu.look.flyout.separatorInset
+                            height: menu.look.glass.hairlineWidth
+                            color: menu.look.glass.divider
                         }
-                    }
 
-                    Text {
-                        visible: !entry.separator
-                        anchors.left: iconBox.visible ? iconBox.right : parent.left
-                        anchors.leftMargin: iconBox.visible ? menu.look.flyout.iconGap : menu.look.flyout.textInset
-                        anchors.right: detail.left
-                        anchors.rightMargin: menu.look.flyout.detailGap
-                        anchors.verticalCenter: parent.verticalCenter
-                        textFormat: Text.PlainText
-                        text: entry.modelData.label || ""
-                        color: menu.look.text.foreground
-                        elide: Text.ElideRight
-                        font.family: menu.look.font.family
-                        font.pixelSize: menu.look.text.flyout.size
-                    }
+                        Item {
+                            id: iconBox
+                            visible: entry.hasIcon
+                            anchors.left: parent.left
+                            anchors.leftMargin: menu.look.flyout.iconInset
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: menu.look.flyout.iconSize
+                            height: menu.look.flyout.iconSize
 
-                    Text {
-                        id: detail
-                        visible: !entry.separator && !!entry.modelData.detail
-                        anchors.right: parent.right
-                        anchors.rightMargin: menu.look.flyout.textInset
-                        anchors.verticalCenter: parent.verticalCenter
-                        textFormat: Text.PlainText
-                        text: entry.modelData.detail || ""
-                        color: menu.look.text.foreground
-                        opacity: menu.look.text.detail.opacity
-                        font.family: menu.look.font.family
-                        font.pixelSize: menu.look.text.flyout.detail
-                    }
+                            Image {
+                                anchors.fill: parent
+                                visible: !!entry.modelData.icon
+                                sourceSize.width: width * Screen.devicePixelRatio
+                                sourceSize.height: height * Screen.devicePixelRatio
+                                source: entry.modelData.icon || ""
+                                asynchronous: true
+                            }
+                            Icon {
+                                anchors.centerIn: parent
+                                visible: !entry.modelData.icon && !!entry.modelData.glyph
+                                name: entry.modelData.glyph || ""
+                                size: menu.look.flyout.iconSize
+                                stroke: menu.look.tile.stroke
+                                color: menu.look.text.foreground
+                            }
+                        }
 
-                    MouseArea {
-                        anchors.fill: parent
-                        enabled: !entry.separator
-                        hoverEnabled: true
-                        PointerCursor {}
-                        onEntered: menu.hovered = entry.index
-                        onExited: if (menu.hovered === entry.index) menu.hovered = -1
-                        onClicked: {
-                            menu.close();
-                            menu.triggered(entry.modelData.id);
+                        Text {
+                            visible: !entry.separator
+                            anchors.left: iconBox.visible ? iconBox.right : parent.left
+                            anchors.leftMargin: iconBox.visible ? menu.look.flyout.iconGap : menu.look.flyout.textInset
+                            anchors.right: detail.left
+                            anchors.rightMargin: menu.look.flyout.detailGap
+                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: entry.modelData.label || ""
+                            color: menu.look.text.foreground
+                            elide: Text.ElideRight
+                            font.family: menu.look.font.family
+                            font.pixelSize: menu.look.text.flyout.size
+                        }
+
+                        Text {
+                            id: detail
+                            visible: !entry.separator && !!entry.modelData.detail
+                            anchors.right: parent.right
+                            anchors.rightMargin: menu.look.flyout.textInset
+                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: entry.modelData.detail || ""
+                            color: menu.look.text.foreground
+                            opacity: menu.look.text.detail.opacity
+                            font.family: menu.look.font.family
+                            font.pixelSize: menu.look.text.flyout.detail
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: !entry.separator
+                            hoverEnabled: true
+                            PointerCursor {}
+                            onEntered: menu.hovered = entry.index
+                            onExited: if (menu.hovered === entry.index) menu.hovered = -1
+                            onClicked: {
+                                menu.close();
+                                menu.triggered(entry.modelData.id);
+                            }
                         }
                     }
                 }
