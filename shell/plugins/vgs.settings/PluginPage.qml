@@ -226,6 +226,7 @@ FocusScope {
                     required property var modelData
                     width: body.width
                     title: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
+                    headerInset: 0
 
                     Repeater {
                         model: ScriptModel {
@@ -245,6 +246,7 @@ FocusScope {
                 visible: page.row !== null && page.row.requirements.length > 0
                 title: "Requirements"
                 description: "Commands the plugin runs, looked up on PATH at the last scan"
+                headerInset: 0
 
                 Column {
                     id: requirementRows
@@ -293,6 +295,7 @@ FocusScope {
                     required property var modelData
                     width: body.width
                     title: section.modelData.group === "" ? "Settings" : section.modelData.group
+                    headerInset: 0
 
                     Repeater {
                         model: ScriptModel {
@@ -320,6 +323,7 @@ FocusScope {
                 visible: page.row !== null && page.row.binds.length > 0
                 title: "Keys"
                 description: "Written to shell.json; an empty key unbinds it"
+                headerInset: 0
 
                 Repeater {
                     model: ScriptModel {
