@@ -51,7 +51,7 @@ async function inside() {
                 seq: ++seq, state: {
                     gen: 0, nextOp: 1, stale: 0, settings: {},
                     gate: { kind: "down", reason: locked ? "locked" : "unconfigured" },
-                    mute: { kind: "off" }, capture: { kind: "closed" }, turn: { kind: "none" },
+                    mute: { kind: "off" }, capture: { kind: "closed" }, turn: { kind: "none" }, brain: { kind: "closed" },
                     playback: { kind: "idle" }, action: { kind: "none" }, approval: { kind: "none" }, fault: { kind: "none" },
                     conversation: { kind: "ended" }, input: { kind: "released" }, indicator: { kind: "gone" },
                     duplex: { kind: "half" }, toggleAt: null

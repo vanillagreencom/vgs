@@ -75,6 +75,7 @@ const table = [
     }],
     ["hold-edges", logic => {
         let s = listening(logic);
+        s = step(logic, s, callback("partial", s.turn, 20, { text: "keep this partial" })).state;
         assert.equal(logic.phaseOf(s), "listening");
         const duplicate = step(logic, s, event("talk-down", 21));
         assert.deepEqual(duplicate, { state: s, effects: [] });
@@ -84,6 +85,39 @@ const table = [
         assert.deepEqual(step(logic, ready(logic), event("talk-up")).effects, []);
         const conversation = listening(logic, true);
         assert.deepEqual(step(logic, conversation, event("talk-up")), { state: conversation, effects: [] });
+    }],
+    ["hold-replacement", logic => {
+        let s = listening(logic);
+        const old = copy(s.turn);
+        s = step(logic, s, event("talk-up", 21)).state;
+        s = step(logic, s, callback("capture-closed", s.capture, 22)).state;
+        s = step(logic, s, event("talk-down", 23)).state;
+        s = step(logic, s, callback("capture-opened", s.capture, 24)).state;
+        const before = copy(s);
+        const late = step(logic, s, callback("final", old, 25, { text: "old transcript" }));
+        assert.deepEqual(late.effects, [], "the old final cannot send or close the new hold");
+        assert.deepEqual(late.state.capture, before.capture);
+        assert.deepEqual(late.state.input, { kind: "held" });
+        assert.deepEqual(late.state.turn, before.turn);
+        assert.equal(late.state.stale, before.stale + 1);
+        assert.notEqual(before.turn.op, old.op);
+        const fresh = step(logic, late.state, callback("final", before.turn, 26, { text: "new transcript" }));
+        assert.equal(fresh.effects.find(e => e.kind === "brain-send").text, "new transcript");
+    }],
+    ["hold-approval", logic => {
+        const s = held(logic);
+        const results = ["talk-down", "interrupt"].map(type => step(logic, s, event(type, 50)));
+        for (const r of results) {
+            assert.equal(r.state.approval.kind, "none", "both interruption sources retire approval");
+            assert.equal(r.state.turn.kind, "cancelling");
+            const ended = r.effects.find(e => e.kind === "approval-ended");
+            assert.equal(ended.id, s.approval.id);
+            assert.equal(ended.target, s.approval.op);
+            assert.equal(ended.reason, "interrupt");
+        }
+        assert.deepEqual(results[0].effects, results[1].effects);
+        const repeated = step(logic, results[0].state, event("talk-down", 51));
+        assert.deepEqual(repeated, { state: results[0].state, effects: [] });
     }],
     ["toggle-debounce", logic => {
         const s = step(logic, ready(logic), event("toggle", 100)).state;
@@ -185,6 +219,37 @@ const table = [
         assert.equal(r.state.turn.kind, "none");
         assert.deepEqual(kinds(r), ["brain-cancel", "brain-close"]);
         assert.equal(r.effects[1].target, s.turn.op);
+    }],
+    ["completed-brain-owner", logic => {
+        const thinkingState = thinking(logic);
+        const owner = copy(thinkingState.brain);
+        const completed = step(logic, thinkingState, callback("brain-done", thinkingState.turn, 40)).state;
+        assert.equal(completed.turn.kind, "none");
+        assert.deepEqual(completed.brain, owner, "response completion is not adapter teardown");
+        for (const endEvent of [event("stop", 50), event("lease-ended", 50),
+            snapshot({ at: 50, settings: { model: "new" } })]) {
+            const r = step(logic, completed, endEvent);
+            assert.equal(r.state.brain.kind, "closed");
+            const closes = r.effects.filter(e => e.kind === "brain-close");
+            assert.equal(closes.length, 1);
+            assert.equal(closes[0].gen, owner.gen);
+            assert.equal(closes[0].target, owner.op);
+            assert.equal(kinds(step(logic, r.state, endEvent)).includes("brain-close"), false);
+        }
+    }],
+    ["reused-brain-owner", logic => {
+        let s = thinking(logic);
+        const owner = copy(s.brain);
+        s = step(logic, s, callback("brain-done", s.turn, 40)).state;
+        s = step(logic, s, event("talk-down", 50)).state;
+        s = step(logic, s, callback("capture-opened", s.capture, 51)).state;
+        const sent = step(logic, s, callback("final", s.turn, 52, { text: "next turn" }));
+        assert.notEqual(sent.state.turn.op, owner.op);
+        assert.equal(sent.effects.find(e => e.kind === "brain-send").owner, owner.op);
+        assert.deepEqual(sent.state.brain, owner);
+        s = step(logic, sent.state, callback("brain-done", sent.state.turn, 53)).state;
+        const closed = step(logic, s, event("lease-ended", 54));
+        assert.equal(closed.effects.find(e => e.kind === "brain-close").target, owner.op);
     }],
     ["thinking-timeout", logic => {
         const s = thinking(logic);
@@ -446,6 +511,136 @@ function invariants(before, e, r) {
         if (effect.kind === "tool-cancel") assert.notEqual(before.action.cancellation.kind, "unavailable");
     }
 }
+const createdCallbacks = [
+    { effect: "capture-open", type: "capture-opened", check: (s, r, e) => {
+        assert.equal(r.state.capture.kind, "open");
+        assert.equal(r.state.capture.op, e.op);
+    } },
+    { effect: "capture-close", type: "capture-closed", check: (s, r) => {
+        assert.ok(["closed", "opening"].includes(r.state.capture.kind));
+        assert.notEqual(r.state.capture.op, s.capture.op);
+    } },
+    { effect: "collect", type: "partial", check: (s, r) => {
+        assert.equal(r.state.turn.kind, "collecting");
+        assert.equal(r.state.turn.partial, "fixture");
+    } },
+    { effect: "collect", type: "final", check: (s, r) => {
+        assert.equal(r.state.turn.kind, "thinking");
+        assert.equal(r.effects.find(e => e.kind === "brain-send").text, "fixture");
+    } },
+    { effect: "brain-send", type: "brain-done", check: (s, r) => {
+        assert.ok(["none", "collecting"].includes(r.state.turn.kind));
+        assert.deepEqual(r.state.brain, s.brain);
+        assert.equal(kinds(r).includes("brain-close"), false);
+    } },
+    { effect: "brain-send", type: "brain-failed", check: (s, r) => {
+        assert.equal(r.state.fault.reason, "fixture");
+        assert.equal(r.state.brain.kind, "closed");
+        assert.equal(r.effects.find(e => e.kind === "brain-close").target, s.brain.op);
+    } },
+    { effect: "brain-send", type: "play", check: (s, r, e) => {
+        assert.equal(r.state.playback.kind, "playing");
+        assert.equal(r.state.playback.source, e.op);
+    } },
+    { effect: "brain-send", type: "tool", check: (s, r) => {
+        if (s.action.kind === "none" && s.approval.kind === "none") {
+            assert.equal(r.state.action.kind, "running");
+            assert.equal(r.effects.find(e => e.kind === "tool-start").tool, "fixture");
+        } else assert.equal(kinds(r).includes("tool-start"), false);
+    } },
+    { effect: "brain-send", type: "approval", check: (s, r) => {
+        if (s.action.kind === "none" && s.approval.kind === "none") {
+            assert.equal(r.state.approval.kind, "held");
+            assert.equal(r.effects.find(e => e.kind === "approval-show").id, "fixture");
+        } else assert.equal(kinds(r).includes("approval-show"), false);
+    } },
+    { effect: "brain-send", type: "deadline", deadline: "turn", check: (s, r) => {
+        assert.equal(r.state.turn.kind, "cancelling");
+        assert.equal(r.state.fault.reason, "thinking-timeout");
+        assert.equal(r.effects.find(e => e.kind === "brain-cancel").target, s.turn.op);
+    } },
+    { effect: "brain-cancel", type: "cancelled", target: true, check: (s, r) => {
+        assert.ok(["none", "collecting"].includes(r.state.turn.kind));
+        assert.equal(r.state.brain.kind, "closed");
+        assert.equal(r.effects.find(e => e.kind === "brain-close").target, s.brain.op);
+    } },
+    { effect: "brain-cancel", type: "deadline", target: true, deadline: "turn", check: (s, r) => {
+        assert.ok(["none", "collecting"].includes(r.state.turn.kind));
+        assert.equal(r.state.brain.kind, "closed");
+        assert.equal(r.effects.find(e => e.kind === "brain-close").target, s.brain.op);
+    } },
+    { effect: "playback-start", type: "played", check: (s, r) => assert.equal(r.state.playback.kind, "idle") },
+    { effect: "playback-flush", type: "flushed", check: (s, r) => assert.equal(r.state.playback.kind, "idle") },
+    { effect: "tool-start", type: "tool-done", check: (s, r, e) => {
+        assert.equal(r.state.action.kind, "none");
+        const outcome = r.effects.find(e => e.kind === "tool-outcome");
+        assert.equal(outcome.outcome, "completed");
+        assert.equal(outcome.source, e.op);
+        assert.equal(outcome.target, s.action.brain);
+    } },
+    { effect: "tool-start", type: "deadline", deadline: "action", check: (s, r, e) => {
+        assert.equal(r.state.action.limit.kind, "expired");
+        assert.equal(r.effects.find(e => e.kind === "tool-outcome").outcome, "unknown");
+        assert.equal(r.effects.find(e => e.kind === "tool-cancel").target, e.op);
+    } },
+    { effect: "approval-show", type: "shown", check: (s, r) => {
+        assert.equal(r.state.approval.kind, "held");
+        assert.equal(r.state.approval.shownAt, 201);
+    } },
+    { effect: "approval-show", type: "deadline", deadline: "approval", check: (s, r, e) => {
+        assert.equal(r.state.approval.kind, "none");
+        const ended = r.effects.find(e => e.kind === "approval-ended");
+        assert.equal(ended.reason, "timeout");
+        assert.equal(ended.target, e.op);
+    } }
+];
+
+// Discover actual effects, not merely event names. Each matching second
+// event uses the identity that the production effect consumer stamps.
+function createdPairMatrix(logic) {
+    const seen = new Set();
+    let count = 0;
+    for (const seed of seeds) for (const first of pairEvents) {
+        const input = { ...fixtureEvent(first.type, seed, 200), ...first.extra };
+        const firstResult = step(logic, seed, input);
+        for (const effect of firstResult.effects) {
+            // Lease teardown can cancel and close in the same transition.
+            // Its acknowledgment is retired, not a new live owner.
+            if (effect.kind === "brain-cancel" && firstResult.state.turn.kind !== "cancelling") continue;
+            for (const pair of createdCallbacks.filter(row => row.effect === effect.kind)) {
+                const before = firstResult.state;
+                const second = fixtureEvent(pair.type, before, 201);
+                second.gen = effect.gen;
+                second.op = pair.target ? effect.target : effect.op;
+                if (pair.deadline) {
+                    const owner = before[pair.deadline];
+                    second.at = pair.deadline === "action" ? owner.limit.deadline : owner.deadline;
+                }
+                const result = step(logic, before, second);
+                assert.equal(result.state.stale, before.stale,
+                    effect.kind + ":" + pair.type + " must reach a live callback");
+                invariants(before, second, result);
+                pair.check(before, result, effect);
+                seen.add(effect.kind + ":" + pair.type);
+                count++;
+            }
+        }
+    }
+    // These expected producers/consumers are independent of the discovery
+    // table. Omitting one row cannot shrink the coverage claim with it.
+    assert.deepEqual([...seen].sort(), [
+        "capture-open:capture-opened", "capture-close:capture-closed",
+        "collect:partial", "collect:final",
+        "brain-send:brain-done", "brain-send:brain-failed", "brain-send:play",
+        "brain-send:tool", "brain-send:approval", "brain-send:deadline",
+        "brain-cancel:cancelled", "brain-cancel:deadline",
+        "playback-start:played", "playback-flush:flushed",
+        "tool-start:tool-done", "tool-start:deadline",
+        "approval-show:shown", "approval-show:deadline"
+    ].sort(), "created-owner discovery omitted a producer or deadline owner");
+    assert.ok(count >= 18, "created-owner discovery did not complete its required callbacks");
+    return count;
+}
 let pairs = 0;
 for (const seed of seeds) for (const a of pairEvents) for (const b of pairEvents) {
     // A,B and B,A appear as distinct rows of this Cartesian product.
@@ -462,6 +657,7 @@ for (const seed of seeds) for (const a of pairEvents) for (const b of pairEvents
     pairs++;
 }
 assert.equal(pairs, 14336, "matrix discovery floor and exact event set");
+const createdPairs = createdPairMatrix(Session);
 
 const parent = path.resolve(__dirname, "../tmp");
 fs.mkdirSync(parent, { recursive: true });
@@ -480,15 +676,23 @@ try {
         ["gate", 's.gate.kind === "up" && s.mute', '(true || s.gate.kind === "up") && s.mute', "gate"],
         ["fault", 's.fault.kind === "none";', '(true || s.fault.kind === "none");', "fault-gate"],
         ["indicator", 's.indicator.kind === "shown"', '(true || s.indicator.kind === "shown")', "indicator-gate"],
-        ["hold", 'if (s.conversation.kind === "ended") {\n        s.gen++;',
-            'if (true || s.conversation.kind === "ended") {\n        s.gen++;', "hold-edges"],
+        ["hold", 'if (s.input.kind === "held") break;',
+            'if (false && s.input.kind === "held") break;', "hold-edges"],
+        ["retire-collect", 'else if (s.turn.kind === "collecting") s.turn = { kind: "none" };',
+            'else if (false && s.turn.kind === "collecting") s.turn = { kind: "none" };', "hold-replacement"],
+        ["retire-approval", 'dropApproval(s, effects, "interrupt");',
+            'if (false) dropApproval(s, effects, "interrupt");', "hold-approval"],
+        ["completed-brain", 'if (s.turn.kind === "none") closeBrain(s, effects);',
+            'if (false && s.turn.kind === "none") closeBrain(s, effects);', "completed-brain-owner"],
+        ["retain-brain", 'if (s.brain.kind === "closed") s.brain = { kind: "acquired", gen: brain.gen, op: brain.op };',
+            'if (true || s.brain.kind === "closed") s.brain = { kind: "acquired", gen: brain.gen, op: brain.op };', "reused-brain-owner"],
         ["release", 'if (s.input.kind !== "held") break;', 'if (false && s.input.kind !== "held") break;', "hold-edges"],
         ["toggle", "e.at - s.toggleAt < 250", "e.at - s.toggleAt < 249", "toggle-debounce"],
         ["start-gen", 's.gen++;\n        s.conversation = { kind: "active" };', 's.gen += 0;\n        s.conversation = { kind: "active" };', "start-generation"],
         ["end-gen", 's.gen++;\n        s.conversation = { kind: "ended" };', 's.gen += 0;\n        s.conversation = { kind: "ended" };', "end-generation"],
         ["settings", 'a[key] !== b[key]', '(false && a[key] !== b[key])', "settings-model"],
         ["mute-ack", 's.mute.kind === "muting" && s.capture.kind === "closed"', 's.mute.kind === "muting"', "mute-ack"],
-        ["cancel-ack", '["cancelling"])) { stale(s); break; }\n        effect', '["none"])) { stale(s); break; }\n        effect', "cancel-ack"],
+        ["cancel-ack", '["cancelling"])) { stale(s); break; }\n        closeBrain', '["none"])) { stale(s); break; }\n        closeBrain', "cancel-ack"],
         ["cancel-bound", "deadline: at + 2000", "deadline: at + 2001", "cancel-timeout"],
         ["think-bound", 's.turn.kind === "thinking" && at >= s.turn.deadline',
             's.turn.kind === "thinking" && false && at >= s.turn.deadline', "thinking-timeout"],
@@ -496,8 +700,8 @@ try {
             's.approval.kind === "held" && false && at >= s.approval.deadline', "approval-timeout"],
         ["late-callback", 'if (e.type !== "deadline") expire(s, effects, e.at);',
             'if (false && e.type !== "deadline") expire(s, effects, e.at);', "late-callback"],
-        ["lease-close", 'if (s.turn.kind === "cancelling") {\n            effect',
-            'if (false && s.turn.kind === "cancelling") {\n            effect', "lease-close"],
+        ["lease-close", 'if (s.brain.kind === "closed") return;',
+            'if (true || s.brain.kind === "closed") return;', "lease-close"],
         ["stale-count", 'function stale(s) { s.stale++; }', 'function stale(s) { if (false) s.stale++; }', "stale-op"],
         ["flush", 'if (s.playback.kind !== "playing") return;', 'if (true || s.playback.kind !== "playing") return;', "interrupt"],
         ["cancel-capture", 's.turn.kind !== "cancelling"', '(true || s.turn.kind !== "cancelling")', "cancel-capture-gate"],
@@ -566,5 +770,29 @@ try {
             name + " must turn its rule assertion red");
         controls++;
     }
+    const matrixSource = createdPairMatrix.toString();
+    function matrixControl(name, needle, replacement) {
+        assert.equal(matrixSource.split(needle).length - 1, 1, name + " matrix mutation match");
+        const changed = matrixSource.replace(needle, replacement);
+        assert.notEqual(changed, matrixSource);
+        const mutant = path.join(root, name + ".js");
+        fs.writeFileSync(mutant, ".pragma library\n" + changed);
+        const logic = load(mutant);
+        Object.assign(logic, { assert, seeds, pairEvents, createdCallbacks, fixtureEvent, step, invariants });
+        assert.throws(() => logic.createdPairMatrix(Session), assert.AssertionError, name + " must turn red");
+        controls++;
+    }
+    for (const kind of ["capture-open", "capture-close", "collect", "brain-send", "brain-cancel",
+        "playback-start", "playback-flush", "tool-start", "approval-show"])
+        matrixControl("matrix-omit-" + kind, "for (const effect of firstResult.effects) {",
+            'for (const effect of firstResult.effects) {\n            if (effect.kind === "' + kind + '") continue;');
+    for (const kind of ["brain-send", "brain-cancel", "tool-start", "approval-show"])
+        matrixControl("matrix-omit-deadline-" + kind,
+            "for (const pair of createdCallbacks.filter(row => row.effect === effect.kind)) {",
+            'for (const pair of createdCallbacks.filter(row => row.effect === effect.kind)) {\n' +
+            '                if (effect.kind === "' + kind + '" && pair.type === "deadline") continue;');
+    matrixControl("matrix-stale-only", "second.op = pair.target ? effect.target : effect.op;",
+        "second.op = fixtureEvent(pair.type, seed, 201).op;");
 } finally { fs.rmSync(root, { recursive: true, force: true }); }
-console.log("test-jarvis-session: ok transitions=" + table.length + " ordered-pairs=" + pairs + " controls=" + controls);
+console.log("test-jarvis-session: ok transitions=" + table.length + " old-owner-pairs=" + pairs +
+    " created-owner-pairs=" + createdPairs + " controls=" + controls);

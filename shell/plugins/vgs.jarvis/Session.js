@@ -18,7 +18,7 @@ function initial() {
         gen: 0, nextOp: 1, stale: 0, settings: {},
         gate: { kind: "down", reason: "starting" },
         mute: { kind: "off" }, capture: { kind: "closed" },
-        turn: { kind: "none" }, playback: { kind: "idle" },
+        turn: { kind: "none" }, brain: { kind: "closed" }, playback: { kind: "idle" },
         action: { kind: "none" }, approval: { kind: "none" }, fault: { kind: "none" },
         conversation: { kind: "ended" }, input: { kind: "released" },
         indicator: { kind: "gone" }, duplex: { kind: "half" }, toggleAt: null
@@ -62,6 +62,12 @@ function cancelTurn(s, effects, at) {
     } else if (s.turn.kind === "collecting") s.turn = { kind: "none" };
 }
 
+function closeBrain(s, effects) {
+    if (s.brain.kind === "closed") return;
+    effect(s, effects, "brain-close", { gen: s.brain.gen, target: s.brain.op });
+    s.brain = { kind: "closed" };
+}
+
 function flushPlayback(s, effects) {
     if (s.playback.kind !== "playing") return;
     var old = s.playback;
@@ -90,6 +96,7 @@ function end(s, effects, at, reason, stopTool) {
     s.input = { kind: "released" };
     closeCapture(s, effects);
     cancelTurn(s, effects, at);
+    if (s.turn.kind === "none") closeBrain(s, effects);
     flushPlayback(s, effects);
     dropApproval(s, effects, reason);
     if (stopTool) requestToolCancel(s, effects);
@@ -152,6 +159,14 @@ function canPropose(s) {
     return s.conversation.kind === "active" && s.action.kind === "none" && s.approval.kind === "none";
 }
 
+function interrupt(s, effects, at) {
+    if (s.conversation.kind === "ended") return;
+    s.conversation = { kind: "interrupted" };
+    cancelTurn(s, effects, at);
+    flushPlayback(s, effects);
+    dropApproval(s, effects, "interrupt");
+}
+
 function expire(s, effects, at) {
     if (s.turn.kind === "thinking" && at >= s.turn.deadline) {
         cancelTurn(s, effects, at);
@@ -159,7 +174,7 @@ function expire(s, effects, at) {
         s.input = { kind: "released" };
         closeCapture(s, effects);
     } else if (s.turn.kind === "cancelling" && at >= s.turn.deadline) {
-        effect(s, effects, "brain-close", { gen: s.turn.gen, target: s.turn.op });
+        closeBrain(s, effects);
         s.turn = { kind: "none" };
     }
     if (s.approval.kind === "held" && at >= s.approval.deadline) dropApproval(s, effects, "timeout");
@@ -204,11 +219,8 @@ function reduce(state, e) {
         s.indicator = { kind: e.shown ? "shown" : "gone" };
         break;
     case "talk-down":
-        if (s.playback.kind === "playing" || s.turn.kind === "thinking") {
-            cancelTurn(s, effects, e.at);
-            flushPlayback(s, effects);
-            s.conversation = { kind: "interrupted" };
-        }
+        if (s.input.kind === "held") break;
+        interrupt(s, effects, e.at);
         start(s, effects, "held");
         break;
     case "talk-up":
@@ -237,10 +249,8 @@ function reduce(state, e) {
         end(s, effects, e.at, "lease", true);
         // EOF is teardown, not an interactive cancellation. No adapter may
         // retain the daemon while waiting for an acknowledgment.
-        if (s.turn.kind === "cancelling") {
-            effect(s, effects, "brain-close", { gen: s.turn.gen, target: s.turn.op });
-            s.turn = { kind: "none" };
-        }
+        closeBrain(s, effects);
+        if (s.turn.kind === "cancelling") s.turn = { kind: "none" };
         break;
     case "cancel":
         s.input = { kind: "released" };
@@ -249,11 +259,7 @@ function reduce(state, e) {
         dropApproval(s, effects, "cancel");
         break;
     case "interrupt":
-        if (s.conversation.kind === "ended") break;
-        s.conversation = { kind: "interrupted" };
-        cancelTurn(s, effects, e.at);
-        flushPlayback(s, effects);
-        dropApproval(s, effects, "interrupt");
+        interrupt(s, effects, e.at);
         break;
     case "capture-opened":
         if (!live(s, e, "capture", ["opening"])) { stale(s); break; }
@@ -273,6 +279,8 @@ function reduce(state, e) {
         if (s.input.kind === "held") s.input = { kind: "released" };
         closeCapture(s, effects);
         var brain = effect(s, effects, "brain-send", { text: e.text });
+        if (s.brain.kind === "closed") s.brain = { kind: "acquired", gen: brain.gen, op: brain.op };
+        brain.owner = s.brain.op;
         s.turn = { kind: "thinking", gen: brain.gen, op: brain.op, deadline: e.at + RESPONSE_TIMEOUT_MS };
         break;
     case "brain-done":
@@ -286,7 +294,7 @@ function reduce(state, e) {
         break;
     case "cancelled":
         if (!live(s, e, "turn", ["cancelling"])) { stale(s); break; }
-        effect(s, effects, "brain-close", { gen: s.turn.gen, target: s.turn.op });
+        closeBrain(s, effects);
         s.turn = { kind: "none" };
         break;
     case "play":
@@ -352,6 +360,7 @@ var REGIONS = {
     gate: { down: "reason", up: "" }, mute: { off: "", muting: "", on: "" },
     capture: { closed: "", opening: "gen op mode", open: "gen op mode", closing: "gen op" },
     turn: { none: "", collecting: "gen op partial", thinking: "gen op deadline", cancelling: "gen op deadline" },
+    brain: { closed: "", acquired: "gen op" },
     playback: { idle: "", playing: "gen op source interruptible admission", flushing: "gen op" },
     action: { none: "", running: "gen op tool brain limit cancellation" },
     approval: { none: "", held: "gen op id digest deadline shownAt" },
