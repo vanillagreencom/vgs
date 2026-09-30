@@ -4,6 +4,10 @@ Covers: shell/Commons/Inset.js, shell/Commons/ClearingInset.qml, scripts/test-in
 
 Where a container puts its content and how far apart a component spaces its parts. The tokens these rules read are in [design-system.md](design-system.md).
 
+## Text stack
+
+Reading text draws in `font.family.sans`, the bundled Inter; chrome draws in `font.family.mono`, JetBrains Mono. A role's `lineHeight` is a font-size multiple. `Label` rounds that product into a line box and floors it at the font line box rounded up to a whole pixel. One-line text inside a fixed box uses the `Label` capital-centre measurement, so the capital centre sits on the box centre. `scripts/qml-tests/tst_label.qml` pins every role. The reference rule each role is read from is [design-values.md § Text roles](../reference/design-values.md#text-roles).
+
 ## Layout contract
 
 A container owns one inset box, [D050](../decisions/D050-container-layout-contract.md). A boxed child, such as a button, list-row highlight or card, puts its outer box on that inset edge. Unboxed container content, such as a heading, notice, hint, description or field label, puts its text on that edge. A child then uses its own component padding for its internal text, icon or control. A scroll area in a container extends into the right inset strip: its content ends on the inset box, and its bar sits to the right of that content. A rounded container follows the shared corner-clearing rule below.

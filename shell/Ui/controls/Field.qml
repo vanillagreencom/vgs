@@ -11,7 +11,8 @@ import qs.Ui
 // inline hint starts under the value column. Width comes from the parent;
 // the label, the control and the hint sit `field.paddingX` in from each
 // side. The default is zero, so a field's unboxed label sits on the
-// container's content edge and its control ends on that edge.Column {
+// container's content edge and its control ends on that edge.
+Column {
     id: root
 
     property string label: ""
