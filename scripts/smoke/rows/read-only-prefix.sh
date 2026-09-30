@@ -49,6 +49,7 @@ fi
 readonly_dest="$sandbox/read-only-prefix"
 DESTDIR="$readonly_dest" PREFIX=/usr "$source_repo/packaging/install-system.sh" >/dev/null
 expect "the read-only prefix install matches the manifest" "install-tree=ok root=$readonly_dest/usr manifest=$source_repo/packaging/install-tree.manifest" "$source_repo/scripts/check-install-tree.sh" "$readonly_dest" /usr
+tree_smoke_observer "$source_repo" "$readonly_dest/usr/share/vgs"
 signal_shim="$sandbox/read-only-signal-shim"
 signal_log="$sandbox/read-only-signal-calls.log"
 read_only_prefix_prepare_tree "$readonly_dest/usr" "$repo" "$signal_shim"
@@ -136,11 +137,8 @@ exec {startup_lock}>&-
 expect "theme apply runs from the non-writable installed prefix" ok installed_apply_vgs
 expect "the installed Gallery summons from the read-only prefix" ok ipc shell summon window vgs.gallery '{}'
 expect_poll "the installed Gallery maps" 1 window_count Gallery
-if offset="$(gallery_offset 'Voice levels')" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
-  render expect_poll "the read-only installed VoiceOrb pack compiles" True orb_shaders_ok ''
-else
-  fail "the installed Gallery did not scroll its Voice levels section into view"
-fi
+expect_poll "the installed Gallery builds the VoiceOrb examples" True orb_examples_ok
+gallery_compile_orbs "the read-only installed VoiceOrb pack"
 expect "the installed Gallery hides" ok ipc shell hide window vgs.gallery
 expect_poll "the installed Gallery is gone" 0 window_count Gallery
 if calls="$(read_only_prefix_signal_calls "$signal_log")" && [[ -z $calls ]]; then

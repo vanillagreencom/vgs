@@ -22,15 +22,37 @@ gallery_offset() { python3 -c 'import json,sys; print(int(json.loads(sys.argv[1]
 orb_examples_ok() { ipc smoke galleryOrbs window vgs.gallery '' | py_reply 'import json,sys
 rows=json.load(sys.stdin)
 print(len(rows)==9 and {r["tone"] for r in rows[:6]}=={"accent","info","success","warning","danger","muted"} and all(r["width"]>0 and r["height"]>0 for r in rows) and all(r["active"] for r in rows[:6]) and not rows[6]["active"] and rows[7]["level"]==1 and rows[7]["secondaryLevel"]==1 and 0<rows[8]["level"]<1)'; }
-orb_shaders_ok() { ipc smoke galleryOrbs window vgs.gallery "$1" | py_reply 'import json,sys
+orb_shader_ok() { ipc smoke galleryOrbs window vgs.gallery "$1" | py_reply 'import json,sys
 rows=json.load(sys.stdin)
-print(len(rows)>0 and all(r["compiled"] and r["url"].endswith("/voiceorb.frag.qsb") for r in rows))'; }
+index=int(sys.argv[1])
+print("absent" if index<0 or index>=len(rows) else bool(rows[index]["compiled"] and rows[index]["url"].endswith("/voiceorb.frag.qsb")))' "$2"; }
+gallery_orb_offset() { ipc smoke descendantGeometry window vgs.gallery | py_reply 'import json,sys
+items=json.load(sys.stdin)
+orbs=[item for item in items if item["type"]=="VoiceOrb"]
+title=next((item for item in items if item["type"]=="Label" and item.get("text")=="Gallery"),None)
+index=int(sys.argv[1])
+print("absent" if title is None or index>=len(orbs) else round(orbs[index]["box"][1]-title["box"][1]))' "$1"; }
+gallery_compile_orbs() {
+  local label="$1" count index position offset failed_before
+  count="$(ipc smoke galleryOrbs window vgs.gallery '' | py_reply 'import json,sys; print(len(json.load(sys.stdin)))')" || return 1
+  if [[ $count != 9 ]]; then fail "$label: orb inventory=$count want=9"; return 1; fi
+  # Qt may defer a clipped ShaderEffect's node. Bring each discovered
+  # example into the viewport before reading its own compiled status.
+  for ((index=0; index<count; index++)); do
+    if ! position="$(ipc smoke scrollTo window vgs.gallery 0)" || [[ $position != \[* ]] ||
+       ! offset="$(gallery_orb_offset "$index")" || [[ ! $offset =~ ^-?[0-9]+$ ]] ||
+       ! position="$(ipc smoke scrollTo window vgs.gallery "$offset")" || [[ $position != \[* ]]; then
+      fail "$label: orb=$index did not scroll into view"; return 1
+    fi
+    failed_before="$failures"
+    render expect_poll "$label: orb=$index compiles" True orb_shader_ok '' "$index"
+    if [[ $failures -gt $failed_before ]]; then
+      ipc smoke galleryOrbs window vgs.gallery '' || return 1
+    fi
+  done
+}
 expect_poll "the gallery builds the VoiceOrb tones and level states" True orb_examples_ok
-if offset="$(gallery_offset 'Voice levels')" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
-  render expect_poll "the gallery compiles the VoiceOrb shader" True orb_shaders_ok ''
-else
-  fail "the gallery did not scroll its Voice levels section into view"
-fi
+gallery_compile_orbs "the Gallery VoiceOrb shader"
 # A hidden shader retains its valid pack URL but never compiles. This
 # control tests the compiled-status reader, not frame cost or presentation.
 python3 - "$repo/shell/Ui/feedback/VoiceOrb.qml" "$repo/shell/plugins/vgs.gallery/VoiceOrbControl.qml" "$repo/shell/Ui/feedback/shaders/voiceorb.frag.qsb" <<'PY'
@@ -49,7 +71,7 @@ for needle, replacement in [
 destination.write_text(text)
 PY
 expect "the uncompiled orb control builds" ok ipc smoke popupLoad orb-control "$repo/shell/plugins/vgs.gallery/VoiceOrbControl.qml" window vgs.gallery '{}'
-render expect "the shader reader rejects the uncompiled control" False orb_shaders_ok orb-control
+render expect "the shader reader rejects the uncompiled control" False orb_shader_ok orb-control 0
 expect "the orb control is released" ok ipc smoke popupDrop orb-control
 if [[ $(ipc smoke scrollTo window vgs.gallery 0) == \[* ]] && offset="$(gallery_offset Buttons)" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
   expect_cursor "an enabled button shows the hand" pointer window:Gallery "$(gallery_box Button Small)"

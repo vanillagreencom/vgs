@@ -503,6 +503,7 @@ Scope {
                     tone: orb.tone, active: orb.active, level: orb.level, secondaryLevel: orb.secondaryLevel,
                     width: orb.width, height: orb.height,
                     url: shader === undefined ? "" : String(shader.fragmentShader),
+                    shaderLog: shader === undefined ? "no-shader" : shader.log,
                     compiled: shader !== undefined && shader.status === ShaderEffect.Compiled
                 };
             }));

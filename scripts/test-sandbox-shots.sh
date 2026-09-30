@@ -367,6 +367,51 @@ PY
   fi
 done
 
+# The same observer setup instruments a source copy and an installed copy.
+# Drive its actual file edits without starting QML or a compositor.
+observer_case() {
+  local tree_helper="$1" target count
+  target="$(mktemp -d "$tmp/observer.XXXXXX")" || return 1
+  mkdir -p "$target/shell/Core" "$target/shell/Hosts" &&
+  cp -- "$repo/shell/shell.qml" "$target/shell/shell.qml" &&
+  cp -- "$repo/shell/Core/Config.qml" "$target/shell/Core/Config.qml" &&
+  cp -- "$repo/shell/Hosts/BackgroundHost.qml" "$target/shell/Hosts/BackgroundHost.qml" &&
+  env -i PATH="/usr/bin:/bin" HOME="$tmp" "$BASH" -c '
+    set -euo pipefail
+    source "$1"
+    tree_smoke_observer "$2" "$3"
+  ' _ "$tree_helper" "$repo" "$target" &&
+  cmp -s -- "$repo/scripts/smoke/Probe.qml" "$target/shell/Probe.qml" || return 1
+  count="$(grep -Fc '    Probe {}' "$target/shell/shell.qml")" || return 1
+  [[ $count == 1 ]] || return 1
+  count="$(grep -Fc 'property alias smokeUserView: userView' "$target/shell/Core/Config.qml")" || return 1
+  [[ $count == 1 ]] || return 1
+  count="$(grep -Fc 'onBrokenKeysChanged: console.info("smoke: backgroundFailures="' "$target/shell/Hosts/BackgroundHost.qml")" || return 1
+  [[ $count == 1 ]]
+}
+if observer_case "$repo/scripts/smoke/tree.sh"; then
+  ok "the shared observer instruments a disposable runtime tree"
+else
+  fail "the shared observer instruments a disposable runtime tree"
+fi
+observer_controls=(
+  'the root gets no probe|    Probe {}|    QtObject {}'
+  'the user view gets no readable alias|property alias smokeUserView:|property alias unusedUserView:'
+  'background failures get no observer|onBrokenKeysChanged:|onParentChanged:'
+)
+helper="$repo/scripts/smoke/tree.sh"
+for spec in "${observer_controls[@]}"; do
+  IFS='|' read -r label needle replacement <<<"$spec"
+  observer_mutant="$tmp/observer-mutant.sh"
+  if ! mutate "$needle" "$replacement" "$observer_mutant"; then
+    fail "control: $label could not be planted"
+  elif observer_case "$observer_mutant" >/dev/null; then
+    fail "control: $label left the observer setup green"
+  else
+    ok "control: $label"
+  fi
+done
+
 # The harness names a missing ImageMagick among its prerequisites, since the
 # notifications row and the Slack scene draw converted emoji: with no tool
 # on PATH its not-measured line lists magick, and a copy without the check

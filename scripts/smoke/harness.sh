@@ -99,7 +99,6 @@ source, target = map(pathlib.Path, sys.argv[1:])
 if (target / "themes/targets").exists():
     shutil.rmtree(target / "themes/targets")
 (target / "themes/targets").mkdir()
-shutil.copyfile(source / "scripts/smoke/Probe.qml", target / "shell/Probe.qml")
 # Qt caches a directory's file names when it first loads from it. Prepare
 # every layer mask copy before any host or earlier control reads Hosts.
 text = (source / "shell/Hosts/OverlaySurface.qml").read_text()
@@ -112,22 +111,8 @@ for name, old, new in (
     changed = text.replace(old, new)
     assert changed != text
     (target / f"shell/Hosts/OverlaySurface{name}.qml").write_text(changed)
-path = target / "shell/shell.qml"
-text = path.read_text()
-needle = "ShellRoot {\n"
-assert text.count(needle) == 1, "smoke root insertion must match once"
-path.write_text(text.replace(needle, needle + "    Probe {}\n"))
-path = target / "shell/Core/Config.qml"
-text = path.read_text()
-needle = "    id: root\n"
-assert text.count(needle) == 1, "smoke Config alias insertion must match once"
-path.write_text(text.replace(needle, needle + "    property alias smokeUserView: userView\n"))
-path = target / "shell/Hosts/BackgroundHost.qml"
-text = path.read_text()
-needle = "    id: host\n"
-assert text.count(needle) == 1, "smoke background observer insertion must match once"
-path.write_text(text.replace(needle, needle + '    onBrokenKeysChanged: console.info("smoke: backgroundFailures=" + Object.keys(brokenKeys).length)\n'))
 PY
+tree_smoke_observer "$repo" "$sandbox/repo"
 [[ -z ${source_tree:-} ]] || tree_overlay_helpers "$source_tree" "$sandbox/repo"
 repo="$sandbox/repo"
 
