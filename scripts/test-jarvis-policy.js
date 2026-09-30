@@ -222,6 +222,12 @@ world(() => {
     control("effective-shapes", '!key.effective.every(chord)', 'false',
         logic => refuse(logic, pressed, { ...unbound, input: { ...unbound.input,
             key: { ...unbound.input.key, effective: [{ modifiers: [], keycode: 0 }] } } }, "key-context"));
+    control("effective-array", '!Array.isArray(key.effective)', 'false',
+        logic => refuse(logic, pressed, { ...unbound, input: { ...unbound.input,
+            key: { ...unbound.input.key, effective: {} } } }, "key-context"));
+    control("modifier-array", 'Array.isArray(value.modifiers)', 'true',
+        logic => refuse(logic, pressed, { ...unbound, input: { ...unbound.input,
+            key: { ...unbound.input.key, chord: { modifiers: "SUPER", keycode: 29 } } } }, "key-context"));
     control("chord-positive", 'value.keycode > 0', 'true',
         logic => refuse(logic, pressed, { ...unbound, input: { ...unbound.input,
             key: { ...unbound.input.key, chord: { modifiers: [], keycode: 0 } } } }, "key-context"));

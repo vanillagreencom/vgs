@@ -69,6 +69,7 @@ world(() => {
     fs.symlinkSync(path.join(home, "absent"), dangling);
     refused(denied, dangling, "write", "path-resolution");
     refused(denied, path.join(project, "existing", "child"), "read", "path-resolution");
+    refused(denied, path.join(project, "existing") + "/../existing", "read", "path-resolution");
     const loop = path.join(project, "loop");
     fs.symlinkSync(loop, loop);
     refused(denied, loop, "read", "path-resolution");
@@ -146,6 +147,15 @@ world(() => {
     control("missing-parent", 'if (!exists) throw new Error("jarvis: path=absent-parent");',
         'if (false && !exists) throw new Error("jarvis: path=absent-parent");',
         logic => refused(logic.create(options), path.join(project, "absent") + "/../existing", "write", "path-resolution"));
+    control("directory-parent", 'if (i < parts.length - 1 && !fs.statSync(real).isDirectory())',
+        'if (false && i < parts.length - 1 && !fs.statSync(real).isDirectory())',
+        logic => refused(logic.create(options), path.join(project, "existing") + "/../existing", "read", "path-resolution"));
+    control("absolute-root", 'if (typeof file !== "string" || !path.isAbsolute(file) || /[\\x00-\\x1f\\x7f]/.test(file))',
+        'if (false && (typeof file !== "string" || !path.isAbsolute(file) || /[\\x00-\\x1f\\x7f]/.test(file)))',
+        logic => assert.throws(() => logic.create({ ...options, home: "relative" }), { message: "jarvis: path=invalid" }));
+    control("account-list", 'if (!Array.isArray(accountRoots))',
+        'if (false && !Array.isArray(accountRoots))',
+        logic => assert.throws(() => logic.create({ ...options, accountRoots: null }), { message: "jarvis: paths=account-roots" }));
     control("exists", 'exists = false;', 'exists = true;',
         logic => allowed(logic.create(options), path.join(project, "never-created"), "write", path.join(project, "never-created"), false));
     control("home-required", 'if (!realHome.exists || !fs.statSync(realHome.path).isDirectory())',
