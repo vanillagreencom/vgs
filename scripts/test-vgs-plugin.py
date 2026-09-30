@@ -97,6 +97,32 @@ def pointer_cursor_rows(tmp):
         report(name, checked.returncode == status and lines[-1] == last and found, f"exit={checked.returncode}\n{checked.stdout}{checked.stderr}")
 
 
+def user_command_rows(tmp):
+    """The README row is the must-fail control of cmd_check's user-command
+    step: without that step, the plugin passes and the row turns red."""
+    made = scaffold("new", "acme.readme", "--kinds", "service", "--dir", tmp)
+    target = os.path.join(tmp, "acme.readme")
+    readme = os.path.join(target, "README.md")
+    if made.returncode != 0:
+        report("new writes the user-command fixture", False, f"exit={made.returncode}\n{made.stdout}{made.stderr}")
+        return
+    step = "Run `vgsh plugin enable acme.readme` once."
+    for name, text, status, last in (
+        ("check fails a README that tells the user to run a command", "# Setup\n\n" + step + "\n", 1, "vgs-plugin: check failed=1"),
+        ("check passes the README once the command is behind Show command", "# Setup\n\nEnable it on its Settings page.\n\n<details><summary>Show command</summary>\n\n" + step + "\n\n</details>\n", 0, "vgs-plugin: check ok"),
+    ):
+        with open(readme, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        checked = scaffold("check", target)
+        lines = checked.stdout.rstrip().split("\n")
+        findings = [l for l in lines if l.startswith("instruction ")]
+        if status:
+            found = len(findings) == 1 and "README.md:3 " in findings[0] and "vgsh plugin enable" in findings[0]
+        else:
+            found = not findings and any(l.startswith("check-user-commands: ok files=") for l in lines)
+        report(name, checked.returncode == status and lines[-1] == last and found, f"exit={checked.returncode}\n{checked.stdout}{checked.stderr}")
+
+
 def main():
     kinds_json = subprocess.run(
         ["node", "-e", "process.stdout.write(JSON.stringify(require(process.argv[1]).load(process.argv[2]).KINDS))", LOADER, LOGIC],
@@ -151,6 +177,7 @@ def main():
         unchecked = scaffold("check", empty)
         report("check refuses a directory without a manifest", unchecked.returncode == 2 and first_line(unchecked.stdout) == f"vgs-plugin: refused: no-manifest={empty}", f"exit={unchecked.returncode}\n{unchecked.stdout}{unchecked.stderr}")
         pointer_cursor_rows(tmp)
+        user_command_rows(tmp)
 
     if failures:
         print(f"test-vgs-plugin: failed={failures}")
