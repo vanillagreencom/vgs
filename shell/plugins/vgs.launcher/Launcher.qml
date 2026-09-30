@@ -2,8 +2,11 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+// Namespaced: the launcher's own IconButton shares a name with qs.Ui's.
+import qs.Ui as Ui
 import "Appearance.js" as Appearance
 import "MenuModel.js" as MenuModel
+import "Motion.js" as Motion
 
 // The launcher: the Spotlight glass card the overlay host draws on the
 // screen it was summoned on. It opens as a bare search field; typing
@@ -377,7 +380,7 @@ Item {
         selectedIndex = 0;
         fileSearch.clear();
         fileFlyout.dismiss();
-        disarmPointer();
+        cursorPlate.disarm();
     }
 
     function show() {
@@ -400,7 +403,7 @@ Item {
         selectedIndex = 0;
         cursorActive = mode !== "input";
         notice = "";
-        disarmPointer();
+        cursorPlate.disarm();
         openWithTarget = null;
         if (fileMode) fileSearch.request(fileMode, fileQuery.query);
         else if (fileSearch.mode) fileSearch.clear();
@@ -419,8 +422,8 @@ Item {
         selectedIndex = 0;
         cursorActive = true;
         notice = "";
-        if (fromPointer) pointerArmed = true;
-        else disarmPointer();
+        if (fromPointer) cursorPlate.arm();
+        else cursorPlate.disarm();
         // A provider's list may have changed since it last opened.
         if (items[id] && items[id].provider) {
             const loaded = Object.assign({}, providersLoaded);
@@ -448,7 +451,7 @@ Item {
         showCategories = !showCategories;
         navDirection = 0;
         selectedIndex = 0;
-        disarmPointer();
+        cursorPlate.disarm();
         rebuildDisplay();
     }
 
@@ -671,6 +674,23 @@ Item {
 
     ListModel { id: displayModel }
 
+    // The list motion of qs.Ui, ListCursor and ListEntrance, at the
+    // launcher's own timings and distances, in the shape of
+    // `motion.list`: the curves are the launcher's, which D023 keeps its
+    // own, so the theme reaches them through its motion scale alone.
+    readonly property var listMotion: ({
+        travel: bezierStep(look.motion.duration.medium1, look.motion.curve.emphasizedDecel),
+        resize: bezierStep(look.motion.duration.medium1, look.motion.curve.standard),
+        fade: bezierStep(look.motion.duration.short4, look.motion.curve.standard),
+        enter: bezierStep(look.motion.duration.medium2, look.motion.curve.emphasizedDecel),
+        stagger: look.motion.duration.stagger,
+        staggerRows: look.row.staggerRows,
+        rise: look.row.enterY
+    })
+    function bezierStep(duration, curve) {
+        return { duration: duration, easing: Easing.BezierSpline, curve: Motion.bezier(curve) };
+    }
+
     // Rows new since the last rebuild fade in, staggered; rows that stay
     // appear at once, so typing never flickers the list. A menu change
     // (`navReset`) treats every row as new and slides it in from the side it
@@ -716,8 +736,7 @@ Item {
     }
 
     function rebuildDisplay() {
-        cursorPlate.snap = true;
-        Qt.callLater(() => { cursorPlate.snap = false; });
+        cursorPlate.snap();
         const previous = displayedIds();
         let rows = [];
         const active = items[activeMenu] ? activeMenu : "root";
@@ -763,46 +782,27 @@ Item {
 
     function select(delta) {
         if (displayModel.count === 0) return;
-        disarmPointer();
+        cursorPlate.disarm();
         if (!cursorActive) {
             cursorActive = true;
             selectedIndex = delta < 0 ? displayModel.count - 1 : 0;
         } else if (Math.abs(delta) === 1) {
             // Single steps wrap around; the plate glides unless it wrapped.
             const next = (selectedIndex + delta + displayModel.count) % displayModel.count;
-            if (Math.abs(next - selectedIndex) !== 1) snapPlate();
+            if (Math.abs(next - selectedIndex) !== 1) cursorPlate.snap();
             selectedIndex = next;
         } else {
-            snapPlate();
+            cursorPlate.snap();
             selectedIndex = Math.max(0, Math.min(displayModel.count - 1, selectedIndex + delta));
         }
         revealCursor();
     }
 
-    function snapPlate() {
-        cursorPlate.snap = true;
-        Qt.callLater(() => { cursorPlate.snap = false; });
-    }
-
     // Hover moves the cursor only once the pointer has moved since the
-    // list last changed under it, so a resting pointer steals nothing;
-    // MenuModel.pointerMoved judges a motion.
-    property bool pointerArmed: false
-    property point pointerLast: Qt.point(-1, -1)
-
-    function disarmPointer() {
-        pointerArmed = false;
-        pointerLast = Qt.point(-1, -1);
-    }
-
+    // list last changed under it, so a resting pointer steals nothing; the
+    // list's ListCursor judges a motion.
     function selectFromPointer(index, item, mouse) {
-        const at = item.mapToItem(root, mouse.x, mouse.y);
-        if (!pointerArmed) {
-            const moved = MenuModel.pointerMoved(pointerLast, at);
-            pointerLast = at;
-            if (!moved) return;
-            pointerArmed = true;
-        }
+        if (!cursorPlate.hoverTakes(item.mapToItem(null, mouse.x, mouse.y))) return;
         cursorActive = true;
         selectedIndex = index;
     }
@@ -1055,30 +1055,18 @@ Item {
                     spacing: root.look.row.spacing
                     boundsBehavior: Flickable.StopAtBounds
 
-                    // One plate glides between rows.
-                    Highlight {
+                    // One plate glides between rows: the list motion of
+                    // qs.Ui at the launcher's own timings, drawn as its own
+                    // glass plate. It snaps rather than glides when the list
+                    // was rebuilt or the cursor jumped.
+                    Ui.ListCursor {
                         id: cursorPlate
-                        look: root.look
                         parent: resultList.contentItem
-                        property real targetY: 0
-                        property real targetHeight: root.look.row.height
-                        // Snap rather than glide when the list was rebuilt or
-                        // the cursor jumped.
-                        property bool snap: true
-                        z: -1
-                        width: resultList.width
-                        y: targetY
-                        height: targetHeight
+                        motion: root.listMotion
+                        background: Highlight { look: root.look }
+                        // A rebuild destroys the row under the plate; the
+                        // plate stays for the row that takes the cursor next.
                         shown: root.cursorActive && displayModel.count > 0
-                        onShownChanged: if (!shown) snap = true
-                        Behavior on y {
-                            enabled: !cursorPlate.snap
-                            Anim { duration: root.look.motion.duration.medium1; curve: root.look.motion.curve.emphasizedDecel }
-                        }
-                        Behavior on height {
-                            enabled: !cursorPlate.snap
-                            Anim { duration: root.look.motion.duration.medium1; curve: root.look.motion.curve.standard }
-                        }
                     }
 
                     delegate: LauncherRow {
@@ -1160,6 +1148,7 @@ Item {
     ContextMenu {
         id: fileFlyout
         look: root.look
+        motion: root.listMotion
         property string targetPath: ""
         function dismiss() {
             targetPath = "";

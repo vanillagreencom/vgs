@@ -145,7 +145,9 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `CodeLine` | `Rectangle` | `text`, a command or path, wrapped whole; `copyLabel`, the Copy button's label; `copy()`, `copied()`, `confirming` while the button shows its check mark |
 | `ScrollArea` | `Flickable` | its children; `overflowing`, and `bar`, the embedded bar, which a gutter keeps clear of the content |
 | `Tabs` | `T.TabBar` | `model`, `currentIndex` |
-| `ListItem` | `T.ItemDelegate` | `text`, `secondary`, `iconName`, `trailing`, `highlighted` |
+| `ListItem` | `T.ItemDelegate` | `text`, `secondary`, `iconName`, `trailing`, `highlighted`; `cursor`, the list's `ListCursor`, which then draws the highlight, `pointed` when a hover the cursor lets through should select the row, `enters` (true with a cursor) |
+| `ListCursor` | `Item` | the one highlight of a list, declared in the item that holds the rows or a view's `contentItem`: `follow(row, holds)`, `snap()`, `hoverTakes(scenePoint)`, `disarm()` on a key, `arm()`, `enterSlot()`, `shown`; `motion` (`Theme.motion.list` by default), `color`, `radius`, `background`: [`docs/architecture/motion.md`](../../../../docs/architecture/motion.md) |
+| `ListEntrance` | `Translate` | a row's entrance, as its `transform`: `start(slot, direction)`, `progress` for the row's opacity, `shift`, `motion` |
 | `Disclosure` | `Column` | `text`, `secondary`, `iconName`, `trailing` as `ListItem` takes them, `expanded`, `expandable`; its content as children, shown under the row while expanded |
 | `SectionHeader` | `Column` | `text`, `description`; `leftPadding` and `rightPadding` inset both lines |
 | `Select` | `T.AbstractButton` | `model`, `currentIndex`, `textRole`; `openList()`; the list opens in its own surface and scrolls under the embedded bar |

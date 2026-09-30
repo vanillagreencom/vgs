@@ -408,7 +408,8 @@ Scope {
         // draws no instance of; an empty list is the pass. A QML-defined
         // type prints as `<Name>_QMLTYPE_<n>(...)`. PointerCursor is a
         // pointer handler, which no item list holds; every gallery control
-        // declares one.
+        // declares one. ListEntrance is a transform, read from each item's
+        // `transform` list.
         function galleryMissing(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);
             if (item === null || item.examples === undefined) return "absent";
@@ -419,10 +420,11 @@ Scope {
             }
             if (names.length < 20) return "qmldir-read-broken=" + names.length;
             const seen = {};
-            for (const child of root.descendants(item.examples)) {
-                const m = /^(\w+)_QMLTYPE_/.exec(String(child));
-                if (m !== null) seen[m[1]] = true;
-            }
+            for (const child of root.descendants(item.examples))
+                for (const drawn of [child].concat(Array.from(child.transform || []))) {
+                    const m = /^(\w+)_QMLTYPE_/.exec(String(drawn));
+                    if (m !== null) seen[m[1]] = true;
+                }
             return JSON.stringify(names.filter(name => !seen[name]));
         }
         // Examples drawn past the gallery's right edge, so a row that does
@@ -740,6 +742,18 @@ Scope {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
             const found = root.descendants(item).find(child => root.typeName(child) === type);
+            if (found === undefined) return "absent";
+            const json = JSON.stringify(found[property]);
+            return json === undefined ? "undefined" : json;
+        }
+        // readDescendant over the items whose every ancestor is visible:
+        // a list's own cursor rather than one in a closed flyout of the
+        // same instance, whatever the cursor itself shows.
+        function readShownDescendant(hostKey: string, id: string, type: string, property: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const placed = child => { for (let at = child.parent; at !== null && at !== item; at = at.parent) if (!at.visible) return false; return true; };
+            const found = root.descendants(item).find(child => root.typeName(child) === type && placed(child));
             if (found === undefined) return "absent";
             const json = JSON.stringify(found[property]);
             return json === undefined ? "undefined" : json;

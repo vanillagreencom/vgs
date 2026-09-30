@@ -1,22 +1,17 @@
 import QtQuick
 
 // The selection plate: a soft lifted plate with a hairline and a faint
-// top sheen, gliding between rows as one item rather than lighting each.
+// top sheen, the launcher's own look for the ListCursor that glides it
+// between rows and fades it.
 Rectangle {
     id: plate
 
     required property var look
-    property bool shown: true
 
     radius: look.radius.md
-    opacity: shown ? 1 : 0
     color: look.highlight.plate
     border.width: look.highlight.borderWidth
     border.color: look.highlight.border
-
-    Behavior on opacity {
-        Anim { duration: plate.look.motion.duration.short4; curve: plate.look.motion.curve.standard }
-    }
 
     Rectangle {
         anchors.fill: parent

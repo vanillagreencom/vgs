@@ -11,7 +11,7 @@ expect "the gallery maps no layer surface" 0 layer_count vgs:panel
 # Every component the module's qmldir lists is drawn, read back by type
 # name; the headings have a size, so they show.
 expect_poll "the gallery draws every component of the module" '[]' ipc smoke galleryMissing window vgs.gallery
-render expect_poll "the gallery's headings are drawn with a size" 11 ipc smoke galleryHeadings window vgs.gallery
+render expect_poll "the gallery's headings are drawn with a size" 12 ipc smoke galleryHeadings window vgs.gallery
 geometry expect "every example stays inside the gallery" '[]' ipc smoke galleryOverflow window vgs.gallery
 # The cursor over the controls, with the Buttons section scrolled to the
 # top: the hand over an enabled button, switch and checkbox, and the arrow

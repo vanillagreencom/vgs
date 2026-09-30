@@ -11,7 +11,9 @@ import qs.Unit
 // rests and not under an open overlay, and a toast draws its tone. A menu
 // taller than its maximum scrolls with the highlight kept in view, jumps
 // to the entry whose text starts with the letters typed, opens on its
-// checked entry and draws its mark. The nested sandbox proves placement,
+// checked entry and draws its mark. A menu and a select's list draw their
+// highlight through one ListCursor, which a hover moves only once the
+// pointer moved since the last key. The nested sandbox proves placement,
 // real keys and dismissal.
 Item {
     id: root
@@ -214,6 +216,66 @@ Item {
             menu.items()[0].clicked();
             compare(root.triggered, 0);
             tryCompare(menu, "opened", false);
+        }
+
+        function test_menu_highlights_through_its_cursor() {
+            menu.open();
+            const items = menu.items();
+            const plate = items[0].cursor;
+            verify(plate !== null, "the menu hands its entries a cursor");
+            compare(plate.shown, false, "an open menu with nothing highlighted shows no cursor");
+            compare(String(plate.color), String(Qt.color(Theme.menu.item.hover)));
+            menu.move(1);
+            verify(plate.target === items[0], "the highlighted entry holds the cursor");
+            compare(String(items[0].background.color), "#00000000", "the entry draws no fill of its own");
+            mouseMove(items[1], 10, 5);
+            compare(menu.currentIndex, 0, "the first reading after a key moves nothing");
+            mouseMove(items[1], 12, 5);
+            compare(menu.currentIndex, 1, "a moved pointer highlights the entry under it");
+            mouseMove(items[2], 12, 5);
+            compare(menu.currentIndex, 1, "a hover highlights no disabled entry");
+            menu.move(-1);
+            compare(menu.currentIndex, 0);
+            mouseMove(items[1], 14, 5);
+            compare(menu.currentIndex, 0, "a key disarms the pointer");
+            menu.close();
+        }
+
+        function selectList(owner) {
+            let window = null;
+            for (let i = 0; i < owner.resources.length; i++)
+                if (owner.resources[i].anchor !== undefined) window = owner.resources[i];
+            return window.contentItem.children.find(child => child.currentIndex !== undefined);
+        }
+
+        function test_select_list_highlights_through_its_cursor() {
+            select.openList();
+            const list = selectList(select);
+            tryVerify(() => list.itemAtIndex(1) !== null, 1000, "the list builds its entries");
+            const first = list.itemAtIndex(0);
+            const second = list.itemAtIndex(1);
+            // The keys go to the list's own window, which takes the focus
+            // before the pointer moves: activating it delivers a hover.
+            list.Window.window.requestActivate();
+            list.forceActiveFocus();
+            tryCompare(list.Window, "active", true);
+            tryCompare(list, "activeFocus", true);
+            // The window's first key after it takes the focus goes astray
+            // under the offscreen platform.
+            wait(50);
+            keyClick(Qt.Key_Down);
+            compare(list.currentIndex, 1);
+            mouseMove(second, 10, 5);
+            compare(list.currentIndex, 1, "the first reading after a key moves nothing");
+            mouseMove(first, 12, 5);
+            compare(list.currentIndex, 0, "a moved pointer highlights the entry under it");
+            compare(String(first.background.color), String(Qt.color(Theme.select.selected)), "the chosen entry keeps its fill");
+            keyClick(Qt.Key_Down);
+            compare(list.currentIndex, 1);
+            compare(String(second.background.color), "#00000000", "the highlighted entry draws no fill of its own");
+            mouseMove(first, 14, 5);
+            compare(list.currentIndex, 1, "a key disarms the pointer");
+            select.choose(0);
         }
 
         function test_select_chooses_and_reads_its_role() {

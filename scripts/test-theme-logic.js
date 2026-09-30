@@ -44,6 +44,17 @@ const DEFAULTS = [
     ["radius.md", 0],
     ["motion.duration.normal", 150],
     ["motion.easing.standard", "outCubic"],
+    // The list motion: slow for travel and resize, normal for the fade, and
+    // mul(250, 1.2) = 300 for a row's entrance; the rise is space.sm.
+    ["motion.list.travel.duration", 250],
+    ["motion.list.travel.easing", "outQuint"],
+    ["motion.list.resize.duration", 250],
+    ["motion.list.fade.duration", 150],
+    ["motion.list.enter.duration", 300],
+    ["motion.list.enter.easing", "outQuint"],
+    ["motion.list.stagger", 18],
+    ["motion.list.staggerRows", 8],
+    ["motion.list.rise", 6],
     ["hyprland.border.size", 2],
     ["hyprland.window.radius", 0],
     ["hyprland.window.roundingPower", 2],
@@ -182,7 +193,10 @@ const ACCEPTED = [
     { tokens: { row: { paddingX: 16 } }, want: [["listItem.paddingX", 16], ["menu.item.paddingX", 16], ["field.paddingX", 0], ["button.paddingX", 9]] },
     { tokens: { field: { paddingX: 6 } }, want: [["field.paddingX", 6], ["listItem.paddingX", 12]] },
     { tokens: { font: { size: 16 } }, want: [["text.body.size", 16], ["text.hint.size", 14]] },
-    { tokens: { motion: { scale: 0 } }, want: [["motion.duration.fast", 0], ["motion.duration.slow", 0]] },
+    { tokens: { motion: { scale: 0 } }, want: [["motion.duration.fast", 0], ["motion.duration.slow", 0], ["motion.list.travel.duration", 0], ["motion.list.enter.duration", 0], ["motion.list.stagger", 0], ["motion.list.rise", 6]] },
+    // The list motion follows the scale steps it names: slow at 400 travels
+    // 400 and enters mul(400, 1.2) = 480.
+    { tokens: { motion: { duration: { slow: 400 } } }, want: [["motion.list.travel.duration", 400], ["motion.list.resize.duration", 400], ["motion.list.enter.duration", 480]] },
     // The scale applies after a duration's own expression, so a theme that
     // states its own timing still goes still at 0 and doubles at 2.
     { tokens: { motion: { scale: 0, duration: { normal: 200 } } }, want: [["motion.duration.normal", 0]] },

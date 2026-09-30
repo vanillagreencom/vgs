@@ -195,6 +195,7 @@ smoke_row devtools
 smoke_row overlays
 smoke_row gallery
 smoke_row launcher
+smoke_row list-motion
 smoke_row notifications
 smoke_row automations
 smoke_row hyprland

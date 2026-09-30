@@ -208,6 +208,20 @@ var TOKENS = {
         easing: {
             standard: easing("outCubic"),
             emphasized: easing("outQuint")
+        },
+        // The list motion pattern, ListCursor and ListEntrance in qs.Ui:
+        // the cursor travels to a new row and takes its height, fades in
+        // and out with the list's cursor, and a row that arrives rises
+        // `rise` into place, each of the first `staggerRows` one
+        // `stagger` after the row before it.
+        list: {
+            travel: { duration: duration("{motion.duration.slow}"), easing: easing("{motion.easing.emphasized}") },
+            resize: { duration: duration("{motion.duration.slow}"), easing: easing("{motion.easing.standard}") },
+            fade: { duration: duration("{motion.duration.normal}"), easing: easing("{motion.easing.standard}") },
+            enter: { duration: duration("mul({motion.duration.slow}, 1.2)"), easing: easing("{motion.easing.emphasized}") },
+            stagger: duration(18),
+            staggerRows: number(8, 0, 64),
+            rise: length("{space.sm}")
         }
     },
 

@@ -4,15 +4,16 @@ import qs.Ui
 
 // One row of the launcher's list: an icon tile or an application's own
 // icon, the label, the detail line while a search narrows the list, and a
-// chevron on a menu. The row that holds the cursor hands the plate its
-// geometry, so one plate glides between rows.
+// chevron on a menu. The row that holds the cursor hands itself to the
+// list's ListCursor, so one plate glides between rows, and a row new since
+// the last rebuild enters through ListEntrance.
 Item {
     id: row
 
     required property var look
     // The launcher: its state and the functions a row calls.
     required property var launcher
-    required property Item plate
+    required property ListCursor plate
 
     required property int index
     required property string itemId
@@ -40,30 +41,21 @@ Item {
 
     height: live ? launcher.rowHeightFor(detail) : 0
 
-    // The entrance: 0 hidden, 1 settled.
-    property real enter: 1
-    property int enterDirection: 0
-    opacity: enter
-    transform: Translate {
-        x: (1 - row.enter) * row.enterDirection * row.look.row.enterX
-        y: row.enterDirection === 0 ? (1 - row.enter) * row.look.row.enterY : 0
+    // A row new since the last rebuild rises in, or slides in from the
+    // side the menu change came from.
+    opacity: entrance.progress
+    transform: ListEntrance {
+        id: entrance
+        shift: row.look.row.enterX
+        // The launcher goes before its rows as the overlay is destroyed;
+        // the entrance keeps the motion it last had.
+        Binding on motion { when: row.live; value: row.live ? row.launcher.listMotion : null; restoreMode: Binding.RestoreNone }
     }
     Component.onCompleted: {
-        if (!live || !launcher.freshIds[itemId]) return;
-        enter = 0;
-        enterDirection = launcher.navDirection;
-        entrance.start();
+        if (hasCursor) plate.follow(row, true);
+        if (live && launcher.freshIds[itemId]) entrance.start(plate.enterSlot(), launcher.navDirection);
     }
-    SequentialAnimation {
-        id: entrance
-        PauseAnimation { duration: Math.max(0, Math.min(row.index, row.look.row.staggerRows)) * row.look.motion.duration.stagger }
-        Anim { target: row; property: "enter"; to: 1; duration: row.look.motion.duration.medium2; curve: row.look.motion.curve.emphasizedDecel }
-    }
-
-    // RestoreNone: the row losing the cursor must not write its geometry
-    // back after the next row has claimed the plate.
-    Binding { target: row.plate; property: "targetY"; value: row.y; when: row.hasCursor; restoreMode: Binding.RestoreNone }
-    Binding { target: row.plate; property: "targetHeight"; value: row.height; when: row.hasCursor; restoreMode: Binding.RestoreNone }
+    onHasCursorChanged: if (plate !== null) plate.follow(row, hasCursor)
 
     Rectangle {
         visible: row.startsDrilldown

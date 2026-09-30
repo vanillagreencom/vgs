@@ -117,7 +117,7 @@ pick_tui() {
   for ((n = 0; n < index; n++)); do keys+=(-k Down); done
   if ((index > 0)); then type_keys "${keys[@]}" || { fail "moving to $1 failed"; return 1; }; fi
   expect_poll "the cursor rests on $1" "$index" read_launcher selectedIndex
-  expect "the resting pointer took no row before $1" false read_launcher pointerArmed
+  expect "the resting pointer took no row before $1" false ipc smoke readShownDescendant overlay vgs.launcher ListCursor armed
   type_keys -k Return || fail "sending Return on $1 failed"
 }
 update_words() {

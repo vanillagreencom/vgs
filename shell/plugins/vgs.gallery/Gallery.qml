@@ -346,6 +346,48 @@ Item {
                 MenuItem { text: "A menu entry, as the menu draws it"; iconName: "check"; shortcut: "Enter" }
                 MenuItem { text: "The checked entry of a menu"; iconName: "palette"; checked: true }
             }
+
+            SectionHeader { text: "List motion"; description: "One cursor travels between rows under Up, Down and the pointer, and rows rise in as they arrive" }
+            Button {
+                text: "Replay the entrance"
+                iconName: "refresh-cw"
+                variant: "secondary"
+                size: "sm"
+                onClicked: {
+                    motionRows.model = 0;
+                    motionRows.model = 5;
+                }
+            }
+            Item {
+                id: motionList
+                property int current: 0
+                width: parent.width
+                height: motionColumn.height
+                activeFocusOnTab: true
+                Keys.onUpPressed: { motionCursor.disarm(); current = Math.max(0, current - 1); }
+                Keys.onDownPressed: { motionCursor.disarm(); current = Math.min(motionRows.count - 1, current + 1); }
+
+                ListCursor { id: motionCursor }
+                Column {
+                    id: motionColumn
+                    width: parent.width
+                    Repeater {
+                        id: motionRows
+                        model: 5
+                        ListItem {
+                            required property int index
+                            width: motionColumn.width
+                            text: ["Workspaces", "Clock", "Battery", "Network", "Volume"][index]
+                            secondary: index % 2 === 0 ? "bar widget" : ""
+                            iconName: ["layout-grid", "clock", "battery", "wifi", "volume-2"][index]
+                            cursor: motionCursor
+                            highlighted: index === motionList.current
+                            onPointed: motionList.current = index
+                            onClicked: motionList.forceActiveFocus()
+                        }
+                    }
+                }
+            }
         }
     }
 }

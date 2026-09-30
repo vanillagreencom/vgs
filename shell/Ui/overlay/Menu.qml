@@ -4,8 +4,10 @@ import qs.Commons
 import qs.Ui
 
 // A menu of MenuItem entries under the item it is declared in, in its own
-// surface. Up and Down move the highlight, Enter triggers the highlighted
-// entry, a click triggers an entry, and any trigger closes the menu; a
+// surface. One ListCursor draws the highlight and travels between entries.
+// Up and Down move the highlight, a hover moves it once the pointer moves
+// (ListCursor), Enter triggers the highlighted entry, a click triggers an
+// entry, and any trigger closes the menu; a
 // press outside and Escape close it too. Typing letters highlights the
 // first reachable entry whose text starts with them, the letters kept for
 // `menu.typeahead` milliseconds. Entries taller than `maxHeight` scroll
@@ -45,6 +47,8 @@ Item {
     function open() {
         typed = "";
         currentIndex = items().findIndex(item => reachable(item) && item.checked);
+        plate.disarm();
+        plate.snap();
         window.visible = true;
         scope.forceActiveFocus();
         scroll.contentY = 0;
@@ -60,9 +64,13 @@ Item {
         const reach = all.map((item, index) => reachable(item) ? index : -1).filter(index => index !== -1);
         if (reach.length === 0) return;
         const at = reach.indexOf(currentIndex);
-        if (at === -1) { currentIndex = step > 0 ? reach[0] : reach[reach.length - 1]; return; }
-        currentIndex = reach[(at + step + reach.length) % reach.length];
+        if (at === -1) keyTo(step > 0 ? reach[0] : reach[reach.length - 1]);
+        else keyTo(reach[(at + step + reach.length) % reach.length]);
     }
+
+    // Highlight the entry at `index` from a key: the pointer resting over
+    // the menu takes the highlight again only once it moves.
+    function keyTo(index) { plate.disarm(); currentIndex = index; }
 
     function triggerCurrent() {
         const all = items();
@@ -83,7 +91,7 @@ Item {
         }
         typed = wanted;
         typing.restart();
-        if (found !== -1) currentIndex = found;
+        if (found !== -1) keyTo(found);
         return found !== -1;
     }
 
@@ -110,6 +118,18 @@ Item {
     }
 
     Timer { id: typing; interval: Theme.menu.typeahead; onTriggered: root.typed = "" }
+
+    // Every entry draws its highlight through the menu's cursor, and a
+    // hover the cursor lets through highlights a reachable entry.
+    readonly property Instantiator pointers: Instantiator {
+        model: root.items()
+        delegate: Connections {
+            required property var modelData
+            target: modelData
+            Component.onCompleted: modelData.cursor = plate
+            function onPointed() { if (root.reachable(modelData)) root.currentIndex = root.items().indexOf(modelData); }
+        }
+    }
 
     // Every entry's trigger closes the menu, by click or by key.
     readonly property Instantiator closers: Instantiator {
@@ -167,6 +187,12 @@ Item {
                 y: Theme.menu.padding
                 width: parent.width - 2 * Theme.menu.padding
                 height: parent.height - 2 * Theme.menu.padding
+
+                ListCursor {
+                    id: plate
+                    color: Theme.menu.item.hover
+                    radius: Theme.menu.item.radius
+                }
 
                 Column {
                     id: column

@@ -4,11 +4,14 @@ import qs.Ui
 // The pointer flyout: a small glass menu that opens at a point and closes
 // on a pick, Escape (through close()) or a click outside. Put it in a
 // full-size parent. `items` is [{ id, label, icon?, glyph?, detail?,
-// separator? }]: `icon` an image URL, `glyph` a Lucide name.
+// separator? }]: `icon` an image URL, `glyph` a Lucide name. The hovered
+// entry holds a ListCursor at `motion`, the launcher's list motion, so one
+// plate glides between entries.
 Item {
     id: menu
 
     required property var look
+    required property var motion
     property var items: []
     readonly property bool opened: state === "open"
     property int hovered: -1
@@ -77,6 +80,12 @@ Item {
             onEntered: menu.hovered = -1
         }
 
+        ListCursor {
+            id: plate
+            motion: menu.motion
+            background: Highlight { look: menu.look; radius: menu.look.radius.sm }
+        }
+
         Column {
             id: column
             x: menu.look.flyout.padding
@@ -92,6 +101,8 @@ Item {
                     required property int index
                     readonly property bool separator: !!modelData.separator
                     readonly property bool hasIcon: !separator && (!!modelData.icon || !!modelData.glyph)
+                    readonly property bool hasCursor: menu.hovered === index
+                    onHasCursorChanged: plate.follow(entry, hasCursor)
 
                     width: column.width
                     height: separator ? menu.look.flyout.separatorHeight : menu.look.flyout.rowHeight
@@ -102,14 +113,6 @@ Item {
                         width: parent.width - menu.look.flyout.separatorInset
                         height: menu.look.glass.hairlineWidth
                         color: menu.look.glass.divider
-                    }
-
-                    Highlight {
-                        anchors.fill: parent
-                        look: menu.look
-                        visible: !entry.separator
-                        radius: menu.look.radius.sm
-                        shown: menu.hovered === entry.index
                     }
 
                     Item {

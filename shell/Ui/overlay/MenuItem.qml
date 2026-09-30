@@ -8,12 +8,17 @@ import qs.Ui
 // marks the current choice. The template owns the click, `triggered` and
 // the hover; the menu sets `highlighted` for the keyboard. `shortcut` is a
 // hint drawn after the text, not a binding; a click never toggles
-// `checked`, which the author binds.
+// `checked`, which the author binds. The menu hands every entry its
+// ListCursor as `cursor`: the cursor then draws the highlight, and a hover
+// it lets through emits `pointed` for the menu to highlight the entry.
 T.MenuItem {
     id: root
 
     property string iconName: ""
     property string shortcut: ""
+    property ListCursor cursor: null
+
+    signal pointed()
 
     width: parent ? parent.width : implicitWidth
     implicitWidth: implicitContentWidth + leftPadding + rightPadding
@@ -26,6 +31,12 @@ T.MenuItem {
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
     Accessible.checked: checked
+
+    ListCursorRow {
+        cursor: root.cursor
+        holds: root.highlighted
+        onPointed: root.pointed()
+    }
 
     contentItem: Row {
         spacing: root.spacing
@@ -64,6 +75,6 @@ T.MenuItem {
 
     background: Rectangle {
         radius: Theme.menu.item.radius
-        color: root.highlighted || root.hovered || root.down ? Theme.menu.item.hover : "transparent"
+        color: root.cursor === null && (root.highlighted || root.hovered || root.down) ? Theme.menu.item.hover : "transparent"
     }
 }

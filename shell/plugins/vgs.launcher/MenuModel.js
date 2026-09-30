@@ -644,19 +644,3 @@ function parseOpenWith(raw) {
     }
     return apps.sort(function (a, b) { return (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0); });
 }
-
-// Half a step of wl_fixed_t, the 24.8 fixed-point number Wayland reports a
-// pointer position in: two positions closer than this are one position.
-var POINTER_EPSILON = 1 / 512;
-
-// Whether the pointer moved from `last` to `at`, two hover points mapped
-// into the launcher's own coordinates. A `last` of (-1, -1) is no reading
-// yet, so the first hover after the list changed moves nothing. Qt delivers
-// hover again to a row that moves under a still pointer, as the card
-// animates, and the point it maps back differs by float roundoff
-// (docs/architecture/runtime-pointer.md): an exact comparison reads that as
-// motion, and the resting pointer takes the cursor.
-function pointerMoved(last, at) {
-    if (last.x < 0 && last.y < 0) return false;
-    return Math.abs(at.x - last.x) >= POINTER_EPSILON || Math.abs(at.y - last.y) >= POINTER_EPSILON;
-}

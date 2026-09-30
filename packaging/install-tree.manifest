@@ -110,6 +110,11 @@ f share/vgs/shell/Ui/icons/Lucide.js
 f share/vgs/shell/Ui/layout/AngledCard.qml
 f share/vgs/shell/Ui/layout/CardCarousel.qml
 f share/vgs/shell/Ui/layout/Disclosure.qml
+f share/vgs/shell/Ui/layout/ListAnimation.qml
+f share/vgs/shell/Ui/layout/ListCursor.qml
+f share/vgs/shell/Ui/layout/ListCursorLogic.js
+f share/vgs/shell/Ui/layout/ListCursorRow.qml
+f share/vgs/shell/Ui/layout/ListEntrance.qml
 f share/vgs/shell/Ui/layout/ListItem.qml
 f share/vgs/shell/Ui/layout/Pane.qml
 f share/vgs/shell/Ui/layout/ScrollArea.qml
@@ -179,6 +184,7 @@ f share/vgs/shell/plugins/vgs.launcher/Launcher.qml
 f share/vgs/shell/plugins/vgs.launcher/LauncherRow.qml
 f share/vgs/shell/plugins/vgs.launcher/MenuGlyph.qml
 f share/vgs/shell/plugins/vgs.launcher/MenuModel.js
+f share/vgs/shell/plugins/vgs.launcher/Motion.js
 f share/vgs/shell/plugins/vgs.launcher/SearchGlyph.qml
 f share/vgs/shell/plugins/vgs.launcher/Service.qml
 f share/vgs/shell/plugins/vgs.launcher/Widget.qml

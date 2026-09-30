@@ -7,9 +7,11 @@ import qs.Ui
 // field, under a heading with the Add plugin button. A row shows the plugin's icon, name, version and source, a danger
 // badge counting its errors, its enabled switch and a chevron; a click
 // opens its page. With the search field focused, Up and Down move the
-// highlighted row and Enter opens it. The heading, the search field and the
-// rows share the list's content edges. Each row then owns its own icon
-// inset, and the scroll bar sits in the window's right inset.
+// highlighted row and Enter opens it; a hover moves it once the pointer
+// moves, and one ListCursor draws it and travels between rows. The heading,
+// the search field and the rows share the list's content edges. Each row
+// then owns its own icon inset, and the scroll bar sits in the window's
+// right inset.
 FocusScope {
     id: page
 
@@ -32,6 +34,7 @@ FocusScope {
 
     function move(step) {
         if (shown.length === 0) return;
+        plate.disarm();
         current = Math.max(0, Math.min(shown.length - 1, current + step));
         const item = rows.itemAt(current);
         if (item === null) return;
@@ -41,6 +44,12 @@ FocusScope {
 
     function openCurrent() {
         if (current >= 0 && current < shown.length) panel.openPlugin(shown[current].id);
+    }
+
+    // The rows' cursor, in the body's scrolling content with the rows.
+    ListCursor {
+        id: plate
+        parent: layout.scrollArea.contentItem
     }
 
     Pane {
@@ -117,6 +126,8 @@ FocusScope {
                 secondary: modelData.version + "  " + (modelData.source === "bundled" ? "Bundled" : "Installed")
                 iconName: modelData.icon
                 highlighted: index === page.current
+                cursor: plate
+                onPointed: page.current = index
                 onClicked: page.panel.openPlugin(modelData.id)
                 trailing: [
                     Badge {

@@ -59,7 +59,7 @@ Install opens `core/pkg-install` and Remove `core/pkg-remove`, the core's packag
 
 ## Look
 
-`Appearance.js` holds every value the launcher draws with, as the `appearance` table [docs/decisions/D023](../../../docs/decisions/D023-plugin-owned-appearance.md) sets out. The theme reaches it through `scheme.mode`, `palette.accent` and `motion.scale` alone, so a theme's palette, fonts and metrics leave the glass as it is; the accent lights the orbiting edge reflection and the caret while a search runs. With the motion scale at 0 nothing animates, the caret stays on and the edge lights stand still.
+`Appearance.js` holds every value the launcher draws with, as the `appearance` table [docs/decisions/D023](../../../docs/decisions/D023-plugin-owned-appearance.md) sets out. The theme reaches it through `scheme.mode`, `palette.accent` and `motion.scale` alone, so a theme's palette, fonts and metrics leave the glass as it is; the accent lights the orbiting edge reflection and the caret while a search runs. The result list and the file flyout move their highlight through the list motion of `qs.Ui`, `ListCursor` and `ListEntrance`, at the launcher's own timings and curves and with its own glass plate ([motion.md](../../../docs/architecture/motion.md)). With the motion scale at 0 nothing animates, the caret stays on and the edge lights stand still.
 
 Hyprland blurs what is behind the glass only when a layer rule asks it to, for the host's namespace `vgs:overlay`. The manifest declares that rule, and the Hyprland layer writes it as:
 

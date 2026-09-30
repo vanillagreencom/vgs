@@ -8,8 +8,10 @@ import qs.Ui
 // `textRole` naming the text; `currentIndex` is the choice. A click, Space
 // or Enter opens the list in its own surface under the control; Up and
 // Down move the highlight there and Enter chooses, a click chooses, and a
-// press outside or Escape closes it. With the list closed, Up and Down on
-// the focused control move the choice. A list taller than
+// press outside or Escape closes it. One ListCursor draws the highlight
+// and travels between entries, and a hover moves it once the pointer moves
+// (ListCursor). With the list closed, Up and Down on the focused control
+// move the choice. A list taller than
 // `select.maxHeight` scrolls under the module's embedded bar, which its
 // entries leave a gutter for. The control draws like a text field; the
 // template owns its click, hover and focus.
@@ -50,6 +52,8 @@ T.AbstractButton {
     function openList() {
         if (count === 0) return;
         entries.currentIndex = currentIndex;
+        plate.disarm();
+        plate.snap();
         list.visible = true;
         entries.forceActiveFocus();
     }
@@ -134,8 +138,10 @@ T.AbstractButton {
             keyNavigationEnabled: true
             keyNavigationWraps: false
             boundsBehavior: Flickable.StopAtBounds
-            highlightMoveDuration: Theme.motion.duration.fast
             readonly property bool overflowing: contentHeight > height
+            // A key moves the highlight: the pointer resting over the list
+            // takes it again only once it moves. The key goes on to the view.
+            Keys.onPressed: event => { plate.disarm(); event.accepted = false; }
             Keys.onReturnPressed: root.choose(currentIndex)
             Keys.onEnterPressed: root.choose(currentIndex)
             Keys.onEscapePressed: list.visible = false
@@ -155,7 +161,12 @@ T.AbstractButton {
                 PointerCursor {}
                 Accessible.name: text
                 onClicked: root.choose(index)
-                onHoveredChanged: if (hovered) entries.currentIndex = index
+
+                ListCursorRow {
+                    cursor: plate
+                    holds: entry.highlighted
+                    onPointed: entries.currentIndex = entry.index
+                }
 
                 contentItem: Label {
                     role: "item"
@@ -167,8 +178,15 @@ T.AbstractButton {
 
                 background: Rectangle {
                     radius: Theme.menu.item.radius
-                    color: entry.chosen ? Theme.select.selected : entry.highlighted ? Theme.select.highlight : "transparent"
+                    color: entry.chosen ? Theme.select.selected : "transparent"
                 }
+            }
+
+            ListCursor {
+                id: plate
+                parent: entries.contentItem
+                color: Theme.select.highlight
+                radius: Theme.menu.item.radius
             }
 
             HoverHandler { id: listHover }
