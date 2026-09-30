@@ -24,6 +24,8 @@ A bind takes the key the plugin's `plugins[].keys` entry gives its shortcut, [co
 
 A manifest bind may set `hold: true`; absent or `false` keeps an ordinary press bind. `PluginLogic.hyprlandError` refuses a non-boolean value. Key overrides preserve the hold declaration. An unbound or conflicting key produces neither bind.
 
+The setup-text inventory treats `hold` as boolean data, not user-facing prose. `scripts/test-check-user-commands.py` checks that every admitted manifest field has a classification and controls the hold flag's classification.
+
 The plugin supplies the optional fourth callback, `shell.shortcut.register(name, description, onPressed, onReleased)`. `ShortcutRegistry` owns both native objects under one instance disposer. The main object receives down. A `<name>.release` companion receives up through a second bind with `release`, `non_consuming`, `transparent` and `ignore_mods` set. A dot is outside the public registration-name grammar, so a plugin cannot claim the companion name. Both default and overlay-capture maps use the same renderer.
 
 Only a down received by that registration with an available effective key starts a hold. The owner reads the current generated-layer key at the press, since Registry can change before Hyprland replaces its binds. A late press after unbind, conflict cancellation or section removal does nothing. Repeated down and unmatched up do nothing. Releasing another chord with the same terminal key cannot call an idle registration's callback. Changing the effective key, unbinding it or disposing the registration completes an active hold once. Disposal destroys both native objects even if the release callback throws. Ordinary callers keep their press-only behavior.

@@ -106,7 +106,7 @@ EXEMPT = (
     ("requirements", "*", "command"), ("requirements", "*", "packages"), ("requirements", "*", "optional"),
     ("tui", "*", "script"), ("tui", "*", "size"), ("tui", "*", "presentation"), ("tui", "*", "entry", "icon"),
     ("secrets", "service"),
-    ("hyprland", "binds", "*", "shortcut"), ("hyprland", "binds", "*", "key"), ("hyprland", "appearance"),
+    ("hyprland", "binds", "*", "shortcut"), ("hyprland", "binds", "*", "key"), ("hyprland", "binds", "*", "hold"), ("hyprland", "appearance"),
     ("hyprland", "layerRules", "*", "namespace"), ("hyprland", "layerRules", "*", "blur"), ("hyprland", "layerRules", "*", "ignoreAlpha"),
 )
 
