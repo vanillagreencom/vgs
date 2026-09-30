@@ -124,6 +124,8 @@ elif mode == "path":
     }
     for name in ("pw-record", "pw-cat", "pipewire", "wpctl", "hyprctl", "qs",
                  "secret-tool", "busctl", "systemctl", "systemd-run", "notify-send",
+                 "sudo", "doas", "run0", "pkexec", "pkcheck", "pamtester",
+                 "faillock", "passwd", "loginctl",
                  "pacman", "apt", "dnf", "curl", "wget", "uv", "chromium",
                  "agent-browser", "claude", "codex", "copilot"):
         assert shutil.which(name) is None, name

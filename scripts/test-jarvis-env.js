@@ -99,6 +99,7 @@ async function main() {
     const hostTools = path.join(root, "parent-tools");
     fs.mkdirSync(hostTools);
     fs.writeFileSync(path.join(hostTools, "jarvis-standin"), "#!/bin/sh\nprintf 'standin=host-fallback\\n'\n", { mode: 0o700 });
+    fs.writeFileSync(path.join(hostTools, "sudo"), "#!/bin/sh\nprintf 'auth=parent-standin\\n'\n", { mode: 0o700 });
     env.PATH = hostTools + ":" + systemPath;
     const parentNamespaces = ["user", "net", "pid"].map(kind => fs.readlinkSync("/proc/self/ns/" + kind));
     const source = fs.readFileSync(helper, "utf8");
@@ -117,6 +118,12 @@ async function main() {
     function missingStandin(file) {
         const result = cli(file, missing, "bash", "-c", "jarvis-standin");
         assert.equal(result.status, 127, result.stdout + result.stderr);
+    }
+    function missingAuth(file) {
+        // Lookup only. A broken PATH must never execute a host auth program.
+        const result = cli(file, missing, "bash", "-c", "command -v sudo");
+        assert.equal(result.status, 1, result.stdout + result.stderr);
+        assert.equal(result.stdout, "");
     }
     function outbound(file) {
         const result = cli(file, standins, "python3", probe, "outbound", port);
@@ -281,6 +288,13 @@ async function main() {
         assert.equal(sourced.status, 0, sourced.stderr);
         assert.equal(sourced.stdout, "standin=ok\ncaller-exit");
         missingStandin(helper);
+        missingAuth(helper);
+        const authStandins = path.join(root, "auth-standins");
+        fs.mkdirSync(authStandins);
+        fs.writeFileSync(path.join(authStandins, "sudo"), "#!/bin/sh\nprintf 'auth=world-standin\\n'\n", { mode: 0o700 });
+        const authResult = cli(helper, authStandins, "sudo", "--fixture-only");
+        assert.equal(authResult.status, 0, authResult.stderr);
+        assert.equal(authResult.stdout, "auth=world-standin\n");
         outbound(helper);
         // Prove the synthetic outbound destination is reachable before
         // relying on it for the missing-namespace mutation.
@@ -336,6 +350,7 @@ async function main() {
                 file => good(file, "directory", key, suffix));
         }
         mutation("path-fallback", 'PATH="$root/standins:$root/tools"', 'PATH="$root/standins:$root/tools:$PATH"', missingStandin);
+        mutation("auth-path-fallback", 'PATH="$root/standins:$root/tools"', 'PATH="$root/standins:$root/tools:$PATH"', missingAuth);
         mutation("allow-list", "timeout gdbus)", "timeout gdbus uname)", file => good(file, "path"));
         mutation("network", "-rn --pid", "-r --pid", outbound, 2);
         mutation("child-namespace", "--pid --fork --mount-proc --kill-child --", "--",

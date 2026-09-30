@@ -21,6 +21,7 @@ The shared test world implements the isolation boundary in [the Jarvis plan § T
 - Both D-Bus addresses name private buses with no service directories or included configuration. They cannot activate host services. The tmux wrapper selects a private socket and an empty configuration. Its global-option judge follows [tmux's getopt syntax](https://github.com/tmux/tmux/blob/3.7c/tmux.c) with Bash `getopts`, including clusters, attached values and value-taking options. It refuses socket/configuration overrides and unknown or incomplete global options before starting tmux.
 - PipeWire and PulseAudio addresses name absent endpoints under the private runtime directory. Audio tools are not host tools on PATH. Private null-sink PipeWire belongs to the plan's playback and echo-cancellation issues, not this environment.
 - This boundary isolates processes, networking, command lookup and session endpoints. It is not a filesystem sandbox. Fixtures can read the repository. A consumer that deliberately runs an absolute host executable still owns proof that it touches no live service or device.
+- Tests start no real PAM check, polkit authentication, sudo, faillock-counted check or keyring unlock. Namespace isolation alone does not confine host authentication. Auth commands need stand-ins. The PATH probe asserts their absence, and its fallback control performs lookup only, never authentication.
 
 ## Evidence
 
