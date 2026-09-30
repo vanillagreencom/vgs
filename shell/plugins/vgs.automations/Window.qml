@@ -161,6 +161,8 @@ FocusScope {
         editorOpen = true;
         testRun = null;
         testTranscript = "";
+        testStartedAt = 0;
+        setNotice("neutral", "", "");
         replaceDraft(View.blankDraft(Date.now(), Engine));
         Qt.callLater(() => editor.focusName());
     }
@@ -172,6 +174,8 @@ FocusScope {
         editorOpen = true;
         testRun = null;
         testTranscript = "";
+        testStartedAt = 0;
+        setNotice("neutral", "", "");
         replaceDraft(View.draftFromAutomation(row, Engine));
         Qt.callLater(() => editor.focusName());
         return "ok";
@@ -289,7 +293,7 @@ FocusScope {
         } else if (action === "clear") {
             run(["clear", target === "" ? "--all" : target], ok => {
                 if (!ok) return;
-                setNotice("success", "History cleared.", confirmName);
+                setNotice("success", "History cleared for " + confirmName + ".", "");
                 refreshHistory();
             });
         }

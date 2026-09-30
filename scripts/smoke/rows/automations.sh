@@ -117,11 +117,12 @@ auto_history_count() { automations history --json | py_reply 'import json,sys; p
 # window, and the engine is only read back. Each helper fails when its
 # control is not drawn or its input does not reach the seat.
 # ui_reveal TYPE TEXT: the item's scroll area moved, as a wheel would, so
-# the item lies in view before a click; an item in view does not move it.
-ui_reveal() { [[ $(ipc smoke revealItem window vgs.automations "$1" "$2") == \[* ]]; }
+# the item lies in view before a click (the probe's revealText).
+ui_revealed() { [[ $1 != absent && -n $1 ]]; }
+ui_reveal() { ui_revealed "$(ipc smoke revealText window vgs.automations "$1" "$2")"; }
 # ui_field_in LABEL TYPE TEXT NEW: the same inside the Field labelled LABEL.
 ui_field_in() {
-  [[ $(ipc smoke revealScopedItem window vgs.automations Field "$1" "$2" "$3") == \[* ]] || return
+  ui_revealed "$(ipc smoke revealScopedText window vgs.automations Field "$1" "$2" "$3")" || return
   click_scoped_in window:Automations window vgs.automations Field "$1" "$2" "$3" || return
   type_keys -M ctrl -k a -m ctrl "$4" && echo ok
 }

@@ -75,7 +75,9 @@ FocusScope {
             width: parent.width
             height: historyColumn.implicitHeight
 
-            ListCursor { id: plate; parent: historyColumn }
+            // The cursor sits in this item, beside the rows' column: a
+            // positioner would lay the plate out as a row.
+            ListCursor { id: plate }
             Column {
                 id: historyColumn
                 width: parent.width

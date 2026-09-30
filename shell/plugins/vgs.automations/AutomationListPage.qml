@@ -55,7 +55,9 @@ FocusScope {
         }
     }
 
-    ListCursor { id: plate; parent: listColumn }
+    // The rows' cursor, in the body's scrolling content with the rows,
+    // not in their column, which would lay the plate out as a row.
+    ListCursor { id: plate; parent: layout.scrollArea.contentItem }
 
     Pane {
         id: layout

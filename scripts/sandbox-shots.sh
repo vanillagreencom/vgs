@@ -1400,24 +1400,11 @@ scene_automations() { # MODE
   automation_list_has() { ipc smoke itemTexts window vgs.automations AutomationRow | py_reply 'import json,sys; print(any(row and row[0] == sys.argv[1] for row in json.load(sys.stdin)))' "$1"; }
   automation_list_empty() { ipc smoke itemTexts window vgs.automations AutomationRow | py_reply 'import json,sys; rows=json.load(sys.stdin); print(len(rows) == 0)'; }
   automation_history_count() { automations_shot history "$1" --json | py_reply 'import json,sys; print(len(json.load(sys.stdin)["rows"]))'; }
-  automation_scroll() { ipc smoke scrollAreas window vgs.automations | py_reply 'import json,sys
-areas=json.load(sys.stdin)
-if not areas:
-    print("areas=0"); raise SystemExit
-areas.sort(key=lambda a: a.get("contentHeight", 0) - a.get("height", 0), reverse=True)
-print(json.dumps(areas[0]))'; }
-  automation_scroll_to() {
-    local area move tx ty
-    area="$(automation_scroll)" && [[ $area == \{* ]] || return 1
-    move="$(python3 -c 'import json,sys
-a, want = json.loads(sys.argv[1]), int(sys.argv[2])
-most = a["contentHeight"] - a["height"]
-travel = a["bar"][3] - a["thumb"][3]
-print(0 if most <= 0 or travel <= 0 else round((max(0, min(want, most)) - a["contentY"]) * travel / most))' "$area" "$1")" || return 1
-    [[ $move -ne 0 ]] || return 0
-    read -r tx ty < <(at_centre window:Automations "$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["thumb"]))' "$area")") || return 1
-    drag "$tx" "$ty" "$tx" "$((ty + move))"
-  }
+  # A control below the fold: its scroll area moves, as a wheel would,
+  # until it lies in view (the probe's revealText).
+  automation_reveal() { local at; at="$(ipc smoke revealText window vgs.automations "$1" "$2")" && [[ -n $at && $at != absent ]]; }
+  automation_click() { automation_reveal "$1" "$2" && click_in window:Automations window vgs.automations "$1" "$2"; }
+  automation_read() { ipc smoke readInstance window vgs.automations "$1"; }
   local success='{"name":"Shot success","command":"echo success","notifyEveryRun":true,"schedule":{"frequency":"weekly","interval":1,"weekdays":["mon"],"times":["09:00"],"start":"2026-01-05","end":{"type":"never"}}}'
   local failure='{"name":"Shot failure","command":"echo nope >&2; exit 3","notifyEveryRun":true,"schedule":{"frequency":"weekly","interval":1,"weekdays":["fri"],"times":["17:30"],"start":"2026-01-09","end":{"type":"never"}}}'
   local custom='{"name":"Shot custom","command":"printf custom","notifyEveryRun":false,"schedule":{"frequency":"weekly","interval":3,"weekdays":["mon","wed"],"times":["08:30","16:45"],"start":"2026-01-05","end":{"type":"never"}}}'
@@ -1436,29 +1423,32 @@ print(0 if most <= 0 or travel <= 0 else round((max(0, min(want, most)) - a["con
   auto_shot_preview_ready() { ipc smoke readInstance window vgs.automations previewFirst | py_reply 'import json,sys; print(str(json.load(sys.stdin)).isdigit())'; }
   expect_poll "the preset preview has a first occurrence" True auto_shot_preview_ready
   take "automations-$1-editor-preset-next"
-  automation_scroll_to 360 || true
-  click_in window:Automations window vgs.automations Button "Test run" || fail "starting a test run from the editor failed"
+  automation_click Button "Test run" || fail "starting a test run from the editor failed"
   expect_poll "the editor test run reaches history" 1 automation_history_count shot-success
   auto_shot_transcript_ready() { ipc smoke readInstance window vgs.automations testTranscript | py_reply 'import json,sys; print(json.load(sys.stdin) != "")'; }
   expect_poll "the editor shows the test run transcript" True auto_shot_transcript_ready
   take "automations-$1-test-run-transcript"
-  click_in window:Automations window vgs.automations IconButton "Back to automations" || fail "returning to the automations list failed"
+  automation_click IconButton "Back to automations" || fail "returning to the automations list failed"
   click_in window:Automations window vgs.automations AutomationRow "Shot custom" || fail "selecting the custom automation failed"
   expect_poll "the custom preview has a first occurrence" True auto_shot_preview_ready
   take "automations-$1-editor-custom-next"
-  automation_scroll_to 520 || true
-  click_in window:Automations window vgs.automations Radio On || fail "showing the end date field failed"
-  click_in window:Automations window vgs.automations TextField "2026-01-05" || fail "focusing the end date field failed"
-  type_keys -k Down || fail "opening the date picker failed"
+  automation_click Radio On || fail "showing the end date field failed"
+  ipc smoke revealScopedText window vgs.automations Field Ends IconButton "Pick date" >/dev/null || fail "revealing the end date's picker failed"
+  click_scoped_in window:Automations window vgs.automations Field Ends IconButton "Pick date" || fail "opening the date picker failed"
+  automation_date_open() { ipc smoke itemValues window vgs.automations DateField pickerOpen | py_reply 'import json,sys; print(str(any(r["pickerOpen"] for r in json.load(sys.stdin))).lower())'; }
+  expect_poll "the date picker opens" true automation_date_open
   take "automations-$1-date-picker"
-  type_keys -k Escape >/dev/null 2>&1 || true
+  type_keys -k Escape || fail "closing the date picker failed"
+  expect_poll "the date picker closes" false automation_date_open
   automations_shot run-now shot-success >/dev/null
   automations_shot run-now shot-failure >/dev/null
-  click_in window:Automations window vgs.automations Label History || fail "opening history failed"
+  automation_click Label History || fail "opening history failed"
   take "automations-$1-history"
-  click_in window:Automations window vgs.automations Button "Clear history" || true
+  automation_click Button "Clear history" || fail "asking to clear history failed"
+  expect_poll "the clear question shows" '"clear"' automation_read confirmAction
   take "automations-$1-confirm-dialog"
   click_in window:Automations window vgs.automations Button Confirm || fail "confirming history clear failed"
+  expect_poll "the history is cleared" 0 automation_history_count shot-success
   take "automations-$1-history-empty-state"
   automations_shot remove shot-success >/dev/null
   automations_shot remove shot-failure >/dev/null

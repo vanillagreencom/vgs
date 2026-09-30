@@ -12,6 +12,7 @@ Item {
     property bool error: false
     property string displayText: date
     readonly property bool valid: parse(displayText) !== null
+    readonly property bool pickerOpen: picker.opened
     property var shown: parse(date) || parse(today())
     property int highlightedDay: shown.d
     signal changed(string date)
@@ -83,7 +84,6 @@ Item {
         anchors.fill: parent
         text: root.displayText
         placeholderText: root.placeholderText
-        trailingIcon: "calendar"
         error: root.error || !root.valid
         onTextEdited: {
             root.displayText = text;

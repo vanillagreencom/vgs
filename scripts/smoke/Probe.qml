@@ -329,18 +329,17 @@ Scope {
     // An item's box in its own window's coordinates, as [x, y, w, h]: a
     // layer surface the compositor centres knows no place of its own on the
     // screen, so a row adds the layer's position from `hyprctl layers`.
-    // Scrolls the nearest scrolling ancestor of `found` so it lies in view
-    // and answers its window box after, or "absent" for null.
-    function reveal(found) {
-        if (found === null) return "absent";
-        for (let at = found.parent; at !== null && at !== undefined; at = at.parent) {
-            if (at.contentY === undefined || at.contentHeight === undefined || at.contentItem === undefined || at.contentHeight <= at.height) continue;
-            const top = found.mapToItem(at.contentItem, 0, 0).y;
-            if (top < at.contentY) at.contentY = Math.max(0, top);
-            else if (top + found.height > at.contentY + at.height) at.contentY = Math.min(at.contentHeight - at.height, top + found.height - at.height);
-            break;
-        }
-        return root.json(root.windowBox(found));
+    // revealText's scroll: the innermost shown ScrollArea under `item`
+    // that holds `target`, moved so the target sits a third of the way
+    // down its view.
+    function revealIn(item, target) {
+        if (item === null || target === null) return "absent";
+        const areas = root.shownScrollAreas(item).filter(area => root.descendants(area).indexOf(target) !== -1);
+        const flick = areas.find(area => !areas.some(other => other !== area && root.descendants(area).indexOf(other) !== -1));
+        if (flick === undefined) return "unscrolled";
+        const y = target.mapToItem(flick.contentItem, 0, 0).y - flick.height / 3;
+        flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
+        return String(flick.contentY);
     }
 
     function windowBox(item) {
@@ -669,19 +668,20 @@ Scope {
         // page of a scrolling panel. Answers [contentY, contentHeight,
         // height], or shown-scroll-areas=N when the target is ambiguous.
         // Scrolls the shown ScrollArea holding the first shown, enabled
-        // item named `type` whose text is `text` under an instance so the
-        // item sits a third of the way down its view, for a real click on
-        // a control below the fold. Answers the new contentY, `absent` for
-        // no such item, or `unscrolled` for one no shown area holds.
+        // item named `type` that reads `text` (reads) under an instance so
+        // the item sits a third of the way down its view, for a real click
+        // on a control below the fold. Answers the new contentY, `absent`
+        // for no such item, or `unscrolled` for one no shown area holds.
         function revealText(hostKey: string, id: string, type: string, text: string): string {
-            const target = root.textItem(hostKey, id, type, text);
-            if (target === null) return "absent";
             const item = root.instance(hostKey, id);
-            const flick = root.shownScrollAreas(item).find(area => root.descendants(area).indexOf(target) !== -1);
-            if (flick === undefined) return "unscrolled";
-            const y = target.mapToItem(flick.contentItem, 0, 0).y - flick.height / 3;
-            flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
-            return String(flick.contentY);
+            if (item === null) return "absent";
+            const target = root.descendants(item).find(child => root.typeName(child) === type && root.reads(child, text) && child.visible && child.enabled);
+            return root.revealIn(item, target === undefined ? null : target);
+        }
+        // revealText for the item scopedItem finds, such as one row's
+        // control among rows that each draw one with the same text.
+        function revealScopedText(hostKey: string, id: string, scopeType: string, scopeText: string, type: string, text: string): string {
+            return root.revealIn(root.instance(hostKey, id), root.scopedItem(hostKey, id, scopeType, scopeText, type, text));
         }
         function scrollTo(hostKey: string, id: string, y: int): string {
             const item = root.instance(hostKey, id);
@@ -691,22 +691,6 @@ Scope {
             const flick = areas[0];
             flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height));
             return root.json([flick.contentY, flick.contentHeight, flick.height]);
-        }
-        // Scrolls the nearest scrolling ancestor of the first shown item
-        // named `type` that reads `text` (reads) so the whole item lies in
-        // its view, as a wheel over that list would, and answers the item's
-        // window box after, or "absent". A page with several scroll areas,
-        // such as an editor holding a multi-line field, reveals the item in
-        // the one that holds it.
-        function revealItem(hostKey: string, id: string, type: string, text: string): string {
-            const item = root.instance(hostKey, id);
-            if (item === null) return "absent";
-            const found = root.descendants(item).find(child => root.typeName(child) === type && root.reads(child, text) && child.visible);
-            return root.reveal(found === undefined ? null : found);
-        }
-        // revealItem for the item scopedItem finds.
-        function revealScopedItem(hostKey: string, id: string, scopeType: string, scopeText: string, type: string, text: string): string {
-            return root.reveal(root.scopedItem(hostKey, id, scopeType, scopeText, type, text));
         }
         function galleryHeadings(hostKey: string, id: string): string {
             const item = root.instance(hostKey, id);

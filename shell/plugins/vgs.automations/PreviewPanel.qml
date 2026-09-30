@@ -34,7 +34,9 @@ Section {
         width: root.width
         height: previewColumn.implicitHeight
 
-        ListCursor { id: plate; parent: previewColumn }
+        // The cursor sits in this item, beside the rows' column: a
+        // positioner would lay the plate out as a row.
+        ListCursor { id: plate }
         Column {
             id: previewColumn
             width: parent.width
