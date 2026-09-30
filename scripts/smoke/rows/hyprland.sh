@@ -28,6 +28,15 @@ applied() { local out; out="$(vgsh_run theme apply "$1")" || return; printf '%s\
 # dispatcher, description]: a Lua bind's dispatcher is `__lua`, so the
 # description is what names its shortcut.
 vgs_binds() { hypr -j binds | py_reply 'import json,sys; print(json.dumps(sorted([b["modmask"], b["key"], b["dispatcher"], b["description"]] for b in json.load(sys.stdin) if b["description"].startswith("vgs.") and b.get("submap", "") in ("", "default"))))'; }
+fixture_bind() { hypr -j binds | py_reply '
+import json, sys
+print(json.dumps([
+    [bind["modmask"], bind["key"], bind["keycode"], bind["dispatcher"]]
+    for bind in json.load(sys.stdin)
+    if bind["description"] == "acme.probe:ping" and bind.get("submap", "") in ("", "default")
+]))
+'; }
+fixture_keys() { ipc smoke readInstance service acme.probe shortcutKeys | py_reply 'import json,sys; print(json.load(sys.stdin))'; }
 config_errors() { hypr -j configerrors | py_reply 'import json,sys; print(json.dumps([e for e in json.load(sys.stdin) if e]))'; }
 # A border option as the nested instance holds it, and what Hyprland prints
 # for a one-colour border of `#rrggbbaa` TOKEN_VALUE: hex aarrggbb with no
@@ -313,6 +322,31 @@ press_super n || fail "typing SUPER+N failed"
 expect_poll "SUPER+N opens the inbox" '"inbox"' inbox_mode
 press_super n || fail "typing SUPER+N again failed"
 expect_poll "SUPER+N closes the inbox again" '""' inbox_mode
+
+# The existing fixture consumes effective keys from the same provider as
+# a production plugin. Keycode readback needs no synthetic keyboard.
+expect "enabling the shortcut key fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
+expect_poll "the fixture reads its manifest keycode" '{"ping":"SUPER+code:108"}' fixture_keys
+# Lua's parsed keycode lives in sMkKeys, which binds -j does not expose.
+# Pin its registered row plus the generated code and configerrors instead.
+expect_poll "the nested instance registers the fixture keycode bind" '[[64, "", 0, "__lua"]]' fixture_bind
+expect "the layer binds the fixture by keycode" yes layer_has 'hl.bind("SUPER + code:108", hl.dsp.global("acme.probe:ping"), { description = "acme.probe:ping" })'
+set_keys '{"acme.probe": {"ping": "shift+super+CODE:00108", "ghost": "SUPER+F8"}}'
+expect_poll "the same fixture reads the normalized rebound keycode" '{"ping":"SUPER+SHIFT+code:108"}' fixture_keys
+expect_poll "the rebound keycode reaches the nested compositor" '[[65, "", 0, "__lua"]]' fixture_bind
+expect "the rebound layer keeps the lower-case code prefix" yes layer_has 'hl.bind("SUPER + SHIFT + code:108", hl.dsp.global("acme.probe:ping"), { description = "acme.probe:ping" })'
+expect "a plugin mutation cannot change effective keys" '{"ping":"SUPER+SHIFT+code:108"}' ipc acme.probe mutate-keys
+expect "the nested keycode configuration holds no error" '[]' config_errors
+set_keys '{"acme.probe": {"ping": null}}'
+expect_poll "the fixture reads a null unbinding" '{"ping":null}' fixture_keys
+expect_poll "the null unbinding removes the nested bind" '[]' fixture_bind
+set_keys '{"acme.probe": {"ping": "SUPER+SPACE"}}'
+expect_poll "the fixture wins the conflict by plugin id" '{"ping":"SUPER+SPACE"}' fixture_keys
+expect_poll "the layer reports the same conflict as the key read" '["hyprland: SUPER+SPACE for vgs.launcher:toggle skipped: already bound by acme.probe"]' hypr_problems
+set_keys '{"acme.probe": {}}'
+expect_poll "removing the override restores the manifest key" '{"ping":"SUPER+code:108"}' fixture_keys
+expect "disabling the shortcut fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
+expect_poll "the disabled fixture bind leaves the nested compositor" '[]' fixture_bind
 
 # A rebind, an unbind and a name no bind declares, in shell.json.
 set_keys '{"vgs.launcher": {"toggle": "super+alt+space", "nope": "SUPER+F9"}, "vgs.notifications": {"inbox": null}}'

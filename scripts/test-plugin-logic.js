@@ -511,6 +511,7 @@ function suite(ctx, check) {
     // keyRefusal rows: [name, manifest, shortcut, key, want]
     const keyRefusalRows = [
         ["a declared shortcut takes a key", keyed, "toggle", "ctrl+super+k", ""],
+        ["Settings accepts a keycode", keyed, "toggle", "shift+super+CODE:00108", ""],
         ["null unbinds a declared shortcut", keyed, "toggle", null, ""],
         ["undefined resets a declared shortcut", keyed, "toggle", undefined, ""],
         ["an undeclared shortcut is refused", keyed, "other", "SUPER+K", "refused: key=other undeclared"],
@@ -527,6 +528,7 @@ function suite(ctx, check) {
     const keyRow = { version: 1, plugins: [{ id: "acme.keys", x: 1, keys: { toggle: "SUPER+K" } }] };
     const keyRows = [
         ["a key is written normalised into a new row", null, {}, "toggle", "ctrl+super+k", "plugins", [{ id: "acme.keys", keys: { toggle: "SUPER+CTRL+K" } }]],
+        ["Settings writes a normalized keycode", null, {}, "toggle", "shift+super+CODE:00108", "plugins", [{ id: "acme.keys", keys: { toggle: "SUPER+SHIFT+code:108" } }]],
         ["null is written as an unbind", null, {}, "toggle", null, "plugins", [{ id: "acme.keys", keys: { toggle: null } }]],
         ["the row is seeded from the effective row", null, { plugins: [{ id: "acme.keys", x: 1 }] }, "peek", "SUPER+Q", "plugins", [{ id: "acme.keys", x: 1, keys: { peek: "SUPER+Q" } }]],
         ["the user row is updated in place", { plugins: [{ id: "b.c" }, { id: "acme.keys", keys: { peek: "SUPER+Q" } }] }, {}, "toggle", "SUPER+K", "plugins", [{ id: "b.c" }, { id: "acme.keys", keys: { peek: "SUPER+Q", toggle: "SUPER+K" } }]],

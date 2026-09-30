@@ -27,6 +27,13 @@ Singleton {
     // every scan whose result differs, so bindings re-evaluate once. Each
     // carries `__revision` and `__loadUrl` from the scan.
     property var manifests: Object.create(null)
+    // The enabled manifests' effective Hyprland data, shared by the
+    // generated layer and each instance's read-only shortcut provider.
+    readonly property var hyprlandSections: {
+        const current = manifests;
+        const config = Config.effective;
+        return Object.keys(current).filter(id => root.isEnabled(id)).map(id => Logic.hyprlandSection(config, current[id]));
+    }
     // id -> the commands of its `requirements` the last scan did not find
     // on PATH, for every plugin in `manifests`; replaced whole when a scan
     // finds a different set, apart from the manifests, so a command

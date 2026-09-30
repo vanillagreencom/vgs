@@ -91,11 +91,12 @@ for file in Theme.qml Tokens.js ThemeLogic.js Inset.js ClearingInset.qml Watched
 done
 cp -- "$tests/stand-ins/ThemeSource.qml" "$imports/qs/Commons/ThemeSource.qml"
 printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nInset 1.0 Inset.js\nClearingInset 1.0 ClearingInset.qml\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
-for file in TuiRecords.qml SessionLock.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
+for file in TuiRecords.qml SessionLock.qml ShortcutRegistry.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
   [[ -f $core/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$core/$file" >&2; exit 2; }
   ln -s -- "$core/$file" "$imports/qs/Core/$file"
 done
-printf 'module qs.Core\nTuiRecords 1.0 TuiRecords.qml\nSessionLock 1.0 SessionLock.qml\nPluginLogic 1.0 PluginLogic.js\nPackageManagers 1.0 PackageManagers.js\nHyprlandLayer 1.0 HyprlandLayer.js\n' >"$imports/qs/Core/qmldir"
+cp -- "$tests/stand-ins/ShortcutRegistryInputs.qml" "$imports/qs/Core/Registry.qml"
+printf 'module qs.Core\nTuiRecords 1.0 TuiRecords.qml\nSessionLock 1.0 SessionLock.qml\nShortcutRegistry 1.0 ShortcutRegistry.qml\nsingleton Registry 1.0 Registry.qml\nPluginLogic 1.0 PluginLogic.js\nPackageManagers 1.0 PackageManagers.js\nHyprlandLayer 1.0 HyprlandLayer.js\n' >"$imports/qs/Core/qmldir"
 cp -- "$tests/stand-ins/UnitTheme.qml" "$imports/qs/Unit/UnitTheme.qml"
 # Where the module under test is, for the test that reads its qmldir.
 printf '.pragma library\nvar UI_DIR = %s;\n' "$(python3 -c 'import json, sys; print(json.dumps("file://" + sys.argv[1]))' "$ui")" >"$imports/qs/Unit/UnitPaths.js"
@@ -104,6 +105,9 @@ for file in Singleton.qml Scope.qml PopupWindow.qml Edges.qml PopupAdjustment.qm
   cp -- "$tests/stand-ins/$file" "$imports/Quickshell/$file"
 done
 printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nScope 1.0 Scope.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\n' >"$imports/Quickshell/qmldir"
+mkdir -p -- "$imports/Quickshell/Hyprland"
+cp -- "$tests/stand-ins/GlobalShortcut.qml" "$imports/Quickshell/Hyprland/GlobalShortcut.qml"
+printf 'module Quickshell.Hyprland\nGlobalShortcut 1.0 GlobalShortcut.qml\n' >"$imports/Quickshell/Hyprland/qmldir"
 for file in FileView.qml Process.qml StdioCollector.qml ProcessRegistry.qml FileViewError.qml; do
   cp -- "$tests/stand-ins/$file" "$imports/Quickshell/Io/$file"
 done

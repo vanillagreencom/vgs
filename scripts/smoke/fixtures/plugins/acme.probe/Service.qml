@@ -4,6 +4,7 @@ Item {
     property var shell: null
     readonly property string label: shell === null ? "" : String(shell.settings.label)
     readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
+    readonly property string shortcutKeys: shell === null ? "" : JSON.stringify(shell.shortcut.keys)
     property bool registered: false
     property int presses: 0
     property string duplicateShortcut: ""
@@ -51,6 +52,12 @@ Item {
         shell.shortcut.register("ping", "smoke probe", () => root.presses += 1);
         try { shell.shortcut.register("ping", "again", () => {}); } catch (e) { root.duplicateShortcut = e.message; }
         shell.ipc.handle("echo", arg => arg);
+        shell.ipc.handle("mutate-keys", () => {
+            const keys = root.shell.shortcut.keys;
+            keys.ping = "planted";
+            keys.inbox = "planted";
+            return JSON.stringify(root.shell.shortcut.keys);
+        });
         try { shell.ipc.handle("echo", arg => arg); } catch (e) { root.duplicateIpc = e.message; }
         // `call NAME [ARG]` reaches this plugin's own handler NAME through
         // shell.ipc.call; `throws` throws; `call-number` hands `call` a

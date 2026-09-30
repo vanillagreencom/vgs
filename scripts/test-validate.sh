@@ -303,6 +303,7 @@ cases=(
   "session|shell/Core/SessionLock.qml|all|$session_plan"
   "fixture|scripts/smoke/fixtures/plugins/acme.contention/Background.qml|all|$fixture_plan"
   "smoke-row|scripts/smoke/rows/example.sh|all|$smoke_plan"
+  "shortcut-provider|shell/Core/ShortcutRegistry.qml|unit|scripts/qml-unit.sh"$'\nscripts/test-qml-unit.sh'
   "harness-render|.agents/skills/review-gate/scripts/review-policy|all|$repo_plan"
   "harness-hook|.claude/hooks/example.sh|all|$repo_plan"
   "harness-settings|kendex.local.toml|all|$repo_plan"

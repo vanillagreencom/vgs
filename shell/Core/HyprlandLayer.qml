@@ -36,11 +36,7 @@ Scope {
 
     readonly property bool inputsReady: Registry.scanned && Config.ready && Theme.fileState !== "pending"
     // PluginLogic.hyprlandSection for every enabled plugin.
-    readonly property var sections: {
-        const manifests = Registry.manifests;
-        const config = Config.effective;
-        return Object.keys(manifests).filter(id => Registry.isEnabled(id)).map(id => Logic.hyprlandSection(config, manifests[id]));
-    }
+    readonly property var sections: Registry.hyprlandSections
     readonly property real highestMonitorScale: {
         let highest = 1;
         for (const screen of Quickshell.screens) {

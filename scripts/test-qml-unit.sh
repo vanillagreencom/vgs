@@ -71,6 +71,8 @@ mutations=(
   "the orb drops the wave tokens|feedback/VoiceOrb.qml|Qt.vector4d(Theme.voiceOrb.amplitude, Theme.voiceOrb.waveCount, Theme.voiceOrb.arcSpan, Theme.voiceOrb.arcOpacity)|Qt.vector4d(0.018, 3, 2.4, 0.6)|tst_voiceorb.qml"
   "the orb is exposed as an accessible control|feedback/VoiceOrb.qml|Accessible.ignored: true|Accessible.ignored: false|tst_voiceorb.qml"
   "the orb loads no compiled shader|feedback/VoiceOrb.qml|fragmentShader: Qt.resolvedUrl(\"shaders/voiceorb.frag.qsb\")|fragmentShader: \"\"|tst_voiceorb.qml"
+  "shortcut keys stop following configuration|../Core/ShortcutRegistry.qml|get keys() { return Layer.shortcutKeys(Registry.hyprlandSections, ctx.id); },|keys: Layer.shortcutKeys(Registry.hyprlandSections, ctx.id),|tst_shortcutregistry.qml"
+  "shortcut keys read another plugin|../Core/ShortcutRegistry.qml|Registry.hyprlandSections, ctx.id|Registry.hyprlandSections, \"acme.other\"|tst_shortcutregistry.qml"
   "the label's role is not read|foundation/Label.qml|const found = Theme.text[name];|const found = undefined;|tst_label.qml"
   "the label's weight does not reach the axis|foundation/Label.qml|font.variableAxes: ({ wght: typography.weight })|font.variableAxes: ({ wght: 400 })|tst_label.qml"
   "the bar role draws at the body metrics|../Commons/Tokens.js|bar: role(\"mono\", 0.8, 500, 0.08, 1, true, \"text\")|bar: role(\"sans\", 1, 400, 0, 1.55, false, \"text\")|tst_label.qml"

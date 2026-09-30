@@ -17,7 +17,11 @@ Scope {
     }
 
     function provider(ctx) {
-        return { register: (name, description, onPressed) => root.registerShortcut(ctx, name, description, onPressed) };
+        // REVISIT(D056): A compositor readback API could include later user overrides.
+        return {
+            get keys() { return Layer.shortcutKeys(Registry.hyprlandSections, ctx.id); },
+            register: (name, description, onPressed) => root.registerShortcut(ctx, name, description, onPressed)
+        };
     }
 
     // shortcut: one GlobalShortcut per name under the plugin id, bound in

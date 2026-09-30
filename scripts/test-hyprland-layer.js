@@ -138,6 +138,19 @@ const KEYS = [
     ["ALT+CTRL+SHIFT+SUPER+F1", { key: "SUPER+CTRL+ALT+SHIFT+F1" }],
     ["F12", { key: "F12" }],
     ["XF86AudioMute", { key: "XF86AUDIOMUTE" }],
+    ["super + CoDe:00108", { key: "SUPER+code:108" }],
+    ["SHIFT+SUPER+code:108", { key: "SUPER+SHIFT+code:108" }],
+    ["code:0", { key: "code:0" }],
+    ["code:4294967295", { key: "code:4294967295" }],
+    ["code:4294967296", { error: "names no key" }],
+    ["code:", { error: "names no key" }],
+    ["code:-108", { error: "names no key" }],
+    ["code:1.08", { error: "names no key" }],
+    ["code:1e2", { error: "names no key" }],
+    ["code:108x", { error: "names no key" }],
+    ["code: 108", { error: "names no key" }],
+    ["code:108+N", { error: "has the unknown modifier" }],
+    ["mouse:108", { error: "names no key" }],
     [7, { error: "must be a string" }],
     ["SUPER+", { error: "has an empty part" }],
     ["SUPER++N", { error: "has an empty part" }],
@@ -173,6 +186,8 @@ const MANIFESTS = [
     ["a key the grammar refuses", { hyprland: { binds: [{ shortcut: "toggle", key: "SUPER+" }] } }, "hyprland.binds.0.key has an empty part"],
     ["a modifier after the key", { hyprland: { binds: [toggle, { shortcut: "open", key: "space+super" }] } }, "hyprland.binds.1.key ends in the modifier SUPER"],
     ["one key bound twice", { hyprland: { binds: [toggle, { shortcut: "open", key: "super + space" }] } }, "hyprland.binds.1.key SUPER+SPACE is bound twice"],
+    ["a keycode bind", { hyprland: { binds: [{ shortcut: "talk", key: "SUPER+code:108" }] } }, null],
+    ["one keycode bound twice", { hyprland: { binds: [{ shortcut: "talk", key: "SUPER+code:108" }, { shortcut: "mute", key: "super+CODE:00108" }] } }, "hyprland.binds.1.key SUPER+code:108 is bound twice"],
     ["a rule that is no object", { hyprland: { layerRules: ["^vgs:overlay$"] } }, "hyprland.layerRules.0 must be an object"],
     ["a rule with an unknown key", { hyprland: { layerRules: [{ namespace: "^vgs:overlay$", blur: true, xray: true }] } }, "hyprland.layerRules.0 has unknown key \"xray\""],
     ["an unanchored namespace", { hyprland: { layerRules: [{ namespace: "vgs:overlay", blur: true }] } }, "hyprland.layerRules.0.namespace must be ^vgs:<name>$"],
@@ -191,6 +206,8 @@ const MANIFESTS = [
 const CONFIG_KEYS = [
     ["a key and an unbinding null", { toggle: "super+space", inbox: null }, ""],
     ["a name no bind declares", { later: "SUPER+L" }, ""],
+    ["a rebound keycode", { toggle: "super+CODE:00108" }, ""],
+    ["a malformed rebound keycode", { toggle: "SUPER+code:108x" }, "plugins.0.keys.toggle names no key"],
     ["keys not an object", ["SUPER+SPACE"], "plugins.0.keys must be an object"],
     ["a malformed name", { Toggle: "SUPER+SPACE" }, "plugins.0.keys.Toggle is not a shortcut name"],
     ["a key the grammar refuses", { toggle: "SUPER+" }, "plugins.0.keys.toggle has an empty part"],
@@ -215,6 +232,34 @@ function verify(logic, layer, shellText) {
         else assert.ok(!r.ok && r.error.startsWith(want), "manifest " + name + " refused with " + JSON.stringify(want) + ", got " + JSON.stringify(r.ok ? "accepted" : r.error));
     }
     const declared = manifestOf(logic, { hyprland: { binds: [{ shortcut: "toggle", key: "super + space" }, { shortcut: "inbox", key: "SUPER+N" }], layerRules: [overlayRule] } });
+    const keycode = manifestOf(logic, { hyprland: { binds: [{ shortcut: "talk", key: "super+CODE:00108" }] } });
+    same(keycode.hyprland.binds, [{ shortcut: "talk", key: "SUPER+code:108" }], "manifest keycode normalized");
+    const other = Object.assign({}, keycode, { id: "acme.other" });
+    for (const [label, config, want] of [
+        ["default", {}, { talk: "SUPER+code:108" }],
+        ["rebound", { plugins: [{ id: "acme.keys", keys: { talk: "shift+super+CODE:00108", ghost: "SUPER+F1" } }] }, { talk: "SUPER+SHIFT+code:108" }],
+        ["unbound", { plugins: [{ id: "acme.keys", keys: { talk: null } }] }, { talk: null }]
+    ]) {
+        const sections = [logic.hyprlandSection(config, keycode)];
+        same(layer.shortcutKeys(sections, keycode.id), want, "shortcut keys " + label);
+        const read = layer.shortcutKeys(sections, keycode.id);
+        read.talk = "planted";
+        read.ghost = "planted";
+        same(layer.shortcutKeys(sections, keycode.id), want, "shortcut keys mutation " + label);
+        assert.strictEqual(layer.shortcutKeys(sections, keycode.id).missing, undefined, "undeclared shortcut absent");
+        assert.strictEqual(layer.shortcutKeys(sections, keycode.id).constructor, undefined, "inherited names are no shortcuts");
+        same(layer.shortcutKeys(sections, other.id), {}, "other plugin cannot read keys");
+    }
+    const colliding = [logic.hyprlandSection({}, other), logic.hyprlandSection({}, keycode)];
+    same(layer.shortcutKeys(colliding, other.id), { talk: null }, "conflicting key is not an effective bind");
+    same(layer.shortcutKeys(colliding, keycode.id), { talk: "SUPER+code:108" }, "first id owns the keycode");
+    same(layer.shortcutKeys([], keycode.id), {}, "no enabled section has no keys");
+    const unbound = colliding.map(section => Object.assign({}, section, { binds: [{ shortcut: "talk", key: null }] }));
+    same(layer.resolveBinds(unbound).conflicts, [], "unbound shortcuts claim no key");
+    same(layer.shortcutKeys([logic.hyprlandSection({}, manifestOf(logic, {}))], keycode.id), {}, "manifest without binds has no keys");
+    const keycodeText = layer.render(colliding, theme, "probe").text;
+    assert.ok(keycodeText.includes('hl.bind("SUPER + code:108", hl.dsp.global("acme.keys:talk"), { description = "acme.keys:talk" })'), "renderer preserves lower-case code prefix");
+    assert.ok(keycodeText.includes("-- skipped SUPER+code:108: already bound by acme.keys"), "renderer shares the keycode conflict judge");
     same(declared.hyprland, { binds: [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "inbox", key: "SUPER+N" }], layerRules: [overlayRule], appearance: {} }, "a normalised manifest holds normalised keys");
     same(manifestOf(logic, { hyprland: { layerRules: [overlayRule] } }).hyprland.binds, [], "a normalised manifest without binds holds none");
     assert.strictEqual(manifestOf(logic, {}).hyprland, undefined, "a manifest declaring no hyprland key carries none");
@@ -489,6 +534,13 @@ const CONTROLS = [
     [layerFile, "empty section unwritten", "if (section.binds.length === 0 && section.layerRules.length === 0) return;", ""],
     [layerFile, "first id keeps a key", "if (held[bind.key] !== undefined) {", "if (false) {"],
     [layerFile, "unbound bind", "if (bind.key === null) return { kind: \"unbound\"", "if (false) return { kind: \"unbound\""],
+    [logicFile, "keycode grammar", "/^CODE:[0-9]+$/", "/^CODE:.+$/"],
+    [logicFile, "keycode uint32", " && Number(name.slice(5)) <= 4294967295", ""],
+    [logicFile, "keycode lower-case prefix", 'name = "code:" + String(Number(name.slice(5)));', 'name = "CODE:" + String(Number(name.slice(5)));'],
+    [logicFile, "keycode leading zeros", 'String(Number(name.slice(5)))', 'name.slice(5)'],
+    [layerFile, "shortcut read respects conflicts", 'if (held[bind.key] !== undefined) {\n                conflicts.push', 'if (held[bind.key] !== undefined) {\n                keys[section.id][bind.shortcut] = bind.key;\n                conflicts.push'],
+    [layerFile, "unbound shortcuts claim no key", 'if (bind.key === null) return { kind: "unbound"', 'if (false) return { kind: "unbound"'],
+    [layerFile, "shortcut map has no inherited names", 'keys[section.id] = Object.create(null);', 'keys[section.id] = {};'],
     [layerFile, "identical rule once", "if (written[key] !== undefined) {", "if (false) {"],
     [layerFile, "rule effects compared", "return JSON.stringify([rule.namespace, rule.blur", "return JSON.stringify([rule.namespace]); ([rule.namespace, rule.blur"],
     [layerFile, "comment text", "return String(text).replace(/[^\\x20-\\x7e]/g, \"?\");", "return String(text);"],

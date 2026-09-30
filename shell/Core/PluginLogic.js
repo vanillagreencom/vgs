@@ -599,7 +599,8 @@ function statusRows(manifest, values) {
 }
 
 // A Hyprland key written `MOD+MOD+KEY`, such as `SUPER+SPACE`, normalised:
-// { ok: true, key } with every part upper case, the modifiers in
+// { ok: true, key } with keysyms upper case, `code:<uint32>` lower case,
+// the modifiers in
 // HYPRLAND_MODIFIERS order, each once, and the key name last, joined by
 // `+`; or { ok: false, error }. A manifest's bind and a shell.json `keys`
 // entry both pass through here, so two spellings of one key compare equal.
@@ -612,7 +613,9 @@ function hyprlandKey(text) {
     var name = parts[parts.length - 1];
     if (HYPRLAND_MODIFIERS.indexOf(name) !== -1)
         return { ok: false, error: "ends in the modifier " + name + " and names no key" };
-    if (!HYPRLAND_KEY_NAME.test(name))
+    if (/^CODE:[0-9]+$/.test(name) && Number(name.slice(5)) <= 4294967295)
+        name = "code:" + String(Number(name.slice(5)));
+    else if (!HYPRLAND_KEY_NAME.test(name))
         return { ok: false, error: "names no key: " + JSON.stringify(name) };
     var mods = parts.slice(0, -1);
     for (var i = 0; i < mods.length; i++) {
@@ -2005,7 +2008,7 @@ function settingsFor(config, manifest, target, layoutEntry) {
 }
 
 // Keys of a configuration entry that are no setting: the plugin's `id`, and
-// a plugins row's Hyprland `keys`, which only the Hyprland layer reads.
+// a plugins row's Hyprland `keys`, read through hyprlandSection.
 // validateManifest refuses a default setting under either name.
 var ENTRY_RESERVED_KEYS = ["id", "keys"];
 
