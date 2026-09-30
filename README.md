@@ -95,6 +95,7 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 | [Automations](shell/plugins/vgs.automations/README.md) | Runs your shell commands on a schedule through systemd user timers, such as every weekday at 09:00 or the second Tuesday of each month, keeps each run's transcript for up to 30 days, and sends a notification for every failure whose click opens the transcript. |
 | [Lock](shell/plugins/vgs.lock/README.md) | The lock screen: `SUPER+L`, `vgsh lock`, five minutes without input and every suspend lock the session, and your password unlocks it. The session stays locked if the shell stops. |
 | [Polkit](shell/plugins/vgs.polkit/README.md) | The session's polkit agent: a themed dialog asks for your password when an application needs administrator rights. |
+| [Jarvis](shell/plugins/vgs.jarvis/README.md) | A service-owned child daemon with health in Settings and bounded restart. This skeleton captures no audio and connects to no provider. |
 
 ## How it works
 

@@ -291,11 +291,12 @@ cases=(
   "copr-entry|.copr/Makefile|all|scripts/test-fedora-srpm.sh"$'\n'"$repo_plan"
   "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
   "suite|scripts/test-attribute-heap-profile.py|offline|$heap_plan"
-  "jarvis-env|scripts/lib/jarvis-env.sh|all|$jarvis_owner_plan"
+  "jarvis-env|scripts/lib/jarvis-env.sh|all|$jarvis_owner_plan"$'\nscripts/qml-smoke.sh'
   "jarvis-env-suite|scripts/test-jarvis-env.js|offline|$jarvis_env_plan"
   "jarvis-env-fixture|scripts/fixtures/jarvis-env/probe.py|all|$jarvis_env_plan"
   "jarvis-daemon-suite|scripts/test-jarvis-daemon.js|offline|$jarvis_daemon_plan"
   "jarvis-fixture|scripts/fixtures/jarvis/prepare.js|offline|$jarvis_daemon_plan"
+  "jarvis-fixture-all|scripts/fixtures/jarvis/prepare.js|all|$jarvis_daemon_plan"$'\nscripts/qml-smoke.sh'
   "jarvis-protocol-suite|scripts/test-jarvis-protocol.js|offline|node scripts/test-jarvis-protocol.js"$'\n'"$repo_plan"
   "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"
   "session|shell/Core/SessionLock.qml|all|$session_plan"
