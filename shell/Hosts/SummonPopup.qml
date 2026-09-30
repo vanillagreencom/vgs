@@ -23,8 +23,15 @@ PopupWindow {
     anchor.adjustment: PopupAdjustment.Flip | PopupAdjustment.Slide
     grabFocus: true
     visible: anchorItem !== null
-    implicitWidth: slot.instance ? Math.max(1, slot.instance.implicitWidth) : 1
-    implicitHeight: slot.instance ? Math.max(1, slot.instance.implicitHeight) : 1
+    // The room the output leaves, `size.window.gutter` in from each edge: a
+    // plugin wider or taller than that is laid out at the room's size, since
+    // the plugin fills the popup, and the compositor's slide keeps the
+    // popup inside the output.
+    readonly property var output: request && request.screen ? request.screen : null
+    readonly property real roomWidth: output ? output.width - 2 * Theme.size.window.gutter : Infinity
+    readonly property real roomHeight: output ? output.height - 2 * Theme.size.window.gutter : Infinity
+    implicitWidth: slot.instance ? Math.max(1, Math.min(slot.instance.implicitWidth, roomWidth)) : 1
+    implicitHeight: slot.instance ? Math.max(1, Math.min(slot.instance.implicitHeight, roomHeight)) : 1
     color: "transparent"
     onVisibleChanged: if (!visible) dismissed()
     onAnchorItemChanged: if (anchorItem === null) dismissed()
