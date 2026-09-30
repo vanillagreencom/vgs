@@ -211,6 +211,7 @@ smoke_row notifications
 smoke_row automations
 smoke_row polkit
 smoke_row jarvis
+smoke_row jarvis-setup
 smoke_row hyprland
 smoke_row hold-shortcuts
 smoke_row jarvis-keys

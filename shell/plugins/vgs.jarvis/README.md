@@ -16,10 +16,12 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Mute persists across restarts and blocks talk input.
 - Settings opens Add key in a floating terminal with hidden key input.
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
+- Settings and the launcher open local voice setup in a floating terminal.
+- Local setup verifies downloaded models and runs a bundled test clip without opening audio devices.
 
 ## Requirements
 
-The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and a desktop Secret Service. Add key needs gum to draw its terminal header. Key presence needs busctl. The core's requirement notice offers installation of missing commands.
+The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and a desktop Secret Service. Key presence needs busctl. Terminal flows need gum. Local setup needs uv, curl, Python and user namespaces. Its locked wheels target Linux x86_64. A CUDA tier also needs working CUDA libraries. The core's requirement notice offers installation of declared missing commands.
 
 The optional command sandbox needs bubblewrap and available user namespaces. This skeleton offers no shell tools.
 
@@ -34,3 +36,5 @@ Talk mode defaults to Hold. Toggle keeps conversation demand open until the next
 The Keys section changes Talk, Mute and Stop. Talk defaults to Super with Right Alt. Mute defaults to Super with Shift and Right Alt. Stop defaults to Super with Alt and Period. Mute is separate from Talk mode.
 
 Open Jarvis in Settings and select Add key. Use the provider's origin, such as `https://api.openai.com`, without a path. Add key can ask the desktop keyring to unlock because you started storage. The background presence check never unlocks it.
+
+Select Set up local voice in Settings or the launcher's Jarvis group. Choose a tier in the terminal. Setup downloads its models and a private runtime. Settings reports Ready only after file verification and the bundled probe succeed. This prepares local voice files; voice control is not active in this skeleton.

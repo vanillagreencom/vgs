@@ -29,7 +29,7 @@
     { "command": "node", "packages": { "pacman": "nodejs", "apt": "nodejs", "dnf": "nodejs" }, "optional": false, "purpose": "Runs the Jarvis daemon, which requires Node 22 or later" },
     { "command": "secret-tool", "packages": { "pacman": "libsecret", "apt": "libsecret-tools", "dnf": "libsecret" }, "optional": true, "purpose": "Stores and reads provider keys in the desktop keyring" },
     { "command": "busctl", "packages": { "pacman": "systemd", "apt": "systemd", "dnf": "systemd" }, "optional": true, "purpose": "Checks key presence without reading secrets or unlocking the keyring" },
-    { "command": "gum", "packages": { "pacman": "gum", "apt": "gum", "dnf": "gum" }, "optional": true, "purpose": "Draws the Add key terminal header; Add key needs it to start" },
+    { "command": "gum", "packages": { "pacman": "gum", "apt": "gum", "dnf": "gum" }, "optional": true, "purpose": "Draws headers and choices in Jarvis terminal flows" },
     { "command": "flock", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux" }, "optional": false, "purpose": "Serializes coding-task record writers" },
     { "command": "bwrap", "packages": { "pacman": "bubblewrap", "apt": "bubblewrap", "dnf": "bubblewrap" }, "optional": true, "purpose": "Confines shell commands; shell tools require a successful kernel sandbox probe" },
     { "command": "pw-record", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Captures microphone PCM through a leased child" },
@@ -37,8 +37,11 @@
     { "command": "pw-dump", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Reads available microphones and speakers without changing defaults" },
     { "command": "pw-cli", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Owns a capture-scoped echo cancellation module" },
     { "command": "setpriv", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux" }, "optional": false, "purpose": "Kills audio children when their parent ends" },
-    { "command": "unshare", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux-core" }, "optional": false, "purpose": "Ends all audio descendants with their private PID namespace" },
-    { "command": "python3", "packages": { "pacman": "python", "apt": "python3", "dnf": "python3" }, "optional": false, "purpose": "Checks the audio child parent and owns its pipe lease" }
+    { "command": "unshare", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux-core" }, "optional": false, "purpose": "Owns audio process namespaces and isolates the local voice probe" },
+    { "command": "python3", "packages": { "pacman": "python", "apt": "python3", "dnf": "python3" }, "optional": false, "purpose": "Owns audio pipe leases and verifies the private local voice runtime" },
+    { "command": "uv", "packages": { "pacman": "uv", "dnf": "uv", "mise": "uv" }, "optional": true, "purpose": "Installs the locked local voice runtime when setup is selected" },
+    { "command": "curl", "packages": { "pacman": "curl", "apt": "curl", "dnf": "curl" }, "optional": true, "purpose": "Downloads pinned local voice models when setup is selected" },
+    { "command": "nvidia-smi", "packages": { "pacman": "nvidia-utils", "apt": "nvidia-smi", "dnf": "xorg-x11-drv-nvidia-cuda" }, "optional": true, "purpose": "Verifies CUDA execution only when a CUDA local tier is selected" }
   ],
   "status": {
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },
@@ -47,10 +50,14 @@
     "microphones": { "type": "choices", "label": "Microphones" },
     "speakers": { "type": "choices", "label": "Speakers" },
     "level": { "type": "data", "label": "Audio levels" },
-    "audio": { "type": "state", "label": "Audio" }
+    "audio": { "type": "state", "label": "Audio" },
+    "localRuntime": { "type": "state", "label": "Local voice", "hint": "Setup downloads models and verifies the selected runtime without opening audio devices.",
+      "action": { "label": "Set up local voice", "tui": "setup-local" } }
   },
   "tui": {
     "add-key": { "script": "tui/add-key.sh", "title": "Add Jarvis key",
-      "entry": { "label": "Add key", "icon": "key-round", "group": "Jarvis" } }
+      "entry": { "label": "Add key", "icon": "key-round", "group": "Jarvis" } },
+    "setup-local": { "script": "tui/setup-local.sh", "title": "Set up Jarvis local voice",
+      "entry": { "label": "Set up local voice", "icon": "mic", "group": "Jarvis" } }
   }
 }

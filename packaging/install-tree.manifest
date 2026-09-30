@@ -209,6 +209,7 @@ f share/vgs/shell/plugins/vgs.gallery/manifest.json
 f share/vgs/shell/plugins/vgs.gallery/sample-emoji.png
 f share/vgs/shell/plugins/vgs.jarvis/JarvisProtocol.js
 f share/vgs/shell/plugins/vgs.jarvis/Keys.qml
+f share/vgs/shell/plugins/vgs.jarvis/LocalRuntime.qml
 f share/vgs/shell/plugins/vgs.jarvis/Service.qml
 f share/vgs/shell/plugins/vgs.jarvis/Session.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
@@ -247,7 +248,11 @@ f share/vgs/shell/plugins/vgs.jarvis/fixtures/probe.txt
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/probe.wav
 f share/vgs/shell/plugins/vgs.jarvis/manifest.json
 f share/vgs/shell/plugins/vgs.jarvis/measure-local
+f share/vgs/shell/plugins/vgs.jarvis/requirements-local-cpu.lock
+f share/vgs/shell/plugins/vgs.jarvis/requirements-local.lock
+f share/vgs/shell/plugins/vgs.jarvis/setup-local
 f share/vgs/shell/plugins/vgs.jarvis/tui/add-key.sh
+f share/vgs/shell/plugins/vgs.jarvis/tui/setup-local.sh
 f share/vgs/shell/plugins/vgs.launcher/Anim.qml
 f share/vgs/shell/plugins/vgs.launcher/Appearance.js
 f share/vgs/shell/plugins/vgs.launcher/Caret.qml

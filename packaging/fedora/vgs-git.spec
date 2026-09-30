@@ -45,6 +45,8 @@ Recommends:     xdg-utils
 Recommends:     curl
 Recommends:     libsecret
 Recommends:     bubblewrap
+Recommends:     uv
+Recommends:     xorg-x11-drv-nvidia-cuda
 Recommends:     systemd
 Recommends:     ImageMagick
 Conflicts:      vgs-shell

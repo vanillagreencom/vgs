@@ -6,11 +6,11 @@ Covers: shell/plugins/vgs.jarvis/artifacts.json, shell/plugins/vgs.jarvis/measur
 
 ## Boundary
 
-This directory holds independent feasibility inputs. It has no `manifest.json`, QML entry point or daemon. `bin/vgsh-scan` and `bin/lib/check-manifests.js` skip directories without a manifest. J10 owns registration and the service. J39 owns production adapters and segmentation. J40 owns automatic setup and its lock file. J41 owns admission. J42 owns production captions.
+These feasibility inputs share the Jarvis plugin directory. [The service](jarvis.md) owns registration. [Local setup](jarvis-setup.md) owns installation and readiness. J39 owns production adapters and segmentation. J41 owns admission. J42 owns production captions.
 
-The installed tree carries the pinned declaration, instrument and synthetic fixture. It carries no model, Python environment, CUDA library or espeak runtime. The instrument never installs or downloads anything. J40 must verify the selected runtime and model files before marking setup ready.
+The installed tree carries the pinned declaration, instrument, synthetic fixture and [setup package locks](jarvis-setup.md#inputs-and-boundary). It carries no model, Python environment, CUDA library or espeak runtime. The instrument never installs or downloads anything. Setup verifies its actual selected runtime before publishing readiness.
 
-D035 command requirements enter the plugin manifest when an owning runtime issue introduces that command. This independent instrument uses the core's Python command and uses `nvidia-smi` only for optional CUDA measurement. It does not invent a service or requirement notice before J10.
+D035 command requirements live in the plugin manifest. This independent instrument uses Python and uses `nvidia-smi` only for optional CUDA measurement. The [setup contract](jarvis-setup.md) defines the user-started install path.
 
 ## Artifact contract
 

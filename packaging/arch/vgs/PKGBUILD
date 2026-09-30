@@ -43,6 +43,8 @@ optdepends=(
   'curl: Slack profile photos, custom emoji and Web API calls in notifications'
   'libsecret: secret-tool, for Slack tokens and Jarvis provider keys in the keyring'
   'bubblewrap: kernel confinement for Jarvis shell commands'
+  'uv: installs the locked Jarvis local voice runtime'
+  'nvidia-utils: verifies a selected Jarvis CUDA local voice tier'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'
   'mise: Dev Tools installs, updates and removes developer tools'
   'cronie: crontab, which schedules automations where no systemd user manager answers'

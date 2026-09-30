@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Install a selected local tier and report its verified readiness.
+
+The TUI calls `install TIER`. The service calls `status`, which emits one
+status value for localRuntime. `probe` runs only inside a network namespace.
+Exit 77 means unavailable, never ready. No audio device or host setting is
+opened. The state lock covers invalidation, installation and publication.
+"""
+import argparse
+import fcntl
+from functools import cache
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import tarfile
+import tempfile
+from urllib.parse import urlparse
+
+HERE = Path(__file__).resolve().parent
+sys.dont_write_bytecode = True
+
+
+@cache
+def measurement():
+    """Load the one artifact judge and bundled-clip oracle."""
+    loader = importlib.machinery.SourceFileLoader("jarvis_measure", str(HERE / "measure-local"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def roots():
+    """Use the same state and data roots as the service's hello."""
+    home = Path(os.environ["HOME"])
+    state = Path(os.environ.get("XDG_STATE_HOME") or home / ".local/state") / "vgs/jarvis"
+    data = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share") / "vgs/jarvis/local"
+    return state, data
+
+
+def selected(value, tier):
+    """Take membership and provider from the artifact producer."""
+    row = value["tiers"][tier]
+    by_id = {artifact["id"]: artifact for artifact in value["artifacts"]}
+    return [by_id[name] for name in row["artifacts"]], row["provider"]
+
+
+def environment(data, offline=False):
+    """Children receive no account, audio, desktop or authentication endpoint."""
+    env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+    env.update(LC_ALL="C.UTF-8", UV_NO_CONFIG="1",
+               UV_CACHE_DIR=str(data / "cache"), UV_PYTHON_INSTALL_DIR=str(data / "python"))
+    if offline:
+        env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
+    return env
+
+
+def command(argv, data, offline=False):
+    """Preserve every child failure, including unavailable evidence."""
+    result = subprocess.run(argv, env=environment(data, offline), check=False)
+    if result.returncode != 0:
+        raise SystemExit(result.returncode if result.returncode > 0 else 1)
+
+
+def download(url, target, digest, judge, data):
+    """curl writes a private partial; only verified bytes get their final name."""
+    partial = target.with_name(target.name + ".partial")
+    try:
+        command(["curl", "--disable", "--fail", "--location", "--proto", "=https",
+                 "--proto-redir", "=https", "--output", str(partial), "--", url], data)
+        if judge.sha256(partial) != digest:
+            raise ValueError(f"download=hash-mismatch file={target.name}")
+        partial.replace(target)
+    finally:
+        partial.unlink(missing_ok=True)
+
+
+def extract(archive, models):
+    """Pinned upstream tarballs may write only ordinary files below models."""
+    with tarfile.open(archive) as bundle:
+        for member in bundle:
+            path = Path(member.name)
+            if path.is_absolute() or ".." in path.parts or not (member.isdir() or member.isfile()):
+                raise ValueError(f"archive=unsafe-member file={member.name}")
+        bundle.extractall(models, filter="data")
+
+
+def identity(judge, tier, data):
+    """Bind readiness to setup sources, fixture, lock and installed runtime bytes.
+
+    Bytecode caches are derived from the installed sources and vary on import.
+    The interpreter target, venv configuration and all other environment files
+    are inputs. A changed model is checked by the existing local verifier.
+    """
+    sources = ["artifacts.json", "requirements-local.lock", "requirements-local-cpu.lock",
+               "setup-local", "measure-local"]
+    value = judge.manifest(HERE / "artifacts.json")
+    sources += [value["fixture"]["audio"], value["fixture"]["transcript"]]
+    runtime = data / "venv"
+    files = sorted(path for path in runtime.rglob("*")
+                   if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc")
+    if not files or not (runtime / "bin/python").is_file():
+        raise judge.Unavailable("runtime=missing")
+    digest = hashlib.sha256()
+    for path, name in [(HERE / name, name) for name in sources] + [
+            (path, "venv/" + str(path.relative_to(runtime))) for path in files]:
+        digest.update(name.encode() + b"\0" + judge.sha256(path).encode() + b"\0")
+    digest.update(str((runtime / "bin/python").resolve()).encode())
+    return {"schemaVersion": 1, "tier": tier, "data": str(data.resolve()),
+            "inputs": digest.hexdigest()}
+
+
+def probe(judge, value, tier, data):
+    """Execute the selected installed runtime, with the shared real clip probe."""
+    artifacts, provider = selected(value, tier)
+    judge.run(value, artifacts, data / "models", provider, None, tier)
+
+
+def install(judge, state, data, tier):
+    """Invalidate before any install effect and publish only after real inference."""
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (state / "local-setup.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("setup=busy") from None
+        marker = state / "local-ready.json"
+        marker.unlink(missing_ok=True)
+        value = judge.manifest(HERE / "artifacts.json")
+        artifacts, provider = selected(value, tier)
+        judge.clip(value)
+        data.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for name in ("venv", "models"):
+            if (data / name).exists():
+                shutil.rmtree(data / name)
+        models = data / "models"
+        models.mkdir(mode=0o700)
+        python = data / "venv/bin/python"
+        abi = value["runtimes"]["sherpa-onnx"]["cudaWheel"]["python"]
+        print("jarvis-setup: step=runtime", flush=True)
+        command(["uv", "--no-config", "venv", "--managed-python", "--python", abi,
+                 str(data / "venv")], data)
+        if provider == "cpu":
+            requirements = HERE / "requirements-local-cpu.lock"
+        else:
+            wheel = value["runtimes"]["sherpa-onnx"]["cudaWheel"]
+            requirements = data / "requirements-cuda.lock"
+            requirements.write_text((HERE / "requirements-local.lock").read_text() +
+                f"\nsherpa-onnx @ {wheel['url']} --hash=sha256:{wheel['sha256']}\n")
+        command(["uv", "--no-config", "pip", "sync", "--python", str(python),
+                 "--require-hashes", "--only-binary", ":all:", str(requirements)], data)
+        for artifact in artifacts:
+            print(f"jarvis-setup: step=model id={artifact['id']}", flush=True)
+            target = models / Path(urlparse(artifact["url"]).path).name
+            download(artifact["url"], target, artifact["sha256"], judge, data)
+            if artifact["directory"] != ".":
+                extract(target, models)
+        judge.verify(value, models, artifacts)
+        ready = identity(judge, tier, data)
+        print("jarvis-setup: step=probe", flush=True)
+        command(["unshare", "-rn", "--", str(python), "-I", str(HERE / "setup-local"),
+                 "probe", tier], data, offline=True)
+        judge.verify(value, models, artifacts)
+        if ready != identity(judge, tier, data):
+            raise ValueError("runtime=changed-during-probe")
+        with tempfile.NamedTemporaryFile(mode="w", dir=state, prefix=".local-ready-", delete=False) as output:
+            temporary = Path(output.name)
+            try:
+                json.dump(ready, output)
+                output.flush()
+                os.fsync(output.fileno())
+                temporary.replace(marker)
+            finally:
+                temporary.unlink(missing_ok=True)
+        print("jarvis-setup: ready=" + tier, flush=True)
+
+
+def status(judge, state, data):
+    """A missing, busy, stale or unverifiable installation never reports ready."""
+    report = {"tone": "warning", "text": "Not set up", "action": True}
+    marker = state / "local-ready.json"
+    if not state.is_dir():
+        return report
+    with (state / "local-setup.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"tone": "info", "text": "Setting up", "action": False}
+        if not marker.is_file():
+            return report
+        try:
+            saved = json.loads(marker.read_text())
+            tier = saved["tier"]
+            value = judge.manifest(HERE / "artifacts.json")
+            artifacts, _ = selected(value, tier)
+            if saved != identity(judge, tier, data):
+                raise ValueError("marker=stale")
+            judge.clip(value)
+            judge.verify(value, data / "models", artifacts)
+            return {"tone": "ok", "text": "Ready: " + tier, "action": False}
+        except (ValueError, KeyError, TypeError, OSError, judge.Unavailable):
+            return {"tone": "warning", "text": "Setup needs verification", "action": True}
+
+
+def main():
+    """Keep user-selected tiers within the producer's current declaration."""
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("verb", choices=("install", "status", "probe"))
+    parser.add_argument("tier", nargs="?")
+    args = parser.parse_args()
+    judge = measurement()
+    state, data = roots()
+    if args.verb == "status":
+        if args.tier is not None:
+            parser.error("status takes no tier")
+        print(json.dumps(status(judge, state, data)))
+        return
+    if args.verb == "probe":
+        value = judge.manifest(HERE / "artifacts.json")
+        probe(judge, value, args.tier, data)
+    else:
+        install(judge, state, data, args.tier)
+
+
+if __name__ == "__main__":
+    # A cancelled setup cannot publish its marker after the terminal closes.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    signal.signal(signal.SIGHUP, lambda *_: sys.exit(129))
+    try:
+        main()
+    except measurement().Unavailable as error:
+        print(f"jarvis-setup: unavailable={error}", file=sys.stderr)
+        sys.exit(77)
+    except (ValueError, KeyError, TypeError, OSError, tarfile.TarError) as error:
+        print(f"jarvis-setup: failed={error}", file=sys.stderr)
+        sys.exit(1)

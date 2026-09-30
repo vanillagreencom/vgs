@@ -1,0 +1,4 @@
+# Native CPU runtime projection of artifacts.json; shared closure is above.
+-r requirements-local.lock
+sherpa-onnx==1.13.8 --hash=sha256:6949773017647febc0c3696dffb2c67dd3febd4737b87e3dd135a42773704a06
+sherpa-onnx-core==1.13.8 --hash=sha256:4da90acf435373d7b2ba9cc0be806e7e274d28f63f5780880b5dea6721626e36

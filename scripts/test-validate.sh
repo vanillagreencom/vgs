@@ -311,13 +311,13 @@ readme_plan="$readme_rows$repo_plan"
 curl_installer_plan="$readme_rows"$'scripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
 jarvis_local_rows=$'python3 scripts/test-jarvis-local.py\nscripts/check-jarvis-local.sh\n'
-jarvis_local_tools_plan=$'python3 scripts/check-readme-images.py\n'"${jarvis_local_rows%$'\n'}"
+jarvis_local_tools_plan=$'python3 scripts/check-readme-images.py\npython3 scripts/test-jarvis-local.py\npython3 scripts/test-jarvis-setup.py\nscripts/check-jarvis-local.sh'
 jarvis_env_plan=$'node scripts/test-jarvis-env.js\n'"$repo_plan"
-jarvis_helper_plan=$'node scripts/test-jarvis-env.js\n'"$jarvis_local_rows$repo_plan"
+jarvis_helper_plan=$'node scripts/test-jarvis-env.js\npython3 scripts/test-jarvis-local.py\npython3 scripts/test-jarvis-setup.py\nscripts/check-jarvis-local.sh\n'"$repo_plan"
 jarvis_policy_rows=$'node scripts/test-jarvis-tools.js\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js\nnode scripts/test-jarvis-release.js\nnode scripts/test-jarvis-net.js\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-denied.js\nnode scripts/test-jarvis-audit.js\nnode scripts/test-jarvis-sandbox.js\n'
 jarvis_secrets_plan=$'node scripts/test-jarvis-net.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
 jarvis_audio_rows=$'node scripts/test-jarvis-audio.js\nnode scripts/test-jarvis-audio-daemon.js\n'
-jarvis_owner_plan="$jarvis_policy_rows"$'node scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'node scripts/test-task-event.js\nnode scripts/test-jarvis-secrets.js\n'"$jarvis_helper_plan"
+jarvis_owner_plan="$jarvis_policy_rows"$'node scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'node scripts/test-task-event.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-install-tree.sh\n'"$jarvis_helper_plan"
 jarvis_daemon_plan=$'node scripts/test-jarvis-daemon.js\n'"$repo_plan"
 jarvis_fixture_plan=$'node scripts/test-jarvis-protocol.js\nnode scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-task-event.js\n'"$repo_plan"
 jarvis_guidance_plan=$'node scripts/test-jarvis-guidance.js\n'"$repo_plan"
@@ -391,6 +391,10 @@ cases=(
   "jarvis-fixture-all|scripts/fixtures/jarvis/prepare.js|all|$jarvis_fixture_plan"$'\nscripts/qml-smoke.sh'
   "jarvis-protocol-suite|scripts/test-jarvis-protocol.js|offline|node scripts/test-jarvis-protocol.js"$'\n'"$repo_plan"
   "jarvis-local-suite|scripts/test-jarvis-local.py|all|python3 scripts/test-jarvis-local.py"$'\n'"$repo_plan"
+  "jarvis-setup-suite|scripts/test-jarvis-setup.py|all|python3 scripts/test-jarvis-setup.py"$'\n'"$repo_plan"
+  "jarvis-setup-fixture|scripts/fixtures/jarvis-setup/installer.py|all|python3 scripts/test-jarvis-setup.py"$'\n'"$repo_plan"
+  "jarvis-setup-status-fixture|scripts/fixtures/jarvis-setup/status.py|all|python3 scripts/test-jarvis-setup.py"$'\n'"$repo_plan"$'\nscripts/qml-smoke.sh'
+  "jarvis-setup-installed-fixture|scripts/fixtures/jarvis-setup/installed.py|all|scripts/test-install-tree.sh"$'\npython3 scripts/test-jarvis-setup.py\n'"$repo_plan"$'\nscripts/qml-smoke.sh'
   "jarvis-local-runner|scripts/check-jarvis-local.sh|all|$jarvis_local_rows$repo_plan"
   "jarvis-local-fixture|scripts/fixtures/jarvis-local/run.py|all|$jarvis_local_rows$repo_plan"
   "jarvis-unbounded-probe|scripts/fixtures/jarvis-local/probe-moonshine.py|all|$jarvis_local_rows$repo_plan"
@@ -533,6 +537,7 @@ fi
 d="$tmp/plan-jarvis-edge"; fresh "$d"
 mkdir -p "$d/scripts/lib"
 printf '# neutral selector fixture\n' >"$d/scripts/test-jarvis-local.py"
+printf '# neutral selector fixture\n' >"$d/scripts/test-jarvis-setup.py"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$d/scripts/check-jarvis-local.sh"
 chmod +x "$d/scripts/check-jarvis-local.sh"
 printf 'const fs = require("node:fs"); process.exit(fs.readFileSync("scripts/lib/jarvis-env.sh", "utf8") === "clean\\n" ? 0 : 1);\n' >"$d/scripts/test-jarvis-env.js"

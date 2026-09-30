@@ -195,7 +195,7 @@ rows=(
   "cli|one-time migration runner controls|scripts/test-vgsh-migrate.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-migrate bin/lib/* shell/Commons/SessionLockState.js"
   "cli|Slack photos migration controls|scripts/test-migration-slack-photos.sh|bin/migrations/* bin/vgsh-plugin-judge bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js shell/plugins/vgs.notifications/manifest.json config/shell.json"
   "cli|version controls|scripts/test-vgsh-version.sh|scripts/vgsh-rows.sh bin/vgsh VERSION"
-  "cli|install tree controls|scripts/test-install-tree.sh|packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md scripts/fixtures/jarvis-voice/installed.js"
+  "cli|install tree controls|scripts/test-install-tree.sh|packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md scripts/fixtures/jarvis-voice/installed.js scripts/fixtures/jarvis-setup/installed.py scripts/lib/jarvis-env.sh"
   "cli|fedora source RPM controls|scripts/test-fedora-srpm.sh|packaging/fedora/* .copr/Makefile scripts/fedora-container.sh scripts/lib/release-tarball.sh scripts/vgsh-rows.sh bin/vgsh VERSION"
   "cli|packaging recipe check|node scripts/check-packaging.js|scripts/preflight-floor.js packaging/arch/* packaging/fedora/* bin/vgsh config/requirements.json shell/plugins/*/manifest.json VERSION shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js bin/vgsh-scan"
   "cli|packaging recipe check controls|node scripts/test-check-packaging.js|scripts/check-packaging.js scripts/preflight-floor.js packaging/arch/* packaging/fedora/* bin/vgsh config/requirements.json shell/plugins/*/manifest.json VERSION shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js bin/vgsh-scan"
@@ -270,6 +270,7 @@ rows=(
   "tools|Jarvis test environment controls|node scripts/test-jarvis-env.js|scripts/lib/jarvis-env.sh scripts/fixtures/jarvis-env/* scripts/smoke/harness.sh"
   "tools|pinned schema checker controls|node scripts/test-schema-check.js|scripts/fixtures/schema-check.js scripts/fixtures/jarvis-brain/openai-chat.schema.json scripts/fixtures/jarvis-voice/assertions.js"
   "tools|Jarvis local artifact controls|python3 scripts/test-jarvis-local.py|shell/plugins/vgs.jarvis/* scripts/lib/jarvis-env.sh scripts/check-jarvis-local.sh scripts/fixtures/jarvis-local/*"
+  "tools|Jarvis local setup controls|python3 scripts/test-jarvis-setup.py|shell/plugins/vgs.jarvis/setup-local shell/plugins/vgs.jarvis/requirements-local*.lock shell/plugins/vgs.jarvis/tui/setup-local.sh shell/plugins/vgs.jarvis/artifacts.json shell/plugins/vgs.jarvis/measure-local shell/plugins/vgs.jarvis/fixtures/* scripts/lib/jarvis-env.sh scripts/fixtures/jarvis-setup/* bin/lib/tui.sh"
   "tools|Jarvis actual local models|scripts/check-jarvis-local.sh|shell/plugins/vgs.jarvis/* scripts/lib/jarvis-env.sh scripts/fixtures/jarvis-local/*"
   "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"
@@ -284,7 +285,7 @@ rows=(
   "unit|session lock controls|scripts/test-session-lock.sh|shell/Core/SessionLock.qml shell/Commons/SessionLockState.js scripts/qml-unit.sh scripts/qml-tests/tst_session_lock.qml"
   "nix|nix flake package|scripts/test-flake.sh|flake.nix flake.lock config/requirements.json packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION"
   "package|Arch package build|scripts/arch-packages.sh|scripts/lib/release-tarball.sh packaging/arch/* packaging/install-system.sh"
-  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION scripts/smoke/* scripts/sample-shell-memory.sh scripts/lib/jarvis-env.sh scripts/fixtures/jarvis/* scripts/fixtures/jarvis-voice/installed.js scripts/test-task-event.js"
+  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION scripts/smoke/* scripts/sample-shell-memory.sh scripts/lib/jarvis-env.sh scripts/fixtures/jarvis/* scripts/fixtures/jarvis-setup/status.py scripts/fixtures/jarvis-setup/installed.py scripts/fixtures/jarvis-voice/installed.js scripts/test-task-event.js"
   "qml|shader GPU cost|scripts/measure-shader.sh|scripts/measure-shader.sh scripts/shader/* scripts/check-voiceorb-shader.py shell/Ui/feedback/VoiceOrb.qml shell/Ui/feedback/shaders/* shell/Commons/* config/shell.json bin/lib/qml-library.js shell/Core/HyprlandLayer.js scripts/smoke/harness.sh scripts/smoke/mode-hold.sh scripts/smoke/teardown.sh scripts/smoke/verdict.sh scripts/smoke/tree.sh scripts/smoke/shot.sh scripts/smoke/app-window.sh scripts/smoke/pointer/* scripts/smoke/toplevel/* scripts/smoke/keyboard/*"
 )
 

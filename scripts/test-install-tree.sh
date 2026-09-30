@@ -52,6 +52,13 @@ check "a plugin's other Markdown is not installed" test ! -e "$dest/usr/share/vg
 check "Jarvis runtime guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/core.md"
 run_capture "$tmp/guidance.out" "$tmp/guidance.err" status "${voice_command[@]}" "$dest/usr/share/vgs"
 check "installed guidance composes every consumer without source-tree files" test "$status" = 0
+setup_standins="$tmp/setup-standins"
+mkdir -p -- "$setup_standins"
+run_capture "$tmp/setup.out" "$tmp/setup.err" status env -i PATH=/usr/bin:/bin \
+  "$repo/scripts/lib/jarvis-env.sh" "$setup_standins" -- python3 \
+  "$repo/scripts/fixtures/jarvis-setup/installed.py" "$dest/usr/share/vgs"
+check "installed local readiness reads without source-tree files" test "$status" = 0
+check "installed local readiness is not inferred from packaged inputs" grep_out "jarvis-setup-installed=ok" "$tmp/setup.out"
 private_node="$tmp/private node/bin/node"
 empty_path="$tmp/no-node-on-path"
 mkdir -p -- "$(dirname -- "$private_node")" "$empty_path"

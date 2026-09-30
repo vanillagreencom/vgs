@@ -12,6 +12,8 @@ The [Jarvis control tests](jarvis-controls.md#evidence) use private scripted cap
 
 The [audio suites](jarvis-audio.md#evidence) reuse this world with synthetic PipeWire commands. The host allow-list includes setpriv and unshare for the production child boundary. Neither runs authentication. The audio suites independently assert the absence of auth commands before starting any child.
 
+[Local setup controls](jarvis-setup.md#evidence) use explicit local installer, downloader and interpreter doubles. Their extra namespace-command double enters PATH only after J09 has created the real private world. Bootstrap tools never become installer fallbacks.
+
 ## Ownership
 
 - `scripts/lib/jarvis-env.sh::jarvis_env_run` owns one scratch world per invocation. Its header defines the caller contract. A suite starts its fixture servers, daemon and children inside that invocation, so they share the same loopback network.

@@ -159,6 +159,18 @@ function service(sourceTree, tree, root) {
     if (!fs.existsSync(path.join(root, "key-mode")))
         fs.writeFileSync(path.join(root, "key-mode"), "present\n");
     fs.writeFileSync(keys, keysSource.replace(keysNeedle, keysCommand));
+    const local = path.join(tree, "shell/plugins/vgs.jarvis/LocalRuntime.qml");
+    if (!fs.existsSync(local)) return;
+    const localSource = fs.readFileSync(local, "utf8");
+    const localNeedle = 'command: ["python3", "-I", root.program, "status"]';
+    assert.equal(localSource.split(localNeedle).length - 1, 1, "local status instrumentation match");
+    const localCommand = 'command: ["bash", ' + JSON.stringify(launcher) + ', ' +
+        JSON.stringify(path.join(root, "standins")) + ', "--", "python3", ' +
+        JSON.stringify(path.join(sourceTree, "scripts/fixtures/jarvis-setup/status.py")) + ', ' +
+        JSON.stringify(path.join(root, "local-mode")) + ']';
+    if (!fs.existsSync(path.join(root, "local-mode")))
+        fs.writeFileSync(path.join(root, "local-mode"), "absent\n");
+    fs.writeFileSync(local, localSource.replace(localNeedle, localCommand));
 }
 
 module.exports = { freshSuite, seedTaskEvents };
