@@ -1,6 +1,6 @@
 # Components
 
-Covers: shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/overlay/**, shell/Ui/icons/**, shell/Ui/qmldir, scripts/smoke/rows/overlays.sh, scripts/smoke/rows/gallery.sh, shell/plugins/vgs.gallery/**, scripts/smoke/fixtures/plugins/acme.overlays/**, shell/Ui/AGENTS.md, scripts/vendor-lucide, scripts/test-lucide-data.js, scripts/test-icon-bounds.js, scripts/qml-tests/**, scripts/check-pointer-cursor.py, scripts/test-check-pointer-cursor.py
+Covers: shell/Ui/foundation/**, shell/Ui/controls/**, shell/Ui/feedback/**, shell/Ui/layout/**, shell/Ui/overlay/**, shell/Ui/icons/**, shell/Ui/qmldir, scripts/smoke/rows/overlays.sh, scripts/smoke/fixtures/plugins/acme.overlays/**, shell/Ui/AGENTS.md, scripts/vendor-lucide, scripts/test-lucide-data.js, scripts/test-icon-bounds.js, scripts/qml-tests/**, scripts/check-pointer-cursor.py, scripts/test-check-pointer-cursor.py
 
 What each component of `qs.Ui` guarantees. The tokens they draw from and the layers they sit in are in [design-system.md](design-system.md). `ImageText`, `AngledCard`, `CardCarousel`, `AvatarGroup` and `VoiceOrb` are in [components-media.md](components-media.md), the overlays and the menus' scrolling are in [components-overlays.md](components-overlays.md), and the list motion of `ListCursor` and `ListEntrance` is in [motion.md](motion.md).
 
@@ -34,4 +34,4 @@ What each component of `qs.Ui` guarantees. The tokens they draw from and the lay
 
 ## Gallery
 
-`shell/plugins/vgs.gallery` is a first-party application window ([surfaces.md](surfaces.md)) that draws every component in every variant and state, and every role of `Theme.text` in its typography section, read from the group itself, so a theme author previews a whole theme at once. It is built only while summoned; `scripts/smoke/rows/gallery.sh` summons it, reads its section and component counts back, holds every example inside the window's right edge, shows a toast through its capability and hides it, then reads it as a Hyprland window. A new component is added to the gallery in the same change.
+The gallery application that draws every component: [gallery.md](gallery.md).

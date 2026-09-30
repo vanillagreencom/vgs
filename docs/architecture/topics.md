@@ -27,6 +27,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [design-layout.md](design-layout.md): read before touching a container's inset, the corner-clearing rule, a component's spacing or the notification media tiers.
 - [design-quality.md](design-quality.md): read before judging or changing how a surface looks: its grid, type, control sizes, container class or states.
 - [components.md](components.md), [components-media.md](components-media.md) and [components-overlays.md](components-overlays.md): read before adding or changing a component of `qs.Ui`.
+- [gallery.md](gallery.md): read before changing the gallery window or adding a component to it.
 - [motion.md](motion.md): read before touching a list's highlight, a row's entrance, a `motion.list` token or how hover and keys share a list's selection.
 - [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
 - [theme-apply.md](theme-apply.md) and [theme-reload.md](theme-reload.md): read before touching the apply, a reload hook or `vgsh theme reload`.
