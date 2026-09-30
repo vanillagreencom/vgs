@@ -241,6 +241,7 @@ if changed == source:
 pathlib.Path(sys.argv[2]).write_text(changed)
 PY
 chmod +x "$ipc_mutant/bin/vgsh"; ln -s -- "$repo/bin/lib" "$ipc_mutant/bin/lib"
+vgsh_copy_loads "$ipc_mutant/bin/vgsh" || fail "the IPC judge mutant does not load"
 set +e
 out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt_live" STUB_REPLY_FORM=ansi-ipc-error "$ipc_mutant/bin/vgsh" ipc call shell ping 2>"$tmp/err")"
 status=$?
@@ -431,6 +432,7 @@ pre_copy() { # NEEDLE REPLACEMENT [NEEDLE REPLACEMENT...]
   copy="$tmp/pre-mutant-$pre_copies"
   mkdir -p -- "$copy/bin" "$copy/shell"
   cp -- "$repo/bin/vgsh" "$copy/bin/vgsh"
+  ln -s -- "$repo/bin/lib" "$copy/bin/lib"
   python3 - "$copy/bin/vgsh" "$@" <<'PY' || return 1
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -450,6 +452,7 @@ pre_control() { # NAME KIND ASSIGNMENT WANT_EXIT WANT_ERR NEEDLE REPLACEMENT [NE
   local name="$1" kind="$2" assignment="$3" want_exit="$4" want_err="$5" copy
   shift 5
   if ! copy="$(pre_copy "$@")"; then fail "the $name control could not edit its copy"; return 0; fi
+  if ! vgsh_copy_loads "$copy"; then fail "the $name control's copy does not load"; return 0; fi
   pre_run "$copy" "$kind" "$assignment"
   if pre_held "$want_exit" "$want_err"; then fail "the $name control still holds: exit=$pre_status stderr=[$pre_err]"; else ok "the $name control fails its row"; fi
 }
@@ -558,11 +561,13 @@ restart_below() { # LABEL BIN
 }
 restart_below real "$repo/bin/vgsh"
 if [[ $below_held == true ]]; then ok "restart below the floor exits 78, leaves the shell running and never dispatches"; else fail "restart below floor: exit=$restart_status out=[$restart_out] stderr=[$restart_err] old_live=$([[ -d /proc/$below_pid ]] && echo yes || echo no)"; fi
-if restart_copy="$(pre_copy $'    preflight\n    shell_restart\n' $'    shell_restart\n')"; then
+if ! restart_copy="$(pre_copy $'    preflight\n    shell_restart\n' $'    shell_restart\n')"; then
+  fail "the restart preflight control could not edit its copy"
+elif ! vgsh_copy_loads "$restart_copy"; then
+  fail "the restart preflight control's copy does not load"
+else
   restart_below mutant "$restart_copy"
   if [[ $below_held == false ]]; then ok "the restart preflight control fails its row"; else fail "the restart preflight control still holds"; fi
-else
-  fail "the restart preflight control could not edit its copy"
 fi
 
 run_restart_capture "$rt_empty" "$tmp/record-not-running" "$tmp/dispatch-not-running" false

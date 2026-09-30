@@ -214,10 +214,15 @@ done
 # Controls: one copy of bin/vgsh per rule, each with NEEDLE replaced once;
 # the row the rule decides must not hold on the copy.
 # control NAME NEEDLE REPLACEMENT ROW_FUNCTION_WORDS WANT
+# Each copy sits in $tmp/copies, so bin/vgsh's root is $tmp and the
+# library it loads is $tmp/bin/lib.
+mkdir -p "$tmp/bin"
+ln -s -- "$repo/bin/lib" "$tmp/bin/lib"
 control() {
   local got
   copy_with "$1" "$repo/bin/vgsh" "$2" "$3"
   chmod +x "$copy"
+  if ! vgsh_copy_loads "$copy"; then fail "control $1: the copy does not load"; return; fi
   got="$(verdict_of "$copy" "$4")"
   if [[ $got != "$5" ]]; then ok "control $1: $got"; else fail "control $1 still holds: $got"; fi
 }

@@ -385,6 +385,17 @@ open(sys.argv[2], "w").write(text.replace(os.environ["NEEDLE"], os.environ["REPL
   if cmp -s -- "$2" "$copy"; then echo "$suite_name: control=$1 unchanged" >&2; exit 1; fi
 }
 
+# vgsh_copy_loads BIN: BIN, a copy of bin/vgsh, loads bin/lib beside it
+# and reaches its command dispatch: `pid` with no lock file refuses
+# shell=not-running, exit 69. A mutant copy that stops at loading would
+# fail its row without reaching the mutated rule, so a control checks this
+# first.
+vgsh_copy_loads() { # BIN
+  local err status=0
+  err="$("${base_env[@]}" "$1" pid 2>&1 >/dev/null)" || status=$?
+  [[ $status == 69 && $err == "vgsh: refused: shell=not-running lock=$rt_empty/vgsh.lock" ]]
+}
+
 # work_tree_repo DIR: a git repository at DIR holding one commit of this
 # repository's working tree as `git add -A` would commit it: the tracked
 # files that exist and the untracked files git does not ignore. It reads
