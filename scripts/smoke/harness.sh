@@ -708,12 +708,19 @@ ipc_call_last() {
   return "$status"
 }
 
-# Quickshell 0.3.1 client failures are classified in bin/lib/ipc-reply.sh.
+# bin/lib/ipc-reply.sh, the judge bin/vgsh uses, classifies Quickshell
+# 0.3.1 client failures. A judge that cannot classify fails the row and
+# reads as a failed call.
 ipc_failed() { # TARGET FUNCTION LINE
-  local target="$1" fn="$2" line="$3" reason stripped
-  reason="$(vgs_ipc_reply_failure "$line")" || return 1
-  stripped="$(vgs_ipc_strip_ansi "$line")" || stripped="$line"
-  printf 'ipc: %s %s: %s\n' "$target" "$fn" "$stripped" >>"$sandbox/ipc.log"
+  local target="$1" fn="$2" line="$3" status=0
+  vgs_ipc_reply_failure "$line" >/dev/null || status=$?
+  case "$status" in
+    0) ;;
+    1) return 1 ;;
+    *) fail "ipc: $target $fn: bin/lib/ipc-reply.sh exited $status" ;;
+  esac
+  vgs_ipc_strip_into "$line"
+  printf 'ipc: %s %s: %s\n' "$target" "$fn" "$vgs_ipc_stripped" >>"$sandbox/ipc.log"
   return 0
 }
 
@@ -728,19 +735,14 @@ ipc_page_failed() { # TEXT
 ipc_pages() {
   local vgsh="$1" id="$2" index=0 pages="" reply count slice text="" status
   while :; do
-    if ipc_call_last "$vgsh" smoke page "$id" "$index"; then
-      :
-    else
-      status=$?
-      if ipc_failed smoke page "$ipc_last_reply"; then
-        printf 'ipc-failed\n'
-        return 1
-      fi
-      ipc_page_failed "status=$status reply=${ipc_last_reply:-}"
-      return 1
-    fi
+    status=0
+    ipc_call_last "$vgsh" smoke page "$id" "$index" || status=$?
     if ipc_failed smoke page "$ipc_last_reply"; then
       printf 'ipc-failed\n'
+      return 1
+    fi
+    if ((status)); then
+      ipc_page_failed "status=$status reply=${ipc_last_reply:-}"
       return 1
     fi
     reply="$ipc_last_reply"
@@ -769,20 +771,16 @@ ipc_pages() {
 # classify client failure lines, reassemble smoke pages and record
 # oversize replies.
 ipc_via() {
-  local vgsh="$1" target="$2" fn="$3" status reply id
+  local vgsh="$1" target="$2" fn="$3" status=0 reply id
   shift 3
-  ipc_call_last "$vgsh" "$target" "$fn" "$@" || {
-    status=$?
-    if ipc_failed "$target" "$fn" "$ipc_last_reply"; then
-      printf 'ipc-failed\n'
-      return 1
-    fi
-    [[ -n $ipc_last_reply ]] && printf '%s\n' "$ipc_last_reply"
-    return "$status"
-  }
+  ipc_call_last "$vgsh" "$target" "$fn" "$@" || status=$?
   if ipc_failed "$target" "$fn" "$ipc_last_reply"; then
     printf 'ipc-failed\n'
     return 1
+  fi
+  if ((status)); then
+    [[ -n $ipc_last_reply ]] && printf '%s\n' "$ipc_last_reply"
+    return "$status"
   fi
   reply="$ipc_last_reply"
   if [[ $target == smoke && $reply =~ ^paged=([0-9]+)$ ]]; then

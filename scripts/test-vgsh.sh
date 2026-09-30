@@ -109,7 +109,7 @@ run_row() { # NAME RT ENVSTR ARGS WANT_OUT WANT_EXIT WANT_ERR
   local name="$1" rt="$2" envstr="$3" args="$4" want_out="$5" want_exit="$6" want_err="$7" out status err=""
   set +e
   # shellcheck disable=SC2086
-  out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt" $envstr "${INST_BIN:-$repo/bin/vgsh}" $args 2>"$tmp/err")"
+  out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt" $envstr "$repo/bin/vgsh" $args 2>"$tmp/err")"
   status=$?
   set -e
   [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
@@ -193,6 +193,7 @@ run_row "stderr after the reply does not become the reply" "$rt_live" "STUB_REPL
 run_row "raw ipc client failure exits 69" "$rt_live" "STUB_REPLY_FORM=ansi-ipc-error" "ipc call shell ping" "$ipc_error_line" 69 "vgsh: refused: ipc=shell.ping reason=client-error"
 run_row "enable client failure exits 69" "$rt_live" "STUB_REPLY_FORM=ansi-ipc-error" "plugin enable vgs.clock" "" 69 "vgsh: refused: ipc=shell.setPluginEnabled reason=client-error"
 run_row "enable empty IPC reply exits 69" "$rt_live" "STUB_REPLY_FORM=empty" "plugin enable vgs.clock" "" 69 "vgsh: refused: ipc=shell.setPluginEnabled reason=empty-reply"
+run_row "raw ipc passes a failed qs status on when the reply is no failure" "$rt_live" "STUB_STATUS=3 STUB_REPLY=ok" "ipc call shell ping" "ok" 3 ""
 run_row "raw ipc function-not-found exits 69" "$rt_live" "STUB_REPLY_FORM=function-not-found" "ipc call shell missing" "Function not found." 69 "vgsh: refused: ipc=shell.missing reason=function-not-found"
 run_row "an unexpected reply is a refusal" "$rt_live" "STUB_REPLY=ok_hidden" "plugin disable vgs.bar" "" 1 "vgsh: refused: ok_hidden"
 run_row "a guard refusal from the shell is a refusal with exit 1" "$rt_live" "STUB_REPLY=refused:_guard=unowned" "plugin enable vgs.clock" "" 1 "vgsh: refused: refused:_guard=unowned"
@@ -229,11 +230,11 @@ import pathlib
 import sys
 
 source = pathlib.Path(sys.argv[1]).read_text()
-needle = 'if ipc_reply_failure_reason "$label" "$last"; then'
-replacement = 'if false && ipc_reply_failure_reason "$label" "$last"; then'
+needle = 'reason="$(vgs_ipc_reply_failure "$line")" || status=$?'
+replacement = needle + '; status=1'
 count = source.count(needle)
-if count != 2:
-    raise SystemExit(f"ipc-judge-control: expected two matches, found {count}")
+if count != 1:
+    raise SystemExit(f"ipc-judge-control: expected one match, found {count}")
 changed = source.replace(needle, replacement)
 if changed == source:
     raise SystemExit("ipc-judge-control: mutation changed nothing")
@@ -245,10 +246,12 @@ out="$("${base_env[@]}" XDG_RUNTIME_DIR="$rt_live" STUB_REPLY_FORM=ansi-ipc-erro
 status=$?
 set -e
 err=""; [[ -s $tmp/err ]] && IFS= read -r err <"$tmp/err"
-if [[ $status == 69 && $err == "vgsh: refused: ipc=shell.ping reason=client-error" ]]; then
-  fail "the IPC judge mutant still holds"
-else
+# The mutant must load and pass the failure line on as a reply, exit 0, so
+# a copy that cannot run never reads as a caught mutant.
+if [[ $status == 0 && ${out##*$'\n'} == "$ipc_error_line" && -z $err ]]; then
   ok "the IPC judge mutant fails the raw ipc row"
+else
+  fail "the IPC judge mutant: exit=$status last=[${out##*$'\n'}] stderr=[$err]"
 fi
 
 # The hidden reply carries a space, which env cannot pass; call directly.

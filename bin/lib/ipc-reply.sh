@@ -1,25 +1,17 @@
 # shellcheck shell=bash
 # bin/lib/ipc-reply.sh: classifies the last stdout line from
-# `qs ipc call`. Source this file from Bash. Loading it prints nothing,
-# starts no process and restores the caller's shell options. The table rests
-# on Quickshell 0.3.1 `src/io/ipccomm.cpp` callFunction and
-# `src/ipc/ipc.hpp` waitForResponse.
+# `qs ipc call`. Source this file from Bash. Loading it defines one array
+# and two functions, prints nothing, starts no process and leaves the
+# caller's shell options alone. The table rests on Quickshell 0.3.1
+# `src/io/ipccomm.cpp` callFunction and `src/ipc/ipc.hpp` waitForResponse.
 #
-#   vgs_ipc_strip_ansi LINE
-#     prints LINE with SGR colour escapes removed.
+#   vgs_ipc_strip_into LINE
+#     sets vgs_ipc_stripped to LINE with SGR colour escapes removed.
 #   vgs_ipc_reply_failure LINE
 #     prints a stable reason key and returns 0 when LINE is a Quickshell IPC
 #     client failure. It returns 1 for a normal reply and for an empty line.
-
-_vgs_ipc_had_errexit=0
-_vgs_ipc_had_nounset=0
-_vgs_ipc_had_pipefail=0
-[[ $- == *e* ]] && _vgs_ipc_had_errexit=1
-[[ $- == *u* ]] && _vgs_ipc_had_nounset=1
-[[ -o pipefail ]] && _vgs_ipc_had_pipefail=1
-set -euo pipefail
-
-vgs_ipc_strip_ansi() { sed $'s/\x1b\[[0-9;]*m//g' <<<"$1"; }
+#     A table row of unknown kind prints `ipc-reply: kind=<kind> row=<reason>`
+#     on stderr and returns 2.
 
 vgs_ipc_failure_rows=(
   'client-error|contains|ERROR quickshell.ipc'
@@ -34,26 +26,34 @@ vgs_ipc_failure_rows=(
   'arguments|prefix|Function definition:'
 )
 
+# Pure Bash, so the strip forks nothing and cannot fail.
+vgs_ipc_strip_into() { # LINE
+  vgs_ipc_stripped="$1"
+  while [[ $vgs_ipc_stripped =~ ^(.*)$'\e'\[[0-9\;]*m(.*)$ ]]; do
+    vgs_ipc_stripped="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+  done
+}
+
 vgs_ipc_reply_failure() { # LINE
-  local line="$1" stripped row reason kind text
-  if ! stripped="$(vgs_ipc_strip_ansi "$line")"; then
-    return 1
-  fi
+  local stripped row reason rest kind text
+  vgs_ipc_strip_into "$1"
+  stripped="$vgs_ipc_stripped"
   for row in "${vgs_ipc_failure_rows[@]}"; do
-    IFS='|' read -r reason kind text <<<"$row"
+    reason="${row%%|*}"
+    rest="${row#*|}"
+    kind="${rest%%|*}"
+    text="${rest#*|}"
     case "$kind" in
       contains) [[ $stripped == *"$text"* ]] || continue ;;
       exact) [[ $stripped == "$text" ]] || continue ;;
       prefix) [[ $stripped == "$text"* ]] || continue ;;
-      *) continue ;;
+      *)
+        printf 'ipc-reply: kind=%s row=%s\n' "$kind" "$reason" >&2
+        return 2
+        ;;
     esac
     printf '%s\n' "$reason"
     return 0
   done
   return 1
 }
-
-[[ $_vgs_ipc_had_errexit == 1 ]] || set +e
-[[ $_vgs_ipc_had_nounset == 1 ]] || set +u
-[[ $_vgs_ipc_had_pipefail == 1 ]] || set +o pipefail
-unset _vgs_ipc_had_errexit _vgs_ipc_had_nounset _vgs_ipc_had_pipefail
