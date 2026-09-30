@@ -136,7 +136,7 @@ var SECRET_SERVICE_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 // it: letters and digits, then those and `:._-`.
 var SECRET_ACCOUNT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/;
 // A secret the core stores is 1 to SECRET_VALUE_MAX characters with no
-// control character. secret-tool reads a secret from a stdin that is no
+// control character, line separator or paragraph separator. secret-tool reads a secret from a stdin that is no
 // terminal up to its end, at most 8192 bytes, and keeps every byte
 // (libsecret tool/secret-tool.c, read_password_stdin), so the core writes the
 // value alone, with no newline, and closes stdin; 4096 characters of at
@@ -789,7 +789,8 @@ function secretRefusal(account, reason) {
 }
 
 // Whether SECRET is a value the core stores: 1 to SECRET_VALUE_MAX
-// characters, none a control character.
+// characters, none a control character, a line separator or a paragraph
+// separator.
 function secretValueValid(secret) {
     return typeof secret === "string" && secret.length > 0 && secret.length <= SECRET_VALUE_MAX && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(secret);
 }
