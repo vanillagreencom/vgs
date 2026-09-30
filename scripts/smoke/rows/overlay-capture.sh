@@ -7,7 +7,7 @@
 # without the hl.bind wrapper that learns the user's focus bind.
 set -euo pipefail
 
-ipc() { "${shell_env[@]}" "$repo/bin/vgsh" ipc call "$@" 2>>"$sandbox/ipc.log" | tail -n 1; }
+ipc() { ipc_via "$repo/bin/vgsh" "$@"; }
 press_themes() { type_keys -M logo -k t -m logo; }
 press_exec() { type_keys -M logo -k k -m logo; }
 press_focus_right() { type_keys -M logo -k d -m logo; }
