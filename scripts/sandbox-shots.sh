@@ -894,7 +894,9 @@ scene_devtools() { # MODE
   expect_poll "the Dev Tools window draws its sections" True devtools_sections
   park_pointer
   take "devtools-$1-top"
-  hover_on "the pointer rests on an Install button" window vgs.devtools Button Install "window:Dev Tools" && take "devtools-$1-hover"
+  # The VGS row's Details button: the sandbox's install method is always
+  # unknown, so it shows on the first page whatever the other scenes set up.
+  hover_on "the pointer rests on the VGS row's Details button" window vgs.devtools Button Details "window:Dev Tools" && take "devtools-$1-hover"
   park_pointer
   while (( page <= 4 )); do
     at="$(ipc smoke scrollTo window vgs.devtools "$y")" || at=""
