@@ -55,8 +55,10 @@ check "installed guidance composes every consumer without source-tree files" tes
 setup_standins="$tmp/setup-standins"
 mkdir -p -- "$setup_standins"
 run_capture "$tmp/setup.out" "$tmp/setup.err" status env -i PATH=/usr/bin:/bin \
+  JARVIS_TEST_SCRATCH_ROOT="${JARVIS_TEST_SCRATCH_ROOT:-$repo/tmp}" \
   "$repo/scripts/lib/jarvis-env.sh" "$setup_standins" -- python3 \
   "$repo/scripts/fixtures/jarvis-setup/installed.py" "$dest/usr/share/vgs"
+if [[ $status != 0 ]]; then cat -- "$tmp/setup.err" >&2; fi
 check "installed local readiness reads without source-tree files" test "$status" = 0
 check "installed local readiness is not inferred from packaged inputs" grep_out "jarvis-setup-installed=ok" "$tmp/setup.out"
 private_node="$tmp/private node/bin/node"
