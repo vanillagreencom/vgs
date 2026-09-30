@@ -1,9 +1,11 @@
 # The gallery: the first-party window that draws every component. Summoned
 # over IPC it maps one Hyprland window, holds every section and component
-# it claims, shows the hand over an enabled control and the arrow over a
-# disabled one, shows a toast through its capability, and takes them all
-# down when hidden. Summoned again, it is read as every application window
-# is (app_window_rows, scripts/smoke/app-window.sh), ending closed by Escape.
+# it claims, draws the custom-emoji ImageText image and rejects an alt-only
+# control copy through the shared grim pixel reader, shows the hand over an
+# enabled control and the arrow over a disabled one, shows a toast through
+# its capability, and takes them all down when hidden. Summoned again, it
+# is read as every application window is (app_window_rows,
+# scripts/smoke/app-window.sh), ending closed by Escape.
 set -euo pipefail
 expect "the gallery summons over IPC" ok ipc shell summon window vgs.gallery '{}'
 expect_poll "the gallery maps one window" 1 window_count Gallery
@@ -41,6 +43,78 @@ PY
 gallery_stack_planted() { gallery_stack overlap | py_reply 'import json,sys; print(any(e.startswith("block3.top=") for e in json.load(sys.stdin)))'; }
 geometry expect_poll "no block of the gallery draws over another" '[]' gallery_stack
 expect "control: a heading moved onto the one before is refused" True gallery_stack_planted
+image_text_revealed() {
+  local reply
+  reply="$(ipc smoke revealImageText window vgs.gallery 0)" || return
+  [[ $reply =~ ^[0-9] ]] && echo True || printf '%s\n' "$reply"
+}
+image_text_ready() {
+  ipc smoke imageTextItems window vgs.gallery '' | py_reply 'import json,sys
+items=json.load(sys.stdin)
+ok=len(items)==1 and items[0]["imageMode"] and items[0]["failed"]==[] and len(items[0]["held"])==1
+if ok:
+    held=items[0]["held"][0]
+    ok=held["status"]=="Ready" and held["sourceSize"]==[items[0]["deviceSize"], items[0]["deviceSize"]]
+print(ok)'
+}
+image_text_control_props() {
+  ipc smoke imageTextItems window vgs.gallery '' | py_reply 'import json,sys
+item=json.load(sys.stdin)[0]
+x,y,w,h=item["box"]
+print(json.dumps({"x":x,"y":y,"boxWidth":w}))'
+}
+expect_poll "the gallery scrolls the ImageText sample into view" True image_text_revealed
+expect_poll "the gallery ImageText sample loads its pool image" True image_text_ready
+render expect_poll "the gallery ImageText sample draws magenta emoji pixels" True image_text_magenta_drawn window:Gallery window vgs.gallery '' 0
+image_text_pixels="$(image_text_magenta_count window:Gallery window vgs.gallery '' 0)" || image_text_pixels=""
+if [[ $image_text_pixels == \{* ]]; then
+  py_reply 'import json,sys
+row=json.load(sys.stdin)
+print("  image-text-magenta scale=1 count=%d threshold=%d deviceSize=%d geometry=%s" % (row["count"], row["threshold"], row["deviceSize"], row["geometry"]))' <<<"$image_text_pixels"
+fi
+python3 - "$repo/shell/Ui/feedback/VoiceOrb.qml" "$repo/shell/plugins/vgs.gallery/VoiceOrbControl.qml" "$repo/shell/Ui/feedback/shaders/voiceorb.frag.qsb" <<'PY'
+from pathlib import Path
+import json, sys
+source, destination, pack = map(Path, sys.argv[1:])
+text = source.read_text()
+for needle, replacement in [
+    ("    Accessible.ignored: true\n", "    Accessible.ignored: true\n    function hideShader() { shader.visible = false; }\n"),
+    ('Qt.resolvedUrl("shaders/voiceorb.frag.qsb")', 'Qt.resolvedUrl(' + json.dumps(str(pack)) + ')'),
+]:
+    assert text.count(needle) == 1, needle
+    changed = text.replace(needle, replacement)
+    assert changed != text
+    text = changed
+destination.write_text(text)
+PY
+cat >"$repo/shell/plugins/vgs.gallery/ImageTextControl.qml" <<'QML'
+import QtQuick
+import qs.Commons
+import qs.Ui
+
+Item {
+    property real boxWidth: 400
+    width: boxWidth
+    height: sample.implicitHeight
+
+    Rectangle { anchors.fill: parent; color: Theme.color.surface }
+    ImageText {
+        id: sample
+        width: parent.width
+        maximumLineCount: 2
+        segments: [
+            { markup: "An image sits in the line at the text's height " },
+            { image: "", alt: ":sample:" },
+            { markup: " and a text too long for its lines ends at a whole word or image." }
+        ]
+    }
+}
+QML
+expect "the ImageText alt-only control builds" ok ipc smoke popupLoad image-text-control "$repo/shell/plugins/vgs.gallery/ImageTextControl.qml" window vgs.gallery "$(image_text_control_props)"
+# The sample's magenta fill covers much more than one fifth of its square,
+# while the alt-only text control draws no magenta image pixels.
+render expect_poll "the pixel reader rejects the alt-only ImageText control" False image_text_magenta_drawn window:Gallery window vgs.gallery image-text-control 0
+expect "the ImageText control is released" ok ipc smoke popupDrop image-text-control
 # The cursor over the controls, with the Buttons section scrolled to the
 # top: the hand over an enabled button, switch and checkbox, and the arrow
 # over each disabled one, which Qt skips when it picks the cursor.
@@ -111,21 +185,6 @@ expect_poll "the gallery builds the VoiceOrb tones and level states" True orb_ex
 gallery_draw_orbs "the Gallery VoiceOrb shader"
 # The same control must draw before its shader is hidden. Its blue tone
 # occupies a blank fourth slot beside the final three accent examples.
-python3 - "$repo/shell/Ui/feedback/VoiceOrb.qml" "$repo/shell/plugins/vgs.gallery/VoiceOrbControl.qml" "$repo/shell/Ui/feedback/shaders/voiceorb.frag.qsb" <<'PY'
-from pathlib import Path
-import json, sys
-source, destination, pack = map(Path, sys.argv[1:])
-text = source.read_text()
-for needle, replacement in [
-    ("    Accessible.ignored: true\n", "    Accessible.ignored: true\n    function hideShader() { shader.visible = false; }\n"),
-    ('Qt.resolvedUrl("shaders/voiceorb.frag.qsb")', 'Qt.resolvedUrl(' + json.dumps(str(pack)) + ')'),
-]:
-    assert text.count(needle) == 1, needle
-    changed = text.replace(needle, replacement)
-    assert changed != text
-    text = changed
-destination.write_text(text)
-PY
 control_gap="$(ipc smoke themeValue space.sm)" || exit 1
 control_position="$(ipc smoke galleryOrbs window vgs.gallery '' | py_reply 'import json,sys
 orb=json.load(sys.stdin)[-1]; x,y,w,h=orb["box"]

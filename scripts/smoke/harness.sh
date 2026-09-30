@@ -52,6 +52,42 @@ render() {
     printf '        no frame was drawn during the row (frames=%s)\n' "${after:-unreadable}"
   fi
 }
+image_text_magenta_count() { # SURFACE HOST_KEY ID COPY_NAME INDEX
+  local surface="$1" host_key="$2" id="$3" copy_name="$4" index="$5" rows window sample geometry threshold device_size socket count
+  rows="$(ipc smoke imageTextItems "$host_key" "$id" "$copy_name")" || return
+  window="$(surface_box "$surface")" || return
+  if [[ $window != \[* ]]; then printf '%s\n' "$window"; return; fi
+  sample="$(py_reply 'import json,sys
+rows=json.load(sys.stdin); window=json.loads(sys.argv[1]); index=int(sys.argv[2])
+if not isinstance(rows,list) or index<0 or index>=len(rows):
+    print("absent"); sys.exit()
+item=rows[index]
+if not item["visible"] or not item["windowVisible"]:
+    print("not-drawn"); sys.exit()
+x,y,w,h=item["box"]; device=int(item["deviceSize"])
+if w <= 0 or h <= 0 or device <= 0:
+    print("empty"); sys.exit()
+threshold=max(1, (device * device) // 5)
+print("%d,%d %dx%d|%d|%d" % (round(window[0]+x), round(window[1]+y), round(w), round(h), threshold, device))' "$window" "$index" <<<"$rows")" || return 1
+  if [[ $sample != *'|'* ]]; then printf '%s\n' "$sample"; return; fi
+  IFS='|' read -r geometry threshold device_size <<<"$sample"
+  socket="$(shot_socket "$rt_dir" "$nested_socket" "$host_socket")" || return 1
+  count="$(shot_grim "$socket" "$rt_dir" -g "$geometry" -t ppm - | python3 -c 'import sys
+data=sys.stdin.buffer.read().split(b"\n",3)
+if len(data)!=4 or data[0]!=b"P6" or data[2]!=b"255": print("unreadable"); sys.exit(1)
+w,h=map(int,data[1].split()); pixels=data[3]
+if len(pixels)!=w*h*3: print("unreadable"); sys.exit(1)
+print(sum(pixels[i] >= 240 and pixels[i+1] <= 32 and pixels[i+2] >= 240 for i in range(0,len(pixels),3)))')" || return 1
+  printf '{"count":%s,"threshold":%s,"deviceSize":%s,"geometry":%s}\n' "$count" "$threshold" "$device_size" "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$geometry")"
+}
+image_text_magenta_drawn() { # SURFACE HOST_KEY ID COPY_NAME INDEX
+  local sample
+  sample="$(image_text_magenta_count "$@")" || return
+  if [[ $sample != \{* ]]; then printf '%s\n' "$sample"; return; fi
+  py_reply 'import json,sys
+row=json.load(sys.stdin)
+print(row["count"] >= row["threshold"])' <<<"$sample"
+}
 # Error lines a row provokes on purpose, as extended regexes; the log check
 # leaves out a line matching one of them.
 expected_errors=()

@@ -8,14 +8,17 @@
 # - the shell's screen, as the host handed it to the vgs.themes background
 #   (the probe's screenOf): devicePixelRatio 2 at half the held mode, the
 #   monitor's logical size;
-# - the background's requested sourceSize: the held mode, in device pixels.
+# - the background's requested sourceSize: the held mode, in device pixels;
+# - the Gallery ImageText sample's pool image and magenta pixels: its
+#   sourceSize equals deviceSize, and deviceSize is twice imageSize.
 # Controls: the scale alone drops to 1 under the hold, the compositor
 # reports that scale and the hold reads it as a reset, so the reading is
 # the scale the compositor applied; with the hold file removed, the same
 # scale-only drop and reload leave the held mode at scale 1 and the hold
 # reads reset, so the file brings the hold back; a sandbox copy of
 # Background.qml that decodes at logical pixels requests half the held
-# mode.
+# mode. The Gallery ImageText pixel reader reuses the Gallery row's
+# alt-only control at scale 1, so the scale-2 row adds no second control.
 # The row starts its own shell because a scale change under a running
 # shell does not reach it: the screen reports no devicePixelRatio change,
 # and a window that exists keeps drawing at the old ratio
@@ -81,6 +84,33 @@ else
       expect_poll "the shell started at scale 2 reads its screen at ratio 2 and half the held mode" "$hidpi_base ratio=2" screen_scale "$hidpi_output"
       expect_poll "the scale-2 background draws the prepared image" "$hidpi_image ready" background_image_on "$hidpi_output"
       expect_poll "the scale-2 background requests device pixels" "$hidpi_mode" background_source_size "$hidpi_output"
+      hidpi_image_text_revealed() {
+        local reply
+        reply="$(ipc smoke revealImageText window vgs.gallery 0)" || return
+        [[ $reply =~ ^[0-9] ]] && echo True || printf '%s\n' "$reply"
+      }
+      hidpi_image_text_ready() {
+        ipc smoke imageTextItems window vgs.gallery '' | py_reply 'import json,sys
+items=json.load(sys.stdin)
+ok=len(items)==1 and items[0]["imageMode"] and items[0]["failed"]==[] and items[0]["deviceSize"]==items[0]["imageSize"]*2 and len(items[0]["held"])==1
+if ok:
+    held=items[0]["held"][0]
+    ok=held["status"]=="Ready" and held["sourceSize"]==[items[0]["deviceSize"], items[0]["deviceSize"]]
+print(ok)'
+      }
+      expect "the scale-2 gallery summons over IPC" ok ipc shell summon window vgs.gallery '{}'
+      expect_poll "the scale-2 gallery maps one window" 1 window_count Gallery
+      expect_poll "the scale-2 gallery scrolls the ImageText sample into view" True hidpi_image_text_revealed
+      expect_poll "the scale-2 gallery ImageText sample loads at device pixels" True hidpi_image_text_ready
+      render expect_poll "the scale-2 gallery ImageText sample draws magenta emoji pixels" True image_text_magenta_drawn window:Gallery window vgs.gallery '' 0
+      hidpi_image_text_pixels="$(image_text_magenta_count window:Gallery window vgs.gallery '' 0)" || hidpi_image_text_pixels=""
+      if [[ $hidpi_image_text_pixels == \{* ]]; then
+        py_reply 'import json,sys
+row=json.load(sys.stdin)
+print("  image-text-magenta scale=2 count=%d threshold=%d deviceSize=%d geometry=%s" % (row["count"], row["threshold"], row["deviceSize"], row["geometry"]))' <<<"$hidpi_image_text_pixels"
+      fi
+      expect "hiding the scale-2 gallery is allowed" ok ipc shell hide window vgs.gallery
+      expect_poll "the scale-2 gallery window is gone" 0 window_count Gallery
       expect "the start's follow ends before the logical-pixel control" idle theme_idle
       # Control: a copy of the background that decodes at logical pixels.
       plugin_qml="$repo/shell/plugins/vgs.themes/Background.qml"

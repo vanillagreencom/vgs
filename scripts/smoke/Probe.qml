@@ -733,6 +733,45 @@ Scope {
                 };
             }));
         }
+        // ImageText items under an instance or popup copy. Each held image
+        // names the pool URL, load status and sourceSize in device pixels.
+        function imageTextItems(hostKey: string, id: string, copyName: string): string {
+            const item = copyName === "" ? root.instance(hostKey, id) : root.popupCopies[copyName];
+            if (item === null || item === undefined) return "absent";
+            const statusName = status => status === Image.Null ? "Null" : status === Image.Ready ? "Ready" : status === Image.Loading ? "Loading" : status === Image.Error ? "Error" : String(status);
+            return root.json(root.descendants(item).filter(child => root.typeName(child) === "ImageText").map(text => {
+                const held = [];
+                for (const url of Object.keys(text.held)) {
+                    const image = text.held[url];
+                    held.push({
+                        url: url,
+                        status: statusName(image.status),
+                        source: String(image.source),
+                        sourceSize: [image.sourceSize.width, image.sourceSize.height]
+                    });
+                }
+                const point = text.mapToGlobal(0, 0);
+                const window = text.Window.window;
+                return {
+                    box: root.windowBox(text),
+                    global: [point.x, point.y],
+                    imageMode: text.imageMode,
+                    failed: text.failed,
+                    imageSize: text.imageSize,
+                    deviceSize: text.deviceSize,
+                    held: held,
+                    visible: text.visible,
+                    windowVisible: window !== null && window.visible
+                };
+            }));
+        }
+        // Bring the indexed ImageText item under an instance into view.
+        function revealImageText(hostKey: string, id: string, index: int): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const texts = root.descendants(item).filter(child => root.typeName(child) === "ImageText");
+            return index < 0 || index >= texts.length ? "absent" : root.revealIn(item, texts[index]);
+        }
         // A colour one gallery example draws with, read as a property: the
         // first item named `type` in the section under the SectionHeader
         // reading `section`, through `property`, a dotted path. Written as
