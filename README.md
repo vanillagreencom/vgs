@@ -99,8 +99,8 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 
 ## How it works
 
-- `bin/vgsh run` takes the instance lock and starts one shell for the session.
-- `bin/vgsh restart` refuses while locked, then stops the recorded pid and relaunches through Hyprland. It returns after the new shell answers as the guarded instance.
+- `bin/vgsh run` takes the instance lock and starts one shell for the session. It starts the shell again after a crash, and after six quick crashes in a row it stops and shows a notice, unless the session is locked.
+- `bin/vgsh restart` refuses while locked, then stops the running `vgsh run` and its shell and relaunches through Hyprland. It returns after the new shell answers as the guarded instance.
 - The shell reads `config/shell.json`, then your `~/.config/vgs/shell.json`, and enables the plugins those name.
 - Each plugin is shown on the surfaces it declares. A widget appears in the bar, a service runs with no surface.
 - `bin/vgsh plugin disable <id>` writes your file; the shell watches it and updates the screen. Disable keeps the plugin's placement and settings, so enable restores it as it was.

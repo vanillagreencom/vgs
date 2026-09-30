@@ -19,7 +19,7 @@ The plugin ships with VGS and is enabled by default. Its password check needs no
 - Ten wrong passwords pause the check for two minutes, and the lock screen tells you to wait.
 - If another lock screen already holds the session, the lock takes it over, as Hyprland allows under VGS's settings. If that other lock screen then unlocks the session, the Settings page warns, and the next lock works again.
 - If a suspend goes ahead before the lock is confirmed, a warning toast tells you once you are back at the desktop.
-- A shell started after a crash while locked locks the session again with its own lock screen.
+- After a crash while locked, `vgsh run` starts the shell again, and the new shell locks the session again with its own lock screen.
 
 ## How it works
 

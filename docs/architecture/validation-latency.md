@@ -1,6 +1,6 @@
 # Smoke latencies
 
-Covers: scripts/smoke/rows/diagnostics.sh, scripts/smoke/rows/start-order.sh, scripts/smoke/rows/notifications.sh
+Covers: scripts/smoke/rows/diagnostics.sh, scripts/smoke/rows/start-order.sh, scripts/smoke/rows/notifications.sh, scripts/smoke/rows/supervise.sh, scripts/smoke/rows/lock.sh
 
 The latencies the nested smoke reads, their ceilings and budgets, and the compositor state they are read under. The sandbox and its harness are in [validation-smoke.md](validation-smoke.md).
 
@@ -29,4 +29,5 @@ The latencies the nested smoke reads, their ceilings and budgets, and the compos
   | VGS-674, the probe counts, 14 runs of the row on 2026-09-30, load 4 to 8 | emoji named in the body | 43 to 50 | 79 to 95 |
 
   The earlier rows read the whole text item list on every poll, about 108,000 characters for the inbox. The budgets come from the last row: the toast budget is 100 ms and the inbox budget 190 ms.
+- Two readings follow a SIGKILL to the shell, each held under a ceiling in its row ([D069](../decisions/D069-runner-supervises-the-shell.md)). `scripts/smoke/rows/supervise.sh` prints `latency_relaunch_ms`, from the kill to the runner's new shell answering ping, polled every 50 ms on the lock file and every 200 ms on ping; `relaunch_budget_ms` is 1514. `scripts/smoke/rows/lock.sh` prints `latency_lock_back_ms`, from a kill while locked to the new shell's confirmed lock with its lock screen, polled every 50 ms; `lock_back_budget_ms` is 3212. Each budget is twice the highest of six readings of its row on host cachy on 2026-09-30, at load average 5 to 8: 733 to 757 ms and 1497 to 1606 ms. Both hold the runner's first delay, 0.5 s.
 - The nested compositor starts with its logs off: logging every surface slows the first bar, whose median over five interleaved startups of the harness on host cachy on 2026-09-29, at a load of 5 to 6, read 260 ms with the logs on and 244 ms with them off. Once `scripts/smoke/rows/bar.sh` has read the startup latencies, `compositor_logs_on` creates the flag file the harness's `hyprland.lua` reads and reloads the configuration, so `hyprctl rollinglog` holds each cursor shape the shell sends from then on ([runtime-pointer.md](runtime-pointer.md)). The `hyprland.log` the verdict reads therefore holds the lines logged before the configuration first loaded and every line from that reload to the end, but not the bar rows between. `expect_cursor` moves the pointer onto a control and reads the last shape logged. Qt sends a shape only when it changes, so the helper fails when the log already names the shape it expects before the move, and a row expects another shape between two readings of one.

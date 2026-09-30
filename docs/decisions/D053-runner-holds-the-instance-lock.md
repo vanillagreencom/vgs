@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-29
 
-**Status**: Active
+**Status**: Active (restart's stop → [D069](D069-runner-supervises-the-shell.md))
 
 **Research**: VGS-609
 
@@ -44,10 +44,10 @@ Checked against basecamp/omarchy at `8b4eae6`: `bin/omarchy-launch-shell`, `bin/
 |---|---|---|
 | `omarchy-launch-shell` runs `quickshell` as a background job, waits on it in a loop that tolerates a wait a signal ended, and a `trap stop HUP INT TERM` passes TERM to it. | The same: a background child, a repeated wait and TERM passed on for HUP, INT and TERM. | Taken from Omarchy. |
 | The launcher keeps no instance lock; `omarchy-restart-shell` stops every instance with `quickshell kill` in a loop. | The runner holds the instance lock, and the shell draws only as the runner's child. | One shell per session is a VGS invariant ([overview.md](../architecture/overview.md) invariant 1), and every `vgsh` command addresses the one instance the lock file names. |
-| The launcher relaunches a shell that exits with a non-zero status, up to five times a minute. | The runner exits with the shell's status and does not relaunch it. | `vgsh restart` does not supervise crashes ([runtime.md § Process](../architecture/runtime.md#process)); a relaunch loop is a separate decision. |
+| The launcher relaunches a shell that exits with a non-zero status, up to five times a minute. | The runner exited with the shell's status and did not relaunch it. | A relaunch loop was a separate decision: [D069](D069-runner-supervises-the-shell.md) makes the runner relaunch the shell. |
 | No parent-death signal: a launcher killed with SIGKILL leaves the shell running. | `setpriv --pdeathsig TERM` stops the shell with its runner. | With no lock, a surviving shell breaks no invariant for Omarchy; for VGS it would be a guarded shell with the lock free. |
 
-**Revisit When**: Quickshell gives QML a file lock; VGS adds crash supervision to the runner; or util-linux drops `setpriv --pdeathsig`.
+**Revisit When**: Quickshell gives QML a file lock; or util-linux drops `setpriv --pdeathsig`. The runner's crash supervision, which this list named, is [D069](D069-runner-supervises-the-shell.md).
 
 **Verification**: `scripts/test-vgsh-run.sh` runs the runner against a stub `qs` and pins the lock file and `VGSH_RUNNER_PID`, the shell's descriptors, TERM and INT passed on, the repeated wait, the exit status, a free lock and a next start after a shell that left a process behind or crashed, and the parent-death signal, each with a control on a copy of `bin/vgsh`. `scripts/test-vgsh.sh` pins `run`, `pid` and `restart` against the same pid contract. `scripts/smoke/rows/start-order.sh` reads, in the nested sandbox, `vgsh restart` during a planted process that stands in for a download, and `vgsh run` after a SIGKILL to the shell, with a copy of the tree whose runner execs `qs` with the descriptor open as the control.
 
