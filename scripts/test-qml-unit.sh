@@ -39,7 +39,10 @@ fresh() {
 }
 
 # Rows: label | file under shell/Ui | text to replace | replacement | the
-# test file that must go red. The replacement keeps the text around the
+# test file that must go red. A file under ../Commons or ../Core is a copy
+# of that module handed to the runner; one under ../plugins is a copy of
+# that plugin beside a copy of the tests, which import it by a relative
+# path. The replacement keeps the text around the
 # behaviour and removes the behaviour. A field holds no `|`, the separator.
 mutations=(
   "the orb takes pointer input|feedback/VoiceOrb.qml|    Accessible.ignored: true|    Accessible.ignored: true; MouseArea { anchors.fill: parent }|tst_voiceorb.qml"
@@ -106,6 +109,8 @@ mutations=(
   "the scroll area reads its content item through childrenRect|layout/ScrollArea.qml|contentHeight: measuredContentHeight|contentHeight: contentItem.childrenRect.height|tst_scroll.qml"
   "the scroll area drops content height while its ancestor is hidden|layout/ScrollArea.qml|if (!child.visible && root.visible) continue;|if (!child.visible) continue;|tst_scroll.qml"
   "the bar shows without an overflow|layout/ScrollBar.qml|    visible: needed|    visible: true|tst_scroll.qml"
+  "float noise past the view reads as an overflow|layout/ScrollBar.qml|readonly property bool needed: maxY >= 0.5|readonly property bool needed: maxY > 0|tst_scroll.qml"
+  "a scroll area that fits takes every press|layout/ScrollArea.qml|    interactive: overflowing|    interactive: true|tst_pane.qml"
   "the thumb shrinks below its minimum|layout/ScrollBar.qml|Math.max(Theme.scrollArea.minThumb, height * flickable.height / flickable.contentHeight)|height * flickable.height / flickable.contentHeight|tst_scroll.qml"
   "the thumb is not the view's share|layout/ScrollBar.qml|Math.max(Theme.scrollArea.minThumb, height * flickable.height / flickable.contentHeight)|Theme.scrollArea.minThumb|tst_scroll.qml"
   "dragging the thumb scrolls nothing|layout/ScrollBar.qml|if (pressed) root.dragTo(mapToItem(root, 0, mouse.y).y - grab);|if (pressed) {}|tst_scroll.qml"
@@ -118,6 +123,14 @@ mutations=(
   "the pane lays the scroll area outside the content edge|layout/Pane.qml|width: Math.max(0, root.width - root.contentInset + root.ringRoom)|width: root.contentWidth + root.ringRoom|tst_pane.qml"
   "the pane ignores the container radius|layout/Pane.qml|radius: root.cornerRadius|radius: 0|tst_pane.qml"
   "the pane ignores the dialog component padding|layout/Pane.qml|case \"dialog\": return Theme.dialog.padding;|case \"dialog\": return Theme.inset.dialog;|tst_pane.qml"
+  "a slot reads its children's laid-out boxes|layout/Pane.qml|widest = Math.max(widest, child.implicitWidth);|widest = Math.max(widest, child.x + child.width);|tst_pane.qml"
+  "the body's room keeps no gap before the footer|layout/Pane.qml| - (footerHeight > 0 ? gap : 0));|);|tst_pane.qml"
+  "the body's room keeps no gap after the header|layout/Pane.qml| - (headerHeight > 0 ? gap : 0) - | - |tst_pane.qml"
+  "the terminal's content ignores the window corner|../plugins/vgs.themes/DesktopPreview.qml|anchors.margins: root.contentInset(terminal)|anchors.margins: Theme.desktopPreview.padding|tst_desktoppreview.qml"
+  "the editor's content ignores the window corner|../plugins/vgs.themes/DesktopPreview.qml|anchors.margins: root.contentInset(editor)|anchors.margins: Theme.desktopPreview.padding|tst_desktoppreview.qml"
+  "the notification's content ignores the window corner|../plugins/vgs.themes/DesktopPreview.qml|anchors.margins: root.contentInset(notification)|anchors.margins: Theme.desktopPreview.padding|tst_desktoppreview.qml"
+  "the windows end at the right side's overhang|../plugins/vgs.themes/DesktopPreview.qml|readonly property real windowBottom: height - root.safeInset|readonly property real windowBottom: height - root.safeRight|tst_desktoppreview.qml"
+  "the body's room ignores the footer|layout/Pane.qml| - headerHeight - footerHeight - | - headerHeight - |tst_pane.qml"
   "an overlay pane takes the panel inset|layout/Pane.qml|case \"overlay\": return Theme.inset.overlay;|case \"overlay\": return Theme.surface.padding;|tst_pane.qml"
   "an overlay pane clears a corner it does not draw|layout/Pane.qml|case \"overlay\": return 0;|case \"overlay\": return Theme.surface.radius;|tst_pane.qml"
   "the pane drops the gap between a header and footer without a body|layout/Pane.qml|readonly property real headerGap: headerHeight > 0 && contentBelowHeader ? gap : 0|readonly property real headerGap: headerHeight > 0 && bodyContentHeight > 0 ? gap : 0|tst_pane.qml"
@@ -505,6 +518,7 @@ for row in "${mutations[@]}"; do
   target="$copy/$file"
   commons_args=()
   core_args=()
+  tests_dir="$repo/scripts/qml-tests"
   if [[ $file == ../Commons/* ]]; then
     rm -rf -- "$tmp/commons"
     cp -R -- "$repo/shell/Commons" "$tmp/commons"
@@ -516,6 +530,16 @@ for row in "${mutations[@]}"; do
     cp -R -- "$repo/shell/Core" "$tmp/core"
     target="$tmp/core/${file#../Core/}"
     core_args=(--core "$tmp/core")
+  fi
+  if [[ $file == ../plugins/* ]]; then
+    plugin="${file#../plugins/}"
+    plugin="${plugin%%/*}"
+    rm -rf -- "${tmp:?}/mirror"
+    mkdir -p -- "$tmp/mirror/scripts" "$tmp/mirror/shell/plugins"
+    cp -R -- "$repo/scripts/qml-tests" "$tmp/mirror/scripts/qml-tests"
+    cp -R -- "$repo/shell/plugins/$plugin" "$tmp/mirror/shell/plugins/$plugin"
+    target="$tmp/mirror/shell/${file#../}"
+    tests_dir="$tmp/mirror/scripts/qml-tests"
   fi
   count="$(python3 - "$target" "$needle" <<'PY'
 import sys
@@ -529,7 +553,7 @@ path, needle, replacement = sys.argv[1:]
 text = open(path, encoding="utf-8").read()
 open(path, "w", encoding="utf-8").write(text.replace(needle, replacement))
 PY
-  if out="$("$runner" --ui "$copy" "${commons_args[@]}" "${core_args[@]}" "$repo/scripts/qml-tests/$test" 2>&1)"; then
+  if out="$("$runner" --ui "$copy" "${commons_args[@]}" "${core_args[@]}" --tests "$tests_dir" "$tests_dir/$test" 2>&1)"; then
     fail "$label: $test passed on the mutated copy"
   else
     ok "$label"

@@ -386,13 +386,11 @@ FocusScope {
             }
         ]
 
-        // The rail takes the height its width asks for, or what the output
-        // leaves it once the header, the footer and their gaps are placed,
-        // in whole pixels, so the body's height never overflows the pane's
-        // by a rounding error and shows a scroll bar.
+        // The rail takes the height its width asks for, or the room the
+        // pane leaves its body on the output.
         Item {
             width: layout.contentWidth
-            height: Math.floor(Math.min(carousel.implicitHeight, root.height - 2 * layout.contentInset - layout.headerHeight - layout.footerHeight - 2 * layout.gap))
+            height: Math.min(carousel.implicitHeight, layout.bodyRoom)
 
             CardCarousel {
                 id: carousel

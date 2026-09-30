@@ -72,6 +72,47 @@ Item {
         footer: [ Button { text: "Apply"; variant: "secondary" } ]
     }
 
+    // A panel over a click target: a bare header label, a short body and
+    // a footer bound to the content width, fitted under a cap.
+    Component {
+        id: overTarget
+        Item {
+            width: 240
+            height: 300
+            property alias pane: layer
+            property alias spy: clicks
+            MouseArea { id: target; anchors.fill: parent }
+            SignalSpy { id: clicks; target: target; signalName: "clicked" }
+            Pane {
+                id: layer
+                anchors.fill: parent
+                container: "panel"
+                fitToContent: true
+                maximumHeight: 300
+                header: [ Label { role: "h3"; text: "Themes" } ]
+                Section {
+                    title: "Wallpaper"
+                    Item { width: layer.contentWidth; height: 72 }
+                }
+                footer: [ Column { width: layer.contentWidth; Button { width: parent.width; text: "Add" } } ]
+            }
+        }
+    }
+    // A fitted pane whose body takes the room the pane leaves it.
+    Component {
+        id: filled
+        Pane {
+            id: layer
+            width: 240
+            container: "panel"
+            fitToContent: true
+            maximumHeight: 300
+            header: [ Item { width: 10; height: 20 } ]
+            Item { width: layer.contentWidth; height: layer.bodyRoom }
+            footer: [ Item { width: 10; height: 30 } ]
+        }
+    }
+
     TestCase {
         name: "pane"
         when: windowShown
@@ -104,6 +145,43 @@ Item {
             compare(contentRight, insetRight);
             verify(scroll(pane).bar.x + scroll(pane).x >= contentRight, "bar starts in the right inset strip");
             verify(scroll(pane).bar.x + scroll(pane).bar.width + scroll(pane).x <= pane.width, "bar stays inside the pane");
+        }
+
+        // A bare header label sizes the header slot by its implicit width,
+        // beside a footer bound to the content width, with no binding loop:
+        // the runner fails a file that logs one.
+        function test_a_bare_header_beside_a_footer_loops_nothing() {
+            const made = overTarget.createObject(root);
+            const label = headerSlot(made.pane).children[0];
+            compare(headerSlot(made.pane).implicitWidth, label.implicitWidth);
+            wait(50);
+            made.destroy();
+        }
+
+        // The body fits, so a press on its empty part, 10 px above the
+        // viewport's bottom, reaches the target under the pane.
+        function test_a_press_on_a_body_that_fits_reaches_what_lies_under_it() {
+            const made = overTarget.createObject(root);
+            tryVerify(() => made.pane.bodyContentHeight > 72, 1000, "the body is laid out");
+            verify(!made.pane.scrollArea.overflowing, "the body fits");
+            const view = made.pane.scrollArea;
+            mouseClick(made, 120, view.mapToItem(made, 0, view.height - made.pane.ringRoom - 10).y);
+            compare(made.spy.count, 1);
+            made.destroy();
+        }
+
+        // The body's room at the cap: 300 less 12 inset twice, the 20 px
+        // header, the 30 px footer and a 12 px gap after the header and
+        // before the footer is 300 - 24 - 20 - 30 - 24 = 202. A body that
+        // takes it fills the pane to its cap and does not scroll.
+        function test_a_body_sized_from_its_room_fills_the_pane_to_its_cap() {
+            const made = filled.createObject(root);
+            compare(made.bodyRoom, 202);
+            tryCompare(made, "bodyContentHeight", 202);
+            compare(made.height, 300);
+            verify(!made.scrollArea.overflowing, "the filled body does not scroll");
+            compare(made.scrollArea.interactive, false);
+            made.destroy();
         }
 
         function test_fit_to_content_caps_the_body() {

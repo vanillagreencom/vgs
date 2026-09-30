@@ -17,9 +17,11 @@ Item {
     width: 400
     height: 400
     property real singleFixedHeight: Theme.size.control.lg
+    property real brimHeight: 100.3
 
     ScrollArea { id: area; width: 100; height: 100; Column { width: parent.width; Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } } } }
     ScrollArea { id: short; x: 120; width: 100; height: 100; Column { width: parent.width; Rectangle { width: parent.width; height: 40; color: "transparent" } } }
+    ScrollArea { id: brim; x: 360; width: 30; height: 100; Item { width: parent.width; height: root.brimHeight } }
     ScrollArea { id: tall; x: 240; width: 100; height: 100; Column { width: parent.width; Rectangle { width: parent.width; height: 100000; color: "transparent" } } }
     ScrollArea { id: inset; y: 140; width: 120; height: 100; rightInset: Theme.inset.window; Column { width: parent.width; Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } } } }
     ScrollArea { id: singleFixed; x: 140; y: 140; width: 120; height: 100; Item { y: Theme.space.sm; width: parent.width; implicitHeight: root.singleFixedHeight } }
@@ -54,6 +56,21 @@ Item {
             hideParent.visible = true;
             hiddenArea.contentY = 0;
             long.choose(0);
+            root.brimHeight = 100.3;
+        }
+
+        // Content 0.3 px past the view is float noise of a layout that fits
+        // exactly: no bar, no press taken. 0.5 px past it overflows.
+        function test_less_than_half_a_pixel_past_the_view_is_no_overflow() {
+            compare(brim.overflowing, false);
+            compare(brim.bar.visible, false);
+            compare(brim.interactive, false);
+            root.brimHeight = 100.5;
+            compare(brim.overflowing, true);
+            compare(brim.bar.visible, true);
+            compare(brim.interactive, true);
+            compare(area.interactive, true);
+            compare(short.interactive, false);
         }
 
         function test_the_bar_sits_in_a_gutter_the_content_leaves_free() {

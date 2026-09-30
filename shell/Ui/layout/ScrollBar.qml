@@ -19,7 +19,9 @@ Item {
     property bool hovered: false
 
     readonly property real maxY: Math.max(0, flickable.contentHeight - flickable.height)
-    readonly property bool needed: maxY > 0
+    // Content past the view by less than half a pixel is the float noise
+    // of a layout that fits its view exactly, never an overflow to scroll.
+    readonly property bool needed: maxY >= 0.5
     readonly property real thumbLength: needed ? Math.min(height, Math.max(Theme.scrollArea.minThumb, height * flickable.height / flickable.contentHeight)) : height
     readonly property real travel: height - thumbLength
     readonly property bool active: hovered || barHover.hovered || thumbArea.pressed || flickable.moving || recent.running

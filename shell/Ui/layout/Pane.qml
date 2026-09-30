@@ -48,7 +48,27 @@ Item {
     // less when its host gives it less, such as a popup held inside a
     // short output; the body then scrolls and the footer stays inside.
     readonly property real boxHeight: fitToContent ? (height > 0 ? Math.min(cappedHeight, height) : cappedHeight) : height
+    // The height a body with content shows at the pane's limit: a fitted
+    // pane's `maximumHeight`, unbounded without one, else its height, less
+    // the insets, the header, the footer and the gaps a header and a
+    // footer keep from a body. It reads no height of the body, so a body
+    // sized from it, such as a rail that shrinks to fit, fills the pane to
+    // its cap without a binding loop and without overflowing.
+    readonly property real bodyRoom: {
+        const limit = fitToContent ? (maximumHeight > 0 ? maximumHeight : Infinity) : height;
+        return Math.max(0, limit - 2 * contentInset - headerHeight - footerHeight - (headerHeight > 0 ? gap : 0) - (footerHeight > 0 ? gap : 0));
+    }
     readonly property alias scrollArea: scroll
+
+    // A slot's width is its widest child's implicit width, never the
+    // children's laid-out boxes: read through `childrenRect`, a header of
+    // implicit width and a footer bound to `contentWidth` each moved the
+    // other's box, which fed `implicitWidth` back into itself.
+    function slotWidth(slot) {
+        let widest = 0;
+        for (const child of slot.children) widest = Math.max(widest, child.implicitWidth);
+        return widest;
+    }
 
     implicitWidth: Math.max(headerSlot.implicitWidth, bodyColumn.implicitWidth, footerSlot.implicitWidth) + 2 * contentInset
     implicitHeight: fitToContent ? cappedHeight : uncappedHeight
@@ -93,7 +113,7 @@ Item {
         width: root.contentWidth
         height: root.headerHeight
         implicitHeight: childrenRect.height
-        implicitWidth: childrenRect.width
+        implicitWidth: root.slotWidth(headerSlot)
     }
 
     // The viewport starts `ringRoom` left of and above the content edge and
@@ -131,7 +151,7 @@ Item {
         width: root.contentWidth
         height: root.footerHeight
         implicitHeight: childrenRect.height
-        implicitWidth: childrenRect.width
+        implicitWidth: root.slotWidth(footerSlot)
     }
 
     Rectangle {

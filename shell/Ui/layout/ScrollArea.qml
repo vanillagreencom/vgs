@@ -8,19 +8,23 @@ import qs.Ui
 // bar, `bar`, sits inside that inset while the content overflows, so no
 // content lies under it and the content's width never depends on its own
 // height: wrapping text would otherwise move the layout a turn after it
-// settled, or feed a binding its own input.
+// settled, or feed a binding its own input. The area takes a press, a drag
+// and the wheel only while its content overflows, so a press on an area
+// that fits reaches what lies under it, such as a scrim that closes a
+// full-screen view.
 Flickable {
     id: root
 
     property real rightInset: Theme.scrollArea.gutter
     readonly property real measuredContentHeight: measureContentHeight()
-    readonly property bool overflowing: contentHeight > height
+    readonly property bool overflowing: scrollBar.needed
     readonly property alias bar: scrollBar
 
     clip: true
     contentWidth: width - rightInset
     contentHeight: measuredContentHeight
     boundsBehavior: Flickable.StopAtBounds
+    interactive: overflowing
 
     function measureContentHeight() {
         let bottom = 0;
