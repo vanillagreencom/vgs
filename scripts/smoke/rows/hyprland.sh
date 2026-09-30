@@ -323,8 +323,24 @@ expect_poll "SUPER+N opens the inbox" '"inbox"' inbox_mode
 press_super n || fail "typing SUPER+N again failed"
 expect_poll "SUPER+N closes the inbox again" '""' inbox_mode
 
-# The existing fixture consumes effective keys from the same provider as
-# a production plugin. Keycode readback needs no synthetic keyboard.
+# The shared fixture stays neutral for the earlier Settings and capability
+# rows. Only this row adds its bind, then restores both borrowed files and
+# the enabled state before continuing with the other plugins.
+probe_manifest="$home/.config/vgs/plugins/acme.probe/manifest.json"
+probe_enabled_before="$(plugin_enabled acme.probe)"
+cp -- "$probe_manifest" "$sandbox/probe-before-keycode.json"
+cp -- "$user_config" "$sandbox/shell-before-keycode.json"
+python3 - "$probe_manifest" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+with open(path) as source:
+    manifest = json.load(source)
+manifest["hyprland"] = {"binds": [{"shortcut": "ping", "key": "SUPER+code:108"}]}
+with open(path + ".next", "w") as output:
+    json.dump(manifest, output)
+os.replace(path + ".next", path)
+PY
+expect "rescanning the row-owned keycode bind is allowed" ok ipc shell rescanPlugins
 expect "enabling the shortcut key fixture is allowed" ok ipc shell setPluginEnabled acme.probe true
 expect_poll "the fixture reads its manifest keycode" '{"ping":"SUPER+code:108"}' fixture_keys
 # Lua's parsed keycode lives in sMkKeys, which binds -j does not expose.
@@ -335,7 +351,7 @@ set_keys '{"acme.probe": {"ping": "shift+super+CODE:00108", "ghost": "SUPER+F8"}
 expect_poll "the same fixture reads the normalized rebound keycode" '{"ping":"SUPER+SHIFT+code:108"}' fixture_keys
 expect_poll "the rebound keycode reaches the nested compositor" '[[65, "", 0, "__lua"]]' fixture_bind
 expect "the rebound layer keeps the lower-case code prefix" yes layer_has 'hl.bind("SUPER + SHIFT + code:108", hl.dsp.global("acme.probe:ping"), { description = "acme.probe:ping" })'
-expect "a plugin mutation cannot change effective keys" '{"ping":"SUPER+SHIFT+code:108"}' ipc acme.probe mutate-keys
+expect "a plugin mutation cannot change effective keys" '{"ping":"SUPER+SHIFT+code:108"}' probe mutate-keys
 expect "the nested keycode configuration holds no error" '[]' config_errors
 set_keys '{"acme.probe": {"ping": null}}'
 expect_poll "the fixture reads a null unbinding" '{"ping":null}' fixture_keys
@@ -347,6 +363,16 @@ set_keys '{"acme.probe": {}}'
 expect_poll "removing the override restores the manifest key" '{"ping":"SUPER+code:108"}' fixture_keys
 expect "disabling the shortcut fixture is allowed" ok ipc shell setPluginEnabled acme.probe false
 expect_poll "the disabled fixture bind leaves the nested compositor" '[]' fixture_bind
+cp -- "$sandbox/probe-before-keycode.json" "$probe_manifest.next" && mv -T -- "$probe_manifest.next" "$probe_manifest"
+expect "rescanning the restored neutral fixture is allowed" ok ipc shell rescanPlugins
+cp -- "$sandbox/shell-before-keycode.json" "$user_config.next" && mv -T -- "$user_config.next" "$user_config"
+expect "the fixture manifest is restored byte for byte" same bash -c 'cmp -s -- "$1" "$2" && echo same' _ "$sandbox/probe-before-keycode.json" "$probe_manifest"
+expect "the fixture configuration is restored byte for byte" same bash -c 'cmp -s -- "$1" "$2" && echo same' _ "$sandbox/shell-before-keycode.json" "$user_config"
+expect_poll "the fixture's original enabled state is restored" "$probe_enabled_before" plugin_enabled acme.probe
+if [[ $probe_enabled_before == True ]]; then
+  expect_poll "the restored fixture reads no declared keys" '{}' fixture_keys
+fi
+expect_poll "the restored neutral fixture has no compositor bind" '[]' fixture_bind
 
 # A rebind, an unbind and a name no bind declares, in shell.json.
 set_keys '{"vgs.launcher": {"toggle": "super+alt+space", "nope": "SUPER+F9"}, "vgs.notifications": {"inbox": null}}'
@@ -394,6 +420,7 @@ expect_poll "with the line the launcher's bind is back" "$rebound" vgs_binds
 cp -- "$sandbox/shell-before-hyprland.json" "$user_config.next" && mv -T -- "$user_config.next" "$user_config"
 expect_poll "the launcher is disabled again" False plugin_enabled vgs.launcher
 expect_poll "the notifications are disabled again" False plugin_enabled vgs.notifications
+expect_poll "the shared fixture keeps its original enabled state after the Hyprland rows" "$probe_enabled_before" plugin_enabled acme.probe
 restore_hypr_lua || fail "hyprland.lua is put back after the Hyprland rows"
 expect "the nested instance reloads the first run's hyprland.lua" ok hypr reload config-only
 expect_poll "the nested instance holds no vgs bind after the Hyprland rows" '[]' vgs_binds
