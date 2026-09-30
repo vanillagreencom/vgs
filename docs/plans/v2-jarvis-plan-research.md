@@ -24,6 +24,8 @@ Every claim was read on its primary page on 2026-09-30 unless marked (L = one se
 
 ### 2.3 Local speech stack (candidate set; J38 pins it before any other local issue)
 
+The choices are closed by [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md). [The artifact declaration](../../shell/plugins/vgs.jarvis/artifacts.json) owns exact files, hashes, runtime builds, inputs and licences. [The actual measurements](../measurements/jarvis-local-2026-09-30.md) include all artifacts, resident tiers, caption costs and bounded Moonshine inputs. The table below remains the research candidate context, not a second pin list.
+
 One Python sidecar on sherpa-onnx (Apache-2.0; it embeds espeak-ng, GPL-3.0, so the user installs the runtime and no VGS package ships it). Wheels: CPU, or `sherpa-onnx==1.13.8+cuda12.cudnn9` [L1].
 
 | Role | Artifact | Facts |
@@ -36,7 +38,7 @@ One Python sidecar on sherpa-onnx (Apache-2.0; it embeds espeak-ng, GPL-3.0, so 
 | Other voices | `vits-piper-<locale>-<voice>`, in-process | No `piper` program. Licences differ per voice: only permitted voices are listed [L6] |
 | Voice activity | `silero_vad.onnx` (MIT), CPU | [L7] |
 | End of turn | `smart-turn-v3.2-cpu.onnx` (BSD-2, 8 MB, 23 languages) | Needs `onnxruntime` and a Whisper feature extractor [L8] |
-| Wake word | `sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01`: keywords as text, English only, no stated licence [L9] | openWakeWord's "hey jarvis" is CC BY-NC-SA; Picovoice has no personal plan [L10]. Q5 |
+| Wake word | `sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01`: keywords as text, English only [L9] | The pinned archive's README declares Apache License 2.0: D066 closes Q5. openWakeWord's "hey jarvis" is CC BY-NC-SA; Picovoice has no personal plan [L10] |
 
 - **`artifacts.json`** (J38) pins per artifact: URL, revision, files, SHA-256, runtime version, execution provider, input format, languages, and the licence of software, model and voice. `measure-local` runs a bundled clip through each and records cold load, warm turn, unload, peak memory and speed.
 - **Echo cancellation**: PipeWire's `libpipewire-module-echo-cancel`. A module loaded with `pw-cli` lives in that process [P2], so the daemon owns a loader whose exit removes it. It holds a microphone stream, so it loads only while capture is open. J15 confirms, else half-duplex.

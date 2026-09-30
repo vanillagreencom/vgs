@@ -244,8 +244,10 @@ readme_rows=$'node scripts/check-readme.js\nnode scripts/test-check-readme.js\ns
 readme_plan="$readme_rows$repo_plan"
 curl_installer_plan="$readme_rows"$'scripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
+jarvis_local_rows=$'python3 scripts/test-jarvis-local.py\nscripts/check-jarvis-local.sh\n'
 jarvis_env_plan=$'node scripts/test-jarvis-env.js\n'"$repo_plan"
-jarvis_owner_plan=$'node scripts/test-jarvis-daemon.js\n'"$jarvis_env_plan"
+jarvis_helper_plan=$'node scripts/test-jarvis-env.js\n'"$jarvis_local_rows$repo_plan"
+jarvis_owner_plan=$'node scripts/test-jarvis-daemon.js\n'"$jarvis_helper_plan"
 jarvis_daemon_plan=$'node scripts/test-jarvis-daemon.js\n'"$repo_plan"
 jarvis_fixture_plan=$'node scripts/test-jarvis-protocol.js\n'"$jarvis_daemon_plan"
 dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\n'"$repo_plan"
@@ -299,6 +301,12 @@ cases=(
   "jarvis-fixture|scripts/fixtures/jarvis/prepare.js|offline|$jarvis_fixture_plan"
   "jarvis-fixture-all|scripts/fixtures/jarvis/prepare.js|all|$jarvis_fixture_plan"$'\nscripts/qml-smoke.sh'
   "jarvis-protocol-suite|scripts/test-jarvis-protocol.js|offline|node scripts/test-jarvis-protocol.js"$'\n'"$repo_plan"
+  "jarvis-local-suite|scripts/test-jarvis-local.py|all|python3 scripts/test-jarvis-local.py"$'\n'"$repo_plan"
+  "jarvis-local-runner|scripts/check-jarvis-local.sh|all|scripts/check-jarvis-local.sh"$'\n'"$repo_plan"
+  "jarvis-local-fixture|scripts/fixtures/jarvis-local/run.py|all|scripts/check-jarvis-local.sh"$'\n'"$repo_plan"
+  "jarvis-artifacts|shell/plugins/vgs.jarvis/artifacts.json|tools|$jarvis_local_rows$repo_plan"
+  "jarvis-measure|shell/plugins/vgs.jarvis/measure-local|tools|$jarvis_local_rows$repo_plan"
+  "jarvis-clip|shell/plugins/vgs.jarvis/fixtures/probe.wav|tools|$jarvis_local_rows$repo_plan"
   "dispatch|shell/Core/Dispatch.js|offline|$dispatch_plan"
   "session|shell/Core/SessionLock.qml|all|$session_plan"
   "fixture|scripts/smoke/fixtures/plugins/acme.contention/Background.qml|all|$fixture_plan"
@@ -390,6 +398,9 @@ fi
 # dependency edge lets that defect escape, without starting any test daemon.
 d="$tmp/plan-jarvis-edge"; fresh "$d"
 mkdir -p "$d/scripts/lib"
+printf '# neutral selector fixture\n' >"$d/scripts/test-jarvis-local.py"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$d/scripts/check-jarvis-local.sh"
+chmod +x "$d/scripts/check-jarvis-local.sh"
 printf 'const fs = require("node:fs"); process.exit(fs.readFileSync("scripts/lib/jarvis-env.sh", "utf8") === "clean\\n" ? 0 : 1);\n' >"$d/scripts/test-jarvis-env.js"
 printf 'clean\n' >"$d/scripts/lib/jarvis-env.sh"
 "${base_env[@]}" git -C "$d" add -A

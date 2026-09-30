@@ -1,0 +1,461 @@
+#!/usr/bin/env python3
+"""Measure pinned local speech, never capture or play audio.
+
+The caller supplies a network namespace and a scrubbed environment. Models
+and their archives must already be local. Exit 77 is unavailable evidence.
+Stdout is NDJSON: scope, provider_requested, load_seconds, first_turn_seconds,
+warm_turn_seconds, unload_seconds, peak_rss_bytes, rss_after_unload_bytes,
+gpu_peak_bytes, gpu_after_unload_bytes, gpu_poll_seconds, results and versions.
+GPU memory is the sampled NVIDIA compute allocation for this process, not
+device-wide use. A CUDA request without a process allocation is not evidence.
+Cold means fresh model objects, not an evicted filesystem cache.
+"""
+import argparse
+from datetime import datetime, timezone
+import gc
+import hashlib
+import importlib.metadata
+import json
+import math
+import os
+import platform
+from pathlib import Path
+import re
+import resource
+import socket
+import subprocess
+import sys
+import threading
+import time
+import tarfile
+from urllib.parse import urlparse
+import wave
+
+HERE = Path(__file__).resolve().parent
+
+
+class Unavailable(Exception):
+    """The requested instrument cannot run; no successful reading exists."""
+
+
+def sha256(path):
+    """Return the digest of a local regular input."""
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def relative(name):
+    """Manifest paths are relative to the supplied model or fixture root."""
+    path = Path(name)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"path=outside-root value={name}")
+    return path
+
+
+def manifest(path):
+    """Read the measurement contract produced by artifacts.json."""
+    value = json.loads(path.read_text())
+    if value["schemaVersion"] != 1:
+        raise ValueError("schemaVersion=unsupported")
+    ids = [a["id"] for a in value["artifacts"]]
+    if not ids or len(ids) != len(set(ids)):
+        raise ValueError("artifacts=empty-or-duplicate")
+    for artifact in value["artifacts"]:
+        relative(artifact["directory"])
+        if urlparse(artifact["url"]).scheme != "https":
+            raise ValueError(f"url=not-https id={artifact['id']}")
+        if not artifact["revision"] or not artifact["languages"] or not artifact["modelLicense"]:
+            raise ValueError(f"metadata=missing id={artifact['id']}")
+        if artifact["runtime"] not in value["runtimes"] or not artifact["files"]:
+            raise ValueError(f"runtime-or-files=missing id={artifact['id']}")
+        if "maxInputSamples" in artifact and (type(artifact["maxInputSamples"]) is not int or artifact["maxInputSamples"] <= 0):
+            raise ValueError(f"input-bound=invalid id={artifact['id']}")
+        for name, digest in artifact["files"].items():
+            relative(name)
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise ValueError(f"sha256=invalid id={artifact['id']} file={name}")
+        if not re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"]):
+            raise ValueError(f"archive-sha256=invalid id={artifact['id']}")
+    for tier in value["tiers"].values():
+        if not tier["artifacts"] or any(a not in ids for a in tier["artifacts"]):
+            raise ValueError("tier=unknown-or-empty")
+    return value
+
+
+def verify(value, root, artifacts):
+    """Verify the actual archives and direct inference inputs before loading."""
+    for artifact in artifacts:
+        directory = root / relative(artifact["directory"])
+        archive = root / Path(urlparse(artifact["url"]).path).name
+        inputs = [(archive, artifact["sha256"])]
+        inputs += [(directory / relative(name), digest) for name, digest in artifact["files"].items()]
+        for path, digest in inputs:
+            if not path.is_file():
+                raise Unavailable(f"input=missing path={path}")
+            if sha256(path) != digest:
+                raise ValueError(f"input=hash-mismatch path={path}")
+        for name in artifact.get("auxiliaryDirectories", []):
+            if not (directory / relative(name)).is_dir():
+                raise Unavailable(f"auxiliary=missing id={artifact['id']} path={name}")
+            # The archive hash pins dictionaries and espeak data too. Compare
+            # the local auxiliary bytes to that archive, not merely its URL.
+            prefix = f"{artifact['directory']}/{name}/"
+            count = 0
+            with tarfile.open(archive) as bundle:
+                for member in bundle:
+                    if member.isfile() and member.name.startswith(prefix):
+                        path = root / relative(member.name)
+                        if not path.is_file():
+                            raise Unavailable(f"auxiliary=missing path={path}")
+                        with bundle.extractfile(member) as source:
+                            expected = hashlib.file_digest(source, "sha256").hexdigest()
+                        if sha256(path) != expected:
+                            raise ValueError(f"auxiliary=hash-mismatch path={path}")
+                        count += 1
+            if not count:
+                raise ValueError(f"auxiliary=archive-empty id={artifact['id']} path={name}")
+
+
+def clip(value):
+    """Read only the bundled synthetic speech and its paired transcript."""
+    fixture = value["fixture"]
+    path = HERE / relative(fixture["audio"])
+    text_path = HERE / relative(fixture["transcript"])
+    if sha256(path) != fixture["audioSha256"] or sha256(text_path) != fixture["transcriptSha256"]:
+        raise ValueError("fixture=hash-mismatch")
+    with wave.open(str(path)) as source:
+        if (source.getnchannels(), source.getsampwidth(), source.getframerate()) != (1, 2, 16000):
+            raise ValueError("fixture=format-invalid")
+        data = source.readframes(source.getnframes())
+    if not data:
+        raise ValueError("fixture=empty")
+    text = text_path.read_text().strip()
+    if not text:
+        raise ValueError("fixture=transcript-empty")
+    return data, text
+
+
+def rss():
+    """Linux's resident size after teardown, separate from its lifetime peak."""
+    for line in Path("/proc/self/status").read_text().splitlines():
+        if line.startswith("VmRSS:"):
+            return int(line.split()[1]) * 1024
+    raise Unavailable("rss=not-readable")
+
+
+class GpuSamples:
+    """One owner of the process allocation sampler and its bounded lifetime."""
+    interval = 0.05
+
+    def __init__(self, enabled):
+        self.enabled = enabled
+        self.stop = threading.Event()
+        self.error = None
+        self.peak = 0
+        self.thread = None
+
+    def read(self):
+        child = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
+            env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+            capture_output=True, text=True, timeout=10, check=True)
+        memory = 0
+        for line in child.stdout.splitlines():
+            pid, amount = [v.strip() for v in line.split(",")]
+            if int(pid) == os.getpid():
+                memory += int(amount) * 1024 * 1024
+        return memory
+
+    def sample(self):
+        try:
+            while not self.stop.is_set():
+                self.peak = max(self.peak, self.read())
+                self.stop.wait(self.interval)
+        except Exception as error:
+            self.error = error
+
+    def __enter__(self):
+        if self.enabled:
+            self.thread = threading.Thread(target=self.sample)
+            self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop.set()
+        if self.thread:
+            self.thread.join()
+        if self.error:
+            raise Unavailable(f"gpu-sampler=failed cause={self.error}")
+
+
+def load(artifact, root, provider, np, sherpa):
+    """Use the upstream public interface for each pinned export."""
+    d = root / artifact["directory"]
+    engine = artifact["engine"]
+    provider = provider if provider in artifact["providers"] else "cpu"
+    options = {"num_threads": 2, "provider": provider}
+    if engine in ("parakeet", "nemotron"):
+        options.update(encoder=str(d / "encoder.int8.onnx"), decoder=str(d / "decoder.int8.onnx"),
+                       joiner=str(d / "joiner.int8.onnx"), tokens=str(d / "tokens.txt"))
+        if engine == "parakeet":
+            return sherpa.OfflineRecognizer.from_transducer(model_type="nemo_transducer", **options)
+        return sherpa.OnlineRecognizer.from_transducer(**options)
+    if engine == "moonshine":
+        return sherpa.OfflineRecognizer.from_moonshine_v2(
+            encoder=str(d / "encoder_model.ort"), decoder=str(d / "decoder_model_merged.ort"),
+            tokens=str(d / "tokens.txt"), **options)
+    if engine == "whisper":
+        return sherpa.OfflineRecognizer.from_whisper(
+            encoder=str(d / "turbo-encoder.int8.onnx"), decoder=str(d / "turbo-decoder.int8.onnx"),
+            tokens=str(d / "turbo-tokens.txt"), language="en", **options)
+    if engine in ("piper", "kokoro"):
+        if engine == "piper":
+            tts = {"vits": sherpa.OfflineTtsVitsModelConfig(
+                model=str(d / "en_US-ljspeech-medium.onnx"), tokens=str(d / "tokens.txt"),
+                data_dir=str(d / "espeak-ng-data"))}
+        else:
+            tts = {"kokoro": sherpa.OfflineTtsKokoroModelConfig(
+                model=str(d / "model.onnx"), voices=str(d / "voices.bin"),
+                tokens=str(d / "tokens.txt"), data_dir=str(d / "espeak-ng-data"),
+                dict_dir=str(d / "dict"), lexicon=str(d / "lexicon-us-en.txt"), lang="en")}
+        config = sherpa.OfflineTtsConfig(model=sherpa.OfflineTtsModelConfig(**tts, **options))
+        return sherpa.OfflineTts(config)
+    if engine == "silero":
+        config = sherpa.VadModelConfig()
+        config.silero_vad.model = str(d / "silero_vad.onnx")
+        config.sample_rate = 16000
+        config.num_threads = 2
+        return sherpa.VoiceActivityDetector(config, buffer_size_in_seconds=120)
+    if engine == "wake":
+        suffix = "-epoch-12-avg-2-chunk-16-left-64.int8.onnx"
+        return sherpa.KeywordSpotter(
+            encoder=str(d / ("encoder" + suffix)), decoder=str(d / ("decoder" + suffix)),
+            joiner=str(d / ("joiner" + suffix)), tokens=str(d / "tokens.txt"),
+            keywords_file=str(d / "keywords.txt"), **options)
+    if engine == "smart-turn":
+        import onnxruntime as ort
+        from transformers import WhisperFeatureExtractor
+        config = ort.SessionOptions()
+        config.intra_op_num_threads = 2
+        config.inter_op_num_threads = 1
+        session = ort.InferenceSession(str(d / "smart-turn-v3.2-cpu.onnx"),
+            sess_options=config, providers=["CPUExecutionProvider"])
+        return session, WhisperFeatureExtractor(chunk_length=8)
+    raise ValueError(f"engine=unknown value={engine}")
+
+
+def infer(artifact, model, samples, text, value, np):
+    """Exercise real inference; return only JSON values, never model objects."""
+    engine = artifact["engine"]
+    if engine in ("parakeet", "moonshine", "whisper"):
+        # Moonshine's upstream VAD/offline-ASR path decodes separate speech
+        # segments. This instrument tests a fixed bound, not production VAD
+        # segmentation, overlap or word-boundary reconstruction.
+        bound = artifact.get("maxInputSamples", len(samples))
+        texts = []
+        chunk_sizes = []
+        for offset in range(0, len(samples), bound):
+            chunk = samples[offset:offset + bound]
+            stream = model.create_stream()
+            stream.accept_waveform(16000, chunk)
+            model.decode_stream(stream)
+            if not stream.result.text.strip():
+                raise ValueError(f"inference=empty-transcript id={artifact['id']}")
+            texts.append(stream.result.text)
+            chunk_sizes.append(len(chunk))
+        return {"text": " ".join(texts), "chunk_samples": chunk_sizes,
+                "input_samples": len(samples)}
+    if engine in ("piper", "kokoro"):
+        audio = model.generate(text, sid=0, speed=1)
+        data = np.asarray(audio.samples)
+        if not len(data) or not np.isfinite(data).all() or not np.any(data):
+            raise ValueError(f"inference=invalid-audio id={artifact['id']}")
+        return {"samples": len(data), "sample_rate": audio.sample_rate,
+                "audio_seconds": len(data) / audio.sample_rate}
+    if engine == "smart-turn":
+        session, extractor = model
+        data = samples[-128000:]
+        data = np.pad(data, (128000 - len(data), 0))
+        features = extractor(data, sampling_rate=16000, return_tensors="np",
+            padding="max_length", max_length=128000, truncation=True, do_normalize=True)
+        probability = float(session.run(None, {"input_features": features.input_features})[0].ravel()[0])
+        if not math.isfinite(probability) or not 0 <= probability <= 1:
+            raise ValueError("inference=invalid-turn-probability")
+        return {"probability": probability}
+    if engine == "silero":
+        model.reset()
+        for offset in range(0, len(samples), 512):
+            frame = samples[offset:offset + 512]
+            model.accept_waveform(np.pad(frame, (0, 512 - len(frame))))
+        model.flush()
+        segments = []
+        while not model.empty():
+            segments.append({"start": model.front.start, "samples": len(model.front.samples)})
+            model.pop()
+        if not segments:
+            raise ValueError("inference=no-speech-segment")
+        return {"segments": segments}
+    if engine in ("nemotron", "wake"):
+        stream = model.create_stream(value["fixture"]["wakeTokens"]) if engine == "wake" else model.create_stream()
+        if stream is None:
+            raise ValueError("inference=invalid-wake-tokens")
+        if engine == "nemotron":
+            stream.set_option("language", "en")
+        last_text = ""
+        partial_count = 0
+        decode_seconds = []
+        # Feed local frames as a stream without a wall-clock sleep. This
+        # measures compute cost, not microphone latency or room accuracy.
+        frames = [samples[offset:offset + 3200] for offset in range(0, len(samples), 3200)]
+        frames.append(np.zeros(16000, dtype=np.float32))
+        for index, frame in enumerate(frames):
+            stream.accept_waveform(16000, frame)
+            if index == len(frames) - 1:
+                stream.input_finished()
+            while model.is_ready(stream):
+                started = time.perf_counter()
+                model.decode_stream(stream)
+                decode_seconds.append(time.perf_counter() - started)
+                result = model.get_result(stream)
+                if result:
+                    last_text = result
+                    partial_count += 1
+                    if engine == "wake":
+                        model.reset_stream(stream)
+        if engine == "nemotron" and not partial_count:
+            raise ValueError("inference=empty-streaming-transcript")
+        if not decode_seconds:
+            raise ValueError(f"inference=no-stream-decode id={artifact['id']}")
+        return {"partial_count": partial_count, "final_text": last_text,
+                "decode_calls": len(decode_seconds), "max_decode_seconds": max(decode_seconds)}
+    raise ValueError(f"engine=unknown value={engine}")
+
+
+def outcome(artifact, result, value):
+    """The bundled fixture's execution oracle, not a semantic quality score."""
+    engine = artifact["engine"]
+    fixture = value["fixture"]
+    if engine in ("parakeet", "moonshine", "whisper", "nemotron"):
+        text = result["final_text"] if engine == "nemotron" else result["text"]
+        words = re.findall(r"\w+", text.lower())
+        if not all(word in words for word in fixture["transcriptWords"]):
+            raise ValueError(f"fixture=transcript-mismatch id={artifact['id']}")
+    elif engine in ("piper", "kokoro"):
+        if result["sample_rate"] != artifact["outputSampleRate"] or result["audio_seconds"] < 1:
+            raise ValueError(f"fixture=audio-mismatch id={artifact['id']}")
+    elif engine == "silero":
+        if sum(segment["samples"] for segment in result["segments"]) < fixture["minimumSpeechSamples"]:
+            raise ValueError("fixture=speech-mismatch")
+    elif engine == "smart-turn":
+        if result["probability"] <= fixture["minimumTurnProbability"]:
+            raise ValueError("fixture=turn-mismatch")
+    elif engine == "wake":
+        if result["decode_calls"] <= 0:
+            raise ValueError("fixture=wake-not-decoded")
+    else:
+        raise ValueError(f"engine=unknown value={engine}")
+
+
+def run(value, artifacts, root, provider, seconds, scope):
+    """Measure one artifact or a concurrently resident tier as one lifetime."""
+    if {name for _, name in socket.if_nameindex()} - {"lo"}:
+        raise ValueError("isolation=network-namespace-required")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    versions = {}
+    for name, runtime in value["runtimes"].items():
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError as error:
+            raise Unavailable(f"runtime=missing name={name}") from error
+        if versions[name] not in runtime["versions"]:
+            raise Unavailable(f"runtime=version-mismatch name={name} have={versions[name]}")
+    import numpy as np
+    import sherpa_onnx as sherpa
+    raw, text = clip(value)
+    samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
+    if seconds:
+        total = int(seconds * 16000)
+        samples = np.tile(samples, total // len(samples))
+        samples = np.pad(samples, (total - len(samples), 0))
+    duration = len(samples) / 16000
+    verify(value, root, artifacts)
+    started_utc = datetime.now(timezone.utc).isoformat()
+    with GpuSamples(provider == "cuda") as gpu:
+        start = time.perf_counter()
+        models = [load(a, root, provider, np, sherpa) for a in artifacts]
+        loaded = time.perf_counter()
+        results = [infer(a, m, samples, text, value, np) for a, m in zip(artifacts, models)]
+        for artifact, result in zip(artifacts, results):
+            outcome(artifact, result, value)
+        first = time.perf_counter()
+        warm = [infer(a, m, samples, text, value, np) for a, m in zip(artifacts, models)]
+        for artifact, result in zip(artifacts, warm):
+            outcome(artifact, result, value)
+        finished = time.perf_counter()
+        del models
+        gc.collect()
+        unloaded = time.perf_counter()
+        after_gpu = gpu.read() if provider == "cuda" else None
+    if provider == "cuda" and gpu.peak == 0:
+        raise Unavailable("gpu=allocation-not-observed")
+    record = {"scope": scope, "provider_requested": provider, "versions": versions,
+        "machine": platform.node(), "start_utc": started_utc,
+        "end_utc": datetime.now(timezone.utc).isoformat(),
+        "artifact_ids": [a["id"] for a in artifacts], "audio_seconds": duration,
+        "providers": {a["id"]: provider if provider in a["providers"] else "cpu" for a in artifacts},
+        "load_seconds": loaded - start, "first_turn_seconds": first - loaded,
+        "warm_turn_seconds": finished - first, "unload_seconds": unloaded - finished,
+        "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
+        "rss_after_unload_bytes": rss(), "gpu_peak_bytes": gpu.peak if gpu.enabled else None,
+        "gpu_after_unload_bytes": after_gpu, "gpu_poll_seconds": gpu.interval if gpu.enabled else None,
+        "warm_rtf": (finished - first) / duration, "results": results, "warm_results": warm}
+    print(json.dumps(record, allow_nan=False), flush=True)
+
+
+def main():
+    """CLI entry point; no installer, sidecar, admission or plugin registration."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--manifest", type=Path, default=HERE / "artifacts.json")
+    parser.add_argument("--models", type=Path)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--check", action="store_true")
+    group.add_argument("--verify", action="store_true")
+    group.add_argument("--artifact")
+    group.add_argument("--tier")
+    parser.add_argument("--provider", choices=("cpu", "cuda"), default="cpu")
+    parser.add_argument("--seconds", type=int, choices=(30, 60))
+    args = parser.parse_args()
+    value = manifest(args.manifest)
+    if args.check:
+        clip(value)
+        print("measure-local: manifest=ok")
+        return
+    if args.models is None:
+        raise Unavailable("models=not-supplied")
+    by_id = {a["id"]: a for a in value["artifacts"]}
+    if args.verify:
+        verify(value, args.models, list(by_id.values()))
+        print("measure-local: inputs=ok")
+        return
+    if args.tier:
+        tier = value["tiers"][args.tier]
+        artifacts = [by_id[name] for name in tier["artifacts"]]
+        provider, scope = tier["provider"], args.tier
+    else:
+        artifacts = [by_id[args.artifact]]
+        provider, scope = args.provider, args.artifact
+        if provider not in artifacts[0]["providers"]:
+            raise ValueError(f"provider=unsupported id={scope} value={provider}")
+    run(value, artifacts, args.models, provider, args.seconds, scope)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Unavailable as error:
+        print(f"measure-local: status=not-measured {error}", file=sys.stderr)
+        sys.exit(77)
+    except (ValueError, KeyError, OSError, TypeError, json.JSONDecodeError) as error:
+        print(f"measure-local: failed={error}", file=sys.stderr)
+        sys.exit(1)

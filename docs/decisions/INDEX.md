@@ -68,6 +68,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-29 | D067 | VGS-596 | Full-screen overlays capture keyboard through a Hyprland submap | Hyprland runs binds before focused layers | Hyprland exposes Lua dispatcher details | Active | [Full](D067-overlay-keyboard-capture.md) |
 | 2026-09-30 | D064 | VGS-623 | Jarvis owns one leased child and one shared wire judge | The daemon must end when its service or shell disappears | Quickshell provides a stronger child lease or capture changes ownership | Active | [Full](D064-jarvis-child-lease.md) |
 | 2026-09-30 | D069 | VGS-679 | The runner relaunches the shell with a backoff, gives up with a notice, never while locked | A dead shell leaves no bar, and a dead lock client leaves only a TTY | Quickshell relaunches after every unclean exit, or VGS ships a systemd user unit | Active | [Full](D069-runner-supervises-the-shell.md) |
+| 2026-09-30 | D066 | VGS-651 | Pin local speech exports, bound Moonshine inputs and use CPU streaming captions | Actual model execution and per-tier measurements close the candidate choices without building the sidecar | Export, runtime, licence, voice, input contract or measured hardware changes | Active | [Full](D066-pinned-local-speech-and-bounded-inputs.md) |
 
 ---
 

@@ -1,0 +1,45 @@
+# Local speech feasibility inputs
+
+Covers: shell/plugins/vgs.jarvis/artifacts.json, shell/plugins/vgs.jarvis/measure-local, shell/plugins/vgs.jarvis/fixtures/, scripts/check-jarvis-local.sh, scripts/test-jarvis-local.py, scripts/fixtures/jarvis-local/
+
+[D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) closes the local stack choices. [The measured run](../measurements/jarvis-local-2026-09-30.md) records execution, load, turn, unload and memory observations.
+
+## Boundary
+
+This directory holds independent feasibility inputs. It has no `manifest.json`, QML entry point or daemon. `bin/vgsh-scan` and `bin/lib/check-manifests.js` skip directories without a manifest. J10 owns registration and the service. J39 owns production adapters and segmentation. J40 owns automatic setup and its lock file. J41 owns admission. J42 owns production captions.
+
+The installed tree carries the pinned declaration, instrument and synthetic fixture. It carries no model, Python environment, CUDA library or espeak runtime. The instrument never installs or downloads anything. J40 must verify the selected runtime and model files before marking setup ready.
+
+D035 command requirements enter the plugin manifest when an owning runtime issue introduces that command. This independent instrument uses the core's Python command and uses `nvidia-smi` only for optional CUDA measurement. It does not invent a service or requirement notice before J10.
+
+## Artifact contract
+
+`artifacts.json` owns URLs, revisions, archive and direct-file hashes, software versions, providers, input formats, languages and software/model/voice licence evidence. The CUDA wheel names its actual published build and Python ABI. The shortened wheel URL in the original research does not name that file.
+
+`measure-local::manifest` judges the declaration. `measure-local::verify` checks local archives and direct inputs. It also compares local phonemizer/dictionary bytes with their pinned archives. A missing model or runtime returns `77`. A wrong hash or malformed declaration fails. No probe substitutes another model or provider.
+
+The manifest's tier maps include the resident caption model. A tier's requested CUDA provider applies only to its CUDA-listed artifacts. The record reports each artifact's actual requested provider separately. The instrument's GPU allocation proves a context ran, not that every ONNX graph node ran on CUDA.
+
+## Moonshine input contract
+
+Upstream [the English export's long-file example](https://k2-fsa.github.io/sherpa/onnx/moonshine/models-v2.html#sherpa-onnx-moonshine-base-en-quantized-2026-02-27-english) uses VAD with offline ASR, not an arbitrary-length single decode. Its [Python API example](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/python-api-examples/offline-moonshine-decode-files-v2.py) creates an independent stream for a wave file. This permits independent segment decoding. It does not promise safe word boundaries or certify a maximum duration.
+
+The measured VGS bound is `80000` mono float32 samples at `16000` Hz, or `5` seconds. J39 must bound every Moonshine SDK input by this value, create a fresh offline stream per chunk, decode every chunk in input order, retain the final shorter chunk and preserve the speech samples. It must join chunk outputs once. An empty or failed chunk must not become a successful final transcript.
+
+The feasibility instrument uses non-overlapping fixed chunks. It is not production VAD segmentation. J39 must choose speech boundaries within the measured bound. J59 owns the semantic-quality and room checks. The raw `60`-second input remains unsupported by this export/runtime pair.
+
+## Fixture outcomes
+
+The paired waveform and original text are synthetic and MIT-licensed. `fixtures/PROVENANCE` identifies generation and resampling. The declaration pins both hashes.
+
+`measure-local::outcome` owns the fixed fixture oracle. It checks transcript words, generated audio rate and duration, speech samples and complete-turn probability. Wake execution needs decoder calls but no hit. These checks prove this fixture executed and produced its known properties. They do not prove semantic transcription quality, other languages, other voices or room accuracy.
+
+## Measurement and validation
+
+The caller supplies local prepared inputs and a scrubbed network namespace. The instrument reads only its bundled audio/text and local models. It never opens capture, playback or authentication. `scripts/check-jarvis-local.sh` runs the actual CPU-model row through [the shared Jarvis world](validation-jarvis.md). Without prepared model/runtime paths it exits `77`, not success.
+
+`scripts/test-jarvis-local.py` tests the actual instrument's declaration, hash, fixture, chunk and output rules. Its disposable copies disable each tested rule. Recognizer and GPU-command doubles test the consumer's API calls, not model feasibility. The actual-model row provides separate execution evidence. [Validation](validation.md) owns row selection.
+
+CUDA memory measurement needs a network-only namespace that preserves this process's host PID. A private PID namespace hides its NVIDIA process identity and cannot provide this reading. CPU behavior tests use the shared environment's private PID namespace.
+
+The instrument requires Python with `hashlib.file_digest`. The measured backend uses the pinned Python ABI. No user setup instructions belong here.

@@ -1,0 +1,247 @@
+{
+  "schemaVersion": 1,
+  "runtimes": {
+    "sherpa-onnx": {
+      "versions": ["1.13.8", "1.13.8+cuda13.cudnn9.onnxruntime1.28.2"],
+      "softwareLicense": "Apache-2.0 AND GPL-3.0-or-later",
+      "source": "https://k2-fsa.github.io/sherpa/onnx/python/install.html",
+      "cudaWheel": {
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-wheels/resolve/4de10716b1043c13380c79f3f12127a6c6429650/cuda/1.13.8/sherpa_onnx-1.13.8%2Bcuda13.cudnn9.onnxruntime1.28.2-cp312-cp312-linux_x86_64.whl",
+        "revision": "4de10716b1043c13380c79f3f12127a6c6429650",
+        "sha256": "7c011bec2c9661a29e526c6d89c328687e4fa692a2146dd967733007c0f596d6",
+        "python": "3.12",
+        "cuda": "13",
+        "cudnn": "9",
+        "onnxruntime": "1.28.2"
+      }
+    },
+    "onnxruntime": {
+      "versions": ["1.30.0"],
+      "softwareLicense": "MIT",
+      "source": "https://github.com/microsoft/onnxruntime"
+    },
+    "transformers": {
+      "versions": ["5.17.0"],
+      "softwareLicense": "Apache-2.0",
+      "source": "https://github.com/huggingface/transformers"
+    },
+    "numpy": {
+      "versions": ["2.5.3"],
+      "softwareLicense": "BSD-3-Clause",
+      "source": "https://numpy.org/"
+    }
+  },
+  "fixture": {
+    "audio": "fixtures/probe.wav",
+    "transcript": "fixtures/probe.txt",
+    "audioSha256": "f8130f951f71674584f8a8f969adb18dbfaf84df44a12fb67936dd83064db84d",
+    "transcriptSha256": "f2cf62d0b5aa2560511acec5630b36e7cee9ff3015fbdeb45bc649ebc640e34d",
+    "license": "MIT",
+    "sampleRate": 16000,
+    "channels": 1,
+    "sampleFormat": "s16le",
+    "transcriptWords": ["read", "this", "local", "test"],
+    "minimumSpeechSamples": 16000,
+    "minimumTurnProbability": 0.5,
+    "wakeTokens": "▁HE Y ▁JA R V IS @HEY_JARVIS"
+  },
+  "tiers": {
+    "small": {"provider": "cpu", "artifacts": ["moonshine", "piper", "silero", "smart-turn", "wake", "nemotron"]},
+    "medium": {"provider": "cpu", "artifacts": ["parakeet", "kokoro", "silero", "smart-turn", "wake", "nemotron"]},
+    "large": {"provider": "cuda", "artifacts": ["parakeet", "kokoro", "silero", "smart-turn", "wake", "nemotron"]},
+    "multilingual-cpu": {"provider": "cpu", "artifacts": ["parakeet", "whisper", "kokoro", "silero", "smart-turn", "wake", "nemotron"]},
+    "multilingual-cuda": {"provider": "cuda", "artifacts": ["parakeet", "whisper", "kokoro", "silero", "smart-turn", "wake", "nemotron"]}
+  },
+  "artifacts": [
+    {
+      "id": "parakeet",
+      "engine": "parakeet",
+      "directory": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+      "revision": "asr-models asset updated 2025-08-16T09:29:29Z",
+      "sha256": "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
+      "runtime": "sherpa-onnx",
+      "providers": ["cpu", "cuda"],
+      "input": "mono 16000 Hz float32 PCM normalized to [-1,1]",
+      "languages": ["bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk"],
+      "modelLicense": "CC-BY-4.0",
+      "voiceLicense": null,
+      "licenseSource": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/tree/541d1f99c6b0c3cd0b11a95167540bb8edefd82b",
+      "files": {
+        "encoder.int8.onnx": "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247",
+        "decoder.int8.onnx": "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e",
+        "joiner.int8.onnx": "3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3",
+        "tokens.txt": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"
+      }
+    },
+    {
+      "id": "moonshine",
+      "engine": "moonshine",
+      "maxInputSamples": 80000,
+      "inputContractSource": "https://k2-fsa.github.io/sherpa/onnx/moonshine/models-v2.html#sherpa-onnx-moonshine-base-en-quantized-2026-02-27-english",
+      "directory": "sherpa-onnx-moonshine-base-en-quantized-2026-02-27",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2",
+      "revision": "asr-models asset updated 2026-02-27T09:30:12Z",
+      "sha256": "43232c1d13013d37317163baec3135bd771a186a4356f28c889bab453bb0e891",
+      "runtime": "sherpa-onnx",
+      "providers": ["cpu"],
+      "input": "mono 16000 Hz float32 PCM normalized to [-1,1]; independent chunks of at most 80000 samples",
+      "languages": ["en"],
+      "modelLicense": "MIT",
+      "voiceLicense": null,
+      "licenseSource": "LICENSE in the pinned archive, SECTION 1",
+      "files": {
+        "encoder_model.ort": "7c66495948d0d08ec1af454cd4b5514862ae6511e94712a60e6d83eaec8dc8cf",
+        "decoder_model_merged.ort": "d9d7b333af34bc552580576ddcf248a1c6c839e0d3b43b09afb9376ed009899d",
+        "tokens.txt": "2870d843e14c1e187bf1913a521562a63b53933814bd7f2145120468f494a049",
+        "LICENSE": "6148d7574a6554b7379b633cfd4c4fe5840c3f548d13bc83e00b52dc6fa00abd"
+      }
+    },
+    {
+      "id": "whisper",
+      "engine": "whisper",
+      "directory": "sherpa-onnx-whisper-turbo",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-turbo.tar.bz2",
+      "revision": "asr-models asset updated 2024-10-02T09:56:09Z",
+      "sha256": "b11acbbcd660b44a8e0df33724feb5aaa709cf65668f2823d59f656312544f22",
+      "runtime": "sherpa-onnx",
+      "providers": ["cpu", "cuda"],
+      "input": "mono 16000 Hz float32 PCM normalized to [-1,1]",
+      "languagesSource": "https://github.com/openai/whisper/blob/main/whisper/tokenizer.py",
+      "languages": ["en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi", "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk", "te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw", "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo", "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su", "yue"],
+      "modelLicense": "MIT",
+      "voiceLicense": null,
+      "licenseSource": "https://github.com/openai/whisper/blob/main/LICENSE",
+      "files": {
+        "turbo-encoder.int8.onnx": "b02dcdf54f348741e93fe732b67d933c8dcb6735655f710640143081db38878b",
+        "turbo-decoder.int8.onnx": "20accd02388482eb3a46bd615631adfdc85e1eb2c7db9ea3f02a40ffe6b81547",
+        "turbo-tokens.txt": "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"
+      }
+    },
+    {
+      "id": "kokoro",
+      "engine": "kokoro",
+      "outputSampleRate": 24000,
+      "directory": "kokoro-multi-lang-v1_0",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+      "revision": "tts-models asset updated 2026-09-08T04:35:52Z",
+      "sha256": "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298",
+      "runtime": "sherpa-onnx",
+      "providers": ["cpu", "cuda"],
+      "input": "UTF-8 text; sid=0 af_alloy; lang=en; speed=1",
+      "output": "mono float32 PCM at 24000 Hz",
+      "languages": ["en", "zh", "fr", "es", "it", "hi"],
+      "modelLicense": "Apache-2.0",
+      "voiceLicense": "Apache-2.0",
+      "licenseSource": "https://huggingface.co/hexgrad/Kokoro-82M/tree/f3ff3571791e39611d31c381e3a41a3af07b4987",
+      "auxiliaryDirectories": ["espeak-ng-data", "dict"],
+      "files": {
+        "model.onnx": "b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11",
+        "voices.bin": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
+        "tokens.txt": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
+        "lexicon-us-en.txt": "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
+        "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      }
+    },
+    {
+      "id": "piper",
+      "engine": "piper",
+      "outputSampleRate": 22050,
+      "directory": "vits-piper-en_US-ljspeech-medium",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-medium.tar.bz2",
+      "revision": "tts-models archive sha256 below",
+      "sha256": "3dfb4b759d8be032a4903a9538d128b0fda2a06ab1de6cbc2d93a97e2dd83dba",
+      "runtime": "sherpa-onnx",
+      "providers": ["cpu"],
+      "input": "UTF-8 text; sid=0; speed=1",
+      "output": "mono float32 PCM at 22050 Hz",
+      "languages": ["en-US"],
+      "modelLicense": "MIT",
+      "voiceLicense": "LicenseRef-Public-Domain",
+      "licenseSource": "https://huggingface.co/rhasspy/piper-voices/tree/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/ljspeech/medium",
+      "auxiliaryDirectories": ["espeak-ng-data"],
+      "files": {
+        "en_US-ljspeech-medium.onnx": "8ceba58a4b540d4e7e7e24ad079cf0d92762a4fd334e059f12940787c6c37b3d",
+        "tokens.txt": "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d",
+        "MODEL_CARD": "fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d"
+      }
+    },
+    {
+      "id": "silero",
+      "engine": "silero",
+      "directory": ".",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+      "revision": "asr-models file sha256 below",
+      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "runtime": "sherpa-onnx",
+      "providers": ["cpu"],
+      "input": "mono 16000 Hz float32 PCM; 512-sample windows",
+      "languages": ["language-independent voice activity"],
+      "modelLicense": "MIT",
+      "voiceLicense": null,
+      "licenseSource": "https://github.com/snakers4/silero-vad/blob/master/LICENSE",
+      "files": {"silero_vad.onnx": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"}
+    },
+    {
+      "id": "smart-turn",
+      "engine": "smart-turn",
+      "directory": ".",
+      "url": "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx",
+      "revision": "f766f81d3cfdf7737ac64aad813d91bbfd56bf93",
+      "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
+      "runtime": "onnxruntime",
+      "providers": ["cpu"],
+      "input": "mono 16000 Hz float32 PCM; last 8 seconds left-padded; WhisperFeatureExtractor(chunk_length=8), do_normalize=true",
+      "languages": ["ar", "bn", "zh", "da", "nl", "de", "en", "fi", "fr", "hi", "id", "it", "ja", "ko", "mr", "no", "pl", "pt", "ru", "es", "tr", "uk", "vi"],
+      "modelLicense": "BSD-2-Clause",
+      "voiceLicense": null,
+      "licenseSource": "https://github.com/pipecat-ai/smart-turn/blob/main/LICENSE",
+      "files": {"smart-turn-v3.2-cpu.onnx": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f"}
+    },
+    {
+      "id": "wake",
+      "engine": "wake",
+      "directory": "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2",
+      "revision": "kws-models asset updated 2024-05-07T03:14:19Z",
+      "sha256": "f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a",
+      "runtime": "sherpa-onnx",
+      "providers": ["cpu"],
+      "input": "mono 16000 Hz float32 PCM; open-vocabulary BPE keyword tokens",
+      "languages": ["en"],
+      "modelLicense": "Apache-2.0",
+      "voiceLicense": null,
+      "licenseSource": "README.md in the pinned archive: license: Apache License 2.0",
+      "files": {
+        "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx": "1e721676515bcd42a186979733981213c66c80db680e1cc582dfedf3be76e678",
+        "decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx": "e40ff43297abe815e8898494c17e71bba2152d9d40fa3eb803f75d0f7533329a",
+        "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx": "eae9da0c7e1e6c6a3f4cc42d167899c388f6c6701b94cb96320e4f55df79624c",
+        "tokens.txt": "fd2ded4050a55d2b1578870ba8697d02371980217806b7558bd0a5cc60f3ba53",
+        "bpe.model": "c8a2a0129c4ab8e463164c142f82d25649661b122c8cd0b7aab5c9e80b90ad24",
+        "keywords.txt": "b1740c4925d7c83337de2cffa04e8d35450fab2af8f583e65c54aad6257c4bd6",
+        "README.md": "74e42d37d63acd2366b042151d576fcc0c4917a41de339414a37f1e79f4e80e2"
+      }
+    },
+    {
+      "id": "nemotron",
+      "engine": "nemotron",
+      "directory": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2",
+      "revision": "asr-models asset updated 2026-07-09T03:39:36Z",
+      "sha256": "c6bf5e0df765f9d5b43bc9e0536d4b4b3e7d40bdf5ecf13e45f134c51c05ae3a",
+      "runtime": "sherpa-onnx",
+      "providers": ["cpu"],
+      "input": "mono 16000 Hz float32 PCM; cached streaming; language=en; 560 ms model chunk",
+      "languages": ["en-US", "en-GB", "es-US", "es-ES", "fr-FR", "fr-CA", "it-IT", "pt-BR", "pt-PT", "nl-NL", "de-DE", "tr-TR", "ru-RU", "ar-AR", "hi-IN", "ja-JP", "ko-KR", "vi-VN", "uk-UA", "pl-PL", "sv-SE", "cs-CZ", "nb-NO", "da-DK", "bg-BG", "fi-FI", "hr-HR", "sk-SK", "zh-CN", "hu-HU", "ro-RO", "et-EE"],
+      "modelLicense": "OpenMDW-1.1",
+      "voiceLicense": null,
+      "licenseSource": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b",
+      "files": {
+        "encoder.int8.onnx": "012e9321373af99021415e0b0eb3ec827b4be3153be6f30d9b448fe65e896e68",
+        "decoder.int8.onnx": "19f9c98fc6d0a2c33a65a43b36fdb2e914c26c0aa9764be3aebc502a1e982fb0",
+        "joiner.int8.onnx": "4101c7c679a0bc30483794b27a059e34e79232aa2068d78d51231a22c8b0d7ce",
+        "tokens.txt": "729cc103155bafa785f9cd45746cd41cabe97eab7182fc04d594129587958f8a"
+      }
+    }
+  ]
+}

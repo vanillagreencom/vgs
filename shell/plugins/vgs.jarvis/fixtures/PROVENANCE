@@ -1,0 +1,11 @@
+probe.wav and probe.txt are synthetic VGS fixtures under the repository MIT license.
+The original text is: Hey Jarvis. Read this local test.
+Generation used sherpa-onnx 1.13.8+cuda13.cudnn9.onnxruntime1.28.2 on CPU.
+The voice is the pinned Piper en_US-ljspeech-medium export in artifacts.json.
+The model card states training from scratch on public-domain LJ Speech recordings.
+Generation used speaker 0 and speed 1. No microphone or speaker participated.
+NumPy interpolation converted the generated 22050 Hz audio to 16000 Hz.
+Samples were clipped to [-1,1], multiplied by 32767 and encoded as little-endian int16.
+The WAV contains 43281 samples in one channel.
+artifacts.json pins the audio and transcript hashes.
+The fixture proves execution and known output properties, not room accuracy.

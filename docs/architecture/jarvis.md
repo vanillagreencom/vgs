@@ -4,6 +4,10 @@ Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarv
 
 The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health. This skeleton captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice.
 
+## Local speech inputs
+
+[jarvis-local.md](jarvis-local.md) defines the independent artifact declaration, bounded model inputs, measurement instrument and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the selected exports and caption path. These inputs register no plugin and do not implement the sidecar, setup or admission.
+
 ## Session observation
 
 A privacy-sensitive service declares capability `session` and binds to `shell.session.locked`. The [capability contract](capabilities.md) defines that state and its tests. It grants no lock authority and introduces no dependency on a lock plugin: [D056](../decisions/D056-read-only-session-state.md).
