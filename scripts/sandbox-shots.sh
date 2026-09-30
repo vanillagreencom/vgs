@@ -1393,29 +1393,6 @@ scene_automations() { # MODE
   printf '#!/usr/bin/env bash\nexit 0\n' >"$shim/systemd-analyze"
   chmod 755 "$shim/systemd-analyze"
   terminal_stand_in
-  cat >"$shim/xdg-terminal-exec" <<EOF
-#!/usr/bin/env bash
-: >"$tui_record.next"
-for a; do printf '%s\n' "\$a" >>"$tui_record.next"; done
-mv -f -- "$tui_record.next" "$tui_record"
-app_id="" title=""
-while [[ \$# -gt 0 && \$1 != -- ]]; do
-  case "\$1" in
-    --app-id=*) app_id="\${1#*=}" ;;
-    --title=*) title="\${1#*=}" ;;
-  esac
-  shift
-done
-shift
-presenter=()
-while [[ \$# -gt 0 && \$1 != -- ]]; do presenter+=("\$1"); shift; done
-"$sandbox/toplevel" "\$app_id" "\$title" >/dev/null 2>&1 &
-window=\$!
-"\${presenter[@]}" -- true </dev/null >/dev/null 2>&1
-kill "\$window" 2>/dev/null
-wait "\$window"
-EOF
-  chmod 755 "$shim/xdg-terminal-exec"
   local auto_engine="$repo/shell/plugins/vgs.automations/bin/automations"
   local shell_path
   shell_path="$(tr '\0' '\n' <"/proc/$shell_qs_pid/environ" | sed -n 's/^PATH=//p')"
