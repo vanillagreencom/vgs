@@ -234,6 +234,18 @@ Scope {
             const a = JSON.parse(arg);
             return item.writeSetting(a.id, a.key, a.value);
         }
+        if (name === "fieldChoice" || name === "chooseField") {
+            const a = JSON.parse(arg);
+            const field = fieldOf(item, a.id, a.key);
+            if (field === null) return "absent";
+            const editor = descendants(field).find(child => typeName(child) === "Select");
+            if (editor === undefined) return "no-select";
+            if (name === "chooseField") {
+                editor.choose(a.index);
+                return "chosen";
+            }
+            return JSON.stringify({ model: editor.model, index: editor.currentIndex, text: editor.currentText, value: field.value, enabled: editor.enabled });
+        }
         if (name === "applyKey") {
             // A drawn Keys row's edit, as the row emits it: `key` absent
             // is a reset.

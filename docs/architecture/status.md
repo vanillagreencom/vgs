@@ -23,10 +23,23 @@ The manifest's `status` key maps a status key to `{ type, label, group?, hint?, 
 | `count` | a whole number from 0 | none |
 | `time` | whole milliseconds since the Unix epoch, as `Date.now()` answers | none; drawn as the local short date and time |
 | `data` | plain JSON: null, booleans, finite numbers, strings, arrays and plain objects | never drawn |
+| `choices` | a list of at most `PluginLogic.STATUS_LIST_MAX` items `{ label, value }` | a setting's Select, never a Status row |
 
 A `presence` value answers whether a credential is stored without its value: stored and readable, not stored, stored in a locked collection a background probe must not unlock, a store that cannot be asked, or stored where another user can read it. D037 gives each value's meaning and tone.
 
 A `presenceList` value is one `presence` per thing the manifest cannot list ahead, such as one credential per account the plugin finds. Each item carries only `STATUS_LIST_ITEM_KEYS`: a `label`, a printable line of at most 60 characters; a `value`, a `presence` value; and, when present, a `hint` of at most 200 and a `command` of at most 300, printable lines as a declaration's are. `PluginLogic.statusValueFits` judges each item.
+
+## Setting choices
+
+A string schema entry's `optionsFrom` names a `choices` status key of the same plugin, including a hidden entry. `PluginLogic.schemaError` refuses another type, a malformed key, an undeclared key or a key of another status type. Static `options` remains enum-only. [D057](../decisions/D057-setting-options-from-status.md) refines D032 and D037.
+
+- Each choice holds only `label` and `value`. Both are non-empty printable lines. A label fits `STATUS_LABEL_MAX`, and a value fits `STATUS_TEXT_MAX`. Values are distinct; labels may repeat. An empty list is valid. `PluginLogic.statusValueFits` judges the list under the existing status byte ceiling.
+- `Registry.managerRows.settingChoices` holds one Select model per string with `optionsFrom`, built by `PluginLogic.settingChoices`. It copies the accepted offers, adds an empty-string first-offered entry, and adds the configured id marked unavailable when it is not offered. Unreported or disabled status supplies no offers. The models never reach the status record or configuration by reference.
+- Empty string means the first offered value. The plugin consuming the setting resolves it from its own status; with no offer it has no selected value. The core delivers the configured string unchanged. It never stores the first offer.
+- A status update, a renamed label, reordered offers, an empty list, disable or source replacement changes no setting. A configured id no longer offered stays visible and stored. The string setting judge still accepts it.
+- `SettingField` draws the existing `qs.Ui` Select. `Select.activated` applies the selected id only on a user choice, never on a model or binding change. The editor restores its index binding after the choice, so a refused save shows the configured value again.
+
+`scripts/test-plugin-logic.js` and `scripts/test-plugin-status.js` pin these rules with must-fail controls. `scripts/smoke/rows/settings.sh` reads the drawn model, saved id, unavailable value and no-write refreshes from `acme.status`. `scripts/smoke/rows/status.sh` reads the list from every instance and verifies reader isolation.
 
 ## Published
 
@@ -44,7 +57,7 @@ A `presenceList` value is one `presence` per thing the manifest cannot list ahea
 
 ## Shown
 
-- `Registry.managerRows` gives each plugin `status`, `PluginLogic.statusRows`: one row per entry that is not `data` and not `hidden`, in manifest order, `{ key, type, label, group, hint, command, report, value, tone }`, `report` `reported` or `unreported`. A reported `presenceList` row's `value` is its items, each `{ label, value, hint, command, tone }` with `hint` and `command` "" when the item omits them and `tone` its presence's; the row's own `tone` is "".
+- `Registry.managerRows` gives each plugin `status`, `PluginLogic.statusRows`: one row per entry that is not `data`, `choices` or `hidden`, in manifest order, `{ key, type, label, group, hint, command, report, value, tone }`, `report` `reported` or `unreported`. A reported `presenceList` row's `value` is its items, each `{ label, value, hint, command, tone }` with `hint` and `command` "" when the item omits them and `tone` its presence's; the row's own `tone` is "".
 - The Settings page draws a Status section above the settings form: one `StatusRow` per row, entries without a `group` first under `Status`, then each group in the order its first entry appears. A row draws `StatusLine`s: the label beside the value, a `Badge` in the row's tone for `presence` and `state` and a line of text otherwise, the hint under it, and the command in a `CodeLine`. A `presenceList` row draws its label and hint, "None detected" while the list is empty, then one line per item: the item's label beside a `Badge` of its presence, its hint and its command. An unreported row, and every row of a disabled plugin, reads "Not reported". No row takes an edit.
 
 ## The Slack token rows
@@ -56,7 +69,7 @@ A `presenceList` value is one `presence` per thing the manifest cannot list ahea
 1. Every instance of a plugin reads one record: the service, a bar widget on each of two screens and a summoned panel read one revision and one set of values. Enforced by `scripts/smoke/rows/status.sh`.
 2. Only a declared key with a value of its type, inside the ceiling, is published; the published values do not change in place. Enforced by `scripts/test-plugin-status.js`, each rule with a control, and by `scripts/smoke/rows/status.sh`, which reads each refusal by its text.
 3. A disabled plugin holds no record, a new source revision drops it, and a retired instance's write cannot bring it back. Enforced by `scripts/smoke/rows/status.sh`, from the lending record.
-4. The Settings page draws no `data` or hidden entry and no row takes an edit. Enforced by `scripts/test-plugin-status.js` and `scripts/smoke/rows/settings.sh`.
+4. The Status section draws no `data`, `choices` or hidden entry and no row takes an edit. Enforced by `scripts/test-plugin-status.js` and `scripts/smoke/rows/settings.sh`.
 5. The Slack token probe never reads a token and never prints one. Enforced by `scripts/test-notifications-token-status.sh`, with a control that reads the search's stdout and one that prints the token, and by `scripts/smoke/rows/notifications.sh`, which reads the rows after each set of states of the stub store and finds a token in no record, row or log line.
 6. A `presenceList` item holds only its keys, a label and a presence, and its row carries each item's tone. Enforced by `scripts/test-plugin-status.js`, each rule with a control.
 

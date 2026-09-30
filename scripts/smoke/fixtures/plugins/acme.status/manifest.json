@@ -3,7 +3,10 @@
   "kinds": ["service", "bar-widget", "panel"], "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml", "panel": "Panel.qml" },
   "defaultSection": "right",
   "capabilities": ["status", "ipc"],
+  "settings": { "device": "" },
+  "schema": { "device": { "type": "string", "label": "Device", "optionsFrom": "devices" } },
   "status": {
+    "devices": { "type": "choices", "label": "Devices" },
     "token": { "type": "presence", "label": "Token", "group": "Sync", "hint": "Needed for the fixture's sync", "command": "secret-tool store --label='acme token' service acme account token" },
     "check": { "type": "state", "label": "Check" },
     "pending": { "type": "count", "label": "Pending", "group": "Sync" },

@@ -30,6 +30,8 @@ What each component of `qs.Ui` guarantees. The tokens they draw from and the lay
 - `AvatarGroup` draws people as round faces in a square box `size` wide, from a list of `{ image, initials, tint }` the caller resolves, and `more`, the people past them. One person fills the box with no ring. Two to four overlap in the box's corners; past four, three faces and a `+N` chip take the four places. `scripts/qml-tests/tst_avatargroup.qml` holds the geometry.
 - `Toast` draws one notice in the shared stack. Its rectangular row starts at the normal toast padding for a square corner. With a rounded corner, it starts where the row's corners, one padding down from the top, stay one spacing step inside the drawn curve on both sides, through `Inset.clearing`. `scripts/qml-tests/tst_spacing.qml` holds both cases.
 
+`Select.activated(index)` reports a user choice, including the current entry. Invalid indices emit nothing. A model replacement or a bound index change emits nothing. `scripts/qml-tests/tst_overlays.qml` pins the distinction, with controls in `scripts/test-qml-unit.sh`.
+
 ## Gallery
 
 `shell/plugins/vgs.gallery` is a first-party application window ([surfaces.md](surfaces.md)) that draws every component in every variant and state, and every role of `Theme.text` in its typography section, read from the group itself, so a theme author previews a whole theme at once. It is built only while summoned; `scripts/smoke/rows/gallery.sh` summons it, reads its section and component counts back, holds every example inside the window's right edge, shows a toast through its capability and hides it, then reads it as a Hyprland window. A new component is added to the gallery in the same change.

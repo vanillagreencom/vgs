@@ -4,14 +4,15 @@ import qs.Commons
 import qs.Ui
 
 // One settings field from a schema entry, beside the entry's label in a
-// Field: a switch for a boolean, a select for an enum, a slider with its
+// Field: a switch for a boolean, a select for an enum or a string with
+// optionsFrom, a slider with its
 // value beside it for a number with both `min` and `max`, and a text field
 // for any other number or a string. `apply` carries the new value; the
 // field then shows what the configuration holds again, so a refused write
 // leaves the old value in place. An empty or non-numeric number field
 // sends NaN, which the schema refuses. The slider sends its value when a
-// drag ends or a key moves it. The select assigns its index only on a
-// different choice, so choosing the current option keeps the binding.
+// drag ends or a key moves it. Only Select.activated writes a choice.
+// A model refresh changes the display without writing the configuration.
 Field {
     id: root
 
@@ -19,6 +20,7 @@ Field {
     property string key: ""
     property var spec: ({})
     property var value
+    property var choices: []
     property bool editable: true
     readonly property bool bounded: spec.type === "number" && spec.min !== undefined && spec.max !== undefined
     signal apply(var value)
@@ -30,7 +32,7 @@ Field {
     Loader {
         id: loader
         width: parent.width
-        sourceComponent: root.spec.type === "boolean" ? toggle : root.spec.type === "enum" ? choice : root.bounded ? slider : text
+        sourceComponent: root.spec.type === "boolean" ? toggle : root.spec.type === "enum" || root.spec.optionsFrom !== undefined ? choice : root.bounded ? slider : text
     }
 
     Component {
@@ -66,13 +68,16 @@ Field {
         id: choice
         Select {
             width: parent.width
-            model: root.spec.options
-            currentIndex: Math.max(0, root.spec.options.indexOf(root.value))
+            readonly property bool dynamic: root.spec.optionsFrom !== undefined
+            readonly property int configuredIndex: dynamic ? root.choices.findIndex(option => option.value === root.value) : root.spec.options.indexOf(root.value)
+            model: dynamic ? root.choices : root.spec.options
+            textRole: dynamic ? "label" : ""
+            currentIndex: configuredIndex
             enabled: root.editable
-            onCurrentIndexChanged: {
-                const chosen = root.spec.options[currentIndex];
+            onActivated: index => {
+                const chosen = dynamic ? root.choices[index].value : root.spec.options[index];
+                currentIndex = Qt.binding(() => configuredIndex);
                 if (chosen === root.value) return;
-                currentIndex = Qt.binding(() => Math.max(0, root.spec.options.indexOf(root.value)));
                 root.apply(chosen);
             }
         }

@@ -104,6 +104,8 @@ mutations=(
   "the select accepts an index past its end|controls/Select.qml|index >= count) return;|index >= count + 100) return;|tst_overlays.qml"
   "the select ignores its text role|controls/Select.qml|return String(entry[textRole]);|return String(entry);|tst_overlays.qml"
   "the select breaks its index binding on the current choice|controls/Select.qml|if (index !== currentIndex) currentIndex = index;|currentIndex = index;|tst_overlays.qml"
+  "the select emits no user choice|controls/Select.qml|        activated(index);|        if (false) activated(index);|tst_overlays.qml"
+  "the select activates on a model refresh|controls/Select.qml|signal activated(int index)|signal activated(int index); onModelChanged: activated(currentIndex)|tst_overlays.qml"
   "the toast ignores its tone|feedback/Toast.qml|const found = Theme.badge.tone[name];|const found = undefined;|tst_overlays.qml"
   "Return answers no dialog|feedback/Dialog.qml|Keys.onReturnPressed: pressFocused()|Keys.onReturnPressed: {}|tst_dialog.qml"
   "Enter answers no dialog|feedback/Dialog.qml|Keys.onEnterPressed: pressFocused()|Keys.onEnterPressed: {}|tst_dialog.qml"

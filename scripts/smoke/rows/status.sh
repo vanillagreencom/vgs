@@ -79,6 +79,17 @@ expect "the refusals change no revision" "$before_revision" agreed statusRevisio
 tampered() { publish tamper | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 expect "the published values do not change in place" "$before_values" tampered
 
+# Choices use the same one record and refusal path as other status types.
+agreed_choices() { agreed statusValues | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["devices"]))'; }
+choices_after_tamper() { publish tamper | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["devices"]))'; }
+expect "a labeled choices list is published" ok publish set 'devices=[{"label":"Alpha","value":"a"},{"label":"Beta","value":"b"}]'
+expect_poll "every instance reads the choices list" '[{"label": "Alpha", "value": "a"}, {"label": "Beta", "value": "b"}]' agreed_choices
+choices_revision="$(agreed statusRevision)" || fail "the choices revision is unreadable"
+expect "duplicate choice values are refused" 'refused: status=devices reason=type' publish set 'devices=[{"label":"Alpha","value":"a"},{"label":"Other","value":"a"}]'
+expect "an empty offered id is refused" 'refused: status=devices reason=type' publish set 'devices=[{"label":"Automatic","value":""}]'
+expect "choice refusals change no revision" "$choices_revision" agreed statusRevision
+expect "a reader cannot change the choices in the record" '[{"label": "Alpha", "value": "a"}, {"label": "Beta", "value": "b"}]' choices_after_tamper
+
 # Disable: the record goes with the plugin, and the provider of an
 # instance the core retired cannot bring it back.
 expect "the probe keeps the service's status provider" held ipc smoke holdStatus service acme.status

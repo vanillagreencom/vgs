@@ -289,7 +289,8 @@ Singleton {
     // metadata, its icon, capabilities and source, whether it is enabled,
     // its settings schema, the settings it currently receives (a bar
     // widget's from its first layout entry), its Keys rows, its Status rows
-    // (PluginLogic.statusRows over the values it published), its
+    // (PluginLogic.statusRows over the values it published), its setting
+    // choices (PluginLogic.settingChoices over those same values), its
     // requirements with their state and its errors:
     // each failed build of one of its kinds, once per cause, then each
     // problem the Hyprland layer reports for it.
@@ -308,6 +309,8 @@ Singleton {
             }
             for (const problem of problems)
                 if (problem.id === id) errors.push(problem.error);
+            const settings = Logic.managerSettings(config, m);
+            const values = PluginStatus.valuesOf(id);
             return {
                 id: id,
                 name: m.name,
@@ -321,9 +324,10 @@ Singleton {
                 source: sourceOf(m),
                 enabled: isEnabled(id),
                 schema: m.schema,
-                settings: Logic.managerSettings(config, m),
+                settings: settings,
+                settingChoices: Logic.settingChoices(m, values, settings),
                 binds: Logic.bindRows(config, m, descriptions),
-                status: Logic.statusRows(m, PluginStatus.valuesOf(id)),
+                status: Logic.statusRows(m, values),
                 requirements: requirementsOf(id),
                 errors: errors
             };

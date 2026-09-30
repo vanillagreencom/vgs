@@ -8,6 +8,8 @@
 
 **Research**: VGS-508
 
+**Options refinement**: [D057](D057-setting-options-from-status.md) connects a string field's Select to its plugin's declared choices status. The configured value remains a string.
+
 **Refined by**: [D037](D037-plugin-status.md): a page also shows the read-only status rows the manifest's `status` key declares, above its editable fields. The manifest is still the whole page, and status is no setting. [D044](D044-application-windows-are-hyprland-toplevels.md): the window is kind `window`, a Hyprland toplevel, no longer a `panel` layer surface; the **Kinds**, **Window** and **Deep link** entries below record the first design.
 
 **Context**: The plugin manager's user interface was a `manager` built-in of `vgs.bar`: a Plugins button and a small popup that listed every plugin with a switch and drew every schema form inline, [D013](D013-built-in-widgets-are-the-bar-plugins.md). A user could not see one plugin's details, capabilities or keys in one place, and plugin keybinds, which `hyprland.binds` declares and `shell.json` `keys` rebinds ([D028](D028-one-generated-hyprland-layer.md)), had no user interface. No manifest named an icon, and most first-party plugins declared no schema, so the list showed lower-case ids with a generic icon and nothing to change.

@@ -25,6 +25,8 @@ T.AbstractButton {
     readonly property string currentText: textAt(currentIndex)
     readonly property bool listOpen: list.visible
     property bool counted: false
+    // A user choice only. Model and binding updates never emit this.
+    signal activated(int index)
 
     function share(open) {
         if (open === counted) return;
@@ -46,6 +48,7 @@ T.AbstractButton {
     function choose(index) {
         if (index < 0 || index >= count) return;
         if (index !== currentIndex) currentIndex = index;
+        activated(index);
         list.visible = false;
     }
 

@@ -10,6 +10,8 @@
 
 **Refines**: [D032](D032-settings-plugin-and-manifest-settings-convention.md)
 
+**Refined by**: [D057](D057-setting-options-from-status.md): choices status feeds a string setting's editor. It remains runtime data, not configuration.
+
 **Context**: A plugin's service owns live values: a pending-update count, whether a warden is checking, whether a credential is stored. The plugin's bar widgets, its flyout and its Settings page are separate instances, each built by the core with its own `shell` object, and nothing let one read what another holds. [D032](D032-settings-plugin-and-manifest-settings-convention.md) gave the Settings page editable schema fields only, and the notifications' Slack token, which [VGS-510](../../shell/plugins/vgs.notifications/README.md) keeps in libsecret, had no row saying whether it is stored or how to store it. Updates, Agent Warden and Dev Tools all need the same thing.
 
 **Decision**: One core convention, the `status` key and capability.

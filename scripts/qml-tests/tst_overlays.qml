@@ -44,6 +44,7 @@ Item {
     Toast { id: toast; y: 120; title: "Saved"; message: "to disk"; tone: "success"; iconName: "check" }
     property int triggered: -1
     SignalSpy { id: dismissals; target: toast; signalName: "dismissed" }
+    SignalSpy { id: activations; target: roled; signalName: "activated" }
 
     TestCase {
         name: "overlays"
@@ -342,6 +343,24 @@ Item {
             select.choose(1);
             compare(select.listOpen, false);
             compare(OverlayState.open, 0);
+        }
+
+        function test_select_activation_is_a_user_choice_only() {
+            roled.model = [{ name: "alpha" }, { name: "beta" }];
+            roled.currentIndex = 0;
+            activations.clear();
+            roled.choose(1);
+            compare(activations.count, 1);
+            compare(activations.signalArguments[0][0], 1);
+            roled.choose(1);
+            compare(activations.count, 2, "the current entry is still a user choice");
+            roled.choose(-1);
+            roled.choose(2);
+            compare(activations.count, 2, "invalid entries emit nothing");
+            roled.model = [{ name: "new alpha" }, { name: "new beta" }];
+            roled.currentIndex = 0;
+            compare(activations.count, 2, "model and index updates do not activate");
+            roled.model = [{ name: "alpha" }, { name: "beta" }];
         }
 
         function test_choosing_the_current_entry_keeps_the_index_binding() {

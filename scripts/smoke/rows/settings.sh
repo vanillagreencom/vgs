@@ -87,10 +87,92 @@ expect "the fixture publishes data" ok ipc acme.status invoke detail ''
 expect "the window opens the status fixture's page" ok ipc smoke invokeInstance window vgs.settings openPlugin acme.status
 expect_poll "the manager row lists each drawn entry in manifest order, with its value and tone" "$(python3 -c 'import json,sys; print(json.dumps([["Token", "reported", "present", "success", sys.argv[1]], ["Check", "reported", {"tone": "warning", "text": "Two sources failed"}, "warning", ""], ["Pending", "reported", 3, "", ""], ["Last check", "reported", int(sys.argv[2]), "", ""], ["Note", "unreported", None, "", ""]]))' "$fixture_command" "$fixture_time")" status_of acme.status
 expect_poll "the page draws the ungrouped entries, then each group's, read-only" "$(python3 -c 'import json,sys; print(json.dumps([["Check", "Two sources failed"], ["Last check", "time"], ["Note", "Not reported"], ["Token", "Present", "Needed for the fixture'"'"'s sync", sys.argv[1]], ["Pending", "3"]]))' "$fixture_command")" drawn_status_timeless
-expect_poll "the page heads the status sections before any other" '["Status", "Sync"]' section_names
+expect_poll "the page heads the status sections before any other" '["Status", "Sync", "Settings"]' section_names
 expect "no Status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs window vgs.settings
-expect "the page draws no settings field for the status fixture" '[0, 0]' page_fields_of acme.status
+expect "the page draws the choices setting only" '[1, 0]' page_fields_of acme.status
+
+# The editor reads the service's choices, writes stable values rather than
+# labels, and never writes on a status refresh. A missing configured value
+# remains visible and stored. Node judge controls pin the shape, distinct
+# ids, list and text bounds, empty-string reservation and retained values.
+device_field() { ipc smoke invokeInstance window vgs.settings fieldChoice '{"id":"acme.status","key":"device"}'; }
+device_state() { device_field | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["index"],d["text"],d["value"],d["enabled"]]))'; }
+device_model() { device_field | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["model"]))'; }
+choose_device() { ipc smoke invokeInstance window vgs.settings chooseField "{\"id\":\"acme.status\",\"key\":\"device\",\"index\":$1}"; }
+user_device() { python3 -c 'import json,sys; print(json.dumps(next(r["device"] for r in json.load(open(sys.argv[1]))["plugins"] if r["id"]=="acme.status")))' "$home/.config/vgs/shell.json"; }
+expect_poll "unreported choices draw an automatic Select" '[0, "First offered (none available)", "", true]' device_state
+expect "the fixture offers labeled device ids" ok ipc acme.status invoke set 'devices=[{"label":"Alpha","value":"a"},{"label":"Beta","value":"b"}]'
+expect_poll "the Select draws the status labels and keeps automatic empty string" '[0, "First offered: Alpha", "", true]' device_state
+expect "the Select contains the offered ids" '[{"label": "First offered: Alpha", "value": ""}, {"label": "Alpha", "value": "a"}, {"label": "Beta", "value": "b"}]' device_model
+expect "choosing the second offered device is allowed" chosen choose_device 2
+expect_poll "the file stores the stable id, not its label" '"b"' user_device
+expect_poll "the service receives the chosen id" '"b"' ipc smoke readInstance service acme.status configuredDevice
+expect_poll "the choice save settles" true config_settled
+choices_changes="$(config_changes)" || fail "configuration counter unreadable before choices refresh"
+expect "the fixture removes the chosen id" ok ipc acme.status invoke set 'devices=[{"label":"Alpha","value":"a"}]'
+expect_poll "the removed id remains selected and marked unavailable" '[2, "b (unavailable)", "b", true]' device_state
+expect "the removed id stays in the user file" '"b"' user_device
+expect "removing a choice writes no configuration" "$choices_changes" config_changes
+expect "the fixture offers the configured id again, with a new label and order" ok ipc acme.status invoke set 'devices=[{"label":"Beta renamed","value":"b"},{"label":"Alpha","value":"a"}]'
+expect_poll "the existing value follows its id rather than its old index" '[1, "Beta renamed", "b", true]' device_state
+expect "a label and order refresh writes no configuration" "$choices_changes" config_changes
+expect "the fixture publishes an empty choices list" ok ipc acme.status invoke set 'devices=[]'
+expect_poll "an empty list also keeps the configured id" '[1, "b (unavailable)", "b", true]' device_state
+expect "an empty list writes no configuration" "$choices_changes" config_changes
+expect "the user can return to automatic selection" chosen choose_device 0
+expect_poll "automatic selection stores empty string, not the first id" '""' user_device
+expect "the fixture offers a new first device" ok ipc acme.status invoke set 'devices=[{"label":"Alpha","value":"a"}]'
+expect_poll "automatic selection displays the new first offer without storing it" '[0, "First offered: Alpha", "", true]' device_state
+expect "the empty string stays in the file" '""' user_device
+
+# A disposable SettingField keeps the same editor and observes apply.
+# Each mutation keeps the code it tests and removes one guarantee.
+choice_controls="$repo/shell/plugins/vgs.settings"
+python3 - "$choice_controls" <<'PYEDIT'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+source = (root / "SettingField.qml").read_text()
+controls = [
+    ("ChoicesGood", None, None),
+    ("ChoicesNoModel", "model: dynamic ? root.choices : root.spec.options", "model: dynamic ? [] : root.spec.options"),
+    ("ChoicesWriteLabel", "root.choices[index].value", "root.choices[index].label"),
+    ("ChoicesNoBinding", "currentIndex = Qt.binding(() => configuredIndex);", "if (false) currentIndex = Qt.binding(() => configuredIndex);"),
+]
+for name, needle, replacement in controls:
+    text = source
+    if needle is not None:
+        assert text.count(needle) == 1, (name, needle)
+        text = text.replace(needle, replacement)
+        assert text != source, name
+    anchor = "    property var choices: []"
+    assert text.count(anchor) == 1
+    text = text.replace(anchor, anchor + """
+    property var smokeApplied: null
+    onApply: v => smokeApplied = v
+    readonly property int smokeCount: loader.item === null ? -1 : loader.item.count
+    readonly property int smokeIndex: loader.item === null ? -1 : loader.item.currentIndex
+    function smokeChoose() { loader.item.choose(1); }
+""")
+    (root / (name + ".qml")).write_text(text)
+PYEDIT
+choice_props='{"spec":{"type":"string","label":"Device","optionsFrom":"devices"},"value":"","choices":[{"label":"First offered: Alpha","value":""},{"label":"Alpha","value":"a"}]}'
+for control in ChoicesGood ChoicesNoModel ChoicesWriteLabel ChoicesNoBinding; do
+  expect "the probe builds $control" ok ipc smoke popupLoad "$control" "$choice_controls/$control.qml" window vgs.settings "$choice_props"
+done
+expect "the unchanged field copy draws the model" 2 ipc smoke popupRead ChoicesGood smokeCount
+expect "the control without the status model draws no choices" 0 ipc smoke popupRead ChoicesNoModel smokeCount
+expect "the unchanged copy chooses an offered item" ok ipc smoke popupCall ChoicesGood smokeChoose
+expect "the unchanged copy applies the stable value" '"a"' ipc smoke popupRead ChoicesGood smokeApplied
+expect "the unchanged copy restores the configured index after an unsaved choice" 0 ipc smoke popupRead ChoicesGood smokeIndex
+expect "the label-writing control chooses the same item" ok ipc smoke popupCall ChoicesWriteLabel smokeChoose
+expect "the label-writing control breaks stable-value readback" '"Alpha"' ipc smoke popupRead ChoicesWriteLabel smokeApplied
+expect "the no-binding control chooses the same item" ok ipc smoke popupCall ChoicesNoBinding smokeChoose
+expect "the no-binding control leaves an unsaved index selected" 1 ipc smoke popupRead ChoicesNoBinding smokeIndex
+for control in ChoicesGood ChoicesNoModel ChoicesWriteLabel ChoicesNoBinding; do
+  expect "the probe drops $control" ok ipc smoke popupDrop "$control"
+done
 expect "disabling the status fixture from its page is allowed" ok ipc smoke invokeInstance window vgs.settings toggle acme.status
+expect_poll "a disabled plugin's dynamic Select is read-only and has no offered choices" '[0, "First offered (none available)", "", false]' device_state
 expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "'"$fixture_command"'"], ["Pending", "Not reported"]]' drawn_status
 expect "the window opens the notifications' page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.notifications
 slack_tokens_hint="One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."

@@ -39,7 +39,7 @@ var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"];
 // carry. `min`, `max` and `step` bound a number's control; `group` names the
 // section heading the entry is drawn under.
 var SETTING_TYPES = ["string", "number", "boolean", "enum"];
-var SCHEMA_ENTRY_KEYS = ["type", "label", "description", "options", "min", "max", "step", "group"];
+var SCHEMA_ENTRY_KEYS = ["type", "label", "description", "options", "optionsFrom", "min", "max", "step", "group"];
 var NUMBER_BOUND_KEYS = ["min", "max", "step"];
 
 // The icon a plugin without a manifest `icon` is listed with.
@@ -76,8 +76,9 @@ var CONTROL_CHARACTER = /[\u0000-\u001f\u007f-\u009f]/;
 // Plugin status: the runtime values a plugin publishes through its `status`
 // capability, each declared in the manifest's `status` key with one of these
 // types. `data` is structured JSON only the plugin's own instances read; the
-// Settings window draws every other type unless the entry is `hidden`.
-var STATUS_TYPES = ["presence", "presenceList", "state", "text", "count", "time", "data"];
+// Settings window draws every other type unless the entry is `hidden`;
+// `choices` feeds a setting's Select instead of a Status row.
+var STATUS_TYPES = ["presence", "presenceList", "state", "text", "count", "time", "data", "choices"];
 var STATUS_ENTRY_KEYS = ["type", "label", "group", "hint", "command", "hidden"];
 // A status key names a value in `shell.status.values`, so it is a plain
 // identifier.
@@ -106,6 +107,9 @@ var STATUS_STATE_KEYS = ["tone", "text"];
 // optional printable `hint` and `command`, of the declaration's lengths.
 var STATUS_LIST_MAX = 32;
 var STATUS_LIST_ITEM_KEYS = ["label", "value", "hint", "command"];
+// Choice values are stable ids, not their display labels. Empty string is
+// reserved for a setting that follows the first offered value.
+var STATUS_CHOICE_KEYS = ["label", "value"];
 
 // A name a plugin registers a shortcut, an IPC target or a built-in widget
 // under, the name a manifest's Hyprland bind gives its shortcut, and the name
@@ -243,8 +247,9 @@ function settingError(entry, value) {
 // entry may bound its control with finite `min` below finite `max` and a
 // positive `step`, which no other type carries; `group`, when present, is a
 // non-empty string; every entry has a default of its type, inside its
-// bounds, in `settings`, so a form always has a value to show.
-function schemaError(schema, settings) {
+// bounds, in `settings`, so a form always has a value to show. optionsFrom
+// connects a string to a declared choices status, never to another plugin.
+function schemaError(schema, settings, status) {
     if (!isPlainObject(schema))
         return "schema must be an object";
     if (hasOwn(schema, "id"))
@@ -276,6 +281,14 @@ function schemaError(schema, settings) {
             }
         } else if (entry.options !== undefined) {
             return at + ".options needs type enum";
+        }
+        if (entry.optionsFrom !== undefined) {
+            if (entry.type !== "string")
+                return at + ".optionsFrom needs type string";
+            if (typeof entry.optionsFrom !== "string" || !STATUS_KEY_PATTERN.test(entry.optionsFrom))
+                return at + ".optionsFrom must name a status key";
+            if (!hasOwn(status, entry.optionsFrom) || status[entry.optionsFrom].type !== "choices")
+                return at + ".optionsFrom must name a choices status entry";
         }
         for (var n = 0; n < NUMBER_BOUND_KEYS.length; n++) {
             var bound = NUMBER_BOUND_KEYS[n];
@@ -392,13 +405,28 @@ function isPlainJson(value) {
 // item by item, at most STATUS_LIST_MAX long; `state` { tone, text } with a tone of
 // STATUS_STATE_TONES and a printable text; `text` a printable line; `count`
 // a whole number from 0; `time` a whole number of milliseconds since the
-// Unix epoch, from 0; `data` plain JSON.
+// Unix epoch, from 0; `data` plain JSON; `choices` a bounded list of labeled,
+// distinct, non-empty string ids.
 function statusValueFits(type, value) {
     if (type === "presence") return typeof value === "string" && hasOwn(STATUS_PRESENCE_TONES, value);
     if (type === "presenceList") {
         if (!Array.isArray(value) || value.length > STATUS_LIST_MAX) return false;
         for (var n = 0; n < value.length; n++)
             if (!statusListItemFits(value[n])) return false;
+        return true;
+    }
+    if (type === "choices") {
+        if (!Array.isArray(value) || value.length > STATUS_LIST_MAX) return false;
+        var seen = [];
+        for (var c = 0; c < value.length; c++) {
+            var choice = value[c];
+            if (!isPlainObject(choice) || !isPlainJson(choice)) return false;
+            if (Object.keys(choice).some(function (key) { return STATUS_CHOICE_KEYS.indexOf(key) === -1; })) return false;
+            if (!isPrintableLine(choice.label, STATUS_LABEL_MAX)) return false;
+            if (!isPrintableLine(choice.value, STATUS_TEXT_MAX)) return false;
+            if (seen.indexOf(choice.value) !== -1) return false;
+            seen.push(choice.value);
+        }
         return true;
     }
     if (type === "state") {
@@ -493,9 +521,28 @@ function statusWrite(manifest, values, key, value) {
 }
 
 // Whether the Settings window draws status entry `entry`: every type but
-// `data`, unless the entry is `hidden`.
+// `data` and `choices`, unless the entry is `hidden`. Choices feed editors.
 function statusDisplayable(entry) {
-    return entry.type !== "data" && entry.hidden !== true;
+    return entry.type !== "data" && entry.type !== "choices" && entry.hidden !== true;
+}
+
+// Select models keyed by string setting name. Only accepted status enters
+// here. Neither a new list nor an absent configured id writes settings.
+// REVISIT(D057): A multi-value setting needs a separate schema contract.
+function settingChoices(manifest, values, settings) {
+    var out = {};
+    Object.keys(manifest.schema).forEach(function (key) {
+        var entry = manifest.schema[key];
+        if (entry.optionsFrom === undefined) return;
+        var offered = hasOwn(values, entry.optionsFrom) ? values[entry.optionsFrom] : [];
+        var model = [{ label: offered.length === 0 ? "First offered (none available)" : "First offered: " + offered[0].label, value: "" }];
+        offered.forEach(function (choice) { model.push({ label: choice.label, value: choice.value }); });
+        var configured = settings[key];
+        if (configured !== "" && !offered.some(function (choice) { return choice.value === configured; }))
+            model.push({ label: configured + " (unavailable)", value: configured });
+        out[key] = model;
+    });
+    return frozenJson(out);
 }
 
 // The badge tone Settings draws a reported status value with: the
@@ -1806,8 +1853,15 @@ function validateManifest(raw, sourceDir) {
         return { ok: false, error: "settings must not carry a keys key: a plugins row's keys are its Hyprland keys" };
     if (hasOwn(settings, "placement") && PLACEMENTS.indexOf(settings.placement) === -1)
         return { ok: false, error: "settings.placement must be one of " + PLACEMENTS.join(", ") + ", got " + JSON.stringify(settings.placement) };
+    if (raw.status !== undefined) {
+        var badStatus = statusError(raw.status, capabilities);
+        if (badStatus !== "")
+            return { ok: false, error: badStatus };
+    } else if (capabilities.indexOf("status") !== -1) {
+        return { ok: false, error: "capability status needs a status declaration" };
+    }
     var schema = raw.schema === undefined ? {} : raw.schema;
-    var badSchema = schemaError(schema, settings);
+    var badSchema = schemaError(schema, settings, raw.status === undefined ? {} : raw.status);
     if (badSchema !== "")
         return { ok: false, error: badSchema };
     if (capabilities.indexOf("configure") !== -1 && Object.keys(schema).length === 0)
@@ -1827,13 +1881,6 @@ function validateManifest(raw, sourceDir) {
     var badRequirements = requirementsError(requirements);
     if (badRequirements !== "")
         return { ok: false, error: badRequirements };
-    if (raw.status !== undefined) {
-        var badStatus = statusError(raw.status, capabilities);
-        if (badStatus !== "")
-            return { ok: false, error: badStatus };
-    } else if (capabilities.indexOf("status") !== -1) {
-        return { ok: false, error: "capability status needs a status declaration" };
-    }
     if (raw.tui !== undefined) {
         var badTui = tuiError(raw.tui, capabilities);
         if (badTui !== "")

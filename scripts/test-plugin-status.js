@@ -28,7 +28,10 @@ function suite(ctx, check) {
     const raw = {
         schemaVersion: 1, id: "acme.status", name: "Status", version: "1", author: "a", description: "d",
         kinds: ["service"], entryPoints: { service: "S.qml" }, capabilities: ["status"],
+        settings: { device: "", plain: "text" },
+        schema: { device: { type: "string", label: "Device", optionsFrom: "devices" }, plain: { type: "string", label: "Plain" } },
         status: {
+            devices: { type: "choices", label: "Devices" },
             token: { type: "presence", label: "Token", group: "Keys", hint: "Needed", command: "secret-tool store x" },
             tokens: { type: "presenceList", label: "Tokens", group: "Keys", hint: "One per workspace" },
             check: { type: "state", label: "Check" },
@@ -45,6 +48,26 @@ function suite(ctx, check) {
 
     // statusWrite: [name, key, value, want], `want` the error line or "ok".
     const writeRows = [
+        ["choices with separate labels and values", "devices", [{ label: "Microphone", value: "mic:1" }, { label: "Speaker", value: "sink:2" }], "ok"],
+        ["empty choices", "devices", [], "ok"],
+        ["choices at the item ceiling", "devices", Array.from({ length: 32 }, (_, i) => ({ label: "Device", value: "d" + i })), "ok"],
+        ["choices past the item ceiling", "devices", Array.from({ length: 33 }, (_, i) => ({ label: "Device", value: "d" + i })), "refused: status=devices reason=type"],
+        ["choices must be a list", "devices", { label: "A", value: "a" }, "refused: status=devices reason=type"],
+        ["choices item must be an object", "devices", ["a"], "refused: status=devices reason=type"],
+        ["choices item must be plain JSON", "devices", [new (class Choice { constructor() { this.label = "A"; this.value = "a"; } })()], "refused: status=devices reason=type"],
+        ["choices item holds only its keys", "devices", [{ label: "A", value: "a", command: "run" }], "refused: status=devices reason=type"],
+        ["choices missing label", "devices", [{ value: "a" }], "refused: status=devices reason=type"],
+        ["choices empty label", "devices", [{ label: "", value: "a" }], "refused: status=devices reason=type"],
+        ["choices multiline label", "devices", [{ label: "A\nB", value: "a" }], "refused: status=devices reason=type"],
+        ["choices label past its bound", "devices", [{ label: "x".repeat(61), value: "a" }], "refused: status=devices reason=type"],
+        ["choices missing value", "devices", [{ label: "A" }], "refused: status=devices reason=type"],
+        ["choices empty value is reserved", "devices", [{ label: "A", value: "" }], "refused: status=devices reason=type"],
+        ["choices value must be a string", "devices", [{ label: "A", value: 1 }], "refused: status=devices reason=type"],
+        ["choices value past its bound", "devices", [{ label: "A", value: "x".repeat(201) }], "refused: status=devices reason=type"],
+        ["choices value contains a control", "devices", [{ label: "A", value: "a\u0000b" }], "refused: status=devices reason=type"],
+        ["choices at text bounds", "devices", [{ label: "x".repeat(60), value: "x".repeat(200) }], "ok"],
+        ["choices duplicate labels are allowed", "devices", [{ label: "A", value: "a" }, { label: "A", value: "b" }], "ok"],
+        ["choices duplicate values are refused", "devices", [{ label: "A", value: "a" }, { label: "B", value: "a" }], "refused: status=devices reason=type"],
         ["a presence value present", "token", "present", "ok"],
         ["a presence value absent", "token", "absent", "ok"],
         ["a presence value locked", "token", "locked", "ok"],
@@ -173,8 +196,38 @@ function suite(ctx, check) {
     check("statusTone: every tone is a badge tone", Object.values(ctx.STATUS_PRESENCE_TONES).concat(Object.values(ctx.STATUS_STATE_TONES)).every(t => badges.indexOf(t) !== -1), true);
     check("statusTone: a text type has none", ["text", "count", "time"].map(t => ctx.statusTone(t, 1)), ["", "", ""]);
     check("statusTone: a presence list has none of its own", ctx.statusTone("presenceList", [{ label: "A", value: "present" }]), "");
-    check("STATUS_TYPES", ctx.STATUS_TYPES, ["presence", "presenceList", "state", "text", "count", "time", "data"]);
+    check("STATUS_TYPES", ctx.STATUS_TYPES, ["presence", "presenceList", "state", "text", "count", "time", "data", "choices"]);
     check("STATUS_LIST_MAX", ctx.STATUS_LIST_MAX, 32);
+
+    const offered = [{ label: "Alpha", value: "a" }, { label: "Beta", value: "b" }];
+    const automatic = { label: "First offered: Alpha", value: "" };
+    const unavailable = { label: "gone (unavailable)", value: "gone" };
+    const empty = { label: "First offered (none available)", value: "" };
+    for (const [name, publishedChoices, configured, want] of [
+        ["unreported", {}, "", [empty]],
+        ["reported empty", { devices: [] }, "", [empty]],
+        ["first offered stays empty", { devices: offered }, "", [automatic, ...offered]],
+        ["configured offered", { devices: offered }, "b", [automatic, ...offered]],
+        ["removed configured value stays", { devices: offered }, "gone", [automatic, ...offered, unavailable]],
+        ["empty list keeps configured value", { devices: [] }, "gone", [empty, unavailable]],
+        ["unreported keeps configured value", {}, "gone", [empty, unavailable]],
+        ["reordered list changes the first offered label only", { devices: offered.slice().reverse() }, "", [{ label: "First offered: Beta", value: "" }, ...offered.slice().reverse()]]
+    ]) {
+        const settings = { device: configured, plain: "text" };
+        const before = JSON.stringify([publishedChoices, settings]);
+        const models = ctx.settingChoices(m, publishedChoices, settings);
+        check("settingChoices: " + name, models, { device: want });
+        check("settingChoices changes no input: " + name, JSON.stringify([publishedChoices, settings]), before);
+        check("settingChoices freezes its result: " + name, [Object.isFrozen(models), Object.isFrozen(models.device), Object.isFrozen(models.device[0])], [true, true, true]);
+    }
+    check("settingRefusal keeps an unavailable id", ctx.settingRefusal(m, "device", "gone"), "");
+    check("settingRefusal keeps automatic empty string", ctx.settingRefusal(m, "device", ""), "");
+    check("settingRefusal still requires a string", ctx.settingRefusal(m, "device", 1), "refused: setting=device want=string");
+    const choiceSource = [{ label: "Original", value: "original" }];
+    const choiceValues = ctx.statusWrite(m, {}, "devices", choiceSource).values;
+    const choiceModels = ctx.settingChoices(m, choiceValues, { device: "" });
+    choiceSource[0].label = "changed";
+    check("choices and editor models isolate their writer", [choiceValues.devices[0].label, choiceModels.device[1].label], ["Original", "Original"]);
 }
 
 suite(load(LOGIC), report);
@@ -182,6 +235,16 @@ suite(load(LOGIC), report);
 // Each control removes one rule from a copy of the judge and keeps the text
 // around it; the suite must fail on every copy.
 const CONTROLS = [
+    ["choices is a list", "if (!Array.isArray(value) || value.length > STATUS_LIST_MAX) return false;\n        var seen", "if (value.length > STATUS_LIST_MAX) return false;\n        var seen"],
+    ["choices is bounded", "if (!Array.isArray(value) || value.length > STATUS_LIST_MAX) return false;\n        var seen", "if (!Array.isArray(value)) return false;\n        var seen"],
+    ["choices item is plain JSON", "if (!isPlainObject(choice) || !isPlainJson(choice)) return false;", "if (false) return false;"],
+    ["choices item has only its keys", "if (Object.keys(choice).some(function (key) { return STATUS_CHOICE_KEYS.indexOf(key) === -1; })) return false;", "if (false) return false;"],
+    ["choices label is bounded printable text", "if (!isPrintableLine(choice.label, STATUS_LABEL_MAX)) return false;", "if (false) return false;"],
+    ["choices value is bounded non-empty printable text", "if (!isPrintableLine(choice.value, STATUS_TEXT_MAX)) return false;", "if (false) return false;"],
+    ["choices values are distinct", "if (seen.indexOf(choice.value) !== -1) return false;", "if (false) return false;"],
+    ["choices preserves an unavailable id", "model.push({ label: configured + \" (unavailable)\", value: configured });", "model.push({ label: configured + \" (unavailable)\", value: \"\" });"],
+    ["choices exposes the automatic empty string", "value: \"\" }];\n        offered.forEach", "value: \"auto\" }];\n        offered.forEach"],
+    ["choices copies offered labels", "model.push({ label: choice.label, value: choice.value });", "model.push({ label: choice.value, value: choice.value });"],
     ["a write needs a declared key", "if (typeof key !== \"string\" || !hasOwn(manifest.status, key))\n        return refused(\"undeclared\");", "if (false)\n        return refused(\"undeclared\");"],
     ["a write needs a value of its type", "if (!statusValueFits(manifest.status[key].type, value))\n        return refused(\"type\");", "if (false)\n        return refused(\"type\");"],
     ["a write fits the size ceiling", "if (bytes > STATUS_MAX_BYTES)", "if (false)"],
@@ -213,8 +276,9 @@ const CONTROLS = [
     ["a surrogate pair counts four", "bytes += 4;\n            i += 1;", "bytes += 3;"],
     ["published values are frozen", "return Object.freeze(node);", "return node;"],
     ["published values are a copy", "var copy = JSON.parse(JSON.stringify(value));", "var copy = value;"],
-    ["a row leaves data out", "return entry.type !== \"data\" && entry.hidden !== true;", "return entry.hidden !== true;"],
-    ["a row leaves hidden entries out", "return entry.type !== \"data\" && entry.hidden !== true;", "return entry.type !== \"data\";"],
+    ["a row leaves data out", "return entry.type !== \"data\" && entry.type !== \"choices\" && entry.hidden !== true;", "return entry.type !== \"choices\" && entry.hidden !== true;"],
+    ["a row leaves choices out", "return entry.type !== \"data\" && entry.type !== \"choices\" && entry.hidden !== true;", "return entry.type !== \"data\" && entry.hidden !== true;"],
+    ["a row leaves hidden entries out", "return entry.type !== \"data\" && entry.type !== \"choices\" && entry.hidden !== true;", "return entry.type !== \"data\" && entry.type !== \"choices\";"],
     ["an unreported row says so", "report: reported ? \"reported\" : \"unreported\",", "report: \"reported\","],
     ["a presence has its tone", "if (type === \"presence\") return STATUS_PRESENCE_TONES[value];", "if (type === \"presence\") return \"neutral\";"],
     ["a locked presence is info", "locked: \"info\"", "locked: \"warning\""],

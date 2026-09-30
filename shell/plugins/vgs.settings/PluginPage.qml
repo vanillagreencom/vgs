@@ -54,7 +54,7 @@ FocusScope {
     // The displayable status entries' keys by section, as `sections` holds
     // the schema's: [{ group, keys }], ungrouped first, then each group in
     // the order its first entry appears. The row's `status` is in manifest
-    // order and holds no `data` or hidden entry.
+    // order and holds no `data`, `choices` or hidden entry.
     readonly property var statusSections: {
         if (row === null) return [];
         const out = [{ group: "", keys: [] }];
@@ -308,6 +308,7 @@ FocusScope {
                             key: modelData
                             spec: page.row.schema[modelData]
                             value: page.row.settings[modelData]
+                            choices: page.row.settingChoices[modelData] || []
                             editable: page.editable
                             // An editor loses focus while the page is torn
                             // down and emits apply into a page that is

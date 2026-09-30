@@ -49,3 +49,4 @@ One line per decision record that shapes the architecture; the full log with dat
 - [D054](../decisions/D054-list-motion-is-one-cursor-in-qs-ui.md): the list motion is one cursor in `qs.Ui`, `ListCursor`, with `ListEntrance` for a row's entrance, timed by `motion.list`; a plugin that owns its look hands both its own timings and plate. Refines D023.
 - [D055](../decisions/D055-theme-browser-previews.md): theme browser previews use package `preview.png` first, then a live token preview for the selected card.
 - [D056](../decisions/D056-read-only-session-state.md): plugins read session lock state through a shared capability without lock authority. Refines D012.
+- [D057](../decisions/D057-setting-options-from-status.md): string settings take options from their plugin's choices status and keep unavailable configured ids. Refines D032 and D037.

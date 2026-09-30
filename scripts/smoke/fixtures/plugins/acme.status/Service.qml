@@ -14,6 +14,7 @@ Item {
     property string startReply: ""
     readonly property int statusRevision: shell === null ? -1 : shell.status.revision
     readonly property var statusValues: shell === null ? null : shell.status.values
+    readonly property string configuredDevice: shell === null ? "" : shell.settings.device
 
     onShellChanged: {
         if (shell === null || registered) return;
@@ -27,6 +28,10 @@ Item {
             try { values.pending = 99; } catch (e) {}
             try { values.detail.items.push(9); } catch (e) {}
             try { values.fresh = 1; } catch (e) {}
+            if (values.devices !== undefined) {
+                try { values.devices[0].label = "changed"; } catch (e) {}
+                try { values.devices.push({ label: "Extra", value: "extra" }); } catch (e) {}
+            }
             return JSON.stringify(root.shell.status.values);
         });
     }
