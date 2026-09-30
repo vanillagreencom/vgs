@@ -224,34 +224,29 @@ expect_poll "the closed toast is in the history" True in_history "First toast, u
 # The VGS hints (docs/architecture/notification-hints.md): a card keeps the
 # hints the judge accepts, draws the hinted Lucide icon, and a click on an
 # `open` card hands the open TUI the file through the stand-in terminal,
-# whose presenter runs the plugin's script; with no EDITOR in the shell's
-# environment the script hands the file to xdg-open, here a stand-in that
-# records its argv, so no opener runs. A `none` card is only dismissed.
-# While $hint_gate exists the stand-in holds the open run live, so a second
-# card's open finds the one open TUI busy: that card stays and a core toast
-# says why, and once the first run ends its click opens its own file.
+# which records the argv and runs no plugin script
+# (scripts/test-notifications-open.sh runs the script). A `none` card is
+# only dismissed. While hold_runs holds the open run live, a second card's
+# open finds the one open TUI busy: that card stays and a core toast says
+# why, and once the first run ends its click opens its own file.
 terminal_stand_in
 hint_file="$sandbox/hint-transcript.log"
 hint_other="$sandbox/hint-other.log"
 printf 'transcript\n' >"$hint_file"
 printf 'other\n' >"$hint_other"
-hint_opened="$sandbox/xdg-open-argv"
-hint_gate="$sandbox/xdg-open-gate"
-# The wait ends after 1200 polls, 60 s, whatever the gate does: a ceiling
-# past the rows that hold it, so an interrupted run leaves no opener behind.
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >%q\nn=0; while [[ -e %q && $n -lt 1200 ]]; do sleep 0.05; n=$((n + 1)); done\n' "$hint_opened" "$hint_gate" >"$shim/xdg-open"
+# An xdg-open that answers 1 stays for the rest of the run, so no row
+# reaches the host's opener.
+printf '#!/usr/bin/env bash\nexit 1\n' >"$shim/xdg-open"
 chmod 755 "$shim/xdg-open"
 hint_roles() { ipc smoke modelRows vgs.notifications rows summary,hintIcon,hintTone,hintOpen,hintClick | py_reply 'import json,sys; print(json.dumps(next((r[1:] for r in json.load(sys.stdin) if r[0] == sys.argv[1]), None)))' "$1"; }
 hint_drawn() { ipc smoke layerItems vgs.notifications NotificationCard summary,mediaKind,showsSlot | py_reply 'import json,sys; print(json.dumps(next(([v["mediaKind"], v["showsSlot"]] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None)))' "$1"; }
-opened_file() { if [[ -f $hint_opened ]]; then cat -- "$hint_opened"; else echo absent; fi; }
 forget_record
 notify smoke-app 0 "Hinted error" "Exit code 3" '[]' "{\"x-vgs-icon\": <\"circle-x\">, \"x-vgs-tone\": <\"danger\">, \"x-vgs-open\": <\"$hint_file\">, \"x-vgs-click\": <\"open\">}" 0 >/dev/null
 expect_poll "a hinted notification keeps its hints" "[\"circle-x\", \"danger\", \"$hint_file\", \"open\"]" hint_roles "Hinted error"
 expect_poll "its card's media slot draws the hinted icon in place of the application icon" '["glyph", true]' hint_drawn "Hinted error"
-: >"$hint_gate"
+hold_runs
 expect "a click on the newest card is allowed" ok notes invoke-latest
 expect_poll "the click hands the open TUI the hinted file" "$(words vgs.notifications/open tui/open.sh "$hint_file")" recorded_tail
-expect_poll "the open TUI hands the file to xdg-open without an EDITOR" "$hint_file" opened_file
 expect_poll "the clicked card leaves" none key_of "Hinted error"
 open_toasts() { ipc shell lent | py_reply 'import json,sys; print(json.dumps([[t["title"], t["tone"]] for t in json.load(sys.stdin)["toasts"]["visible"] if t["plugin"] == "vgs.notifications"]))'; }
 forget_record
@@ -263,7 +258,7 @@ expect_log "the busy open is logged" 1 'notifications: open refused: tui=open re
 expected_errors+=('notifications: open refused: tui=open reason=busy')
 expect "the busy open keeps its card" True has_row live "Hinted other"
 expect "the busy open reaches no terminal" absent recorded
-rm -f -- "$hint_gate"
+release_runs
 expect_poll "the first open run ends" idle key_idle vgs.notifications/open
 expect "a click on the kept card is allowed" ok notes invoke-latest
 expect_poll "the kept card's click hands the open TUI its own file" "$(words vgs.notifications/open tui/open.sh "$hint_other")" recorded_tail
@@ -279,8 +274,6 @@ expect "a click on a none card opens nothing" absent recorded
 notify smoke-app 0 "Bad hints" "" '[]' '{"x-vgs-tone": <"red">, "x-vgs-click": <"open">}' 0 >/dev/null
 expect_poll "refused hints leave no role" '["", "", "", ""]' hint_roles "Bad hints"
 expected_errors+=('notifications: hints refused: app="smoke-app" names=x-vgs-tone,x-vgs-click')
-# The stand-in stays, answering 1, so no later row reaches the host's opener.
-printf '#!/usr/bin/env bash\nexit 1\n' >"$shim/xdg-open"
 
 # A toast expires on its own; the pointer on it pauses its clock.
 notify smoke-app 0 "Brief" "" '[]' '{"urgency": <byte 0>}' 0 >/dev/null

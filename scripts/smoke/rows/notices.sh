@@ -213,11 +213,10 @@ resting_offer() { needs offer vgs-smoke-needs | sed -E 's/retry-ms=[0-9]+$/retry
 expect "an offer while the plugin rests is refused" "refused: requirements=acme.needs reason=resting retry-ms=N" resting_offer
 expect "a refused offer raises no notice" 0 layer_count vgs:notice
 
-# Install: the primary's package through the core's TUI. While
-# hold_core makes the stand-in terminal hold the core run open
-# (terminal_stand_in in harness.sh), and the notice has no surface, so the terminal shows
-# whole. The command stays missing after the run's rescan, so the notice
-# comes back with the keyboard.
+# Install: the primary's package through the core's TUI. While hold_runs
+# holds the core run open (terminal_stand_in in harness.sh), the notice has
+# no surface, so the terminal shows whole. The command stays missing after
+# the run's rescan, so the notice comes back with the keyboard.
 notice_waiting() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["notices"]["waiting"]))'; }
 notice_front() { ipc shell lent | py_reply 'import json,sys; s=json.load(sys.stdin)["notices"]["shown"]; print(json.dumps(None if s is None else s["plugin"]))'; }
 # `settled` once no install is in flight: the notice in front is not
@@ -235,14 +234,14 @@ expect "enabling the enabled fixture raises the notice again" ok ipc shell setPl
 expect_poll "the notice is back" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
 expect_poll "the notice holds the keyboard for Install" true ipc smoke noticeFocused
 expect "no install ran before the rows" idle key_idle core/requirements-install
-hold_core
+hold_runs
 forget_record
 type_keys -k Return || fail "sending Return failed"
 expect_poll "Install hands the terminal vgsh pkg run install with the primary's package" "$(install_words vgs-smoke-needs-pkg)" recorded
 expect_poll "the notice records its install running" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], true]" notice_shown
 expect_poll "a live install leaves the notice no surface" 0 layer_count vgs:notice
 expect "the install's run is live while the notice is gone" busy key_idle core/requirements-install
-release_core
+release_runs
 expect_run_end "the install run ends" core/requirements-install
 expect_within "the scan after the install run settles the notice" install_settle settled "$install_settle_ceiling_ms" install_settled
 expect "the rescan after an install that left the command missing keeps the notice" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], false]" notice_shown
@@ -273,7 +272,7 @@ expect_poll "acme.other is discovered" True plugin_known acme.other
 expect "enabling acme.other is allowed" ok ipc shell setPluginEnabled acme.other true
 expect_poll "acme.other's notice waits behind acme.needs'" '["acme.other"]' notice_waiting
 expect_poll "the notice holds the keyboard for the second Install" true ipc smoke noticeFocused
-hold_core
+hold_runs
 forget_record
 type_keys -k Return || fail "sending Return failed"
 expect_poll "the second Install reaches the terminal" "$(install_words vgs-smoke-needs-pkg)" recorded
@@ -285,7 +284,7 @@ expect_poll "the capability no longer lists the installed command" '["vgs-smoke-
 expect "the installing notice stays after a scan that finds its command" "[\"acme.needs\", $all_needs, [\"vgs-smoke-needs\"], true]" notice_shown
 expect "the waiting notice stays behind the live install" '["acme.other"]' notice_waiting
 expect "no notice surface maps while the install runs" 0 layer_count vgs:notice
-release_core
+release_runs
 expect_run_end "the second install run ends" core/requirements-install
 expect_within "the scan after the second install run settles the notice" install_settle settled "$install_settle_ceiling_ms" install_settled
 expect "the scan after the run closes the satisfied notice and brings the waiting one forward" '"acme.other"' notice_front

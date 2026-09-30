@@ -399,13 +399,13 @@ expect "the scrolled window hides" ok ipc shell hide window vgs.settings
 expect_poll "the scrolled window is gone" 0 window_count Settings
 settings_show acme.probe
 forget_record
-hold_core
+hold_runs
 settings_click Button Update || fail "the click on Update failed"
 expect_poll "Update opens vgsh plugin update for the plugin in the wide floating TUI" \
   "$(core_words core/plugin-update "Update a plugin" org.vgs.tui.wide plugin update acme.probe)" recorded
 expect_poll "the update's terminal is focused over the Settings window" '["org.vgs.tui.wide", "VGS · Update a plugin"]' active_window
 expect "Update leaves the Settings window open behind the terminal" 1 window_count Settings
-release_core
+release_runs
 expect_run_end "the update's run ends" core/plugin-update
 expect_poll "the update's terminal closes" 0 tui_windows
 expect_poll "the Settings window takes the focus back" "$settings_focused" active_window
@@ -535,7 +535,7 @@ expect_poll "the plugin's errors clear with the problem" '[[]]' row_of vgs.setti
 # through the shared shown answer. The terminal covers the window, so the
 # second request is the window's own call, as its button makes it.
 forget_record
-hold_core
+hold_runs
 settings_click Button "Add plugin" || fail "the click on Add plugin failed"
 expect_poll "Add plugin opens vgsh plugin add in the floating TUI" "$(core_words core/plugin-add "Add a plugin" org.vgs.tui plugin add)" recorded
 expect_poll "the add's terminal is focused over the Settings window" '["org.vgs.tui", "VGS · Add a plugin"]' active_window
@@ -561,7 +561,7 @@ expect "busy Add plugin answers ok" ok ipc smoke invokeInstance window vgs.setti
 expect_poll "busy Add plugin focuses the live terminal" '["org.vgs.tui", "VGS · Add a plugin"]' active_window
 expect "busy Add plugin leaves the Settings window open" 1 window_count Settings
 expect_poll "the add's run stays live until release" busy key_idle core/plugin-add
-release_core
+release_runs
 expect_run_end "the add's run ends" core/plugin-add
 expect_poll "the add's terminal closes" 0 tui_windows
 

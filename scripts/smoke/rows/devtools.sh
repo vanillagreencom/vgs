@@ -5,9 +5,10 @@
 # probe the engine and the core's
 # commands make reaches a stand-in or reads the host's PATH. The row picks
 # an agent whose command that PATH does not hold, so it lists absent on any
-# host. rows/tui.sh's stand-in terminal records the argv of every run and
-# runs the real presenter with no terminal behind it, where the engine
-# refuses to change anything, so a run ends at once.
+# host. harness.sh's stand-in terminal records the argv of every run and
+# runs the install TUI as `true`, never the plugin's script
+# (scripts/test-devtools.sh runs it), so a run ends at once; the row
+# writes the key mise then holds itself, before the click.
 # Rows: the service publishes the status its manifest declares; IPC open
 # summons the window, which is read as every application window is
 # (app_window_rows, scripts/smoke/app-window.sh) and, opened again, draws

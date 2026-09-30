@@ -1,14 +1,11 @@
 # vgs.updates, the service that owns every update probe, its bar widget
 # and its flyout. A copy of the plugin in the user directory, which wins
 # the id over the shipped one, runs the shipped Service.qml, Widget.qml,
-# Panel.qml and bin/check against the shipped bin/vgsh, with three changes
-# only: one stub `tui` script beside the declared update TUIs, a run of
-# which the row holds open until it opens a gate, listed with an entry so
-# `openTui` reaches it; the declared `update`, `update-source` and `log`
-# scripts replaced by ones that exit 0, since the pipeline itself would run
-# package managers and its own controls are
-# scripts/test-updates-pipeline.sh; and the vgsh it runs, a wrapper that
-# confines each verb:
+# Panel.qml and bin/check against the shipped bin/vgsh, with two changes
+# only: one fixture `tui` script beside the declared update TUIs,
+# scripts/smoke/fixtures/tui/vgs.updates/tui/finish.sh, a run of which the
+# row holds open until it opens a gate, listed with an entry so `openTui`
+# reaches it; and the vgsh it runs, a wrapper that confines each verb:
 #
 # - `pkg` runs the shipped `vgsh pkg` in an unprivileged mount namespace
 #   whose /etc/os-release names the identity this row picks, `arch` or
@@ -19,6 +16,11 @@
 # - every other verb runs the shipped vgsh with only the stand-in git ahead
 #   of the shell's PATH: it answers for this checkout and the plugin copy
 #   alone, so `self status` and `plugin outdated` reach no remote.
+#
+# The stand-in terminal runs the fixture alone: the declared `update`,
+# `update-source` and `log` scripts, which would run package managers, it
+# replaces with `true` (terminal_stand_in in harness.sh). The pipeline's
+# own controls are scripts/test-updates-pipeline.sh.
 #
 # Read back from the accepted status record: every source's count, one
 # probe run per check however often it is read, a failing source named and
@@ -94,7 +96,7 @@ exec env PATH="$updates_state/git-bin:\$PATH" UPDATES_SMOKE_CHECKOUTS="$repo:$up
 EOF
 chmod 755 "$updates_vgsh"
 
-# The copy's three changes, each checked to apply once.
+# The copy's two changes, each checked to apply once.
 python3 - "$updates_dir" "$updates_vgsh" <<'PY'
 import json, pathlib, sys
 plugin, vgsh = pathlib.Path(sys.argv[1]), sys.argv[2]
@@ -104,10 +106,6 @@ assert "finish" not in doc["tui"], doc["tui"]
 doc["tui"]["finish"] = {"script": "tui/finish.sh", "title": "Updates smoke", "size": "default", "presentation": "plain", "entry": {"label": "Updates smoke", "icon": "terminal", "group": "Smoke"}}
 manifest.write_text(json.dumps(doc))
 assert sorted(doc["tui"]) == ["finish", "log", "update", "update-source"], sorted(doc["tui"])
-for name in ("update", "update-source", "log"):
-    script = plugin / doc["tui"][name]["script"]
-    assert script.is_file(), script
-    script.write_text("#!/usr/bin/env bash\nexit 0\n")
 service = plugin / "Service.qml"
 lines = service.read_text().splitlines()
 hits = [i for i, line in enumerate(lines) if line.startswith("    readonly property string vgshPath:")]
@@ -116,25 +114,12 @@ lines[hits[0]] = "    readonly property string vgshPath: " + json.dumps(vgsh)
 service.write_text("\n".join(lines) + "\n")
 PY
 mkdir -p "$updates_dir/tui"
-cat >"$updates_dir/tui/finish.sh" <<'TUI'
-#!/usr/bin/env bash
-# Runs until the row opens its gate.
-gate="${XDG_STATE_HOME:?}/vgs/updates-smoke/tui-gate"
-while [[ ! -e $gate ]]; do sleep 0.05; done
-TUI
+cp -- "$repo/scripts/smoke/fixtures/tui/vgs.updates/tui/finish.sh" "$updates_dir/tui/finish.sh"
 chmod 755 "$updates_dir/tui/finish.sh"
 
-# A terminal stand-in that runs the presenter with no window;
-# rows/agent-warden.sh writes harness.sh's recording one over it.
-cat >"$shim/xdg-terminal-exec" <<'EOF'
-#!/usr/bin/env bash
-while [[ $# -gt 0 && $1 != -- ]]; do shift; done
-shift
-presenter=()
-while [[ $# -gt 0 && $1 != -- ]]; do presenter+=("$1"); shift; done
-"${presenter[@]}" "$@" </dev/null >/dev/null 2>&1
-EOF
-chmod 755 "$shim/xdg-terminal-exec"
+# The stand-in terminal with no window; the widget's rows below write it
+# again with its window.
+terminal_stand_in windowless
 
 # The accepted status record, as every instance reads it.
 updates_values() { ipc vgs.updates invoke status ''; }
@@ -241,8 +226,9 @@ expect "the TUI's end starts exactly one check" STEADY checks_settle_at "$((befo
 expect_poll "the service is idle after the TUI check" idle updates_idle
 
 # ---- The bar widget and the flyout ------------------------------------------
-# Enabling the plugin placed its widget in its default section. Each TUI a
-# button opens is a stub that exits at once; its end starts one check of
+# Enabling the plugin placed its widget in its default section. The
+# stand-in terminal runs each TUI a button opens as `true`, which exits at
+# once; its end starts one check of
 # the service, so every button waits for its run to end and the service to
 # go idle before the next.
 terminal_stand_in

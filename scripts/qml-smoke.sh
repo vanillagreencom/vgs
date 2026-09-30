@@ -219,6 +219,9 @@ smoke_row notices-control
 smoke_row hidpi
 smoke_row start-order
 smoke_row overlay-capture
+# After every row that opens a TUI: the stand-in terminal ran no plugin
+# script but a fixture's.
+smoke_row tui-guard
 # Last: every row above has run, so its reading covers the whole run.
 smoke_row auth-sentinel
 

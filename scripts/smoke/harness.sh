@@ -133,10 +133,10 @@ repo="$sandbox/repo"
 auth_log="$sandbox/auth-sentinel.calls"
 # bin/vgsh-browser-policy sets its own PATH to the system directories and
 # runs sudo from there, so no PATH sentinel can stand before its sudo. The
-# copy's writer is a sentinel for the whole run: a plugin TUI the stand-in
-# terminal runs for real, such as vgs.themes's browser-policy, reaches it
-# and never the host's sudo. A row that presses that step swaps in its own
-# stand-in and puts the sentinel back.
+# copy's writer is a sentinel for the whole run, so a process that reaches
+# it, such as vgs.themes's browser-policy TUI, never reaches the host's
+# sudo. The stand-in terminal runs no such TUI script (terminal_stand_in
+# below), and no row stands over the writer.
 if [[ -e $repo/bin/vgsh-browser-policy ]]; then
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "vgsh-browser-policy $*" >>%q\nexit 1\n' "$auth_log" >"$repo/bin/vgsh-browser-policy"
   chmod 755 "$repo/bin/vgsh-browser-policy"
@@ -263,10 +263,10 @@ exit 1
 EOF
 chmod 755 "$shim/loginctl" "$shim/secret-tool"
 auth_sentinels=(sudo doas run0 pkexec su loginctl secret-tool)
-# A row that needs one of the sentinels, or the tree's writer, to answer
-# its own way stands over it with sentinel_stand_over FILE, the script on
-# stdin, and puts it back with sentinel_restore FILE. The first stand-over
-# keeps the sentinel; a second one keeps that. $sentinels_stood lists each
+# A row that needs one of the sentinels to answer its own way stands over
+# it with sentinel_stand_over FILE, the script on stdin, and puts it back
+# with sentinel_restore FILE. The first stand-over keeps the sentinel; a
+# second one keeps that. $sentinels_stood lists each
 # file stood over and not yet put back, one path per line, and
 # rows/auth-sentinel.sh requires it empty and every sentinel in place.
 sentinels_saved="$sandbox/sentinels"
@@ -1743,59 +1743,159 @@ plugin_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; rows=[p[
 record_exists() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]==sys.argv[1] for rows in json.load(sys.stdin).values() for r in rows))' "$1"; }
 
 # Floating TUIs reach a stand-in xdg-terminal-exec in the shell's own PATH
-# directory, which terminal_stand_in writes: it records the argv it was
-# handed in $tui_record, maps the toplevel helper with the app-id and title
-# it was handed as the window, and runs the real presenter with no terminal
-# behind it, so the presenter writes its exit records and no terminal
-# starts. The argv is written whole and moved into place, so a row never
-# reads half a record. The window lives as long as the presenter. The
-# presenter runs a plugin's script as it is and any other command as
-# `true`, so no core command, such as the sudo grant or a plugin update,
-# runs in the sandbox. While the file $sandbox/core-hold exists, a core
-# command's `true` waits for it to go, polled every 0.05 s, so a row can
-# read the shell while a core run is live. The wait ends after 2400 polls,
-# 120 s, whatever the file does: a ceiling well past the longest held
-# section's polls, not a measurement, so a run interrupted before its row
-# removes the file leaves no presenter behind, since bin/vgsh-tui starts
-# the stand-in outside the harness's groups. Writing it again changes
-# nothing.
+# directory, which terminal_stand_in writes and no row writes otherwise
+# (scripts/check-smoke-terminal.py): it records the argv it was handed in
+# $tui_record, maps the toplevel helper with the app-id and title it was
+# handed as the window, and runs the real presenter with no terminal behind
+# it, so the presenter writes its exit records and no terminal starts. The
+# argv is written whole and moved into place, so a row never reads half a
+# record. The window lives as long as the presenter. `terminal_stand_in
+# windowless` maps no window.
+#
+# The stand-in runs no script but a fixture's. The nested sandbox shares
+# the host's files, PAM and sudo timestamp, so a plugin's real TUI script
+# could change the host. The stand-in hands the presenter a plugin's script
+# only when the script is tui/<name>, a regular file in the snapshot and
+# not a link, and byte for byte the copy $tui_fixtures holds under the
+# plugin's id; any error in that check is a refusal. Every other plugin
+# script, and every core command, such as the sudo grant or a plugin
+# update, becomes `true`, with the plugin's --plugin and --dir dropped:
+# the presenter still writes the run's records, with code 0, so the
+# shell sees the run start and end, and a row reads the argv it recorded,
+# never an effect of the script. A refused plugin script also adds the line
+# `<record key or -> <plugin id> <script>` to $tui_refused, which
+# rows/tui-guard.sh reads. A terminal handed no presenter runs nothing.
+#
+# While the file $sandbox/run-hold exists, the replacement `true` waits for
+# it to go, polled every 0.05 s, so a row can read the shell while a run is
+# live. The wait ends after 2400 polls, 120 s, whatever the file does: a
+# ceiling well past the longest held section's polls, not a measurement,
+# so a run interrupted before its row removes the file leaves no presenter
+# behind, since bin/vgsh-tui starts the stand-in outside the harness's
+# groups. Writing the stand-in again changes nothing. $tui_terminal is the
+# stand-in's path, and a copy of the text last written stays in
+# $tui_terminal_written, which rows/tui-guard.sh compares with it.
+tui_terminal="$shim/xdg-terminal-exec"
+tui_terminal_written="$sandbox/xdg-terminal-exec.harness"
 tui_record="$sandbox/tui-argv"
+tui_refused="$sandbox/tui-refused.calls"
+tui_fixtures="$sandbox/tui-fixtures"
 tui_self="$(readlink -f -- "$repo/bin/vgsh-tui")"
-terminal_stand_in() {
-  cat >"$shim/xdg-terminal-exec" <<EOF
-#!/usr/bin/env bash
-: >"$tui_record.next"
-for a; do printf '%s\n' "\$a" >>"$tui_record.next"; done
-mv -f -- "$tui_record.next" "$tui_record"
+: >"$tui_refused"
+terminal_stand_in() { # [windowless]
+  local window
+  case "${1:-}" in
+    "") window=yes ;;
+    windowless) window=no ;;
+    *) fail "terminal_stand_in: mode=$1 unknown"; return 1 ;;
+  esac
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'record=%q refused=%q fixtures=%q hold=%q toplevel=%q window=%q\n' \
+      "$tui_record" "$tui_refused" "$tui_fixtures" "$sandbox/run-hold" "$sandbox/toplevel" "$window"
+    cat <<'EOF'
+: >"$record.next"
+for a; do printf '%s\n' "$a" >>"$record.next"; done
+mv -f -- "$record.next" "$record"
 app_id="" title=""
-while [[ \$# -gt 0 && \$1 != -- ]]; do
-  case "\$1" in
-    --app-id=*) app_id="\${1#*=}" ;;
-    --title=*) title="\${1#*=}" ;;
+while [[ $# -gt 0 && $1 != -- ]]; do
+  case "$1" in
+    --app-id=*) app_id="${1#*=}" ;;
+    --title=*) title="${1#*=}" ;;
   esac
   shift
 done
+[[ $# -gt 0 ]] || exit 0
 shift
-presenter=() fixture=no
-while [[ \$# -gt 0 && \$1 != -- ]]; do
-  [[ \$1 == --plugin ]] && fixture=yes
-  presenter+=("\$1")
-  shift
+presenter=()
+while [[ $# -gt 0 && $1 != -- ]]; do presenter+=("$1"); shift; done
+# Only bin/vgsh-tui's present, with its `--` and a command, runs.
+[[ $# -ge 2 && ${#presenter[@]} -ge 2 && ${presenter[0]##*/} == vgsh-tui && ${presenter[1]} == present ]] || exit 0
+# present's options are pairs; kept is present without the plugin's pair.
+plugin="" dir="" key="-" kept=("${presenter[0]}" present)
+for ((i = 2; i < ${#presenter[@]}; i += 2)); do
+  case "${presenter[i]}" in
+    --plugin) plugin="${presenter[i + 1]:-}" ;;
+    --dir) dir="${presenter[i + 1]:-}" ;;
+    *)
+      [[ ${presenter[i]} != --record ]] || key="${presenter[i + 1]:-}"
+      kept+=("${presenter[i]}" "${presenter[i + 1]:-}")
+      ;;
+  esac
 done
-if [[ \$fixture != yes ]]; then
-  if [[ -e "$sandbox/core-hold" ]]; then set -- -- sh -c 'n=0; while [ -e "\$1" ] && [ "\$n" -lt 2400 ]; do sleep 0.05; n=\$((n + 1)); done' sh "$sandbox/core-hold"; else set -- -- true; fi
-fi
-"$sandbox/toplevel" "\$app_id" "\$title" >/dev/null 2>&1 &
-window=\$!
-"\${presenter[@]}" "\$@" </dev/null >/dev/null 2>&1
-kill "\$window" 2>/dev/null
-wait "\$window"
-EOF
-  chmod 755 "$shim/xdg-terminal-exec"
+script="$2"
+# Classes are spelled out, since a range follows the locale.
+name='[0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ]'
+fixture() {
+  [[ $plugin =~ ^$name($name|[._-])*$ && $script =~ ^tui/$name($name|[._-])*$ && $dir == /* ]] || return 1
+  [[ -f $fixtures/$plugin/$script && -f $dir/$script && ! -L $dir/$script ]] || return 1
+  cmp -s -- "$fixtures/$plugin/$script" "$dir/$script"
 }
-# Hold a core TUI stand-in open while a row checks a busy key.
-hold_core() { : >"$sandbox/core-hold"; }
-release_core() { rm -f -- "$sandbox/core-hold"; }
+if [[ -n $plugin || -n $dir ]] && fixture; then
+  run=("${presenter[@]}" "$@")
+else
+  if [[ -n $plugin || -n $dir ]]; then
+    printf '%s %s %s\n' "$key" "${plugin:--}" "${script:--}" >>"$refused"
+  fi
+  if [[ -e $hold ]]; then
+    run=("${kept[@]}" -- sh -c 'n=0; while [ -e "$1" ] && [ "$n" -lt 2400 ]; do sleep 0.05; n=$((n + 1)); done' sh "$hold")
+  else
+    run=("${kept[@]}" -- true)
+  fi
+fi
+if [[ $window == yes ]]; then
+  "$toplevel" "$app_id" "$title" >/dev/null 2>&1 &
+  shown=$!
+fi
+"${run[@]}" </dev/null >/dev/null 2>&1
+if [[ $window == yes ]]; then
+  kill "$shown" 2>/dev/null
+  wait "$shown"
+fi
+EOF
+  } >"$tui_terminal.next" || { fail "terminal_stand_in: the stand-in could not be written"; return 1; }
+  if ! { chmod 755 "$tui_terminal.next" && cp -- "$tui_terminal.next" "$tui_terminal_written" &&
+    mv -f -- "$tui_terminal.next" "$tui_terminal"; }; then
+    fail "terminal_stand_in: the stand-in could not be put in place"
+    return 1
+  fi
+}
+# hold_runs keeps every run the stand-in replaces live, a core command's or
+# a refused plugin script's, until release_runs, so a row can read a busy
+# key or plant the state a run's end reads.
+hold_runs() { : >"$sandbox/run-hold"; }
+release_runs() { rm -f -- "${sandbox:?}/run-hold"; }
+# tui_fixtures_assemble TREE DEST: every TUI fixture script under TREE's
+# scripts/smoke/fixtures, as DEST/<plugin id>/tui/<name>, from two homes:
+# plugins/<id>/tui/, the fixture plugins' own, and tui/<id>/tui/, scripts a
+# row plants into its copy of a shipped plugin. An id in both homes, an
+# entry that is not a regular file and no fixture at all are refused.
+tui_fixtures_assemble() { # TREE DEST
+  python3 - "$1/scripts/smoke/fixtures" "$2" <<'PY'
+import pathlib, shutil, sys
+fixtures, dest = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+homes = {}
+for home in ("plugins", "tui"):
+    for tui in sorted((fixtures / home).glob("*/tui")):
+        plugin = tui.parent.name
+        if plugin in homes:
+            sys.exit(f"tui-fixtures: id={plugin} homes={homes[plugin]},{home}")
+        homes[plugin] = home
+        for script in sorted(tui.iterdir()):
+            if script.is_symlink() or not script.is_file():
+                sys.exit(f"tui-fixtures: entry={script} reason=not-a-regular-file")
+            (dest / plugin / "tui").mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(script, dest / plugin / "tui" / script.name)
+if not homes:
+    sys.exit(f"tui-fixtures: fixtures={fixtures} reason=none")
+PY
+}
+# The fixture index, frozen before any row: a row that later edits the
+# tree's fixtures cannot widen what the stand-in runs.
+if ! tui_fixtures_assemble "$repo" "$tui_fixtures" || ! chmod -R a-w -- "$tui_fixtures"; then
+  printf 'qml-smoke: tui-fixtures=failed dest=%s\n' "$tui_fixtures"
+  exit 1
+fi
 # The record, with the run id the core chose as RUN, and a list of words, as
 # one JSON line each.
 recorded() { python3 -c '

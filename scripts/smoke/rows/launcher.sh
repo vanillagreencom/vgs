@@ -148,7 +148,7 @@ done
 # shell.tui.open's shared shown answer, so it closes without a notice, and
 # IPC sees the same answer while the runner focuses the live window.
 forget_record
-hold_core
+hold_runs
 categories "held Install"
 pick_tui Install
 expect_poll "held Install hands the terminal the core's vgsh pkg install" "$(core_words core/pkg-install "Install packages" org.vgs.tui pkg install)" recorded
@@ -159,7 +159,7 @@ pick_tui Install
 expect_poll "busy Install closes the launcher" 0 layer_count vgs:overlay
 expect "busy Install is not logged as a launcher refusal" 0 log_lines 'launcher: tui core/pkg-install refused: tui=core/pkg-install reason=busy'
 expect "IPC openTui answers ok for the busy install picker" ok ipc shell openTui core/pkg-install
-release_core
+release_runs
 expect_run_end "the held install picker run ends" core/pkg-install
 
 expect "the Update fixture starts disabled, as tui.sh left it" False plugin_enabled acme.tui
