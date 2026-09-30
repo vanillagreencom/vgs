@@ -453,6 +453,7 @@ mutations=(
   "a row that cannot expand gives up its chevron's room|layout/Disclosure.qml|opacity: root.expandable ? 1 : 0|visible: root.expandable|tst_disclosure.qml"
   "a pane's footer divider shows only while more lies below|layout/Pane.qml|visible: root.footerHeight > 0 && scroll.contentY + scroll.height < scroll.contentHeight - 1|visible: root.footerHeight > 0|tst_pane.qml"
   "a title button reports its title's capital centre|controls/TitleButton.qml|readonly property real capCentre: topPadding + label.capCentre|readonly property real capCentre: topPadding + label.height / 2|tst_titlebutton.qml"
+  "an arc adds only its end|foundation/IconBounds.js|        if (inside(theta)) pointAt(theta);|        if (false) pointAt(theta);|tst_icon.qml"
 )
 
 copy="$tmp/ui"

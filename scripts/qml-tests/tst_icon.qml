@@ -36,12 +36,16 @@ Item {
         }
 
         // The painted extent of chevron-left, M15 18 l-6-6 6-6: x 9 to 15
-        // and y 6 to 18 of the 24 unit box, grown by half the stroke.
+        // and y 6 to 18 of the 24 unit box, grown by half the stroke. The
+        // circle, two arcs of radius 10 around (12, 12), reaches 2 to 22 on
+        // both axes: only the arc branch places those extremes, 10 units
+        // from the arcs' ends.
         function test_painted_extent_reads_the_path() {
             const half = Theme.icon.stroke / 2;
             compare(chevron.painted, [9 - half, 6 - half, 15 + half, 18 + half]);
             const box = circle.painted;
-            verify(box[0] >= 0 && box[1] >= 0 && box[2] <= circle.size && box[3] <= circle.size, "an arc's extent stays in the box: " + box);
+            for (let i = 0; i < 4; i++)
+                fuzzyCompare(box[i], [2 - half, 2 - half, 22 + half, 22 + half][i], 1e-6);
         }
 
         // No ink lies outside the painted extent.
