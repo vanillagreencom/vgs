@@ -15,10 +15,17 @@ Item {
     property bool error: false
     property string errorMessage: ""
     readonly property bool absolute: isAbsolute(displayPath)
-    readonly property string requestedFolder: displayPath !== "" && displayPath.charAt(0) === "/" ? clean(displayPath) : currentFolder
+    // The folder model falls back to the working directory for a folder
+    // that does not exist (runtime-qml.md), so the folder it lists names
+    // whether the folder the picker shows exists.
     readonly property string actualFolder: clean(String(folders.folder || ""))
-    readonly property bool folderFound: requestedFolder === "" || actualFolder === requestedFolder
-    readonly property bool valid: absolute && (displayPath === "" || folderFound)
+    readonly property bool folderFound: actualFolder === currentFolder
+    // Whether the typed or chosen path exists, read while the picker's
+    // folder is that path and kept while the picker browses elsewhere.
+    property bool displayFound: true
+    readonly property bool valid: absolute && (displayPath === "" || displayFound)
+    onFolderFoundChanged: syncDisplayFound()
+    onActualFolderChanged: syncDisplayFound()
     signal changed(string path)
     signal edited(string path, bool valid)
     signal picked(string path)
@@ -31,6 +38,9 @@ Item {
     implicitWidth: field.implicitWidth
     implicitHeight: field.implicitHeight
 
+    function syncDisplayFound() {
+        if (displayPath !== "" && isAbsolute(displayPath) && clean(displayPath) === currentFolder) displayFound = folderFound;
+    }
     function homePath() { return StandardPaths.writableLocation(StandardPaths.HomeLocation); }
     function isAbsolute(value) { return value === "" || value.charAt(0) === "/"; }
     function clean(value) {

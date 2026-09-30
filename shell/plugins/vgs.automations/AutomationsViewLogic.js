@@ -35,9 +35,11 @@ function todayText(nowMs, logic) {
     return now.getFullYear() + "-" + logic.pad2(now.getMonth() + 1) + "-" + logic.pad2(now.getDate());
 }
 
-function currentTimeText(nowMs, logic) {
+// A new draft's time: the next whole hour, so a Once left at its defaults
+// still lies ahead when it is saved.
+function nextHourText(nowMs, logic) {
     var now = new Date(nowMs === undefined ? Date.now() : nowMs);
-    return logic.pad2(now.getHours()) + ":" + logic.pad2(now.getMinutes());
+    return logic.pad2((now.getHours() + 1) % 24) + ":00";
 }
 
 function nthWeekday(dateText, logic) {
@@ -72,7 +74,7 @@ function blankDraft(nowMs, logic) {
         yearlyMonth: d.m,
         yearlyDay: d.d,
         yearlyEdited: false,
-        times: [currentTimeText(nowMs, logic)],
+        times: [nextHourText(nowMs, logic)],
         start: today,
         endType: "never",
         endDate: today,
@@ -243,6 +245,10 @@ function validation(draft, logic, nowMs) {
         schedule = scheduleFromDraft(draft, logic);
         var defect = logic.scheduleError(schedule);
         if (defect !== "" && errors.times === undefined && errors.end === undefined) errors.schedule = friendlyScheduleError(defect);
+        // A rule with no run ahead saves an automation that never runs,
+        // since adding it marks every earlier occurrence handled.
+        else if (defect === "" && logic.nextOccurrences(schedule, nowMs === undefined ? Date.now() : nowMs, 1).length === 0)
+            errors.schedule = draft.preset === "once" ? "Pick a date and time that is still ahead." : "No run of this rule is still ahead.";
     } catch (e) {
         errors.schedule = e.message;
     }
@@ -345,9 +351,13 @@ function firstOccurrence(previewJson) {
     }
 }
 
-function saveCompletionDraft(currentDraft, requestDraft, requestRevision, currentRevision, stdoutText) {
-    if (requestRevision !== currentRevision) return null;
-    if (currentDraft.saved !== requestDraft.saved || currentDraft.id !== requestDraft.id) return null;
+// The draft a save's reply lands on: the one the editor still holds when
+// its key, which moves only when another draft loads, is the key the save
+// was sent under, with the id the engine gave it; edits made while the save
+// was in flight stay in the draft for the next save. Null when another
+// draft has loaded since.
+function saveCompletionDraft(currentDraft, requestDraft, requestKey, currentKey, stdoutText) {
+    if (requestKey !== currentKey) return null;
     var line = String(stdoutText || "").trim().split("\n").pop();
     var id = requestDraft.saved ? requestDraft.id : line.slice(line.indexOf("=") + 1);
     var next = clone(currentDraft);

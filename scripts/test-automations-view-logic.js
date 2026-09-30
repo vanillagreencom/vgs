@@ -38,6 +38,9 @@ function run(view, logic) {
         end: { type: "count", count: 1 }
     }, "Once is expressed as one counted occurrence");
     assert.equal(view.validation(once, logic, now).ok, true);
+    const pastOnce = view.clone(once);
+    pastOnce.times = ["00:00"];
+    same(view.validation(pastOnce, logic, now).errors, { schedule: "Pick a date and time that is still ahead." }, "a Once already past is refused, since it would never run");
     assert.equal(view.summary(once, logic), "Once on Monday 5 January 2026 at 09:00");
 
     const invalid = view.blankDraft(now, logic);
@@ -109,6 +112,12 @@ function run(view, logic) {
     assert.equal(saved.id, "made");
     const second = view.blankDraft(now + 86400000, logic);
     assert.equal(view.saveCompletionDraft(second, request, 1, 2, "added=made\n"), null, "an old save completion cannot mark another draft saved");
+    const edited = view.clone(current);
+    edited.name = "Edited while saving";
+    const kept = view.saveCompletionDraft(edited, request, 3, 3, "added=made\n");
+    assert.equal(kept.id, "made", "an edit while the add is in flight keeps the id the engine gave the draft");
+    assert.equal(kept.saved, true);
+    assert.equal(kept.name, "Edited while saving", "the edit stays for the next save");
 }
 
 const view = load(viewFile);
@@ -122,9 +131,11 @@ try {
     const controls = [
         ["Once no longer ends after one run", "if (draft.preset === \"once\") return { type: \"count\", count: 1 };", "if (draft.preset === \"once\") return { type: \"never\" };"],
         ["preset detection ignores the start date", "var expected = scheduleWithTimes(logic.presetSchedule(preset, schedule.start, time), schedule.times || []);", "var expected = scheduleWithTimes(logic.presetSchedule(preset, \"2026-01-09\", time), schedule.times || []);"],
-        ["save completion ignores draft replacement", "if (requestRevision !== currentRevision) return null;", "if (false) return null;"],
+        ["save completion ignores draft replacement", "if (requestKey !== currentKey) return null;", "if (false) return null;"],
+        ["save completion drops the id after an edit in flight", "if (requestKey !== currentKey) return null;", "if (requestKey !== currentKey || currentDraft.name !== requestDraft.name) return null;"],
         ["yearly custom omits its chosen date", "if (draft.frequency === \"yearly\") schedule.yearly = { month: Number(draft.yearlyMonth), day: Number(draft.yearlyDay) };", "if (draft.frequency === \"yearly\") schedule.yearly = { month: 1, day: 1 };"],
         ["empty commands are accepted", "if (String(draft.command || \"\").trim() === \"\") errors.command = \"Add the command this automation runs.\";", "if (false) errors.command = \"Add the command this automation runs.\";"],
+        ["a rule with no run ahead is accepted", "else if (defect === \"\" && logic.nextOccurrences(schedule, nowMs === undefined ? Date.now() : nowMs, 1).length === 0)", "else if (false)"],
         ["duplicates do not advance copy names", "for (var n = 2; takenNames.indexOf(name) !== -1; n++) name = base + \" \" + n;", "for (var n = 2; false; n++) name = base + \" \" + n;"]
     ];
     for (const [name, from, to] of controls) {

@@ -112,6 +112,7 @@ mutations=(
   "path field accepts relative paths|controls/PathField.qml|readonly property bool absolute: isAbsolute(displayPath)|readonly property bool absolute: true|tst_automation_controls.qml"
   "path field opens the wrong folder|controls/PathField.qml|function openFolder(value) { currentFolder = clean(value); errorMessage = \"\"; }|function openFolder(value) { currentFolder = homePath(); errorMessage = \"\"; }|tst_automation_controls.qml"
   "path field breaks the path binding|controls/PathField.qml|displayPath = chosen;|path = chosen; displayPath = chosen;|tst_automation_controls.qml"
+  "path field judges the browsed folder against the chosen one|controls/PathField.qml|readonly property bool folderFound: actualFolder === currentFolder|readonly property bool folderFound: actualFolder === clean(displayPath)|tst_automation_controls.qml"
   "the progress fill stays displaced|feedback/ProgressBar.qml|onStopped: fill.x = Qt.binding(() => root.mirrored && !root.indeterminate ? fill.parent.width - fill.width : 0)|onStopped: {}|tst_feedback.qml"
   "the popover does not count as open|overlay/Popover.qml|onVisibleChanged: root.share(visible)|onVisibleChanged: {}|tst_overlays.qml"
   "a hidden anchor leaves its popup open|overlay/AnchorTracker.qml|function onVisibleChanged() { if (!target.visible) tracker.popup.visible = false; }|function onVisibleChanged() {}|tst_overlays.qml"

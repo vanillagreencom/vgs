@@ -210,4 +210,15 @@ Section {
             }
         }
     }
+
+    // What the rule as a whole cannot do, such as a Once already past: no
+    // field above owns it.
+    Label {
+        width: parent.width
+        role: "hint"
+        color: Theme.color.danger
+        text: root.validation.errors.schedule || ""
+        visible: text !== ""
+        wrapMode: Text.Wrap
+    }
 }

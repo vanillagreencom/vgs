@@ -32,7 +32,14 @@ FocusScope {
     property real testStartedAt: 0
     property string listStoreFile: ""
     property string listRunsDir: ""
-    property int draftRevision: 0
+    // Which draft the editor holds: it moves when another draft loads,
+    // never on a field edit, so a save's reply lands on the draft it saved.
+    property int draftKey: 0
+    // The preview request whose answer the panel may still take.
+    property int previewToken: 0
+    // A save of the shown draft is in flight: a second Save waits for its
+    // reply, so a new draft is added once and edited after.
+    property bool saving: false
 
     readonly property var templates: View.TEMPLATES
     readonly property var validationResult: View.validation(draft, Engine, Date.now())
@@ -112,13 +119,12 @@ FocusScope {
             // Remove or any other caller: its draft goes, and the editor
             // returns to the list rather than opening a blank draft.
             if (draft.saved && !automations.some(row => row.id === draft.id)) {
-                replaceDraft(View.blankDraft(Date.now(), Engine));
+                loadDraft(View.blankDraft(Date.now(), Engine));
                 if (editorOpen) {
                     editorOpen = false;
                     Qt.callLater(() => automationList.focusList());
                 }
             }
-            if (notice.tone === "danger") notice = { tone: "neutral", text: "", detail: "" };
         });
     }
 
@@ -136,9 +142,13 @@ FocusScope {
     }
 
     function replaceDraft(next) {
-        draftRevision += 1;
         draft = next;
         previewSoon.restart();
+    }
+
+    function loadDraft(next) {
+        draftKey += 1;
+        replaceDraft(next);
     }
 
     function updateDraft(key, value) {
@@ -163,7 +173,7 @@ FocusScope {
         testTranscript = "";
         testStartedAt = 0;
         setNotice("neutral", "", "");
-        replaceDraft(View.blankDraft(Date.now(), Engine));
+        loadDraft(View.blankDraft(Date.now(), Engine));
         Qt.callLater(() => editor.focusName());
     }
 
@@ -176,7 +186,7 @@ FocusScope {
         testTranscript = "";
         testStartedAt = 0;
         setNotice("neutral", "", "");
-        replaceDraft(View.draftFromAutomation(row, Engine));
+        loadDraft(View.draftFromAutomation(row, Engine));
         Qt.callLater(() => editor.focusName());
         return "ok";
     }
@@ -186,7 +196,7 @@ FocusScope {
         if (row === undefined) return "unknown: " + id;
         place = "automations";
         editorOpen = true;
-        replaceDraft(View.duplicateDraft(row, automations.map(item => item.name), Engine));
+        loadDraft(View.duplicateDraft(row, automations.map(item => item.name), Engine));
         setNotice("info", "Duplicated " + row.name + ".", "The copy starts paused until you save it.");
         return "ok";
     }
@@ -196,7 +206,7 @@ FocusScope {
         if (template === undefined) return "unknown: " + key;
         place = "automations";
         editorOpen = true;
-        replaceDraft(View.templateDraft(template, Date.now(), Engine));
+        loadDraft(View.templateDraft(template, Date.now(), Engine));
         setNotice("info", "Template loaded.", template.label);
         return "ok";
     }
@@ -207,13 +217,19 @@ FocusScope {
             setNotice("danger", "Fix the highlighted fields before saving.", Object.keys(checked.errors).map(key => checked.errors[key]).join(" "));
             return "refused: draft=invalid";
         }
+        if (saving) {
+            setNotice("info", "Saving…", "Save again once this save ends.");
+            return "refused: saving";
+        }
         const requestDraft = View.clone(draft);
-        const requestRevision = draftRevision;
+        const requestKey = draftKey;
         const definition = JSON.stringify(View.definitionFromDraft(requestDraft, Engine));
         const args = requestDraft.saved ? ["edit", requestDraft.id, "--definition", definition] : ["add", "--definition", definition];
+        saving = true;
         run(args, (ok, out) => {
+            saving = false;
             if (!ok) return;
-            const next = View.saveCompletionDraft(draft, requestDraft, requestRevision, draftRevision, out);
+            const next = View.saveCompletionDraft(draft, requestDraft, requestKey, draftKey, out);
             if (next === null) {
                 refreshAll();
                 return;
@@ -313,12 +329,16 @@ FocusScope {
 
     function updatePreview() {
         const checked = validationResult;
+        const token = ++previewToken;
         previewSummary = View.summary(draft, Engine);
         if (checked.schedule === null || Engine.scheduleError(checked.schedule) !== "") {
             previewRows = [];
             return;
         }
         runJson(["preview", "--schedule", JSON.stringify(checked.schedule), "--count", "5"], (ok, doc) => {
+            // A later edit asked again, or made the rule invalid: this
+            // answer is for a rule the editor no longer shows.
+            if (token !== previewToken) return;
             if (!ok) { previewRows = []; return; }
             previewSummary = doc.summary;
             previewRows = doc.occurrences;

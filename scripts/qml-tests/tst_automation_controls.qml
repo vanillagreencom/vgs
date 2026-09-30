@@ -157,6 +157,18 @@ Item {
             compare(pathField.parentPath(pathField.currentFolder), "/home/method");
         }
 
+        function test_path_field_browses_away_from_a_chosen_folder() {
+            pathField.choose("/usr");
+            tryCompare(pathField, "folderFound", true);
+            pathField.openFolder("/usr/share");
+            tryCompare(pathField, "actualFolder", "/usr/share");
+            compare(pathField.folderFound, true);
+            compare(pathField.valid, true);
+            pathField.openFolder("/nonexistent-vgs-601-folder");
+            tryCompare(pathField, "folderFound", false);
+            compare(pathField.valid, true);
+        }
+
         function test_path_field_keeps_external_binding_after_choose() {
             boundPath.choose("/home");
             compare(boundPath.displayPath, "/home");
