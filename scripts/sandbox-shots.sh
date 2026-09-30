@@ -29,10 +29,11 @@
 # output at double its mode and scale 2 before the shell starts
 # (shell_output_scale in scripts/smoke/harness.sh), so the layout keeps its
 # logical size and the shell draws each PNG in device pixels. Each shot at
-# scale 2 checks before and after its capture that the output still reads
-# that mode, since a host resize or refocus, or a writer not identified,
-# resets it (held_mode_state in scripts/smoke/harness.sh), and fails when
-# it does not. Another value is refused as
+# scale 2 checks before and after its capture (shot_held in
+# scripts/smoke/shot.sh) that the output still reads that mode, since a
+# host resize or refocus, or a writer not identified, resets it
+# (held_mode_state in scripts/smoke/harness.sh), and fails when it does
+# not. Another value is refused as
 # `sandbox-shots: refused: scale=<value>`.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
@@ -166,24 +167,26 @@ main_name="$(first_name)" || { fail "the monitor is unreadable"; exit 1; }
 read -r mon_w mon_h bar_reserved < <(hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]), round(m["height"] / m["scale"]), m["reserved"][1])')
 
 undrawn=0
-# hold_kept WHAT: true when no mode is held or the output still reads the
-# held one; otherwise one failure that starts with WHAT and names what the
-# output reads.
-hold_kept() {
-  [[ ${#mode_hold[@]} -eq 0 || $(held_mode_state) == held ]] && return 0
-  fail "$1: ${mode_hold[0]} reads $(mode_scale_of "${mode_hold[0]}" || echo unreadable), not the held ${mode_hold[1]}; a host resize or refocus, or another writer, reset it"
-  return 1
+# hold_left: what the output reads in place of the held mode.
+hold_left() {
+  echo "${mode_hold[0]} reads $(mode_scale_of "${mode_hold[0]}" || echo unreadable), not the held ${mode_hold[1]}; a host resize or refocus, or another writer, reset it"
 }
-# take NAME: one shot, refused while the output has left a mode the run
-# holds, and failed when the output left it while shot waited for a settled
-# frame, so a PNG never shows a reset output under a held mode's name.
+# take NAME: one shot. While the run holds a mode, shot_held refuses it
+# when the output has left that mode, and fails it when the output left it
+# while shot waited for a settled frame, so a PNG never shows a reset
+# output under a held mode's name.
 take() { # NAME
   local status=0
-  hold_kept "shot $1 not taken" || return 0
-  shot "$1" || status=$?
+  if [[ ${#mode_hold[@]} -eq 0 ]]; then
+    shot "$1" || status=$?
+  else
+    shot_held "$1" held_mode_state || status=$?
+  fi
   case $status in
-    0) hold_kept "shot $1 not accepted" || true ;;
+    0) ;;
     2) undrawn=$((undrawn + 1)); fail "grim got no frame from the nested compositor for $1" ;;
+    3) fail "shot $1 not taken: $(hold_left)" ;;
+    4) fail "shot $1 not accepted: $(hold_left)" ;;
     *) fail "shot $1 failed" ;;
   esac
 }

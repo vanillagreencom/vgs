@@ -56,6 +56,10 @@ esac
 SH
 chmod 755 "$tmp/bin/grim"
 hash_a="$(printf 'image-a' | sha256sum | cut -d' ' -f1)"
+# The hold cases replace shot with a stub that records its name in
+# called, so shot_held is driven alone. Their reader, hold, prints the
+# hold's state, and reads called to tell before the capture from after it.
+held_stubs='shot() { echo "$1" >"$D/called"; }; '
 
 # run_case FILE LABEL SNIPPET STATUS LINE: true when the helper FILE gives
 # the status and first stderr line. The snippet runs with the helper
@@ -104,6 +108,12 @@ cases=(
   'echo hang >"$T/bin/mode"; SHOT_GRIM_TIMEOUT_S=1 shot four' 2 "shot: capture-failed name=four grim-status=timeout"
   "grim sees only the nested socket"
   'echo fixed-b >"$T/bin/mode"; shot five >/dev/null; grep -qx WAYLAND_DISPLAY=wayland-1 "$T/bin/env.log"; grep -qx "XDG_RUNTIME_DIR=$RT" "$T/bin/env.log"; ! grep -q HOST_MARKER "$T/bin/env.log"' 0 ""
+  "a capture under a hold held before and after is taken"
+  "$held_stubs"'hold() { echo held; }; shot_held six hold; [[ $(cat "$D/called") == six ]]' 0 ""
+  "a hold left before the capture refuses it untaken"
+  "$held_stubs"'hold() { echo reset; }; s=0; shot_held seven hold || s=$?; [[ ! -e $D/called ]] || exit 9; exit "$s"' 3 "shot: refused: reason=hold-left-before value=reset"
+  "a hold reset during the capture refuses it after"
+  "$held_stubs"'hold() { if [[ -e $D/called ]]; then echo reset; else echo held; fi; }; shot_held eight hold' 4 "shot: refused: reason=hold-left-after value=reset"
 )
 for (( i = 0; i < ${#cases[@]}; i += 4 )); do
   if run_case "$helper" "${cases[@]:i:4}"; then ok "${cases[i]}"; else fail "${cases[i]}"; fi
@@ -142,6 +152,10 @@ controls=(
   '[[ $status -eq 124 ]] && return 2' 'true' "a grim that never returns reads as no frame"
   "grim inherits the caller's environment"
   'env -i PATH="$PATH"' 'env PATH="$PATH"' "grim sees only the nested socket"
+  "a hold left before the capture is not read"
+  '[[ $state == held ]] || { shot_refuse hold-left-before' 'true || { shot_refuse hold-left-before' "a hold left before the capture refuses it untaken"
+  "a hold reset during the capture is not read"
+  '[[ $state == held ]] || { shot_refuse hold-left-after' 'true || { shot_refuse hold-left-after' "a hold reset during the capture refuses it after"
 )
 for (( i = 0; i < ${#controls[@]}; i += 4 )); do
   label="${controls[i]}"; target="${controls[i + 3]}"

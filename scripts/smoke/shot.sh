@@ -125,3 +125,26 @@ shot() {
   shot_last_hash="${stable:-$last}"
   printf '  shot  %s (%s)\n' "$file" "$kind"
 }
+
+# shot_held NAME READER [ARGS...]: `shot NAME` under a held output mode.
+# READER with ARGS prints the hold's state, `held` while the output reads
+# the held mode (held_mode_state in scripts/smoke/harness.sh). A state
+# other than `held`, or a reader that fails, before the capture refuses it
+# untaken. After a capture, such a state means the output left the mode
+# while shot waited for a settled frame: the PNG stays but shows no held
+# output. Returns 0 when taken under the hold, 1 when shot failed, 2 when
+# grim got no frame (shot's 2), 3 when refused before the capture, 4 when
+# refused after it.
+shot_held() {
+  local name="$1" state status=0
+  state="$("${@:2}")" || state=unreadable
+  [[ $state == held ]] || { shot_refuse hold-left-before "$state" || true; return 3; }
+  shot "$name" || status=$?
+  case $status in
+    0) ;;
+    2) return 2 ;;
+    *) return 1 ;;
+  esac
+  state="$("${@:2}")" || state=unreadable
+  [[ $state == held ]] || { shot_refuse hold-left-after "$state" || true; return 4; }
+}
