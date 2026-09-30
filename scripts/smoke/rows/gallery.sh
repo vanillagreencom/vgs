@@ -18,7 +18,7 @@ geometry expect "every example stays inside the gallery" '[]' ipc smoke galleryO
 # end of the one before, within one pixel. The control moves the third
 # heading onto the second in a copy of the same reading, which the check
 # refuses. `[]` is the pass.
-gallery_sections=(Surfaces Typography Buttons Choices Inputs Feedback Dialogs Cards Carousel "Titles and scrolling" Lists "List motion")
+gallery_sections=(Surfaces Typography Buttons Choices Inputs Feedback "Voice levels" Dialogs Cards Carousel "Titles and scrolling" Lists "List motion")
 gallery_stack() {
   local boxes=() title name
   title="$(ipc smoke shownWindowGeometry window vgs.gallery Label Gallery)" || return
