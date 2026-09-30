@@ -11,7 +11,7 @@ const file = path.resolve(__dirname, "../shell/plugins/vgs.jarvis/Session.js");
 const Session = load(file);
 const copy = value => JSON.parse(JSON.stringify(value));
 const events = ["snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle", "stop",
-    "cancel", "interrupt", "capture-opened", "capture-closed", "partial", "final", "brain-done",
+    "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial", "final", "brain-done",
     "brain-failed", "cancelled", "play", "played", "flushed", "tool", "tool-done", "approval",
     "shown", "approval-cancel", "deadline", "lease-ended"];
 assert.deepEqual(copy(Session.EVENTS), events, "every supported event enters the pair matrix");
@@ -78,6 +78,33 @@ const table = [
         assert.deepEqual(unmuted.effects.map(e => [e.kind, e.muted]), [["mute-store", false]]);
         s = step(logic, active, snapshot({ at: 30, settings: { mode: "toggle" } })).state;
         assert.equal(s.conversation.kind, "ended", "mode change ends capture demand");
+    }],
+    ["device-retries", logic => {
+        let s = listening(logic);
+        for (let attempt = 0; attempt <= 3; attempt++) {
+            s = step(logic, s, callback("capture-failed", s.capture, 50 + attempt, { reason: "device-lost" })).state;
+            assert.equal(s.capture.kind, "closing");
+            assert.equal(s.fault.kind, attempt < 3 ? "retrying" : "error");
+            assert.equal(s.fault.retry, Math.min(attempt + 1, 3));
+            s = step(logic, s, callback("capture-closed", s.capture, 60 + attempt)).state;
+            assert.equal(s.capture.kind, attempt < 3 ? "opening" : "closed");
+        }
+        assert.equal(logic.phaseOf(s), "error");
+    }],
+    ["capture-fault", logic => {
+        const before = listening(logic);
+        const s = step(logic, before, callback("capture-failed", before.capture, 50, { reason: "provider-disconnected" })).state;
+        assert.equal(s.fault.reason, "provider-disconnected");
+        assert.equal(s.fault.retry, 0);
+        assert.equal(s.capture.kind, "closing");
+        assert.equal(s.turn.kind, "none");
+    }],
+    ["playback-fault", logic => {
+        const before = speaking(logic);
+        const s = step(logic, before, callback("playback-failed", before.playback, 50, { reason: "device-lost" })).state;
+        assert.equal(s.fault.reason, "device-lost");
+        assert.equal(s.playback.kind, "flushing");
+        assert.equal(s.conversation.kind, "ended");
     }],
     ["unknown-event", logic => assert.throws(() => logic.reduce(logic.initial(), event("unknown")),
         { message: "jarvis: session=event type=unknown" })],
@@ -509,7 +536,8 @@ const pairEvents = events.map(type => ({ type, extra: {} })).concat([
 ]);
 function fixtureEvent(type, s, at) {
     const regions = {
-        "capture-opened": "capture", "capture-closed": "capture", partial: "turn", final: "turn",
+        "capture-opened": "capture", "capture-closed": "capture", "capture-failed": "capture",
+        "playback-failed": "playback", partial: "turn", final: "turn",
         "brain-done": "turn", "brain-failed": "turn", cancelled: "turn", play: "turn",
         played: "playback", flushed: "playback", tool: "turn", "tool-done": "action",
         approval: "turn", shown: "approval", deadline: "turn"
@@ -529,7 +557,7 @@ function invariants(before, e, r) {
         assert.equal(s.gate.kind, "up");
         assert.equal(s.mute.kind, "off");
         assert.equal(s.indicator.kind, "shown");
-        assert.equal(s.fault.kind, "none");
+        assert.notEqual(s.fault.kind, "error");
         assert.notEqual(s.turn.kind, "cancelling");
         assert.ok(s.duplex.kind === "echo" || s.playback.kind === "idle");
     }
@@ -544,6 +572,14 @@ function invariants(before, e, r) {
     }
 }
 const createdCallbacks = [
+    { effect: "capture-open", type: "capture-failed", check: (s, r) => {
+        assert.equal(r.state.capture.kind, "closing");
+        assert.equal(r.state.fault.reason, "fixture");
+    } },
+    { effect: "playback-start", type: "playback-failed", check: (s, r) => {
+        assert.equal(r.state.playback.kind, "flushing");
+        assert.equal(r.state.fault.reason, "fixture");
+    } },
     { effect: "capture-open", type: "capture-opened", check: (s, r, e) => {
         assert.equal(r.state.capture.kind, "open");
         assert.equal(r.state.capture.op, e.op);
@@ -661,12 +697,12 @@ function createdPairMatrix(logic) {
     // These expected producers/consumers are independent of the discovery
     // table. Omitting one row cannot shrink the coverage claim with it.
     assert.deepEqual([...seen].sort(), [
-        "capture-open:capture-opened", "capture-close:capture-closed",
+        "capture-open:capture-opened", "capture-open:capture-failed", "capture-close:capture-closed",
         "collect:partial", "collect:final",
         "brain-send:brain-done", "brain-send:brain-failed", "brain-send:play",
         "brain-send:tool", "brain-send:approval", "brain-send:deadline",
         "brain-cancel:cancelled", "brain-cancel:deadline",
-        "playback-start:played", "playback-flush:flushed",
+        "playback-start:played", "playback-start:playback-failed", "playback-flush:flushed",
         "tool-start:tool-done", "tool-start:deadline",
         "approval-show:shown", "approval-show:deadline"
     ].sort(), "created-owner discovery omitted a producer or deadline owner");
@@ -710,7 +746,14 @@ try {
         ["stale-kind", 'kinds.indexOf(owner.kind) !== -1', '(true || kinds.indexOf(owner.kind) !== -1)', "stale-kind"],
         ["mute", 's.mute.kind === "off" && s.fault', '(true || s.mute.kind === "off") && s.fault', "mute-gate"],
         ["gate", 's.gate.kind === "up" && s.mute', '(true || s.gate.kind === "up") && s.mute', "gate"],
-        ["fault", 's.fault.kind === "none";', '(true || s.fault.kind === "none");', "fault-gate"],
+        ["fault", 's.mute.kind === "off" && s.fault.kind !== "error";',
+            's.mute.kind === "off" && (true || s.fault.kind !== "error");', "fault-gate"],
+        ["device-retry-limit", 'e.reason === "device-lost" && retry < 3',
+            'e.reason === "device-lost" && retry < 4', "device-retries"],
+        ["capture-fault", 'reason: e.reason, retry: retry };',
+            'reason: "wrong-cause", retry: retry };', "capture-fault"],
+        ["playback-fault", 'end(s, effects, e.at, "playback-failed", false);',
+            'if (false) end(s, effects, e.at, "playback-failed", false);', "playback-fault"],
         ["indicator", 's.indicator.kind === "shown"', '(true || s.indicator.kind === "shown")', "indicator-gate"],
         ["hold", 'if (s.input.kind === "held") break;',
             'if (false && s.input.kind === "held") break;', "hold-edges"],

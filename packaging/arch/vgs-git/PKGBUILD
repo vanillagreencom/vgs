@@ -24,6 +24,7 @@ depends=(
   'xdg-terminal-exec'
 )
 optdepends=(
+  'pipewire: Jarvis audio capture, playback, discovery and echo cancellation'
   'fd: launcher file and folder search'
   'fzf: launcher file search matching and the package pickers in floating TUIs'
   'file: launcher open-with list for a found file'

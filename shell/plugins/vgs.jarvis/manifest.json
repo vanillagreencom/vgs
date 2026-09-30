@@ -10,11 +10,13 @@
   "kinds": ["service"],
   "entryPoints": { "service": "Service.qml" },
   "capabilities": ["session", "status", "toasts", "tui", "shortcut"],
-  "settings": { "mode": "hold" },
+  "settings": { "mode": "hold", "microphone": "", "speaker": "" },
   "schema": {
     "mode": { "type": "enum", "label": "Talk mode", "group": "Listening",
       "options": ["hold", "toggle"],
-      "description": "Hold commits on release. Toggle keeps a conversation open. Audio engines are not configured yet." }
+      "description": "Hold commits on release. Toggle keeps a conversation open. Audio engines are not configured yet." },
+    "microphone": { "type": "string", "label": "Microphone", "group": "Audio", "optionsFrom": "microphones" },
+    "speaker": { "type": "string", "label": "Speaker", "group": "Audio", "optionsFrom": "speakers" }
   },
   "hyprland": {
     "binds": [
@@ -29,12 +31,23 @@
     { "command": "busctl", "packages": { "pacman": "systemd", "apt": "systemd", "dnf": "systemd" }, "optional": true, "purpose": "Checks key presence without reading secrets or unlocking the keyring" },
     { "command": "gum", "packages": { "pacman": "gum", "apt": "gum", "dnf": "gum" }, "optional": true, "purpose": "Draws the Add key terminal header; Add key needs it to start" },
     { "command": "flock", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux" }, "optional": false, "purpose": "Serializes coding-task record writers" },
-    { "command": "bwrap", "packages": { "pacman": "bubblewrap", "apt": "bubblewrap", "dnf": "bubblewrap" }, "optional": true, "purpose": "Confines shell commands; shell tools require a successful kernel sandbox probe" }
+    { "command": "bwrap", "packages": { "pacman": "bubblewrap", "apt": "bubblewrap", "dnf": "bubblewrap" }, "optional": true, "purpose": "Confines shell commands; shell tools require a successful kernel sandbox probe" },
+    { "command": "pw-record", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Captures microphone PCM through a leased child" },
+    { "command": "pw-cat", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Plays speech PCM through a leased child" },
+    { "command": "pw-dump", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Reads available microphones and speakers without changing defaults" },
+    { "command": "pw-cli", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Owns a capture-scoped echo cancellation module" },
+    { "command": "setpriv", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux" }, "optional": false, "purpose": "Kills audio children when their parent ends" },
+    { "command": "unshare", "packages": { "pacman": "util-linux", "apt": "util-linux", "dnf": "util-linux-core" }, "optional": false, "purpose": "Ends all audio descendants with their private PID namespace" },
+    { "command": "python3", "packages": { "pacman": "python", "apt": "python3", "dnf": "python3" }, "optional": false, "purpose": "Checks the audio child parent and owns its pipe lease" }
   ],
   "status": {
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },
     "detail": { "type": "data", "label": "Session" },
-    "keys": { "type": "presenceList", "label": "Provider keys", "hint": "Use Add key below. This check never reads a key or unlocks the keyring." }
+    "keys": { "type": "presenceList", "label": "Provider keys", "hint": "Use Add key below. This check never reads a key or unlocks the keyring." },
+    "microphones": { "type": "choices", "label": "Microphones" },
+    "speakers": { "type": "choices", "label": "Speakers" },
+    "level": { "type": "data", "label": "Microphone level" },
+    "audio": { "type": "state", "label": "Audio" }
   },
   "tui": {
     "add-key": { "script": "tui/add-key.sh", "title": "Add Jarvis key",

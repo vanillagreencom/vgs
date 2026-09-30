@@ -22,7 +22,7 @@ _jarvis_env_error() {
 # The allow-list is deliberately disjoint from desktop, audio, account,
 # browser and installer commands. PATH resolves those only as stand-ins.
 _jarvis_env_tools=(bash sh env node python3 cat mkdir rm cp mv ln chmod sleep flock
-  readlink dirname basename stat grep sed awk sort cut wc true false timeout gdbus)
+  readlink dirname basename stat grep sed awk sort cut wc true false setpriv timeout gdbus)
 
 # jarvis_env_run STANDINS -- COMMAND [ARG...]: preserve the sourced caller's
 # traps, options, directories and environment in a subshell.
@@ -94,7 +94,10 @@ PY
     real="$(PATH=/usr/bin:/usr/sbin:/bin:/sbin type -P -- "$tool")" ||
       { _jarvis_env_error "status=not-measured missing=$tool"; exit 77; }
     case "$tool" in
-      unshare|ip|dbus-daemon|tmux) ln -s -- "$real" "$root/bootstrap/$tool" || exit 1 ;;
+      unshare)
+        ln -s -- "$real" "$root/bootstrap/$tool" || exit 1
+        ln -s -- "$real" "$root/tools/$tool" || exit 1 ;;
+      ip|dbus-daemon|tmux) ln -s -- "$real" "$root/bootstrap/$tool" || exit 1 ;;
       *) ln -s -- "$real" "$root/tools/$tool" || exit 1 ;;
     esac
   done

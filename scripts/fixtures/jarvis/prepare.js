@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const cp = require("node:child_process");
+const { standins } = require("./audio.js");
 
 // Synthetic Tasks.js v1 records from the Jarvis plan, 2026-09-30.
 function seedTaskEvents(folder, count) {
@@ -24,7 +25,9 @@ function freshSuite(tree, suite, root) {
         "shell/plugins/vgs.jarvis/Session.js", "shell/plugins/vgs.jarvis/backend/session-runner.js",
         "shell/plugins/vgs.jarvis/backend/jarvisd.js", "shell/plugins/vgs.jarvis/backend/Tasks.js",
         "shell/plugins/vgs.jarvis/backend/task-event", "shell/plugins/vgs.jarvis/manifest.json",
-        "scripts/fixtures/jarvis/scripted.js"])
+        "scripts/fixtures/jarvis/scripted.js", "shell/plugins/vgs.jarvis/backend/Audio.js",
+        "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
+        "scripts/fixtures/jarvis/audio-tool.py"])
         fs.copyFileSync(path.join(tree, file), path.join(clone, file));
     const file = path.join(clone, relative);
     const run = () => cp.spawnSync(process.execPath, [file, "--fresh"], {
@@ -109,6 +112,7 @@ function fixtureWrite(wire) {
 
 function service(sourceTree, tree, root) {
     require("./keys-world.js").standins(path.join(root, "standins"));
+    standins(path.join(root, "standins"));
     const launcher = path.join(sourceTree, "scripts/lib/jarvis-env.sh");
     const lease = path.join(root, "lease.sh");
     // Bash gives an asynchronous command /dev/null on stdin. J09 starts

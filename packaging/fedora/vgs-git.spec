@@ -45,6 +45,7 @@ Recommends:     curl
 Recommends:     libsecret
 Recommends:     bubblewrap
 Recommends:     systemd
+Recommends:     pipewire-utils
 Recommends:     ImageMagick
 Conflicts:      vgs-shell
 # end runtime dependencies

@@ -121,6 +121,7 @@ elif mode == "path":
         "bash", "sh", "env", "node", "python3", "cat", "mkdir", "rm", "cp", "mv",
         "ln", "chmod", "sleep", "flock", "readlink", "dirname", "basename", "stat", "grep",
         "sed", "awk", "sort", "cut", "wc", "true", "false", "timeout", "gdbus", "tmux",
+        "setpriv", "unshare",
     }
     for name in ("pw-record", "pw-cat", "pipewire", "wpctl", "hyprctl", "qs",
                  "secret-tool", "busctl", "systemctl", "systemd-run", "notify-send",

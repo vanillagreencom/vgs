@@ -14,10 +14,11 @@ function world(implementation = Owner, synchronous = false, session = Session) {
     let at = 0;
     const timers = new Map(), calls = [], published = [], trace = [];
     const pending = {}, connections = new Map();
-    const port = name => (e, done) => {
+    const port = name => (e, done, failed) => {
         calls.push({ name, e });
         trace.push(name);
         if (done) pending[name] = done;
+        if (failed) pending[name + "-failed"] = failed;
         if (synchronous && done && ["open", "close"].includes(name)) done();
     };
     const runner = new implementation.SessionRunner(session, {
@@ -93,6 +94,15 @@ const tests = [
         assert.equal(w.runner.state.mute.kind, "on");
         w.dispatch("mute-toggle");
         assert.deepEqual(w.calls.at(-1), { name: "mute-store", value: false });
+        assert.equal(w.runner.state.capture.kind, "closed");
+    }],
+    ["audio-failure", impl => {
+        const w = world(impl);
+        w.dispatch("talk-down");
+        w.pending["open-failed"]("provider-disconnected");
+        assert.equal(w.runner.state.fault.reason, "provider-disconnected");
+        assert.equal(w.runner.state.capture.kind, "closing");
+        w.pending.close();
         assert.equal(w.runner.state.capture.kind, "closed");
     }],
     ["completed-connection", (impl, session = Session) => {

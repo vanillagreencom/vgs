@@ -94,6 +94,7 @@ fi
 expect "Jarvis enables from the non-writable installed prefix" ok ipc shell setPluginEnabled vgs.jarvis true
 expect "Jarvis answers hello without retries from the non-writable installed prefix" ready jarvis_wait_ready 0
 expect "task events use a private data engine from the read-only prefix" "task-prefix=ok" "$node_bin" "$source_repo/scripts/test-task-event.js" --prefix "$readonly_dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend"
+expect_poll "installed Jarvis discovers device choices without writing the prefix" devices jarvis_devices
 
 installed_apply_vgs() {
   local err status=0

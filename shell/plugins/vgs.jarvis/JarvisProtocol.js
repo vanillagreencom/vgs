@@ -2,7 +2,7 @@
 .import "Session.js" as Session
 
 // Service produces hello snapshots and intent(talk-down, talk-up, mute, stop).
-// Daemon consumes those and produces status/state. A line excludes its LF.
+// Daemon produces status/state/devices/level/audio-fault. A line excludes its LF.
 var MAX_LINE_BYTES = 256 * 1024;
 
 function fail(reason) {
@@ -64,8 +64,11 @@ function accept(line, direction) {
     case "hello":
         if (direction !== "shell") fail("direction-hello");
         keys(message, ["v", "type", "gen", "settings", "directories", "revision", "locked", "keys"], "hello");
-        keys(message.settings, ["mode"], "settings");
+        keys(message.settings, ["mode", "microphone", "speaker"], "settings");
         if (message.settings.mode !== "hold" && message.settings.mode !== "toggle") fail("mode");
+        for (var setting of ["microphone", "speaker"])
+            if (typeof message.settings[setting] !== "string"
+                    || !/^[^\x00-\x1f\x7f]{0,200}$/.test(message.settings[setting])) fail("device-setting");
         keys(message.keys, ["talk", "mute", "stop"], "keys");
         for (var shortcut of Object.keys(message.keys)) {
             var key = message.keys[shortcut];
@@ -95,6 +98,34 @@ function accept(line, direction) {
         if (!Session.validate(message.state)) fail("state");
         if (message.state.gen !== message.gen) fail("state-generation");
         if (message.phase !== Session.phaseOf(message.state)) fail("phase");
+        break;
+    case "devices":
+        if (direction !== "daemon") fail("direction-devices");
+        keys(message, ["v", "type", "gen", "revision", "microphones", "speakers"], "devices");
+        for (var group of ["microphones", "speakers"]) {
+            var values = message[group];
+            if (!Array.isArray(values) || values.length > 32) fail("choices");
+            var seen = {};
+            for (var choice of values) {
+                keys(choice, ["label", "value"], "choice");
+                if (typeof choice.label !== "string" || !/^[^\x00-\x1f\x7f]{1,60}$/.test(choice.label)
+                        || typeof choice.value !== "string" || !/^[^\x00-\x1f\x7f]{1,200}$/.test(choice.value))
+                    fail("choice");
+                if (Object.prototype.hasOwnProperty.call(seen, choice.value)) fail("choice-duplicate");
+                Object.defineProperty(seen, choice.value, { value: true });
+            }
+        }
+        break;
+    case "level":
+        if (direction !== "daemon") fail("direction-level");
+        keys(message, ["v", "type", "gen", "revision", "level"], "level");
+        if (!Number.isFinite(message.level) || message.level < 0 || message.level > 1) fail("level");
+        break;
+    case "audio-fault":
+        if (direction !== "daemon") fail("direction-audio-fault");
+        keys(message, ["v", "type", "gen", "revision", "reason"], "audio-fault");
+        if (typeof message.reason !== "string" || !/^[^\x00-\x1f\x7f]{1,180}$/.test(message.reason))
+            fail("audio-fault");
         break;
     default:
         fail("type");

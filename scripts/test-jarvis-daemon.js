@@ -9,10 +9,11 @@ const path = require("node:path");
 const { once } = require("node:events");
 const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const { instrument } = require("./fixtures/jarvis/scripted.js");
+const { standins } = require("./fixtures/jarvis/audio.js");
 const tree = path.resolve(__dirname, "..");
 const daemon = path.join(tree, "shell/plugins/vgs.jarvis/backend/jarvisd.js");
 const source = fs.readFileSync(daemon, "utf8");
-const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold" }, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
@@ -57,7 +58,7 @@ async function inside() {
             lines.push(reply(locked, seq === 0 ? 0 : 1));
             lines.push({ v: 1, type: "state", gen: 1, revision: hello.revision,
                 seq: ++seq, state: {
-                    gen: 1, nextOp: 1, stale: 0, settings: { mode: "hold" },
+                    gen: 1, nextOp: 1, stale: 0, settings: { mode: "hold", microphone: "", speaker: "" },
                     gate: { kind: "down", reason: locked ? "locked" : "unconfigured" },
                     mute: { kind: "off" }, capture: { kind: "closed" }, turn: { kind: "none" }, brain: { kind: "closed" },
                     playback: { kind: "idle" }, action: { kind: "none" }, approval: { kind: "none" }, fault: { kind: "none" },
@@ -106,7 +107,7 @@ async function inside() {
         fs.writeFileSync(path.join(copyDir, "JarvisProtocol.js"), protocol);
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"), path.join(copyDir, "Session.js"));
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/session-runner.js"), path.join(copyDir, "backend/session-runner.js"));
-        for (const filename of ["Tasks.js", "task-event"])
+        for (const filename of ["Tasks.js", "task-event", "Audio.js", "audio-child.py"])
             fs.copyFileSync(path.join(path.dirname(daemon), filename), path.join(copyDir, "backend", filename));
         const copy = path.join(copyDir, "backend/jarvisd.js");
         fs.writeFileSync(copy, source.replace(needle, replacement));
@@ -121,7 +122,8 @@ async function inside() {
         file => run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false])));
     await control("session-forward", "locked: context.locked,", "locked: false,",
         file => run(file, [JSON.stringify({ ...hello, locked: true }) + "\n"], 0, null, states([true])));
-    await control("state-publish", 'if (!ending && context !== null) write(', 'if (false && !ending && context !== null) write(',
+    await control("state-publish", 'if (!ending && context !== null) write({ v: 1, type: "state"',
+        'if (false && !ending && context !== null) write({ v: 1, type: "state"',
         file => run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false])));
     await control("intent-identity", 'if (context === null || message.revision !== context.revision)',
         'if (false)',
@@ -170,7 +172,7 @@ async function inside() {
         const directory = path.join(root, name);
         fs.mkdirSync(path.join(directory, "backend"), { recursive: true });
         for (const relative of ["JarvisProtocol.js", "Session.js", "backend/session-runner.js",
-            "backend/jarvisd.js", "backend/Tasks.js", "backend/task-event"])
+            "backend/jarvisd.js", "backend/Tasks.js", "backend/task-event", "backend/Audio.js", "backend/audio-child.py"])
             fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis", relative), path.join(directory, relative));
         return path.join(directory, "backend/jarvisd.js");
     }
@@ -203,7 +205,7 @@ async function inside() {
             assert.fail("daemon state timeout: " + JSON.stringify(last()) + " stderr=" + err);
         };
         try {
-            send({ ...hello, settings: { mode } });
+            send({ ...hello, settings: { ...hello.settings, mode } });
             await wait(m => m.state.gate.kind !== "down" || m.state.gate.reason === "unconfigured");
             await check({ send: name => send(intent(name)), wait, last, messages });
             child.stdin.end();
@@ -381,6 +383,38 @@ async function inside() {
         await w.wait(m => m.state.conversation.kind === "ended");
         assert.equal(w.last().state.capture.kind, "closed");
     }, "toggle");
+    async function blockedReader(file) {
+        fs.writeFileSync(path.join(process.env.HOME, "audio-flood"), "");
+        const child = cp.spawn("node", [file, "--tree", tree], {
+            env: { PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR },
+            stdio: ["pipe", "pipe", "pipe"]
+        });
+        let err = "";
+        child.stderr.on("data", data => { err += data; });
+        child.stdin.on("error", error => { if (error.code !== "EPIPE") throw error; });
+        const exited = once(child, "exit");
+        const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+        try {
+            child.stdin.write(JSON.stringify(hello) + "\n");
+            // Deliberately leave stdout unread. Discovery must not grow its
+            // outgoing queue without a bound while the lease remains open.
+            const [code, signal] = await exited;
+            assert.equal(signal, null, "blocked stdout must fault without waiting for EOF: " + err);
+            assert.equal(code, 74);
+            assert.equal(err.trim(), "jarvis: stdout=overflow");
+        } finally {
+            clearTimeout(timeout);
+            child.stdout.destroy();
+            child.stdin.destroy();
+            if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+            fs.unlinkSync(path.join(process.env.HOME, "audio-flood"));
+        }
+    }
+    await blockedReader(daemon);
+    await control("outgoing-bound",
+        'if (process.stdout.writableLength + Buffer.byteLength(wire + "\\n") > Protocol.MAX_LINE_BYTES)',
+        'if (false && process.stdout.writableLength + Buffer.byteLength(wire + "\\n") > Protocol.MAX_LINE_BYTES)',
+        blockedReader);
     console.log("test-jarvis-daemon: ok cases=" + cases + " controls=" + controls);
 }
 
@@ -392,7 +426,7 @@ async function main() {
     try {
         if (process.argv[2] !== "--fresh") freshSuite(tree, "daemon", root);
         const launcher = path.join(tree, "scripts/lib/jarvis-env.sh");
-        fs.mkdirSync(path.join(root, "standins"));
+        standins(path.join(root, "standins"));
         const result = cp.spawnSync("/bin/bash", [launcher, path.join(root, "standins"), "--", "node", __filename, "--inside"],
             { env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
                 encoding: "utf8", timeout: 30000 });

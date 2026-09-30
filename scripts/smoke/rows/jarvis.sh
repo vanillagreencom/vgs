@@ -1,5 +1,6 @@
 # This row has no latency ceiling. It polls once per nested IPC round trip.
-# The real child runs inside J09, with no account, audio or desktop endpoint.
+# The real child runs inside J09, with synthetic audio commands and no
+# account, real audio or desktop endpoint.
 set -euo pipefail
 expected_errors+=('WARN qml: jarvis: stderr=.*Killed.*')
 expected_errors+=('WARN qml: jarvis: stderr=jarvis: node=21[.]0[.]0 need=22')
@@ -192,6 +193,22 @@ jarvis_session_assertion() {
    echo "$failures")
 }
 
+jarvis_devices() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+status=json.load(sys.stdin)["status"]
+expected={"microphones":[{"label":"Fixture microphone","value":"fixture.mic"}],
+          "speakers":[{"label":"Fixture speaker","value":"fixture.speaker"}]}
+print("devices" if all(status.get(k)==v for k,v in expected.items()) else "pending")
+'
+}
+
+jarvis_devices_assertion() {
+  (failures=0 behaviour_failures=0
+   expect_poll "the service publishes actual audio offers" devices jarvis_devices >"$sandbox/jarvis-devices-control-assertions.log"
+   echo "$failures")
+}
+
 jarvis_seen_hello() {
   [[ -s $jarvis_seen ]] && echo seen || echo pending
 }
@@ -251,6 +268,7 @@ print("matched" if rows == expected else "pending")
 jarvis_enable
 expect_poll "the healthy skeleton keeps the Session gate unconfigured" session jarvis_session unconfigured
 expect_poll "Jarvis publishes only the fixture key presence" matched jarvis_key_value present
+expect_poll "the real audio owner publishes stable microphone and speaker offers" devices jarvis_devices
 jarvis_disable
 
 jarvis_service="$repo/shell/plugins/vgs.jarvis/Service.qml"
@@ -273,6 +291,26 @@ PY
 jarvis_rescan
 jarvis_enable
 expect "removing Session publication breaks its real consumer assertion" 1 jarvis_session_assertion
+jarvis_disable
+cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+jarvis_rescan
+
+# Keep the branch, but omit its status write. The real offers assertion fails
+# before any microphone or speaker can start.
+python3 - "$jarvis_service" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+needle='const reply = shell.status.set(key, message[key]);'
+assert s.count(needle)==1
+changed=s.replace(needle, 'const reply = false ? shell.status.set(key, message[key]) : "ok";')
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+jarvis_enable
+expect "removing offer publication breaks the real consumer assertion" 1 jarvis_devices_assertion
 jarvis_disable
 cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
 jarvis_rescan

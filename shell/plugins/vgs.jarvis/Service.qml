@@ -49,6 +49,14 @@ Item {
         sessionState = null;
         const result = shell.status.set("detail", null);
         if (result !== "ok") throw new Error("jarvis: " + result);
+        for (const key of ["microphones", "speakers"]) {
+            const cleared = shell.status.set(key, []);
+            if (cleared !== "ok") throw new Error("jarvis: " + cleared);
+        }
+        const audioReport = shell.status.set("audio", { tone: "info", text: "Reading devices" });
+        if (audioReport !== "ok") throw new Error("jarvis: " + audioReport);
+        const quiet = shell.status.set("level", 0);
+        if (quiet !== "ok") throw new Error("jarvis: " + quiet);
         child.completion = null;
         child.stdinEnabled = true;
         publish("info", "Starting");
@@ -147,6 +155,27 @@ Item {
                 const message = Protocol.accept(line, "daemon");
                 if (message.revision !== shell.manifest.__revision)
                     throw new Error("jarvis: protocol=identity");
+                if (message.type === "devices") {
+                    for (const key of ["microphones", "speakers"]) {
+                        const reply = shell.status.set(key, message[key]);
+                        if (reply !== "ok") throw new Error("jarvis: " + reply);
+                    }
+                    const report = shell.status.set("audio", { tone: "ok", text: "Device list ready" });
+                    if (report !== "ok") throw new Error("jarvis: " + report);
+                    continue;
+                }
+                if (message.type === "audio-fault") {
+                    const report = shell.status.set("audio", { tone: "danger", text: message.reason });
+                    if (report !== "ok") throw new Error("jarvis: " + report);
+                    continue;
+                }
+                if (message.type === "level") {
+                    if (sessionState !== null && message.gen === sessionState.gen) {
+                        const reply = shell.status.set("level", message.level);
+                        if (reply !== "ok") throw new Error("jarvis: " + reply);
+                    }
+                    continue;
+                }
                 if (message.type === "state") {
                     // An ordered old lock snapshot can precede the latest
                     // hello's answer. Do not publish it as current state.

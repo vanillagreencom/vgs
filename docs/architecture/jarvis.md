@@ -2,7 +2,7 @@
 
 Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, scripts/smoke/rows/jarvis-keys.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
 
-The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon runs the region reducer and persists privacy mute, but captures no audio, opens no account or socket, and runs no tool. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
+The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon installs the [audio owner](jarvis-audio.md) and its real reducer ports and persists privacy mute. It captures no audio until speech and indicator prerequisites exist. It opens no provider account and runs no policy tool or coding task. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
 
 The service also owns a metadata-only key presence probe. Settings opens the masked Add key terminal. Storage, lookup and the reference contract for future adapters and the accounts picker are in [jarvis-secrets.md](jarvis-secrets.md). The daemon still opens no provider account.
 
@@ -40,9 +40,9 @@ The service treats a missing shell or lock value as locked. Each hello carries t
 
 The starred strings in [the plan's settings section](../plans/v2-jarvis-plan.md#310-settings-status-and-files) use `optionsFrom`: voice, language, microphone, speaker, brain, model and coding agent. The service that owns discovery publishes each offer list through its plugin's declared `choices` status. A label names the choice to the user; its stable id is the setting.
 
-[status.md § Setting choices](status.md#setting-choices) defines the generic shape, bounds, empty-string first-offered convention and retained unavailable ids. [D057](../decisions/D057-setting-options-from-status.md) records the core choice and its Omarchy comparison. The future Jarvis consumer resolves empty string from its own first offer and treats no offers as no selection. Discovery failure must not silently change the configured provider or device.
+[status.md § Setting choices](status.md#setting-choices) defines the generic shape, bounds, empty-string first-offered convention and retained unavailable ids. [D057](../decisions/D057-setting-options-from-status.md) records the core choice and its Omarchy comparison. Each discovery owner resolves empty string from its own first offer and treats no offers as no selection. Discovery failure must not silently change the configured provider or device.
 
-The generic fixture `acme.status`, not a Jarvis skeleton, proves the Settings Select in `scripts/smoke/rows/settings.sh`. It uses synthetic offers and writes only the sandbox's configuration. No microphone, speaker, provider account or network is needed.
+The generic fixture `acme.status` proves the Settings Select in `scripts/smoke/rows/settings.sh`. Jarvis publishes its own [read-only device offers](jarvis-audio.md#device-discovery). Both use synthetic offers in validation and write only sandbox configuration. No real microphone, speaker, provider account or network is needed.
 
 ## Passive input
 
@@ -54,7 +54,7 @@ The core supports the [passive layer input contract](layers.md), refined by [D05
 - The daemon exits when stdin closes. No systemd unit or detached process keeps it alive. It uses the shared library loader from the real VGS tree, passed as argv, because its published plugin snapshot contains no core files.
 - A successful hello does not replenish the restart allowance. Five restarts use exponential delays, then the service publishes a problem and raises one toast. The hello deadline bounds a child that starts but sends no answer. These are recovery rules, not measured latency budgets.
 - The daemon's normal exit 78 is permanent configuration failure. The service publishes its cause without a restart. Node below the plugin floor and privacy-record failures take this path. VGS's package floor remains Node 18; only Jarvis requires Node 22.
-- Node below the plugin floor refuses before reading hello. The manifest names the daemon and key flow's commands. D035 supplies the install notice; the plugin runs no installer.
+- Node below the plugin floor refuses before reading hello. The manifest names the daemon, audio, key-flow, task-record and sandbox commands. D035 supplies the install notice; the plugin runs no installer.
 
 ## Wire
 
@@ -62,7 +62,7 @@ The wire contract is in [jarvis-controls.md § Wire](jarvis-controls.md#wire).
 
 ## Boundaries still owned by later rows
 
-J13 owns audio process lifetime, forced daemon death ending its children, and actual capture teardown during lock, mute or unknown lock state. J16 owns the mapped indicator handshake. J19 owns the policy-approved tool router and confirmation authority. J42 owns local toggle turn detection; J43 owns always runtime; J57 owns the console. Their settings and actions enter only with their consumers. The reducer's ports do not implement those owners. Engines, adapters, accounts and user interfaces stay with their assigned issues. [The action policy](jarvis-policy.md) names the separate routing, approval, audit, release and confinement owners.
+[The audio owner](jarvis-audio.md) implements audio process lifetime and capture teardown. J14 owns playback accounting and J15 owns echo verification. J16 owns the mapped indicator handshake. J19 owns the policy-approved tool router and confirmation authority. J42 owns local toggle turn detection; J43 owns always runtime; J57 owns the console. Their settings and actions enter only with their consumers. The reducer's ports do not implement those owners. Engines, adapters, accounts and user interfaces stay with their assigned issues. [The action policy](jarvis-policy.md) names the separate routing, approval, audit, release and confinement owners.
 
 ## Evidence
 
@@ -74,10 +74,8 @@ J13 owns audio process lifetime, forced daemon death ending its children, and ac
 - `scripts/smoke/rows/read-only-prefix.sh` adds the shared observer to its disposable installed tree. It requires zero-retry hello from the non-writable prefix and checks that startup changes no installed file. `scripts/smoke/rows/start-order.sh` uses the same fresh-start read for the default set.
 - Smoke instruments only disposable service copies to launch the child through the real J09 helper. `scripts/fixtures/jarvis/prepare.js` keeps that instrumentation in one place. The helper itself owns worktree-local scratch allocation. A fixture launcher carries the stdin pipe through a descriptor, because Bash replaces stdin with `/dev/null` for the helper's asynchronous namespace supervisor. It restores stdin inside the namespace before executing the real daemon.
 
+[Jarvis validation](jarvis-validation.md#evidence) also records the shared service checks. [Audio evidence](jarvis-audio.md#evidence) holds the child-lifetime and buffer checks.
+
 ## Omarchy comparison
 
-The read-only Omarchy shell reference's `plugins/agents/Main.qml` separates display from external collectors. VGS keeps that separation, with the daemon as the worker and the service as its health publisher. Omarchy's collectors do not own a continuously leased child.
-
-The read-only omarchy-voice reference's `share/omarchy-voice.service` uses a graphical-session systemd unit with restart limiting. VGS keeps bounded restart but ties the daemon to the enabled service's stdin instead. A unit can outlive the shell and its future capture indicator. J13 and J16 must enforce the audio and indicator promises before capture exists.
-
-omarchy-voice's `session.py` forwards local control commands through a socket; its `playback.py` owns the playback queue. VGS keeps effect ownership separate from state transitions. One pure reducer must judge overlapping capture, playback, tools and approvals without sharing mutable flags between adapter callbacks.
+[The service comparison](jarvis-validation.md#omarchy-comparison) and [the audio comparison](jarvis-audio.md#omarchy-comparison) name the adopted interfaces and different lifetimes.

@@ -8,7 +8,7 @@ const { load } = require("../bin/lib/qml-library.js");
 const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const file = path.join(__dirname, "../shell/plugins/vgs.jarvis/JarvisProtocol.js");
 const Protocol = load(file);
-const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold" }, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
@@ -17,7 +17,7 @@ const status = { v: 1, type: "status", gen: 0, revision: hello.revision, daemon:
 const state = { v: 1, type: "state", gen: 0, revision: hello.revision, seq: 1,
     state: JSON.parse(JSON.stringify(Protocol.Session.initial())), phase: "down" };
 const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(file), "manifest.json"), "utf8"));
-assert.deepEqual(manifest.settings, { mode: "hold" });
+assert.deepEqual(manifest.settings, { mode: "hold", microphone: "", speaker: "" });
 assert.deepEqual(manifest.schema.mode.options, ["hold", "toggle"]);
 assert.deepEqual(manifest.hyprland.binds, [
     { shortcut: "talk", key: "SUPER+code:108", hold: true },
@@ -25,8 +25,21 @@ assert.deepEqual(manifest.hyprland.binds, [
     { shortcut: "stop", key: "SUPER+ALT+PERIOD" }
 ]);
 assert.equal(manifest.capabilities.includes("shortcut"), true);
+const devices = { v: 1, type: "devices", gen: 0, revision: hello.revision,
+    microphones: [{ label: "Microphone", value: "fixture.mic" }], speakers: [] };
+const level = { v: 1, type: "level", gen: 0, revision: hello.revision, level: 0.5 };
+const audioFault = { v: 1, type: "audio-fault", gen: 0, revision: hello.revision, reason: "discovery-exit" };
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const cases = [
+    ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
+    ["audio-fault", changed(audioFault, { reason: "" }), "daemon", "audio-fault"],
+    ["device-setting", changed(hello, { settings: { ...hello.settings, microphone: 1 } }), "shell", "device-setting"],
+    ["devices-direction", JSON.stringify(devices), "shell", "direction-devices"],
+    ["choices", changed(devices, { microphones: {} }), "daemon", "choices"],
+    ["choice", changed(devices, { microphones: [{ label: "Microphone", value: "" }] }), "daemon", "choice"],
+    ["choice-duplicate", changed(devices, { microphones: devices.microphones.concat(devices.microphones) }), "daemon", "choice-duplicate"],
+    ["level-direction", JSON.stringify(level), "shell", "direction-level"],
+    ["level-bound", changed(level, { level: 1.01 }), "daemon", "level"],
     ["json", "{", "shell", "json"],
     ["object", "[]", "shell", "object"],
     ["version", changed(hello, { v: 2 }), "shell", "version"],
@@ -40,7 +53,7 @@ const cases = [
     ["hello-shape", changed(hello, { surprise: true }), "shell", "shape-hello"],
     ["status-shape", changed(status, { surprise: true }), "daemon", "shape-status"],
     ["settings", changed(hello, { settings: {} }), "shell", "shape-settings"],
-    ["mode", changed(hello, { settings: { mode: "always" } }), "shell", "mode"],
+    ["mode", changed(hello, { settings: { ...hello.settings, mode: "always" } }), "shell", "mode"],
     ["keys", changed(hello, { keys: { talk: "SUPER+A" } }), "shell", "shape-keys"],
     ["key-type", changed(hello, { keys: { ...hello.keys, talk: false } }), "shell", "key-talk"],
     ["key-empty", changed(hello, { keys: { ...hello.keys, talk: "" } }), "shell", "key-talk"],
@@ -74,8 +87,12 @@ for (const daemon of ["ready", "locked"])
 assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(state), "daemon")), JSON.stringify(state));
 for (const name of ["talk-down", "talk-up", "mute", "stop"])
     assert.equal(Protocol.accept(changed(intent, { intent: name }), "shell").intent, name);
-assert.equal(Protocol.accept(changed(hello, { settings: { mode: "toggle" },
+assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, mode: "toggle" },
     keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
+for (const message of [devices, level, audioFault])
+    assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
+for (const value of [0, 1]) assert.equal(Protocol.accept(changed(level, { level: value }), "daemon").level, value);
+assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, microphone: "missing.mic" } }), "shell").settings.microphone, "missing.mic");
 for (const text of ["", "a", "é", "語", "😀", "\ud800"])
     assert.equal(Protocol.bytes(text), Buffer.byteLength(text), text);
 const wire = JSON.stringify(status);
@@ -112,6 +129,19 @@ try {
             'if (false) fail("direction-intent");', "intent-direction"],
         ["intent-name", 'if (["talk-down", "talk-up", "mute", "stop"].indexOf(message.intent) === -1) fail("intent");',
             'if (false) fail("intent");', "intent-name"],
+        ["audio-fault-direction", 'if (direction !== "daemon") fail("direction-audio-fault");',
+            'if (false) fail("direction-audio-fault");', "audio-fault-direction"],
+        ["audio-fault", 'fail("audio-fault");', ';', "audio-fault"],
+        ["device-setting", 'fail("device-setting");', ';', "device-setting"],
+        ["devices-direction", 'if (direction !== "daemon") fail("direction-devices");', 'if (false) fail("direction-devices");', "devices-direction"],
+        ["choices", 'if (!Array.isArray(values) || values.length > 32) fail("choices");',
+            'if (false) fail("choices");', "choices"],
+        ["choice", 'fail("choice");', ';', "choice"],
+        ["choice-duplicate", 'if (Object.prototype.hasOwnProperty.call(seen, choice.value)) fail("choice-duplicate");',
+            'if (false) fail("choice-duplicate");', "choice-duplicate"],
+        ["level-direction", 'if (direction !== "daemon") fail("direction-level");', 'if (false) fail("direction-level");', "level-direction"],
+        ["level-bound", 'if (!Number.isFinite(message.level) || message.level < 0 || message.level > 1) fail("level");',
+            'if (false) fail("level");', "level-bound"],
         ["object", 'if (!object(message)) fail("object");', 'if (false) fail("object");', "object"],
         ["version", 'if (message.v !== 1) fail("version");', 'if (false) fail("version");', "version"],
         ["generation", 'fail("generation");', ';', "generation"],

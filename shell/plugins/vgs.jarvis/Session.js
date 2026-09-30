@@ -8,7 +8,7 @@ var SESSION_SETTINGS = ["mode", "voiceProvider", "voice", "language", "brain", "
 var RESPONSE_TIMEOUT_MS = 60000;
 var EVENTS = [
     "snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle",
-    "stop", "cancel", "interrupt", "capture-opened", "capture-closed", "partial",
+    "stop", "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial",
     "final", "brain-done", "brain-failed", "cancelled", "play", "played",
     "flushed", "tool", "tool-done", "approval",     "shown", "approval-cancel", "deadline", "lease-ended"
 ];
@@ -103,13 +103,17 @@ function end(s, effects, at, reason, stopTool) {
 }
 
 function canEngage(s) {
-    return s.gate.kind === "up" && s.mute.kind === "off" && s.fault.kind === "none";
+    return s.gate.kind === "up" && s.mute.kind === "off" && s.fault.kind !== "error";
 }
 
 function canCapture(s) {
     return canEngage(s) && s.indicator.kind === "shown"
         && (s.duplex.kind === "echo" || s.playback.kind === "idle")
         && s.turn.kind !== "cancelling" && s.conversation.kind !== "ended" && s.input.kind !== "released";
+}
+
+function canPlayback(s) {
+    return s.gate.kind === "up" && s.fault.kind !== "error" && s.playback.kind === "playing";
 }
 
 function reconcile(s, effects) {
@@ -280,7 +284,18 @@ function reduce(state, e) {
     case "capture-opened":
         if (!live(s, e, "capture", ["opening"])) { stale(s); break; }
         s.capture.kind = "open";
+        if (s.fault.kind === "retrying") s.fault = { kind: "none" };
         break;
+    case "capture-failed": {
+        if (!live(s, e, "capture", ["opening", "open"])) { stale(s); break; }
+        var retry = s.fault.kind === "retrying" ? s.fault.retry : 0;
+        s.fault = e.reason === "device-lost" && retry < 3
+            ? { kind: "retrying", reason: e.reason, retry: retry + 1 }
+            : { kind: "error", reason: e.reason, retry: retry };
+        closeCapture(s, effects);
+        if (s.turn.kind === "collecting") s.turn = { kind: "none" };
+        break;
+    }
     case "capture-closed":
         if (!live(s, e, "capture", ["closing"])) { stale(s); break; }
         s.capture = { kind: "closed" };
@@ -326,6 +341,11 @@ function reduce(state, e) {
     case "flushed":
         if (!live(s, e, "playback", ["flushing"])) { stale(s); break; }
         s.playback = { kind: "idle" };
+        break;
+    case "playback-failed":
+        if (!live(s, e, "playback", ["playing"])) { stale(s); break; }
+        s.fault = { kind: "error", reason: e.reason, retry: 0 };
+        end(s, effects, e.at, "playback-failed", false);
         break;
     case "tool":
         if (!live(s, e, "turn", ["thinking"])) { stale(s); break; }
@@ -380,7 +400,7 @@ var REGIONS = {
     playback: { idle: "", playing: "gen op source interruptible admission", flushing: "gen op" },
     action: { none: "", running: "gen op tool brain limit cancellation" },
     approval: { none: "", held: "gen op id digest deadline shownAt" },
-    fault: { none: "", error: "reason retry" }, conversation: { ended: "", active: "", interrupted: "" },
+    fault: { none: "", error: "reason retry", retrying: "reason retry" }, conversation: { ended: "", active: "", interrupted: "" },
     input: { released: "", held: "", conversation: "", "follow-up": "", armed: "" },
     indicator: { gone: "", shown: "" }, duplex: { half: "", echo: "" }
 };

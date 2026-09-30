@@ -211,6 +211,7 @@ f share/vgs/shell/plugins/vgs.jarvis/Service.qml
 f share/vgs/shell/plugins/vgs.jarvis/Session.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Audio.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/OpenAIChat.js
@@ -224,6 +225,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/SpeechLanguage.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Sse.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tasks.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/audio-child.py
 f share/vgs/shell/plugins/vgs.jarvis/backend/jarvisd.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/keys.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/net.js

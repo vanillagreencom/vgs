@@ -5,7 +5,8 @@
 // mute-store failure exits 78. Stdout carries v1 status/state
 // messages judged by JarvisProtocol; stderr carries keyed jarvis: failures.
 // Startup validates coding-task records and publishes their durable producer.
-// It opens no socket, account or audio device and starts no coding task.
+// Device discovery is read-only. Speech/indicator prerequisites keep capture
+// unconfigured. EOF closes the audio owner and waits for all child exits.
 "use strict";
 const path = require("node:path");
 const fs = require("node:fs");
@@ -28,6 +29,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
     const Session = Protocol.Session;
     const { SessionRunner, unavailable } = require("./session-runner.js");
+    const { Audio } = require("./Audio.js");
     const decoder = new StringDecoder("utf8");
     let tail = "";
     let context = null;
@@ -90,11 +92,37 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     function write(message) {
         const wire = JSON.stringify(message);
         Protocol.accept(wire, "daemon");
+        if (process.stdout.writableLength + Buffer.byteLength(wire + "\n") > Protocol.MAX_LINE_BYTES) {
+            ioFailed("stdout", { code: "overflow" });
+            return;
+        }
         if (!process.stdout.write(wire + "\n")) process.stdin.pause();
     }
-    const runner = new SessionRunner(Session, { ...unavailable(), mute: { store: storeMute } }, {
+    const audio = new Audio({
+        session: Session, environment: process.env, clock: { now: () => performance.now() },
+        offers: devices => {
+            if (!ending && context !== null) write({ v: 1, type: "devices", gen: runner.state.gen,
+                revision: context.revision, ...devices });
+        },
+        level: (gen, level) => {
+            if (!ending && context !== null) write({ v: 1, type: "level", gen,
+                revision: context.revision, level });
+        },
+        fault: reason => {
+            if (!ending && context !== null) write({ v: 1, type: "audio-fault", gen: runner.state.gen,
+                revision: context.revision, reason: String(reason).replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) });
+        },
+        captureSink: null, playbackSource: null, echo: null
+    });
+    const ports = unavailable();
+    ports.capture = { ...ports.capture, ...audio.capturePort };
+    ports.playback = audio.playbackPort;
+    ports.mute = { store: storeMute };
+    const runner = new SessionRunner(Session, ports, {
         now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer)
     }, (state, phase) => {
+        audio.observe(state);
+        if (state.gate.kind === "down") void audio.teardown("gate");
         if (!ending && context !== null) write({ v: 1, type: "state", gen: state.gen,
             revision: context.revision, seq: ++seq, state, phase });
     });
@@ -135,27 +163,42 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                 if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,
                     daemon: context.locked ? "locked" : "ready" });
-                // No adapter/configuration/indicator exists yet. A healthy
+                // No speech adapter or indicator exists yet. A healthy
                 // child is not permission to capture or start a tool.
                 runner.dispatch({ type: "snapshot", locked: context.locked,
                     configured: false, echoCancel: false, settings: context.settings });
+                if (first) void audio.discover().catch(error => {
+                    if (!ending) audio.fault(error.message);
+                });
             }
         } catch (error) {
             ending = true;
             runner.close();
+            void audio.close("protocol");
             refuse(error.message.startsWith("jarvis: tasks=") ? 74
                 : error.message.startsWith("jarvis: mute=") ? 78 : 65, error.message);
         }
     }
     process.stdout.on("drain", () => { if (!ending) process.stdin.resume(); });
-    process.stdout.on("error", error => { ending = true; refuse(74, "jarvis: stdout=" + error.code); });
-    process.stdin.on("error", error => { ending = true; refuse(74, "jarvis: stdin=" + error.code); });
+    function ioFailed(channel, error) {
+        if (ending) return;
+        ending = true;
+        runner.close();
+        const released = audio.close(channel);
+        refuse(74, "jarvis: " + channel + "=" + error.code);
+        // Node's standard output can retain a blocked write after destroy.
+        // Audio exits first; a failed pipe cannot keep the daemon alive.
+        void released.then(() => process.exit(74));
+    }
+    process.stdout.on("error", error => ioFailed("stdout", error));
+    process.stdin.on("error", error => ioFailed("stdin", error));
     process.stdin.on("data", chunk => read(decoder.write(chunk)));
     process.stdin.on("end", () => {
         read(decoder.end());
         if (ending) return;
         ending = true;
         runner.close();
+        void audio.close("lease");
         if (tail !== "") refuse(65, "jarvis: protocol=unterminated-line");
         // No child or handle holds the process alive after lease loss.
     });

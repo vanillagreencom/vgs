@@ -1,6 +1,7 @@
 // Own reducer effects and deadlines in the daemon. Ports own their resources;
 // each receives a completion function stamped with its original gen/op.
-// The daemon supplies unavailable ports until audio, brain and router land.
+// Audio supplies its production ports. Speech, brain and router ports remain
+// unavailable until their owners can enforce the session prerequisites.
 "use strict";
 
 class SessionRunner {
@@ -34,7 +35,8 @@ class SessionRunner {
     consume(e) {
         const done = (type, values = {}) => this.dispatch({ ...values, type, gen: e.gen, op: e.op });
         switch (e.kind) {
-        case "capture-open": this.ports.capture.open(e, () => done("capture-opened")); break;
+        case "capture-open": this.ports.capture.open(e, () => done("capture-opened"),
+            reason => done("capture-failed", { reason })); break;
         case "capture-close": this.ports.capture.close(e, () => done("capture-closed")); break;
         case "collect": this.ports.capture.collect(e, (type, text) => done(type, { text })); break;
         case "brain-send": this.ports.brain.send(e, (type, values) => done(type, values)); break;
@@ -42,7 +44,8 @@ class SessionRunner {
             this.ports.brain.cancel(e, () => this.dispatch({ type: "cancelled", gen: e.gen, op: e.target }));
             break;
         case "brain-close": this.ports.brain.close(e); break;
-        case "playback-start": this.ports.playback.start(e, () => done("played")); break;
+        case "playback-start": this.ports.playback.start(e, () => done("played"),
+            reason => done("playback-failed", { reason })); break;
         case "playback-flush": this.ports.playback.flush(e, () => done("flushed")); break;
         case "tool-start": this.ports.tools.start(e, outcome => done("tool-done", { outcome })); break;
         case "tool-cancel": this.ports.tools.cancel(e); break;
