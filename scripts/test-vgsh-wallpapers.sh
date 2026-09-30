@@ -265,8 +265,25 @@ judge_control unbounded 'if (member.size > download.MEMBER_CEILING) refuse(' 'if
 tinst "the unbounded mutant writes the member until the archive ends" "$cfg" "$rt_empty" 1 "$any_out" 'vgsh: refused: wallpapers=moor reason=header defect=truncated' theme wallpapers --json moor
 unset THEME_BIN
 fresh vgs-theme-moor-r1.tar.gz
-judge_control file-anywhere 'Boolean(process.env[TEST_RUN])' 'true'
+judge_control file-anywhere 'download.archiveUrl(plan.pin, process.env[ASSET_BASE], Boolean(process.env[TEST_RUN]))' 'download.archiveUrl(plan.pin, process.env[ASSET_BASE], true)'
 INST_TEST_RUN="" tinst "the file-anywhere mutant downloads a file:// base outside a test run" "$cfg" "$rt_empty" 0 "ok wallpapers=moor state=installed images=2 archive=${r1_sha:0:12}" "$any_out" theme wallpapers moor
+unset THEME_BIN
+
+inst_env=(VGS_THEME_ASSET_BASE="file://$assets")
+index vgs-theme-moor-r1.tar.gz
+preview_dir="$cache/previews"
+rm -rf -- "$preview_dir"; mkdir -p "$preview_dir"
+printf 'partial\n' >"$preview_dir/$r1_sha-0-one.png.part"
+tinst "preview ignores and removes a stale part" "$cfg" "$rt_empty" 0 "$any_out" "" theme preview --json moor
+check "preview returns a completed image, not the stale part" last_json 'd["state"] == "ok" and d["path"].endswith("-0-one.png") and not d["path"].endswith(".part")'
+check "preview removed the stale part" test ! -e "$preview_dir/$r1_sha-0-one.png.part"
+check "preview wrote the image byte for byte" cmp -s "$tmp/one.png" "$preview_dir/$r1_sha-0-one.png"
+
+rm -rf -- "$themes/moor/backgrounds"; cp -- "$tmp/snapshot/.vgs-catalog.json" "$marker"
+rm -rf -- "$preview_dir"; mkdir -p "$preview_dir"; printf 'partial\n' >"$preview_dir/$r1_sha-0-one.png.part"
+judge_control part-hit 'cachedPreview = fs.readdirSync(previewCacheDir(), { withFileTypes: true }).find(entry => entry.isFile() && entry.name.startsWith(pin.sha256 + "-") && !entry.name.endsWith(".part"));' 'cachedPreview = fs.readdirSync(previewCacheDir(), { withFileTypes: true }).find(entry => entry.isFile() && entry.name.startsWith(pin.sha256 + "-"));'
+tinst "the part-hit mutant returns the stale preview part" "$cfg" "$rt_empty" 0 "$any_out" "" theme preview --json moor
+check "the part-hit mutant reports the .part path" last_json 'd["state"] == "ok" and d["path"].endswith(".part")'
 unset THEME_BIN
 
 rows_done test-vgsh-wallpapers

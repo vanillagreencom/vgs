@@ -10,6 +10,7 @@ A theme package is one directory. It holds the shell document and the applicatio
 |---|---|---|
 | `theme.json` | yes | The shell document from [design-system.md § The shell document](design-system.md#the-shell-document). |
 | `terminal.json` | no | `{ "schemaVersion": 1, "slots": { "color0": "#...", ... "color15": "#..." } }`. |
+| `preview.png` | no | A package-authored desktop preview image. The theme browser uses it before the live token preview. |
 | `targets/<target>.<ext>` | no | A curated file, taken verbatim in place of the target file the renderer writes to that name, where the target accepts it. An installed package's is dropped on a target whose files run code: [theme-targets.md § Templates](theme-targets.md#templates). |
 | `backgrounds/<image>` | no | Background images, which apply makes current: [theme-backgrounds.md](theme-backgrounds.md). |
 
@@ -23,7 +24,7 @@ A package is shipped under `themes/<name>/`, installed under the configuration h
 
 ## Boundaries
 
-- `ThemeLogic.acceptPackage` takes the token table and file texts. It performs no I/O. It judges `theme.json` through `ThemeLogic.accept`, judges terminal slot names and colours, checks the directory/document name match, and applies the `vgs`, `targets`, `catalog` and `thumbnails` reservations.
+- `ThemeLogic.acceptPackage` takes the token table and file texts. It performs no I/O. It judges `theme.json` through `ThemeLogic.accept`, judges terminal slot names and colours, checks the directory/document name match, and applies the `vgs`, `targets`, `catalog` and `thumbnails` reservations. The runner accepts `preview.png` as an optional package file and refuses it when it is a symlink.
 - `bin/vgsh-theme-judge` walks the package and target directories, reads every file an apply needs, and makes every decision through `ThemeLogic.js`, `Tokens.js` and, for `shell.json`, `PluginLogic.js`, loaded through `bin/lib/qml-library.js`. Its refusal and its file writes are `bin/lib/judge-files.js`, shared with `bin/vgsh-plugin-judge`.
 - `bin/lib/theme-render.js` judges `target.json`, renders templates and chooses the terminal slots. It performs no I/O: the judge reads every file and passes its text or bytes, with `ThemeLogic.js` and the token table as arguments, so a token path means what it means to the shell.
 - `bin/lib/theme-select.js` decides the text a settings file takes when a target's `select` sets its theme key. It performs no I/O either.

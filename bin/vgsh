@@ -1256,6 +1256,11 @@ theme_wallpapers() { # FORMAT NAME MODE
   node "$theme_judge" wallpapers-land "$1" "$config_home/vgs" "$stage" "$verdict" "$2" "$3"
 }
 
+theme_preview() { # FORMAT NAME
+  theme_download_verdict
+  exec node "$theme_judge" preview "$1" "$download_verdict" "$2"
+}
+
 # The judge recovers, stages and judges the catalog package and moves it
 # into place, and prints a result on every path the lock verdict reaches;
 # this process holds the stage and the lock.
@@ -1750,6 +1755,12 @@ case "$cmd" in
         done
         if [[ -z $name ]]; then printf 'vgsh: refused: name=missing\n' >&2; usage; exit 2; fi
         theme_wallpapers "$format" "$name" "$mode"
+        ;;
+      preview)
+        name="${1:-}"
+        if [[ -z $name ]]; then printf 'vgsh: refused: name=missing\n' >&2; usage; exit 2; fi
+        if [[ $# -gt 1 ]]; then printf 'vgsh: refused: argument=%s\n' "$2" >&2; usage; exit 2; fi
+        theme_preview "$format" "$name"
         ;;
       *)
         printf 'vgsh: refused: theme-subcommand=%s\n' "${sub:-missing}" >&2; usage; exit 2

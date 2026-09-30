@@ -10,7 +10,7 @@ A bar button that opens a panel listing every theme package, a full-screen theme
 - A catalog row shows Installing while an install runs. It shows the browser's progress text while a wallpaper download runs. A click on an installed catalog row applies it.
 - Add from URL opens the floating TUI for `bin/vgsh theme add`, asks for a git URL, then offers to apply the new theme.
 - A click on a row applies that package, as `bin/vgsh theme apply <name>` does.
-- A full-screen theme browser opens on `SUPER+T`. It lists shipped, installed and catalog themes as angled cards. Type to filter. Select All or Installed. Press Enter, or click the selected card, to install a catalog theme when needed and apply it.
+- A full-screen theme browser opens on `SUPER+T`. It lists shipped, installed and catalog themes as angled cards. A package `preview.png` draws first. Without it, the selected card draws a live desktop preview from the package's tokens and terminal colours. Side cards draw the package preview, wallpaper or palette. Type to filter. Select All or Installed. Press Enter, or click the selected card, to install a catalog theme when needed and apply it.
 - After a catalog theme applies without its wallpapers, the browser asks whether to download them. Download shows progress, unpacks the wallpapers and applies the theme again so its first wallpaper shows. Not now leaves the theme applied without its wallpapers.
 - The last apply's problems on its package's row, until the next apply: each application target that failed, with its reason, and each file of an installed package the apply dropped because its target runs code, as `bin/vgsh theme apply` reports it with `dropped=`.
 - A Modified badge when `~/.config/vgs/theme.json` no longer matches the package it names. Apply the package again to revert the edit.
@@ -52,7 +52,7 @@ The plugin declares both shortcuts in its manifest. Remove the owner's old `SUPE
 
 ## Capabilities
 
-- `theme`: list packages, read the catalog, install a catalog package, apply a package, list and set images, and download or update wallpapers.
+- `theme`: list packages, read the catalog, install a catalog package, apply a package, list and set images, download or update wallpapers, and fetch a selected catalog preview.
 - `surfaces`: open the panel and the full-screen browser, and close them from their own controls.
 - `shortcut`: register `vgs.themes:themes` and `vgs.themes:wallpapers`, which the manifest binds to `SUPER+T` and `SUPER+W`.
 - `screens`: count the monitors for the wallpaper browser's monitor choice, and name the monitor it shows on.

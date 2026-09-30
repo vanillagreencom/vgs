@@ -691,8 +691,21 @@ var TOKENS = {
         minScale: number(0.35, 0.1, 1),
         maxScale: number(2, 1, 4),
         band: number(2, 0, 16),
-        decodeCap: length(2560),
+        decodeCap: length(4096),
+        previewDwell: duration("{motion.duration.slow}"),
         duration: duration("{motion.duration.normal}")
+    },
+
+    desktopPreview: {
+        referenceWidth: length(1600),
+        referenceHeight: length(900),
+        barHeight: length(42),
+        gap: length("{space.xxl}"),
+        terminalWidthShare: share(0.56),
+        panelHeightShare: share(0.5),
+        shadowOffset: length("{space.sm}"),
+        wallpaperDim: share(0.5),
+        barOpacity: share(0.86)
     },
 
     // The embedded bar: `barWidth` thick, `barInset` from the area's edge,

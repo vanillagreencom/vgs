@@ -2,8 +2,9 @@
 # Capture the shell's surfaces in the nested Hyprland sandbox with grim.
 #
 # Usage: scripts/sandbox-shots.sh [--out DIR] [--rev REV] [--modes LIST]
-#                                 [--scale N] [--timeout SECONDS] [--keep]
-#                                 [SCENE...]
+#                                 [--size WxH] [--scale N]
+#                                 [--theme-card NAME]
+#                                 [--timeout SECONDS] [--keep] [SCENE...]
 #
 # The sandbox is the smoke's own (scripts/smoke/harness.sh): its own HOME,
 # runtime dir, buses and nested compositor, with the shell started inside
@@ -12,7 +13,8 @@
 # or started on the live desktop. It needs the smoke's prerequisites,
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
-# SCENE is gallery, settings, manager, launcher or notifications. The
+# SCENE is gallery, settings, manager, launcher, notifications,
+# theme-browser or wallpaper-browser. The
 # default is gallery, the plugin manager's scene, the launcher and the
 # notifications, or gallery and the manager's scene with --rev; the
 # manager's scene is `settings` for a tree that ships vgs.settings and
@@ -35,6 +37,11 @@
 # (held_mode_state in scripts/smoke/harness.sh), and fails when it does
 # not. Another value is refused as
 # `sandbox-shots: refused: scale=<value>`.
+# --size WxH holds the nested output at W by H logical pixels, at the run's
+# scale, for every scene, so a shot's width does not depend on the host's
+# window; another shape is refused as `sandbox-shots: refused: size=<value>`.
+# --theme-card NAME is the catalog theme the theme-browser scene selects,
+# frankenstein by default.
 #
 # PNGs go to DIR, which must lie under this checkout's tmp/; the default is
 # tmp/sandbox-shots/<UTC time>[-REV][-x2]. shots.tsv beside them lists each shot
@@ -53,17 +60,21 @@ out=""
 rev=""
 modes=""
 scale=1
+shot_size=""
+theme_card="frankenstein"
 scenes=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out) out="$2"; shift 2 ;;
     --rev) rev="$2"; shift 2 ;;
     --modes) modes="$2"; shift 2 ;;
+    --size) shot_size="$2"; shift 2 ;;
     --scale) scale="$2"; shift 2 ;;
+    --theme-card) theme_card="$2"; shift 2 ;;
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|settings|manager|launcher|notifications) scenes+=("$1"); shift ;;
+    gallery|settings|manager|launcher|notifications|theme-browser|wallpaper-browser) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -73,6 +84,7 @@ for mode in "${mode_list[@]}"; do
   [[ $mode == dark || $mode == light ]] || { printf 'sandbox-shots: refused: mode=%s\n' "$mode" >&2; exit 2; }
 done
 [[ $scale == 1 || $scale == 2 ]] || { printf 'sandbox-shots: refused: scale=%s\n' "$scale" >&2; exit 2; }
+[[ -z $shot_size || $shot_size =~ ^[1-9][0-9]*x[1-9][0-9]*$ ]] || { printf 'sandbox-shots: refused: size=%s\n' "$shot_size" >&2; exit 2; }
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
@@ -167,6 +179,16 @@ ok "grim captures only $SHOT_SOCKET"
 # would sit over the top right of every shot.
 expect "the nested compositor's notices are dismissed" ok hypr dismissnotify
 main_name="$(first_name)" || { fail "the monitor is unreadable"; exit 1; }
+# --size: the output holds WxH logical pixels at the run's scale for every
+# scene. At scale 2 the harness's own hold ends first and the run's mode
+# becomes the doubled size, which a scene that leaves the hold returns to.
+if [[ -n $shot_size ]]; then
+  size_mode="$shot_size"
+  [[ $scale == 1 ]] || size_mode="$((${shot_size%x*} * 2))x$((${shot_size#*x} * 2))"
+  [[ $scale == 1 ]] || release_mode "the run's scale-2 hold ends for the requested shot size" "$main_name" "$shell_output_mode" "$scale"
+  hold_mode "the nested output holds the requested shot size" "$main_name" "$size_mode" "$scale"
+  [[ $scale == 1 ]] || shell_output_mode="$size_mode"
+fi
 # The monitor's logical size, the layout coordinates the pointer helper
 # takes, and the space the bar reserves at its top.
 read -r mon_w mon_h bar_reserved < <(hypr -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(round(m["width"] / m["scale"]), round(m["height"] / m["scale"]), m["reserved"][1])')
@@ -414,6 +436,55 @@ scene_settings() { # MODE
   release_mode "the run's mode is restored" "$main_name" "$main_mode" "$scale"
   [[ $scale == 1 ]] || hold_mode "the monitor holds its scale-2 mode again" "$main_name" "$main_mode" "$scale"
   expect_poll "the monitor has its width back" "$mon_w" first_width
+}
+
+scene_theme-browser() { # MODE
+  local selected preview_path
+  selected_path() { ipc smoke readDescendant overlay vgs.themes ThemeView selected | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("sharpenedImage") or d.get("image") or d.get("previewImage") or "")'; }
+  selected_ready() { selected="$(selected_path)" && [[ -n $selected ]] && ipc smoke images overlay vgs.themes | python3 -c 'import json,sys; path=sys.argv[1]; print(any(i[0] == path and i[1] == "ready" for i in json.load(sys.stdin)))' "$selected"; }
+  preview_cached() { ipc smoke readDescendant overlay vgs.themes ThemeView previewCache | python3 -c 'import json,sys; t=sys.stdin.read(); d=json.loads(t) if t.startswith("{") else {}; print(sys.argv[1] in d and bool(d[sys.argv[1]]))' "$1"; }
+  card_image() { ipc smoke images overlay vgs.themes | python3 -c 'import json,sys; r=[i[1] for i in json.load(sys.stdin) if i[0]==sys.argv[1]]; print(r[0] if r else "none")' "$1"; }
+  preview_path_of() { ipc smoke readDescendant overlay vgs.themes ThemeView previewCache | python3 -c 'import json,sys; t=sys.stdin.read(); d=json.loads(t) if t.startswith("{") else {}; print(d.get(sys.argv[1], ""))' "$1"; }
+  wait_preview_cached() { local _; for _ in $(seq 1 50); do [[ $(preview_cached "$1") == True ]] && return 0; sleep 0.2; done; return 1; }
+  expect "vgs.themes enables for the theme browser shot" ok ipc shell setPluginEnabled vgs.themes true
+  expect "the theme browser opens" ok ipc shell summon overlay vgs.themes '{"view":"themes"}'
+  expect_poll "the theme browser maps" 1 layer_count vgs:overlay
+  expect_poll "the theme browser reads its cards" true ipc smoke readDescendant overlay vgs.themes ThemeView loaded
+  type_keys "$theme_card" || fail "typing the theme-browser card failed"
+  expect_poll "the theme browser selects $theme_card" "\"$theme_card\"" ipc smoke readDescendant overlay vgs.themes ThemeView selectedName
+  if wait_preview_cached "$theme_card"; then
+    ok "the selected catalog preview is cached"
+    preview_path="$(preview_path_of "$theme_card")"
+    expect_poll "the selected catalog preview image is ready" ready card_image "$preview_path"
+    take "theme-browser-$1-catalog-$theme_card-sharpened"
+  else
+    expect_poll "the selected catalog image is ready" True selected_ready
+    take "theme-browser-$1-catalog-$theme_card"
+  fi
+  expect "the theme browser hides before the installed shot" ok ipc shell hide overlay vgs.themes
+  expect_poll "the theme browser is gone before the installed shot" 0 layer_count vgs:overlay
+  mkdir -p -- "$home/.config/vgs/themes/$theme_card/backgrounds"
+  cp -- "$repo/themes/catalog/$theme_card/theme.json" "$home/.config/vgs/themes/$theme_card/theme.json"
+  [[ ! -f $repo/themes/catalog/$theme_card/terminal.json ]] || cp -- "$repo/themes/catalog/$theme_card/terminal.json" "$home/.config/vgs/themes/$theme_card/terminal.json"
+  magick "$repo/themes/catalog/thumbnails/$theme_card.jpg" -resize 2560x1440\! "$home/.config/vgs/themes/$theme_card/backgrounds/preview.jpg"
+  expect "the theme browser opens for the installed shot" ok ipc shell summon overlay vgs.themes '{"view":"themes"}'
+  expect_poll "the installed theme browser reads its cards" true ipc smoke readDescendant overlay vgs.themes ThemeView loaded
+  type_keys "$theme_card" || fail "typing the installed theme-browser card failed"
+  expect_poll "the theme browser selects installed $theme_card" "\"$theme_card\"" ipc smoke readDescendant overlay vgs.themes ThemeView selectedName
+  expect_poll "the installed theme browser image is ready" True selected_ready
+  take "theme-browser-$1-installed-$theme_card"
+  expect "the theme browser hides" ok ipc shell hide overlay vgs.themes
+  expect_poll "the theme browser is gone" 0 layer_count vgs:overlay
+}
+
+scene_wallpaper-browser() { # MODE
+  expect "vgs.themes enables for the wallpaper browser shot" ok ipc shell setPluginEnabled vgs.themes true
+  expect "the wallpaper browser opens" ok ipc shell summon overlay vgs.themes '{"view":"wallpapers"}'
+  expect_poll "the wallpaper browser maps" 1 layer_count vgs:overlay
+  expect_poll "the wallpaper browser reads its cards" true ipc smoke readDescendant overlay vgs.themes WallpaperView loaded
+  take "wallpaper-browser-$1"
+  expect "the wallpaper browser hides" ok ipc shell hide overlay vgs.themes
+  expect_poll "the wallpaper browser is gone" 0 layer_count vgs:overlay
 }
 
 # The bar's manager panel of a tree before the Settings plugin: opened by a

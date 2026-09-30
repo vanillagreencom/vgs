@@ -184,8 +184,14 @@ const DEFAULTS = [
     ["carousel.minScale", 0.35],
     ["carousel.maxScale", 2],
     ["carousel.band", 2],
-    ["carousel.decodeCap", 2560],
-    ["carousel.duration", 150]
+    ["carousel.decodeCap", 4096],
+    ["carousel.previewDwell", 250],
+    ["carousel.duration", 150],
+    ["desktopPreview.referenceWidth", 1600],
+    ["desktopPreview.referenceHeight", 900],
+    ["desktopPreview.barHeight", 42],
+    ["desktopPreview.terminalWidthShare", 0.56],
+    ["desktopPreview.barOpacity", 0.86]
 ];
 
 // A document that is accepted, and the values it must resolve to.

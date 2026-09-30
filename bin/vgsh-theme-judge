@@ -164,6 +164,7 @@ const SHIPPED_CONFIG = path.join(repo, "config", "shell.json");
 // holds the catalog, with its index file. Neither is ever a package:
 // ThemeLogic.RESERVED_DIRECTORIES names both.
 const TARGETS = "targets";
+const PREVIEW_FILE = "preview.png";
 const CATALOG = "catalog";
 const CATALOG_INDEX = "index.json";
 const FORMATS = ["text", "json"];
@@ -285,8 +286,8 @@ function readPackage(dir, shipped) {
     return { files: read.files, verdict: judge(read.files) };
 }
 
-// The package in DIR's theme.json and terminal.json as `{ files: { theme,
-// terminal }, linked }`: each file's bytes, undefined when absent, and
+// The package in DIR's theme.json and terminal.json as
+// `{ files: { theme, terminal }, linked }`: each file's bytes, undefined when absent, and
 // `linked`, the first of the two that is a symlink, or null. packageFile's
 // fs failure throws.
 function packageFiles(dir) {
@@ -297,6 +298,17 @@ function packageFiles(dir) {
         if (file.state === "file") read.files[key] = file.bytes;
     }
     return read;
+}
+
+function previewPath(dir) {
+    const file = path.join(dir, PREVIEW_FILE);
+    let stat;
+    try {
+        stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    } catch (e) {
+        return null;
+    }
+    return stat?.isFile() === true ? file : null;
 }
 
 // --- packages
@@ -632,10 +644,10 @@ function targetFiles(row, key) {
 }
 
 // The digest of package ROW's content as apply reads it: theme.json,
-// terminal.json, an absent one marked as absent, and each of its
+// terminal.json, absent optional files marked as absent, and each of its
 // targetFiles. Each part is framed by its name and length, so no two
-// contents share a digest. Backgrounds are no colours and stay out, and so
-// does the catalog marker. KEY leads targetFiles' refusal.
+// contents share a digest. Backgrounds and previews are no colours and stay
+// out, and so does the catalog marker. KEY leads targetFiles' refusal.
 function packageDigest(row, key) {
     const hash = crypto.createHash("sha256");
     const part = (name, bytes) => {
@@ -692,12 +704,24 @@ function list(format, configDir, stateDir) {
     const applied = readApplied(stateDir, "themes");
     const file = themeFile(path.join(configDir, "theme.json"));
     const current = file.state === "loaded" ? resolved.get(file.name) : undefined;
-    const packages = rows.map(row => ({ name: row.name, source: row.source, path: row.path, state: row.state, reason: row.reason, current: row === current, palette: row.palette }));
+    const packages = rows.map(row => ({
+        name: row.name,
+        source: row.source,
+        path: row.path,
+        state: row.state,
+        reason: row.reason,
+        current: row === current,
+        palette: row.palette,
+        tokens: row.values === null ? null : previewTokens(row.values, true),
+        terminal: row.terminal,
+        previewPath: previewPath(row.path)
+    }));
     const report = { file: { path: file.path, state: file.state, name: file.name, modified: modified(file, resolved, applied) }, packages };
     if (format === "json") {
         process.stdout.write(JSON.stringify(report) + "\n");
         return;
     }
+
     console.log("file path=" + file.path + " state=" + file.state + " name=" + (file.name === null ? "-" : file.name) + " modified=" + report.file.modified);
     for (const p of packages) {
         let line = "theme=" + p.name + " source=" + p.source + " state=" + p.state;
@@ -706,6 +730,19 @@ function list(format, configDir, stateDir) {
         if (p.palette !== null) line += " palette=" + Object.keys(p.palette).map(k => k + ":" + p.palette[k]).join(",");
         console.log(line);
     }
+}
+
+function previewTokens(values, includePalette) {
+    const out = {
+        color: {
+            surfaceRaised: values.color.surfaceRaised,
+            border: values.color.border,
+            textMuted: values.color.textMuted
+        },
+        hyprland: values.hyprland
+    };
+    if (includePalette) out.palette = values.palette;
+    return out;
 }
 
 // --- apply
@@ -2026,8 +2063,7 @@ function realDirectory(dir, key) {
 // Write catalog package SOURCE, a catalogPackage row, into PKG, a
 // directory this creates, as an install lands it: theme.json,
 // terminal.json and its targetFiles, the content packageDigest reads, then
-// the marker recording that content's digest and IMAGERY. Answers the
-// digest.
+// the marker recording that content's digest and IMAGERY. Answers the digest.
 function stageCatalog(source, pkg, imagery, key) {
     const write = (relative, bytes) => {
         const file = path.join(pkg, relative);
@@ -2245,9 +2281,18 @@ function catalogList(format, configDir) {
     const rows = catalogEntries("catalog").map(entry => {
         const { dir, key } = installedPath(configDir, entry.name);
         const marker = realDirectory(dir, key) ? installOrigin(dir, key).marker : null;
-        const digest = marker === null ? null : packageDigest(catalogPackage(entry, key), key);
+        const source = catalogPackage(entry, key);
+        const digest = marker === null ? null : packageDigest(source, key);
         const thumbnailPath = entry.thumbnail === null ? null : path.join(SHIPPED, CATALOG, entry.thumbnail);
-        return Object.assign({}, entry, { thumbnailPath }, catalog.installState(entry, marker, digest));
+        const verdict = logic.acceptPackage(tokens, { directoryName: entry.name, themeJson: text(source.files.theme), terminalJson: text(source.files.terminal), shipped: false });
+        const catalogPreview = previewPath(source.path);
+        const installedPreview = realDirectory(dir, key) ? previewPath(dir) : null;
+        return Object.assign({}, entry, {
+            thumbnailPath,
+            previewPath: installedPreview === null ? catalogPreview : installedPreview,
+            tokens: verdict.ok ? previewTokens(verdict.values, false) : null,
+            terminal: verdict.ok ? verdict.terminal : null
+        }, catalog.installState(entry, marker, digest));
     });
     if (format === "json") {
         process.stdout.write(JSON.stringify({ entries: rows }) + "\n");
@@ -2342,6 +2387,93 @@ function refuseAsset(key, e) {
     case "name": refuse(key + "=path member=" + JSON.stringify(e.member), "path"); break;
     default: throw new Error("vgsh-theme-judge: asset refusal step " + e.step + " is none of fetch, archive, header, name");
     }
+}
+
+function previewResult(name) {
+    return { state: "failed", theme: name, path: null, reason: null };
+}
+
+function previewCacheDir() {
+    return path.join(download.cacheDir(), "previews");
+}
+
+function previewPathFor(pin, file) {
+    return path.join(previewCacheDir(), pin.sha256 + "-" + file.replace(/[^A-Za-z0-9._-]/g, "_"));
+}
+
+function removePreviewParts(pin, key) {
+    let entries;
+    try {
+        entries = fs.readdirSync(previewCacheDir(), { withFileTypes: true });
+    } catch (e) {
+        if (e.code === "ENOENT") return;
+        throw e;
+    }
+    for (const entry of entries) {
+        if (entry.isFile() && entry.name.startsWith(pin.sha256 + "-") && entry.name.endsWith(".part"))
+            writing(path.join(previewCacheDir(), entry.name), key, () => fs.rmSync(path.join(previewCacheDir(), entry.name), { force: true }));
+    }
+}
+
+async function previewFetch(format, lock, name) {
+    const result = previewResult(name);
+    await wallpaperReport(format, result, async () => {
+        const key = "preview=" + name + " reason";
+        heldLock(key, lock, path.join(download.cacheDir(), download.LOCK_FILE));
+        const pin = catalogEntry(name, key).imagery;
+        if (pin === null) refuse(key + "=no-imagery", "no-imagery");
+        const url = download.archiveUrl(pin, process.env[ASSET_BASE], Boolean(process.env[TEST_RUN]));
+        let cachedPreview;
+        try {
+            cachedPreview = fs.readdirSync(previewCacheDir(), { withFileTypes: true }).find(entry => entry.isFile() && entry.name.startsWith(pin.sha256 + "-") && !entry.name.endsWith(".part"));
+        } catch (e) {
+            if (e.code !== "ENOENT") throw e;
+        }
+        if (cachedPreview !== undefined) {
+            result.path = path.join(previewCacheDir(), cachedPreview.name);
+            result.state = "ok";
+            return;
+        }
+        removePreviewParts(pin, key);
+        let chosen = null;
+        let fetched = null;
+        const noop = () => {};
+        try {
+            fetched = await download.fetchArchive(pin, url, download.cacheDir(), false, noop);
+            await download.readArchive(fetched.file, member => {
+                if (chosen !== null) return null;
+                if (member.kind !== "file") return null;
+                if (!member.name.startsWith(backgrounds.DIR + "/")) return null;
+                const file = member.name.slice(backgrounds.DIR.length + 1);
+                if (file.includes("/") || !backgrounds.isImageName(file)) return null;
+                const target = previewPathFor(pin, file);
+                const stat = fs.lstatSync(target, { throwIfNoEntry: false });
+                if (stat?.isFile() === true) {
+                    chosen = target;
+                    return null;
+                }
+                writing(previewCacheDir(), key, () => fs.mkdirSync(previewCacheDir(), { recursive: true }));
+                const part = target + ".part";
+                let fd;
+                writing(part, key, () => { fs.rmSync(part, { force: true }); fd = fs.openSync(part, "wx"); });
+                chosen = target;
+                return {
+                    write(chunk) { writing(part, key, () => download.writeAll(fd, chunk)); },
+                    close() { writing(part, key, () => { fs.closeSync(fd); fs.renameSync(part, target); }); }
+                };
+            }, noop);
+        } catch (e) {
+            if (e instanceof download.AssetRefusal) refuseAsset(key, e);
+            throw e;
+        } finally {
+            if (fetched !== null && !fetched.cached) writing(fetched.file, key, () => fs.rmSync(fetched.file, { force: true }));
+        }
+        if (chosen === null) refuse(key + "=no-image", "no-image");
+        result.path = chosen;
+        result.state = "ok";
+    });
+    if (format === "json") process.stdout.write(JSON.stringify(result) + "\n");
+    else console.log("ok preview=" + name + " path=" + result.path);
 }
 
 // A sink writing one image to FILE, created afresh: a name the archive
@@ -2557,6 +2689,9 @@ main(() => {
     case "wallpapers-land":
         if (args.length !== 6 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[3]) || !WALLPAPER_MODES.includes(args[5])) usage("arguments=" + command);
         return command === "wallpapers-fetch" ? wallpapersFetch(...args) : wallpapersLand(...args);
+    case "preview":
+        if (args.length !== 3 || !FORMATS.includes(args[0]) || !LOCK_VERDICTS.includes(args[1])) usage("arguments=" + command);
+        return previewFetch(...args);
     case "asset-lock":
         if (args.length !== 0) usage("arguments=" + command);
         assetLock();

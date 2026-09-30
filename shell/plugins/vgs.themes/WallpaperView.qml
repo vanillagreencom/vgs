@@ -325,6 +325,7 @@ FocusScope {
         anchors.bottomMargin: Theme.space.xl
         anchors.left: parent.left
         anchors.right: parent.right
+        devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
         model: ScriptModel {
             values: root.cards.map(card => Object.assign({ railKey: BrowserLogic.railKey(card.key, root.generation), generation: root.generation }, card))
             objectProp: "railKey"

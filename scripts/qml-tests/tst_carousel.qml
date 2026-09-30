@@ -32,6 +32,16 @@ Item {
             color: "white"
         }
     }
+    Component {
+        id: currentContent
+        Rectangle {
+            required property var modelData
+            required property size decodeSize
+            property bool current: false
+            anchors.fill: parent
+            color: current ? "white" : "black"
+        }
+    }
     // Delegates that cannot build a card: one without decodeSize, and one
     // that declares a required property the carousel does not hand over.
     Component {
@@ -56,6 +66,7 @@ Item {
     }
 
     Rectangle { anchors.fill: parent; color: "black" }
+    ListModel { id: changingModel }
     CardCarousel {
         id: carousel
         x: 100
@@ -77,6 +88,8 @@ Item {
             carousel.width = 1822;
             carousel.height = 475;
             carousel.devicePixelRatio = 1;
+            carousel.delegate = content;
+            carousel.model = root.entries;
             carousel.currentIndex = 20;
             carousel.forceActiveFocus();
             activations.clear();
@@ -179,8 +192,9 @@ Item {
 
         // At unit 1 and two device pixels a pixel: a slice decodes at 216
         // by 864, the current card and its neighbours at 1536 by 950. At
-        // four, 3072 by 1900 is held to 2560 on the longer side: 1900 *
-        // 2560 / 3072 = 1583.3.
+        // four, 3072 by 1900 is still under the 4096-pixel long-side cap.
+        // At six, 4608 by 2850 is held to 4096 on the longer side: 2850 *
+        // 4096 / 4608 = 2533.6.
         function test_each_card_is_handed_its_decode_size() {
             carousel.devicePixelRatio = 2;
             compare(built().e20.decodeSize, Qt.size(1536, 950));
@@ -192,8 +206,39 @@ Item {
             compare(built().e22.decodeSize, Qt.size(1536, 950));
             compare(built().e19.decodeSize, Qt.size(216, 864));
             carousel.devicePixelRatio = 4;
-            compare(built().e21.decodeSize, Qt.size(2560, 1583));
+            compare(built().e21.decodeSize, Qt.size(3072, 1900));
             compare(built().e23.decodeSize, Qt.size(432, 1728));
+            carousel.devicePixelRatio = 6;
+            compare(built().e21.decodeSize, Qt.size(4096, 2533));
+        }
+
+        function test_a_delegate_can_read_whether_it_is_current() {
+            carousel.delegate = currentContent;
+            carousel.model = 0;
+            wait(0);
+            carousel.model = root.entries;
+            carousel.currentIndex = 20;
+            tryVerify(() => builtNames().length === 17);
+            compare(built().e20.current, true);
+            compare(built().e19.current, false);
+            keyClick(Qt.Key_Right);
+            compare(built().e21.current, true);
+            compare(built().e20.current, false);
+            carousel.delegate = content;
+            carousel.model = root.entries;
+        }
+
+        function test_a_model_change_rebinds_built_card_content() {
+            changingModel.clear();
+            for (let i = 0; i < 60; i++) changingModel.append({ modelData: "e" + i });
+            carousel.model = changingModel;
+            carousel.currentIndex = 20;
+            tryVerify(() => built().e20 !== undefined);
+            compare(built().e20.modelData, "e20");
+            changingModel.setProperty(20, "modelData", "replacement");
+            tryVerify(() => built().replacement !== undefined);
+            compare(built().replacement.modelData, "replacement");
+            verify(built().e20 === undefined);
         }
 
         function test_a_click_selects_a_slice_and_activates_the_current_card() {

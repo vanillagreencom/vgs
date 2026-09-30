@@ -32,6 +32,8 @@ Scope {
     property var jobs: []
     // The download lane's one job, a job as above, or null.
     property var download: null
+    property var previewJob: null
+    property var downloadAfterPreview: null
     // The last list `vgsh theme list --json` printed, or null before the
     // first and after one that failed.
     property var listing: null
@@ -67,6 +69,7 @@ Scope {
             background: (step, done) => root.background(ctx, step, done),
             catalog: done => root.catalog(ctx, done),
             install: (name, done) => root.install(ctx, name, done),
+            preview: (name, done) => root.preview(ctx, name, done),
             wallpapers: (name, done, options) => root.wallpapers(ctx, name, done, options),
             images: (scope, done) => root.images(ctx, scope, done),
             set: (path, screen, done) => root.set(ctx, path, screen, done),
@@ -98,6 +101,7 @@ Scope {
     function apply(ctx, name, done) {
         if (!ThemeLogic.isPackageName(name)) return "refused: theme=" + JSON.stringify(name) + " reason=malformed-name";
         if (jobs.some(job => job.verb === "apply")) return "refused: theme=" + name + " reason=busy";
+        cancelPreview();
         enqueue(newJob(ctx, "apply", name, done));
         return "ok";
     }
@@ -119,6 +123,7 @@ Scope {
     // refusal included.
     function install(ctx, name, done) {
         if (!ThemeLogic.isPackageName(name)) return "refused: theme=" + JSON.stringify(name) + " reason=malformed-name";
+        cancelPreview();
         enqueue(newJob(ctx, "install", name, done));
         return "ok";
     }
@@ -159,9 +164,40 @@ Scope {
         if (!ThemeLogic.isPackageName(name)) return "refused: wallpapers=" + JSON.stringify(name) + " reason=malformed-name";
         const extra = ThemeLogic.wallpaperArguments(options);
         if (extra === null) return "refused: wallpapers=" + JSON.stringify(options) + " reason=malformed-options";
-        if (download !== null) return "refused: wallpapers=" + name + " reason=busy";
-        startDownload(newJob(ctx, "wallpapers", name, done, extra));
+        if (download !== null || downloadAfterPreview !== null) return "refused: wallpapers=" + name + " reason=busy";
+        const job = newJob(ctx, "wallpapers", name, done, extra);
+        if (previewJob !== null) {
+            downloadAfterPreview = job;
+            if (!cancelPreview())
+                startDownload(takeDownloadAfterPreview());
+        } else {
+            startDownload(job);
+        }
         return "ok";
+    }
+
+    function preview(ctx, name, done) {
+        if (!ThemeLogic.isPackageName(name)) return "refused: preview=" + JSON.stringify(name) + " reason=malformed-name";
+        if (previewJob !== null) return "refused: preview=" + name + " reason=busy";
+        previewJob = newJob(ctx, "preview", name, done);
+        Qt.callLater(startPreviewNow);
+        return "ok";
+    }
+
+    function cancelPreview() {
+        if (previewJob === null) return false;
+        if (previewJob.started) {
+            previewProcess.running = false;
+            return true;
+        }
+        previewJob = null;
+        return false;
+    }
+
+    function takeDownloadAfterPreview() {
+        const next = downloadAfterPreview;
+        downloadAfterPreview = null;
+        return next;
     }
 
     // follow: queue `vgsh theme follow --json`. A follow asked for while a
@@ -197,6 +233,8 @@ Scope {
             return [verb, "--json", name];
         case "wallpapers":
             return ["wallpapers", "--json", name].concat(extra);
+        case "preview":
+            return ["preview", "--json", name];
         case "background":
             return ["background", "--json", name];
         case "images":
@@ -256,6 +294,11 @@ Scope {
     function startDownloadNow() {
         if (download === null || download.started) return;
         start(download, downloadProcess);
+    }
+
+    function startPreviewNow() {
+        if (previewJob === null || previewJob.started) return;
+        start(previewJob, previewProcess);
     }
 
     function start(job, process) {
@@ -323,6 +366,7 @@ Scope {
         case "images":
         case "set":
         case "wallpapers":
+        case "preview":
             if (isObject(value) && typeof value.state === "string") return value;
             break;
         default:
@@ -332,7 +376,8 @@ Scope {
     }
 
     function failure(job, reason, detail) {
-        console.error("theme: vgsh theme " + job.verb + " reason=" + reason + (job.name === null ? "" : " name=" + job.name) + detail);
+        if (job.verb !== "preview")
+            console.error("theme: vgsh theme " + job.verb + " reason=" + reason + (job.name === null ? "" : " name=" + job.name) + detail);
         switch (job.verb) {
         case "apply":
             return { state: "failed", shell: "failed", targets: [], theme: job.name, reason: reason };
@@ -352,6 +397,8 @@ Scope {
             return { state: "failed", background: null, theme: null, path: null, screen: null, reason: reason };
         case "wallpapers":
             return { state: "failed", theme: job.name, wallpapers: null, images: null, sha256: null, reason: reason };
+        case "preview":
+            return { state: "failed", theme: job.name, path: null, reason: reason };
         }
         throw new Error("theme: failure for unknown verb=" + job.verb);
     }
@@ -383,6 +430,8 @@ Scope {
         case "wallpapers":
             downloading = null;
             break;
+        case "preview":
+            break;
         case "background":
         case "catalog":
         case "install":
@@ -394,6 +443,13 @@ Scope {
         }
         if (job === download) {
             download = null;
+        } else if (job === previewJob) {
+            previewJob = null;
+            if (downloadAfterPreview !== null && download === null) {
+                startDownload(takeDownloadAfterPreview());
+            } else if (downloadAfterPreview !== null) {
+                failWaitingJob(takeDownloadAfterPreview(), "handoff-busy");
+            }
         } else {
             if (jobs[0] !== job) throw new Error("theme: finished job verb=" + job.verb + " is not the queue's first");
             jobs = jobs.slice(1);
@@ -409,6 +465,18 @@ Scope {
         startNext();
     }
 
+    function failWaitingJob(job, reason) {
+        const result = frozen(failure(job, reason, ""));
+        for (const waiter of job.waiters.slice()) {
+            waiter.release();
+            try {
+                waiter.done(result);
+            } catch (e) {
+                console.error("capabilities: theme " + job.verb + " callback of " + waiter.id + " threw: " + e.message);
+            }
+        }
+    }
+
     function frozen(value) {
         if (value === null || typeof value !== "object") return value;
         for (const key of Object.keys(value)) frozen(value[key]);
@@ -421,6 +489,8 @@ Scope {
         return {
             jobs: jobs.map(shown),
             download: download === null ? null : shown(download),
+            preview: previewJob === null ? null : shown(previewJob),
+            pendingDownload: downloadAfterPreview === null ? null : shown(downloadAfterPreview),
             last: last
         };
     }
@@ -449,4 +519,16 @@ Scope {
             root.finish(downloadProcess);
         }
     }
+
+    Process {
+        id: previewProcess
+        property var job: null
+        stdout: SplitParser { onRead: data => root.read(previewProcess.job, data) }
+        onExited: (code, status) => { previewProcess.job.completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            root.finish(previewProcess);
+        }
+    }
+
 }

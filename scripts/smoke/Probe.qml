@@ -770,6 +770,14 @@ Scope {
             const json = JSON.stringify(found[property]);
             return json === undefined ? "undefined" : json;
         }
+        // The name the theme browser's centre card draws, as JSON, or
+        // `absent` while no ThemeCard is current.
+        function currentThemeCardName(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const found = root.descendants(item).find(child => root.typeName(child) === "ThemeCard" && child.current === true);
+            return found === undefined ? "absent" : JSON.stringify(found.cardName);
+        }
         function activeFocusIn(hostKey: string, id: string): bool {
             const item = root.instance(hostKey, id);
             return item !== null && root.descendants(item).some(child => child.activeFocus);

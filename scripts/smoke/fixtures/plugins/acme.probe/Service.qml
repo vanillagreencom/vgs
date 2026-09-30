@@ -100,6 +100,12 @@ Item {
         // member returned, `ok` for catalog.
         shell.ipc.handle("theme-catalog", () => { root.shell.theme.catalog(root.themeAnswer("catalog")); return "ok"; });
         shell.ipc.handle("theme-install", name => root.shell.theme.install(name, root.themeAnswer("install")));
+        shell.ipc.handle("theme-preview", name => root.shell.theme.preview(name, root.themeAnswer("preview")));
+        shell.ipc.handle("theme-preview-then-wallpapers", name => {
+            const previewReply = root.shell.theme.preview(name, root.themeAnswer("preview"));
+            const wallpapersReply = root.shell.theme.wallpapers(name, root.themeAnswer("wallpapers"));
+            return previewReply + "|" + wallpapersReply;
+        });
         shell.ipc.handle("theme-wallpapers", name => root.shell.theme.wallpapers(name, root.themeAnswer("wallpapers")));
         // theme-wallpapers-with <name>|<options JSON> passes the options
         // after the callback, as the update form takes them.

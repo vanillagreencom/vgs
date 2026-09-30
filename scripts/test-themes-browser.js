@@ -24,7 +24,8 @@ const same = (got, want, message) => assert.deepEqual(JSON.parse(JSON.stringify(
 const PALETTE = { background: "#101010ff", foreground: "#eeeeeeff", accent: "#3366ffff" };
 const pkg = (name, source, state) => ({ name, source, state, reason: state === "refused" ? "unknown-token" : null, palette: state === "refused" ? null : PALETTE });
 const pin = size => ({ repo: "https://github.com/vanillagreencom/vgs-themes", release: "themes-v1", archive: "a.tar.gz", size, sha256: "a".repeat(64) });
-const entry = (name, installed, imagery, imageryInstalled) => ({ name, mode: "dark", thumbnail: "thumbnails/" + name + ".jpg", thumbnailPath: "/c/thumbnails/" + name + ".jpg", palette: PALETTE, imagery, installed, imageryInstalled, imageryUpdate: false, definitionUpdate: false });
+const TERMINAL = Object.fromEntries(Array.from({ length: 16 }, (_, index) => ["color" + index, "#000000ff"]));
+const entry = (name, installed, imagery, imageryInstalled) => ({ name, mode: "dark", thumbnail: "thumbnails/" + name + ".jpg", thumbnailPath: "/c/thumbnails/" + name + ".jpg", previewPath: name === "akane" ? "/c/akane/preview.png" : null, palette: PALETTE, tokens: { palette: PALETTE }, terminal: TERMINAL, imagery, installed, imageryInstalled, imageryUpdate: false, definitionUpdate: false });
 
 // Payloads refused: [label, text, error].
 const PAYLOAD_REFUSED = [
@@ -65,7 +66,7 @@ function verify(logic, files) {
 
     // Cards: every source, one per name, in name order.
     const packages = [
-        pkg("vgs", "shipped", "ok"),
+        Object.assign(pkg("vgs", "shipped", "ok"), { previewPath: "/themes/vgs/preview.png", tokens: { palette: PALETTE }, terminal: TERMINAL }),
         pkg("light", "shipped", "shadowed"),
         pkg("light", "installed", "ok"),
         pkg("nord", "installed", "ok"),
@@ -94,6 +95,10 @@ function verify(logic, files) {
         ["vgs", "shipped", "ok", true, null, null, false]
     ]);
     same(built.find(c => c.name === "akane").palette, PALETTE, "a catalog card carries the index palette");
+    assert.equal(built.find(c => c.name === "akane").previewImage, "/c/akane/preview.png", "a catalog card carries its package preview");
+    assert.equal(built.find(c => c.name === "vgs").previewImage, "/themes/vgs/preview.png", "an installed or shipped package preview wins");
+    same(built.find(c => c.name === "akane").tokens, { palette: PALETTE }, "a catalog card carries the package tokens");
+    same(built.find(c => c.name === "akane").terminal, TERMINAL, "a catalog card carries the terminal palette");
     same(built.find(c => c.name === "broken").reason, "unknown-token");
     // A catalog install with no image shows its thumbnail.
     same(logic.cards([pkg("nord", "installed", "ok")], [entry("nord", true, pin(9), true)], [], "vgs")[0].image, "/c/thumbnails/nord.jpg");
@@ -114,7 +119,9 @@ function verify(logic, files) {
     assert.equal(logic.cardKey(nordCard), logic.cardKey(Object.assign({}, nordCard, { displayed: false, imagery: null })), "state the card does not draw keeps its key");
     for (const [label, change] of [
         ["a palette", { palette: Object.assign({}, PALETTE, { accent: "#ff0000ff" }) }],
-        ["an image", { image: "/t/nord/backgrounds/b.jpg" }],
+        ["a package preview", { previewImage: "/t/nord/preview.png" }],
+        ["tokens", { tokens: { palette: Object.assign({}, PALETTE, { accent: "#ff0000ff" }) } }],
+        ["terminal slots", { terminal: Object.assign({}, TERMINAL, { color1: "#ff0000ff" }) }],
         ["a label", { label: "Nord Two" }],
         ["a name", { name: "nord-two" }]
     ]) assert.notEqual(logic.cardKey(Object.assign({}, nordCard, change)), logic.cardKey(nordCard), label + " changes the key");
@@ -308,7 +315,7 @@ const CONTROLS = [
     ["offer only when displayed", "card.installed && card.displayed && card.imagery", "card.installed && card.imagery"],
     ["offer only with bytes", "&& card.imagery.size > 0", ""],
     ["rail key holds the generation", "return JSON.stringify([generation, key]);", "return JSON.stringify([key]);"],
-    ["key holds the palette", "return JSON.stringify([card.name, card.label, card.image, card.palette]);", "return JSON.stringify([card.name, card.label, card.image]);"],
+    ["key holds the preview inputs", "return JSON.stringify([card.name, card.label, card.previewImage, card.palette, card.tokens, card.terminal]);", "return JSON.stringify([card.name, card.label]);"],
     ["partial names the panel", 'if (result.state === "partial") return', 'if (false) return'],
     ["wallpaper chords pass on", 'if (chord) return "";', ""],
     ["wallpaper shift tab", "key === KEY.Tab && shift ? KEY.Backtab : key", "key"],

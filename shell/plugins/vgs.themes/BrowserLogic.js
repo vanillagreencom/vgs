@@ -85,14 +85,15 @@ function label(name) {
 // applies: a shadowed row is skipped, a catalog install carries its
 // entry's wallpaper pin and thumbnail, and a catalog entry of a listed name
 // adds no card. Every other catalog entry is a card that is not installed.
+// A card's previewImage is the package's own preview.png when it ships one.
 // A card's image is its package's first image, else the entry's thumbnail,
-// else null for a card drawn from its palette.
+// else null for a card drawn from its palette or from the live preview.
 //
 // A card is { name, label, source, state, reason, installed, palette,
-// image, imagery, displayed }: `source` the list's (`shipped`,
-// `installed`) or `catalog`; `state` `ok` or `refused`; `palette` the
-// `#rrggbbaa` palette group or null; `imagery` null, or the wallpaper
-// archive's { size, installed }.
+// tokens, terminal, previewImage, image, imagery, displayed }: `source`
+// the list's (`shipped`, `installed`) or `catalog`; `state` `ok` or
+// `refused`; `palette` the `#rrggbbaa` palette group or null; `imagery`
+// null, or the wallpaper archive's { size, installed }.
 function cards(packages, entries, images, current) {
     var catalog = {};
     var first = {};
@@ -117,6 +118,9 @@ function cards(packages, entries, images, current) {
             reason: p.reason,
             installed: true,
             palette: p.palette,
+            tokens: p.tokens,
+            terminal: p.terminal,
+            previewImage: p.previewPath,
             image: hasOwn(first, p.name) ? first[p.name] : entry !== null ? entry.thumbnailPath : null,
             imagery: entry === null || entry.imagery === null ? null : { size: entry.imagery.size, installed: entry.imageryInstalled },
             displayed: p.state === "ok" && p.name === current
@@ -133,6 +137,9 @@ function cards(packages, entries, images, current) {
             reason: null,
             installed: false,
             palette: e.palette,
+            tokens: e.tokens === null ? { palette: e.palette } : Object.assign({ palette: e.palette }, e.tokens),
+            terminal: e.terminal,
+            previewImage: e.previewPath,
             image: e.thumbnailPath,
             imagery: e.imagery === null ? null : { size: e.imagery.size, installed: false },
             displayed: false
@@ -161,7 +168,7 @@ function shown(list, text, scope) {
 // image or palette changed is rebuilt under a new key, and one whose drawn
 // inputs stayed is kept.
 function cardKey(card) {
-    return JSON.stringify([card.name, card.label, card.image, card.palette]);
+    return JSON.stringify([card.name, card.label, card.previewImage, card.palette, card.tokens, card.terminal]);
 }
 
 // The identity of a card on a rail from its KEY and the view's

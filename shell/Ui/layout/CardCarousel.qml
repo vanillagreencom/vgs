@@ -16,7 +16,11 @@ import qs.Ui
 // property size decodeSize`, what an image in it decodes at, in device
 // pixels: the drawn size for the current card and its two neighbours, so a
 // step finds the next image decoded, the longer side no more than
-// `carousel.decodeCap`; the slice size for every other card. Only the cards within `carousel.band` slices
+// `carousel.decodeCap`; the slice size for every other card. When the
+// delegate root declares a `current` property, the carousel binds it to
+// whether that card is selected. A built slot can survive a model change
+// at the same index, so the carousel also rebinds modelData after creation.
+// Only the cards within `carousel.band` slices
 // of the shown ones are built; the rest hold no content.
 //
 // A click on a slice makes it current and a click on the current card
@@ -251,6 +255,9 @@ Item {
                                             return;
                                         }
                                         content.decodeSize = Qt.binding(() => slot.decodeSize);
+                                        content.modelData = Qt.binding(() => slot.modelData);
+                                        if ("current" in content)
+                                            content.current = Qt.binding(() => slot.offset === 0);
                                     }
                                 }
                             }

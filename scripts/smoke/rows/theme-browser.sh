@@ -27,6 +27,7 @@ has_card() { view_value shownCards | python3 -c 'import json,sys; print(sys.argv
 card_at() { view_value shownCards | py_reply 'import json,sys; print(json.load(sys.stdin)[int(sys.argv[1])]["name"])' "$1"; }
 job_step() { view_value job | py_reply 'import json,sys; j=json.load(sys.stdin); print("none" if j is None else j["step"] + " " + j["name"])'; }
 selected_installed() { view_value selected | py_reply 'import json,sys; print(json.load(sys.stdin)["installed"])'; }
+selected_preview() { view_value selected | py_reply 'import json,sys; print(json.load(sys.stdin).get("previewImage"))'; }
 offer_name() { view_value offer | py_reply 'import json,sys; o=json.load(sys.stdin); print("none" if o is None else o["name"])'; }
 badges() { ipc smoke itemTexts overlay vgs.themes Badge | py_reply 'import json,sys; print(json.dumps(sorted(t[0] for t in json.load(sys.stdin) if t)))'; }
 dialog_has() { ipc smoke itemTexts overlay vgs.themes Dialog | py_reply 'import json,sys; print(any(sys.argv[1] in t for t in json.load(sys.stdin)))' "$1"; }
@@ -35,11 +36,19 @@ card_image() { ipc smoke images overlay vgs.themes | py_reply 'import json,sys; 
 # Whether a palette card names LABEL: a card with no image draws its
 # label, and one whose image shows draws none.
 palette_card() { ipc smoke itemTexts overlay vgs.themes ThemeCard | py_reply 'import json,sys; print(any(sys.argv[1] in t for t in json.load(sys.stdin)))' "$1"; }
+theme_card_has_colour() { ipc smoke itemColours overlay vgs.themes ThemeCard Rectangle | py_reply 'import json,sys; print(any(sys.argv[1] in row for row in json.load(sys.stdin)))' "$1"; }
 has_badge() { ipc smoke itemTexts overlay vgs.themes Badge | py_reply 'import json,sys,re; print(any(re.fullmatch(sys.argv[1], x) for t in json.load(sys.stdin) for x in t))' "$1"; }
 lent_themes() { ipc shell lent | python3 -c 'import json,sys; print(json.dumps(sorted(s for s in json.load(sys.stdin)["shortcuts"] if s.startswith("vgs.themes"))))'; }
 # The binds of shortcut NAME, `themes` by default, as [modmask, key].
 themes_bind() { hypr -j binds | python3 -c 'import json,sys; print(json.dumps([[b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.themes:" + sys.argv[1]]))' "${1:-themes}"; }
 catalog_imagery() { "${shell_env[@]}" "$repo/bin/vgsh" theme catalog --json | python3 -c 'import json,sys; print([e["imageryInstalled"] for e in json.load(sys.stdin)["entries"] if e["name"]==sys.argv[1]][0])' "$1"; }
+# Whether the first ready image drawing PATH asks to decode at its drawn size
+# times the CardCarousel's screen scale.
+card_source_size_matches() { # PATH
+  local dpr
+  dpr="$(ipc smoke readDescendant overlay vgs.themes CardCarousel devicePixelRatio)" || return 1
+  ipc smoke images overlay vgs.themes | py_reply 'import json,sys; path, dpr = sys.argv[1], float(sys.argv[2]); rows=[i for i in json.load(sys.stdin) if i[0] == path and i[1] == "ready"]; print(bool(rows and rows[0][4] == [round(rows[0][2][0] * dpr), round(rows[0][2][1] * dpr)]))' "$1" "$dpr"
+}
 # SUPER+T typed on the nested seat.
 press_themes() { type_keys -M logo -k t -m logo; }
 browser_focused() { expect_poll "${1:-the browser holds the keyboard}" true ipc smoke activeFocusIn overlay vgs.themes; }
@@ -49,6 +58,10 @@ index="$repo/themes/catalog/index.json"
 cp -p -- "$index" "$sandbox/catalog-index.json"
 assets="$sandbox/theme-assets"
 mkdir -p -- "$assets/themes-v1"
+python3 - "$repo/themes/catalog/nord/preview.png" <<'PY'
+import base64, sys
+open(sys.argv[1], "wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="))
+PY
 python3 - "$assets/themes-v1/vgs-theme-nord-smoke.tar.gz" "$repo/themes/catalog/thumbnails/nord.jpg" "$index" <<'PY'
 import hashlib, io, json, os, sys, tarfile
 out, image, index = sys.argv[1:]
@@ -106,16 +119,47 @@ expect "the browser includes the shipped vgs card" True has_card vgs
 expect "the browser includes the catalog nord card" True has_card nord
 expect "the applied theme is selected" '"vgs"' view_value selectedName
 expect_poll "the applied theme is badged Displayed" '["Displayed"]' badges
-expect_poll "vgs, with no image, draws its palette card" True palette_card Vgs
-first_card="$(card_at 0)"
+first_card=akane
 
-# Paging: Home, Right, Left and End move the selection, and a catalog
-# card draws its thumbnail.
-type_keys -k Home || fail "sending Home failed"
-expect_poll "Home selects the first card" "\"$first_card\"" view_value selectedName
-expect_poll "the first card draws its catalog thumbnail" ready card_image "$repo/themes/catalog/thumbnails/$first_card.jpg"
+# A catalog card draws its thumbnail and live preview from its own tokens.
+type_keys "$first_card" || fail "typing $first_card failed"
+expect_poll "the filter selects the catalog card" "\"$first_card\"" view_value selectedName
+expect_poll "the catalog card draws its thumbnail" ready card_image "$repo/themes/catalog/thumbnails/$first_card.jpg"
+expect "the catalog card decodes at card size times screen scale" True card_source_size_matches "$repo/themes/catalog/thumbnails/$first_card.jpg"
+before_accent="$(ipc smoke readDescendant overlay vgs.themes DesktopPreview accentHex)" || before_accent=""
+python3 - "$repo/themes/catalog/$first_card/theme.json" "$index" "$first_card" <<'PY'
+import json, os, sys
+theme_file, index_file, name = sys.argv[1:]
+theme = json.load(open(theme_file))
+theme.setdefault("tokens", {}).setdefault("palette", {})["accent"] = "#00ff00"
+with open(theme_file + ".next", "w") as f:
+    json.dump(theme, f)
+os.replace(theme_file + ".next", theme_file)
+doc = json.load(open(index_file))
+for entry in doc["entries"]:
+    if entry["name"] == name:
+        entry["palette"]["accent"] = "#00ff00ff"
+with open(index_file + ".next", "w") as f:
+    json.dump(doc, f)
+os.replace(index_file + ".next", index_file)
+PY
+press_themes || fail "closing the browser for the live preview token change failed"
+expect_poll "the browser closes before the live preview token check" 0 layer_count vgs:overlay
+press_themes || fail "reopening the browser for the live preview token change failed"
+expect_poll "the browser reopens after the live preview token change" 1 layer_count vgs:overlay
+expect_poll "the browser rereads the changed package tokens" true view_value loaded
+type_keys "$first_card" || fail "typing $first_card after the token change failed"
+expect_poll "the live preview changes when the package accent changes" '"#00ff00"' ipc smoke readDescendant overlay vgs.themes DesktopPreview accentHex
+expect "the live-preview card keeps the palette strip layer" true ipc smoke readDescendant overlay vgs.themes ThemePaletteStrip visible
 expect "a catalog card is badged Not installed" True has_badge "Not installed"
 expect "a catalog card is badged with its wallpapers' size" True has_badge "Wallpapers [0-9]+ MB"
+
+# Paging: Home, Right, Left and End move the selection.
+type_keys -k Escape || fail "clearing the catalog-card filter failed"
+expect_poll "the catalog-card filter clears" '""' view_value filterText
+first_card="$(card_at 0)"
+type_keys -k Home || fail "sending Home failed"
+expect_poll "Home selects the first card" "\"$first_card\"" view_value selectedName
 type_keys -k Right || fail "sending Right failed"
 expect_poll "Right selects the second card" "\"$(card_at 1)\"" view_value selectedName
 type_keys -k Left || fail "sending Left failed"
@@ -131,6 +175,11 @@ expect_poll "BackSpace erases a character" '"no"' view_value filterText
 type_keys "rd" || fail "typing the rest of the filter failed"
 expect_poll "the filter leaves nord alone" '["nord"]' view_names
 expect "the selection moves to the one match" '"nord"' view_value selectedName
+# Control: scripts/test-qml-unit.sh deletes CardCarousel's modelData rebind and tst_carousel.qml fails.
+expect "the drawn centre theme card matches the selected name after filtering" '"nord"' ipc smoke currentThemeCardName overlay vgs.themes
+expect_poll "nord's package preview wins over its thumbnail and live preview" "$repo/themes/catalog/nord/preview.png" selected_preview
+expect_poll "nord's selected card draws preview.png" ready card_image "$repo/themes/catalog/nord/preview.png"
+expect "nord's selected card hides the live preview" false ipc smoke readDescendant overlay vgs.themes DesktopPreview visible
 click_in vgs:overlay overlay vgs.themes QQuickButton Installed || fail "the click on Installed failed"
 expect_poll "Installed hides the catalog's nord" '[]' view_names
 browser_focused "the rail takes the keyboard back after the scope click"
@@ -311,6 +360,41 @@ plugin_restore() {
   themes_rescan "the view the $2 control replaced"
 }
 
+# Controls for the preview guarantees above.
+plugin_control ThemeCard.qml "preview sourceSize" "decodeSize: root.decodeSize" "decodeSize: Qt.size(1, 1)"
+press_themes || fail "typing SUPER+T for the preview sourceSize control failed"
+expect_poll "the sourceSize control opens the theme browser" 1 layer_count vgs:overlay
+expect_poll "the sourceSize control read its cards" true view_value loaded
+type_keys -k Home || fail "sending Home for the sourceSize control failed"
+expect_poll "control: the live preview no longer decodes at card size times scale" False card_source_size_matches "$repo/themes/catalog/thumbnails/$first_card.jpg"
+type_keys -k Escape || fail "closing the sourceSize control browser failed"
+expect_poll "the sourceSize control browser closes" 0 layer_count vgs:overlay
+plugin_restore ThemeCard.qml "preview sourceSize"
+
+plugin_control ThemeCard.qml "live preview token" "tokens: root.modelData.tokens" "tokens: ({})"
+press_themes || fail "typing SUPER+T for the live preview control failed"
+expect_poll "the live preview control opens the theme browser" 1 layer_count vgs:overlay
+expect_poll "the live preview control read its cards" true view_value loaded
+type_keys "$first_card" || fail "typing $first_card for the live preview control failed"
+expect "control: the live preview no longer uses the package accent" '"#ff5a36"' ipc smoke readDescendant overlay vgs.themes DesktopPreview accentHex
+type_keys -k Escape || fail "clearing the live preview control filter failed"
+type_keys -k Escape || fail "closing the live preview control browser failed"
+expect_poll "the live preview control browser closes" 0 layer_count vgs:overlay
+plugin_restore ThemeCard.qml "live preview token"
+
+plugin_control ThemeCard.qml "preview precedence" "readonly property string cheapImage: packagePreview ? modelData.previewImage : typeof modelData.sharpenedImage === \"string\" && modelData.sharpenedImage !== \"\" ? modelData.sharpenedImage : modelData.image" "readonly property string cheapImage: modelData.image"
+press_themes || fail "typing SUPER+T for the preview precedence control failed"
+expect_poll "the preview precedence control opens the theme browser" 1 layer_count vgs:overlay
+expect_poll "the preview precedence control read its cards" true view_value loaded
+type_keys "nord" || fail "typing nord for the preview precedence control failed"
+expect_poll "the preview precedence control selects nord" '"nord"' view_value selectedName
+expect "control: nord no longer draws preview.png first" none card_image "$repo/themes/catalog/nord/preview.png"
+expect "control: nord shows the live preview instead" true ipc smoke readDescendant overlay vgs.themes DesktopPreview visible
+type_keys -k Escape || fail "clearing the preview precedence control filter failed"
+type_keys -k Escape || fail "closing the preview precedence control browser failed"
+expect_poll "the preview precedence control browser closes" 0 layer_count vgs:overlay
+plugin_restore ThemeCard.qml "preview precedence"
+
 expect "the follow before the wallpaper rows ends" idle theme_idle
 expect "nord applies for the wallpaper rows" "ok theme=nord state=applied shell=applied" vgsh_theme apply nord
 expect_poll "the shell follows nord" nord ipc smoke themeName
@@ -331,6 +415,7 @@ expect "the theme source lists nord's images and no card" "[\"$nord_a\", \"$nord
 expect "the view starts on every monitor" '"every"' wall_value scope
 expect "two screens show the scope control" true wall_value scoped
 expect_poll "the selection starts on the image every screen shows" "$nord_a" wall_selected
+expect "the wallpaper card decodes at card size times screen scale" True card_source_size_matches "$nord_a"
 expect_poll "the shown image is badged Shown" True has_badge Shown
 
 # The toggles: S flips the source, W, Tab and Shift+Tab the scope, and
@@ -438,14 +523,10 @@ plugin_restore ThemeView.qml "theme focus"
 # under its name with an image of another shape and adds c.jpg. Enter on
 # it runs the update form on the download lane, applies nord again, reads
 # the lists again, loads every card's image again and stays open. Each
-# card image is read back by the ratio it decodes to. b.jpg sits next to
-# the selected card before and after the update, so the carousel decodes
-# it at one size throughout and only a new identity reloads it. Control:
-# a copy of the view whose cards keep their identity across the update
-# keeps drawing the old b.jpg. It runs first, on the second archive; the
-# real view then reads that archive's b.jpg on a new open and the third
-# archive's after its update.
-plugin_control WallpaperView.qml identity "BrowserLogic.railKey(card.key, root.generation)" "BrowserLogic.railKey(card.key, 0)"
+# card image is read back by the ratio it decodes to. A changed generation
+# makes the card image URL change; a copy that drops that stamp keeps Qt's
+# old decode for the same path.
+plugin_control WallpaperCard.qml identity "Files.stampedUrl(root.modelData.path, root.modelData.generation)" "Files.fileUrl(root.modelData.path)"
 pin_nord vgs-theme-nord-smoke2.tar.gz "$thumbs/frankenstein.jpg"
 press_wallpapers || fail "typing SUPER+W for the identity control failed"
 expect_poll "SUPER+W opens the identity control's browser" 1 layer_count vgs:overlay
@@ -458,10 +539,10 @@ expect_poll "the identity control's update, apply and lists end" none wall_job
 expect "the identity control's update left no problem" '""' wall_value problem
 expect_poll "the theme source lists the third image and no card" "[\"$nord_a\", \"$nord_b\", \"$nord_c\"]" wall_keys
 expect "the update replaced b.jpg on disk" True bash -c 'cmp -s -- "$1" "$2" && echo True' _ "$thumbs/frankenstein.jpg" "$nord_b"
-expect "the identity control keeps drawing the replaced b.jpg's old picture" "$(file_ratio "$thumbs/nord.jpg")" card_ratio "$nord_b"
+expect "control: an unstamped image URL keeps drawing the replaced b.jpg's old picture" "$(file_ratio "$thumbs/nord.jpg")" card_ratio "$nord_b"
 type_keys -k Escape || fail "sending Escape to the identity control failed"
 expect_poll "Escape closes the identity control's browser" 0 layer_count vgs:overlay
-plugin_restore WallpaperView.qml identity
+plugin_restore WallpaperCard.qml identity
 pin_nord vgs-theme-nord-smoke3.tar.gz "$thumbs/biscuit-de-mar.jpg"
 press_wallpapers || fail "typing SUPER+W for the update failed"
 expect_poll "SUPER+W opens the browser for the update" 1 layer_count vgs:overlay

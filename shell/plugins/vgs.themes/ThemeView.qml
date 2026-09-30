@@ -65,6 +65,10 @@ FocusScope {
     // `last.downloading` as last read while a download this view started
     // runs, else null.
     property var downloading: null
+    property var previewCache: ({})
+    property var previewJobs: ({})
+    property string wantedPreview: ""
+    property string runningPreview: ""
     // What the last step that failed answered, "" when none did.
     property string problem: ""
     // The load the rail's images come from, a clock reading taken on
@@ -132,8 +136,42 @@ FocusScope {
             problem = card.label + " is refused: " + card.reason + ". The Themes panel shows its package.";
             return;
         }
+
         if (card.installed) apply(card.name);
         else install(card.name);
+    }
+
+    function requestPreview(card) {
+        wantedPreview = card === null || card.installed || card.previewImage !== null || card.image === null ? "" : card.name;
+        if (wantedPreview === "" || previewCache[wantedPreview] !== undefined || previewJobs[wantedPreview] === true) return;
+        previewTimer.restart();
+    }
+
+    function startPreview() {
+        const name = wantedPreview;
+        if (name === "" || runningPreview !== "" || previewCache[name] !== undefined || previewJobs[name] === true) return;
+        const nextJobs = Object.assign({}, previewJobs);
+        nextJobs[name] = true;
+        previewJobs = nextJobs;
+        runningPreview = name;
+        const reply = shell.theme.preview(name, result => {
+            root.runningPreview = "";
+            const jobs = Object.assign({}, root.previewJobs);
+            delete jobs[name];
+            root.previewJobs = jobs;
+            if (result.state === "ok") {
+                const cache = Object.assign({}, root.previewCache);
+                cache[name] = result.path;
+                root.previewCache = cache;
+            }
+            if (root.wantedPreview !== "" && root.wantedPreview !== name) root.startPreview();
+        });
+        if (reply !== "ok") {
+            runningPreview = "";
+            const jobs = Object.assign({}, previewJobs);
+            delete jobs[name];
+            previewJobs = jobs;
+        }
     }
 
     function install(name) {
@@ -220,6 +258,7 @@ FocusScope {
 
     Component.onCompleted: start()
     onShellChanged: start()
+    onSelectedChanged: requestPreview(selected)
 
     // An apply from elsewhere moves the displayed badge.
     Connections {
@@ -235,6 +274,12 @@ FocusScope {
         repeat: true
         running: root.job !== null && root.job.step === "download"
         onTriggered: root.downloading = root.shell.theme.last.downloading
+    }
+
+    Timer {
+        id: previewTimer
+        interval: Theme.carousel.previewDwell
+        onTriggered: root.startPreview()
     }
 
     // Keys the carousel passes on.
@@ -283,14 +328,21 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         focus: true
+        devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
         model: ScriptModel {
-            values: root.shownCards.map(card => Object.assign({ key: BrowserLogic.railKey(BrowserLogic.cardKey(card), root.generation), generation: root.generation }, card))
+            values: root.shownCards.map(card => {
+                const sharpened = root.previewCache[card.name] === undefined ? card : Object.assign({}, card, { sharpenedImage: root.previewCache[card.name] });
+                return Object.assign({ key: BrowserLogic.railKey(BrowserLogic.cardKey(sharpened), root.generation), generation: root.generation }, sharpened);
+            })
             objectProp: "key"
         }
         delegate: ThemeCard {
             busy: root.job !== null && root.job.name === modelData.name
         }
-        onCurrentIndexChanged: if (currentIndex < root.shownCards.length) root.selectedName = root.shownCards[currentIndex].name
+        onCurrentIndexChanged: if (currentIndex < root.shownCards.length) {
+            root.selectedName = root.shownCards[currentIndex].name;
+            root.requestPreview(root.shownCards[currentIndex]);
+        }
         onActivated: root.activate()
     }
 
