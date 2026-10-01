@@ -23,6 +23,17 @@ row_class=behaviour
 # reset (held_mode_state in mode-hold.sh).
 mode_hold=()
 mode_resets=0
+# A row that could not measure on this host, as `ROW:REASON` words, which
+# not_measured alone writes: a prerequisite the row needs is missing, or a
+# guard read the shell reaching past the sandbox (scripts/smoke/devices.sh).
+# The row stops there and every other row still runs; a run with no
+# failure and any such row is not measured, never a pass.
+not_measured_rows=()
+# not_measured ROW REASON: the row ROW recorded as not measured and printed.
+not_measured() {
+  not_measured_rows+=("$1:$2")
+  printf '  SKIP  %s: not measured: %s\n' "$1" "$2"
+}
 # fail MESSAGE: one failed row, counted by its class and printed.
 fail() {
   failures=$((failures + 1))
@@ -60,10 +71,15 @@ nested_output_unallocated() {
 # rows met a sandbox fault when a render row drew no frame, or when the
 # nested window's output could not allocate its buffers; it reports
 # not-measured, which is never a pass, and names the cause. Any behaviour
-# failure is a failure.
+# failure is a failure. A run with no failure whose not_measured_rows
+# holds a row is not measured, and its line names each row and reason.
 smoke_verdict() {
   local failures="$1" behaviour_failures="$2" stalled_render="$3" mode_resets="$4"
   shift 4
+  if [[ $failures -eq 0 && ${#not_measured_rows[@]} -gt 0 ]]; then
+    printf 'qml-smoke: status=not-measured rows=%s\n' "$(IFS=,; echo "${not_measured_rows[*]}")"
+    return 77
+  fi
   if [[ $failures -eq 0 ]]; then
     echo "qml-smoke: ok"
     return 0

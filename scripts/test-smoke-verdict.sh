@@ -2,7 +2,7 @@
 # Drive scripts/smoke/verdict.sh, the nested smoke's closing verdict, with
 # the counters smoke_finish hands it, mode resets among them, and fixture
 # compositor logs, and fail, which writes those counters, with the hold's
-# state stubbed. No case
+# state stubbed, and a row not_measured records beside them. No case
 # needs a sandbox. Each case pins the exit status and the first line the
 # verdict prints. The controls at the end plant one defect per rule in a
 # copy of the file and require the case that rule owns to go red.
@@ -126,6 +126,34 @@ for row in "${tallies[@]}"; do
   if run_tally "$verdict" "$row"; then ok "${row%%|*}"; else fail "${row%%|*}"; fi
 done
 
+# run_skip FILE ROW: true when, after not_measured as the file FILE
+# defines it records one row and fail counts the row's failures, the
+# verdict gives the row's status and first line.
+run_skip() {
+  local file="$1" label failed want_status want_line out status=0
+  IFS='|' read -r label failed want_status want_line <<<"$2"
+  out="$(env -i PATH="$PATH" bash -c '
+set -euo pipefail
+source "$1"
+not_measured device-fakes missing=python-dbusmock >/dev/null
+for ((i = 0; i < $2; i++)); do fail "a row" >/dev/null; done
+smoke_verdict "$failures" "$behaviour_failures" "$stalled_render" "$mode_resets" /dev/null' _ \
+    "$file" "$failed")" || status=$?
+  [[ $status -eq $want_status && ${out%%$'\n'*} == "$want_line" ]] && return 0
+  printf '        %s: status=%s want=%s first line: %s\n' "$label" "$status" "$want_status" "${out%%$'\n'*}"
+  return 1
+}
+
+# Rows: label | failed rows beside the not-measured one | status | first
+# line.
+skips=(
+  "a not-measured row in a run with no failure is not measured|0|77|qml-smoke: status=not-measured rows=device-fakes:missing=python-dbusmock"
+  "a failure beside a not-measured row fails|1|1|qml-smoke: failed=1"
+)
+for row in "${skips[@]}"; do
+  if run_skip "$verdict" "$row"; then ok "${row%%|*}"; else fail "${row%%|*}"; fi
+done
+
 # mutate OLD NEW OUT: a copy of the verdict with OLD, which must occur once,
 # replaced by NEW.
 mutate() {
@@ -156,6 +184,8 @@ controls=(
   "the excuse reads any GBM allocation failure|'Output WAYLAND-[0-9]+: pending state rejected: swapchain failed reconfiguring'|'Failed to allocate a GBM buffer'|all-geometry failure with a passing log fails"
   "the nested output's fault is not read|nested_output_unallocated \"\$@\"; then|false; then|all-geometry failure with the nested output's fault is not measured"
   "a behaviour failure is excused by the fault|if [[ \$behaviour_failures -eq 0 ]] && nested_output_unallocated|if nested_output_unallocated|a behaviour failure with the fault fails"
+  "a not-measured row is not read|\$failures -eq 0 && \${#not_measured_rows[@]} -gt 0|\$failures -eq 0 && \${#not_measured_rows[@]} -gt 9|a not-measured row in a run with no failure is not measured"
+  "a not-measured row excuses a failure|if [[ \$failures -eq 0 && \${#not_measured_rows[@]}|if [[ \${#not_measured_rows[@]}|a failure beside a not-measured row fails"
   "an undrawn render row is not read|\$stalled_render == true|\$stalled_render == never|all-geometry failure with an undrawn render row is not measured"
   "a behaviour failure is excused by an undrawn row|\$behaviour_failures -eq 0 && \$stalled_render|\$stalled_render|a behaviour failure with an undrawn render row fails"
 )
@@ -166,6 +196,7 @@ for i in "${!controls[@]}"; do
   row="" runner=""
   for candidate in "${cases[@]}"; do [[ ${candidate%%|*} == "$target" ]] && { row="$candidate"; runner=run_case; }; done
   for candidate in "${tallies[@]}"; do [[ ${candidate%%|*} == "$target" ]] && { row="$candidate"; runner=run_tally; }; done
+  for candidate in "${skips[@]}"; do [[ ${candidate%%|*} == "$target" ]] && { row="$candidate"; runner=run_skip; }; done
   if [[ -z $row ]]; then fail "control: $label names no case: $target"; continue; fi
   if "$runner" "$mutant" "$row" >/dev/null; then fail "control: $label left '$target' green"; else ok "control: $label"; fi
 done
