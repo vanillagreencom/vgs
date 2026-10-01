@@ -8,12 +8,14 @@ A desktop shell for Hyprland, built on Quickshell 0.3.1. A small fixed core star
 
 - `scripts/validate [AREA]`: run only checks affected by changes from the default branch's merge base, including uncommitted files. `--changed BASE` selects a fix round; `--list` previews commands; `--full` opts into the whole area. `unit` needs Qt and no Wayland session; `package` needs rootless podman and the Arch mirrors; `qml` needs the nested sandbox. Exit 77 means a check could not run and is not a pass.
 - `scripts/qml-smoke.sh`: the nested sandbox row alone. It needs `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR` in the environment.
+- `scripts/landing-times.py [--last N]`: the median time from open (first commit, or pull request creation) to landing on `main` over the last N landings, direct pushes and pull requests both, plus the median wait from ready to land.
 - `bin/vgsh`: the runner (`run`, `restart`), the plugin manager and the theme commands (`theme list`, `theme apply <name>`, `theme reload`, `theme background next`, `theme add <git url>`, `theme update <name>`, `theme remove <name>`; `theme apply vgs` restores the defaults). Run it with no arguments for the command list.
 
 ## Conventions
 
 - Work targets `main`. `v1` is an archived reference, not a development target.
 - No branch protection, CI workflows, merge queue, required review or commit/push gates. PRs are optional and may merge immediately; direct pushes are welcome. Do not arm Kendex guards or wait for absent CI.
+- No bot review. No vgs lane or pull request requests or waits for a Copilot, Codex or other bot review: `PR_REVIEW_GATE` and `REVIEW_GATE_MODE` in `kendex.settings.toml` stay `off`. A bot review request that comes from Kendex code goes to `kendex report`.
 - Validate the final relevant diff once. After fixes, use `--changed <last-validated-commit>` and reuse results for unchanged inputs; do not repeat a full suite at commit, push or PR submission. Unknown source inputs select the full area rather than silently skipping coverage. Shared workflow gate requirements do not apply here.
 
 - Hyprland is the only compositor. No compositor abstraction and no second compositor: `docs/decisions/D001-hyprland-only.md`.
