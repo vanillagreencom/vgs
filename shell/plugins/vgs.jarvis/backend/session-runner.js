@@ -95,12 +95,15 @@ class SessionRunner {
         }, Math.max(0, owner.deadline - this.clock.now()));
     }
 
-    // Lease loss also releases a deadline which could otherwise retain Node.
+    // Lease loss also releases a deadline which could otherwise retain Node,
+    // and every speech session: lease-ended aborts only the open one, and
+    // sessions already closing still hold a socket and a timer.
     close() {
         if (this.lifetime.kind !== "open") return;
         this.lifetime = { kind: "closed" };
         this.dispatch({ type: "lease-ended" });
         this.ports.tools.close();
+        this.ports.speech.release();
     }
 }
 
@@ -114,7 +117,7 @@ function unavailable() {
         playback: { start: refuse, flush: (e, done) => done() },
         tools: { start: refuse, cancel: refuse, outcome: refuse, sync: () => {}, close: () => {} },
         approval: { show: refuse, end: () => {}, refused: refuse },
-        speech: { open: refuse, close: () => {}, flush: () => {} },
+        speech: { open: refuse, close: () => {}, flush: () => {}, release: () => {} },
         transcript: refuse
     };
 }

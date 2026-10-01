@@ -20,7 +20,7 @@ const REPLY_GAP_MS = 500;         // no output for this long ends a playing repl
 const SILENCE_TICK_MS = 100;
 const SILENCE_MAX_MS = 1000;      // no catch-up past this after a stalled event loop
 const SEGMENT_GAP_MS = 1200;      // a speaker's pause on the session timeline ends a caption
-const PENDING_BYTES = PCM_RATE * 2 * START_WAIT_MS / 1000;
+const PENDING_BYTES = PCM_RATE * 2 * START_WAIT_MS / 1000;  // queued input, opening words included
 const APPEND_BYTES = PCM_RATE * 2;
 const SEND_BACKLOG_BYTES = 256 * 1024;
 const FRAME_CHARS = 1024 * 1024;
@@ -143,17 +143,41 @@ function create({ provider, clock, conversation, captionLimit, log }) {
         session.sent += pcm.length / 2;
         return true;
     }
+    // Every input frame enters here, in order. Input waits for
+    // session.started, and new input waits behind queued input. Returns
+    // false once the session has failed.
+    function input(session, pcm) {
+        const waiting = session.state.kind === "connecting" || session.state.kind === "starting";
+        if (!waiting && session.pending.length === 0) return append(session, pcm);
+        session.pendingBytes += pcm.length;
+        if (session.pendingBytes > PENDING_BYTES) { failed(session, "live=input-overflow"); return false; }
+        session.pending.push(Buffer.from(pcm));
+        return pump(session);
+    }
+    // Queued input leaves one APPEND_BYTES chunk at a time, each once the
+    // socket has written everything before it, so a long opening never meets
+    // the send backlog. New input and silence ticks drain it.
+    function pump(session) {
+        while (session.state.kind === "running" && session.pending.length > 0 && session.channel.bufferedAmount === 0) {
+            const queued = Buffer.concat(session.pending);
+            const pcm = queued.subarray(0, APPEND_BYTES);
+            session.pending = queued.length > pcm.length ? [queued.subarray(pcm.length)] : [];
+            session.pendingBytes = queued.length - pcm.length;
+            if (!append(session, pcm)) return false;
+        }
+        return true;
+    }
     // The session timeline advances with input audio. While no microphone
     // feeds it, silence lets the voice model hear the turn end and answer.
     function silence(session) {
         session.timers.silence = clock.set(() => {
             session.timers.silence = null;
+            if (!pump(session)) return;
             if (session.capture === null) {
                 const now = clock.now();
-                const samples = Math.min(Math.floor((now - session.inputAt) * PCM_RATE / 1000),
-                    PCM_RATE * SILENCE_MAX_MS / 1000);
+                const samples = Math.floor(Math.min(now - session.inputAt, SILENCE_MAX_MS) * PCM_RATE / 1000);
                 session.inputAt = now;
-                if (samples > 0 && !append(session, Buffer.alloc(samples * 2))) return;
+                if (samples > 0 && !input(session, Buffer.alloc(samples * 2))) return;
             }
             silence(session);
         }, SILENCE_TICK_MS);
@@ -163,7 +187,8 @@ function create({ provider, clock, conversation, captionLimit, log }) {
         clear(session, "idle");
         session.timers.idle = clock.set(() => {
             session.timers.idle = null;
-            // A queued or playing reply is activity; its close restarts this.
+            // Output audio counts through its reply: a queued or playing reply
+            // holds the session, and the reply's close restarts this wait.
             if (session.playing !== null || session.next !== null) return;
             session.events.idle();
         }, IDLE_MS);
@@ -182,17 +207,13 @@ function create({ provider, clock, conversation, captionLimit, log }) {
         if (session.state.kind !== "starting") fail("event-order");
         clear(session, "start");
         session.state = { kind: "running" };
-        const pending = Buffer.concat(session.pending);
-        session.pending = [];
-        for (let offset = 0; offset < pending.length; offset += APPEND_BYTES)
-            if (!append(session, pending.subarray(offset, offset + APPEND_BYTES))) return;
         session.inputAt = clock.now();
+        if (!pump(session)) return;
         silence(session);
         activity(session);
     }
     function output(session, pcm) {
         if (session.output.kind === "discarding" || pcm.length === 0) return;
-        activity(session);
         let reply = session.playing !== null && session.playing.kind === "open" ? session.playing : session.next;
         if (reply === null) {
             reply = { kind: "open", stream: new Readable({ highWaterMark: REPLY_BYTES, read() {} }) };
@@ -314,6 +335,11 @@ function create({ provider, clock, conversation, captionLimit, log }) {
             const closing = [...sessions.values()].filter(value => value.state.kind === "closing");
             if (closing.length > FINALIZING) finalize(closing[0], "finalizing-limit");
         },
+        // Lease loss: no socket or timer may hold the daemon, so every
+        // session, finalizing ones included, is released at once.
+        release() {
+            for (const session of [...sessions.values()]) finalize(session, "lease");
+        },
         // The provider has no truncate event. Drop the queued reply, then the
         // rest of the interrupted one: output passes again once the user's
         // speech after this point on the session timeline is transcribed.
@@ -340,13 +366,7 @@ function create({ provider, clock, conversation, captionLimit, log }) {
                 if (pcm.length % 2 !== 0) { failed(session, "live=input-frame"); return; }
                 session.inputAt = clock.now();
                 switch (session.state.kind) {
-                case "connecting": case "starting":
-                    // The opening words wait for session.started, within its bound.
-                    session.pendingBytes += pcm.length;
-                    if (session.pendingBytes > PENDING_BYTES) { failed(session, "live=input-overflow"); return; }
-                    session.pending.push(Buffer.from(pcm));
-                    return;
-                case "running": append(session, pcm); return;
+                case "connecting": case "starting": case "running": input(session, pcm); return;
                 // Frames in flight after the session ended; Session closes capture.
                 case "closing": case "ended": return;
                 default: throw new Error("jarvis: live=state");

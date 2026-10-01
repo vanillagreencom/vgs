@@ -44,7 +44,8 @@ function world(implementation = Owner, synchronous = false, session = Session) {
         },
         playback: { start: port("play"), flush: port("flush") },
         tools: { start: port("tool"), cancel: port("tool-cancel"), outcome: port("outcome"), sync: () => {}, close: () => {} },
-        approval: { show: port("approval"), end: port("approval-end"), refused: port("confirm-refused") }
+        approval: { show: port("approval"), end: port("approval-end"), refused: port("confirm-refused") },
+        speech: { release: port("speech-release") }
     }, {
         now: () => at,
         set: (fn, ms) => {
@@ -291,7 +292,8 @@ const tests = [
         w.runner.close();
         assert.equal(w.timers.size, 0, "EOF cannot retain a deadline");
         assert.equal(w.runner.state.conversation.kind, "ended");
-        assert.equal(w.calls.at(-1).name, "brain-close", "EOF cannot await an adapter acknowledgment");
+        assert.deepEqual(w.calls.slice(-2).map(call => call.name), ["brain-close", "speech-release"],
+            "EOF cannot await an adapter acknowledgment, and releases every speech session");
     }],
     ["closed-clock", impl => {
         const w = world(impl);
@@ -352,6 +354,7 @@ try {
         ["closed-clock", 'if (this.lifetime.kind === "closed") return;', 'if (false && this.lifetime.kind === "closed") return;', "closed-clock"],
         ["outcome", 'this.ports.tools.outcome(e);', 'void this.ports.tools.outcome;', "approval-and-tool"],
         ["completed-connection", 'this.ports.brain.close(e);', 'if (false) this.ports.brain.close(e);', "completed-connection"],
+        ["speech-release", 'this.ports.speech.release();', 'void this.ports.speech;', "timer-release"],
         ["unavailable", 'function refuse() { throw new Error("jarvis: session=adapter-unavailable"); }',
             'function refuse() { if (false) throw new Error("jarvis: session=adapter-unavailable"); }', "unavailable"]
     ];

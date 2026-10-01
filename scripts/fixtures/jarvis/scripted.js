@@ -96,7 +96,8 @@ function ports(root) {
                 wait("transcript", caption);
             },
             close: e => record("speech-close", e),
-            flush: e => record("speech-flush", e)
+            flush: e => record("speech-flush", e),
+            release: () => {}
         }
     };
 }
