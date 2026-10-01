@@ -15,6 +15,7 @@ const { load } = require("../bin/lib/qml-library.js");
 const LOGIC = path.join(__dirname, "..", "shell", "Core", "PluginLogic.js");
 const LUCIDE = path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js");
 const MANAGERS = path.join(__dirname, "..", "shell", "Core", "PackageManagers.js");
+const SETTING_VALUES = path.join(__dirname, "..", "shell", "Commons", "SettingValues.js");
 
 let failures = 0;
 function report(name, got, want) {
@@ -32,7 +33,7 @@ function suite(ctx, check) {
         requirements: [{ command: "acme-sync", purpose: "Syncs" }],
         secrets: { service: "acme-status", label: "Acme token" },
         settings: { device: "", plain: "text" },
-        schema: { device: { type: "string", label: "Device", optionsFrom: "devices" }, plain: { type: "string", label: "Plain" } },
+        schema: { device: { type: "string", label: "Device", optionsFrom: "devices" }, plain: { type: "string", label: "Plain", presets: [{ value: "text" }], allowCustom: true } },
         status: {
             devices: { type: "choices", label: "Devices" },
             token: { type: "presence", label: "Token", group: "Keys", hint: "Needed", action: { label: "Set up token", tui: "setup" }, command: "secret-tool store x" },
@@ -445,7 +446,9 @@ const CONTROLS = [
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-status-control-"));
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
+    fs.mkdirSync(path.join(temp, "shell", "Commons"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
+    fs.symlinkSync(SETTING_VALUES, path.join(temp, "shell", "Commons", "SettingValues.js"));
     fs.symlinkSync(LUCIDE, path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
     fs.symlinkSync(MANAGERS, path.join(temp, "shell", "Core", "PackageManagers.js"));
     fs.symlinkSync(path.join(__dirname, "..", "shell", "Core", "HyprlandLayer.js"), path.join(temp, "shell", "Core", "HyprlandLayer.js"));

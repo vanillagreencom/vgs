@@ -181,6 +181,36 @@ expect "the fixture offers a new first device" ok ipc acme.status invoke set 'de
 expect_poll "automatic selection displays the new first offer without storing it" '[0, "First offered: Alpha", "", true]' device_state
 expect "the empty string stays in the file" '""' user_device
 
+# Preset fields: the Bar clock format is a datetime preset Select with a
+# trailing Custom… entry. Presets write their stable format string. Custom…
+# opens the custom row without writing, invalid datetime formats show the
+# shared problem text and do not write, and a valid custom format writes.
+clock_field() { ipc smoke invokeInstance window vgs.settings fieldChoice '{"id":"vgs.bar","key":"clockFormat"}'; }
+clock_state() { clock_field | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([len(d["model"]), d["model"][-1]["label"], d["enabled"]]))'; }
+clock_model() { clock_field | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["model"]))'; }
+clock_model_edges() { clock_model | py_reply 'import json,sys; m=json.load(sys.stdin); print(json.dumps([m[0]["value"], m[-1]["label"]]))'; }
+clock_custom() { ipc smoke invokeInstance window vgs.settings fieldCustom '{"id":"vgs.bar","key":"clockFormat"}'; }
+clock_custom_state() { clock_custom | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["visible"], d["text"], d["error"], bool(d["preview"])]))'; }
+choose_clock() { ipc smoke invokeInstance window vgs.settings chooseField "{\"id\":\"vgs.bar\",\"key\":\"clockFormat\",\"index\":$1}"; }
+edit_clock_custom() { ipc smoke invokeInstance window vgs.settings editFieldCustom "$(python3 -c 'import json,sys; print(json.dumps({"id":"vgs.bar","key":"clockFormat","text":sys.argv[1]}))' "$1")"; }
+user_clock() { python3 -c 'import json,sys; print(json.dumps(next(r["clockFormat"] for r in json.load(open(sys.argv[1])).get("plugins", []) if r["id"]=="vgs.bar")))' "$home/.config/vgs/shell.json"; }
+expect "the window opens the Bar page for preset field checks" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.bar
+expect_poll "the clock format Select has every preset and Custom last" '[10, "Custom\u2026", true]' clock_state
+expect "the clock preset model carries the current default first and Custom last" '["ddd d MMM  HH:mm", "Custom\u2026"]' clock_model_edges
+expect "choosing a clock preset is accepted" chosen choose_clock 4
+expect_poll "the chosen clock preset writes its format" '"HH:mm"' user_clock
+expect_poll "the clock preset save settles" true config_settled
+clock_changes="$(config_changes)" || fail "configuration counter unreadable before clock Custom"
+expect "choosing Custom opens the row" chosen choose_clock 9
+expect "choosing Custom writes no configuration" "$clock_changes" config_changes
+expect_poll "the Custom row opens with the configured format and a preview" '[true, "HH:mm", "", true]' clock_custom_state
+expect "an invalid custom clock edit is accepted by the editor" edited edit_clock_custom "'abc"
+expect_poll "the invalid custom clock format shows the shared problem" '[true, "'\''abc", "Close the quoted text.", false]' clock_custom_state
+expect "the invalid custom clock format writes nothing" "$clock_changes" config_changes
+expect "a valid custom clock edit is accepted by the editor" edited edit_clock_custom "yyyy-MM-dd HH:mm:ss"
+expect_poll "the valid custom clock format writes" '"yyyy-MM-dd HH:mm:ss"' user_clock
+expect_poll "the custom clock save settles" true config_settled
+
 # A disposable SettingField keeps the same editor and observes apply.
 # Each mutation keeps the code it tests and removes one guarantee.
 choice_controls="$repo/shell/plugins/vgs.settings"
@@ -240,6 +270,7 @@ for control in ChoicesGood ChoicesNoModel ChoicesWriteLabel ChoicesNoBinding; do
   rm -- "$choice_controls/$control.qml" || fail "removing the $control source copy failed"
 done
 expect "dropping the controls restores the Settings source revision" "$choice_revision_before" choice_source_revision
+expect "the window opens the status fixture's page again" ok ipc smoke invokeInstance window vgs.settings openPlugin acme.status
 expect "disabling the status fixture from its page is allowed" ok ipc smoke invokeInstance window vgs.settings toggle acme.status
 expect_poll "a disabled plugin's dynamic Select is read-only and has no offered choices" '[0, "First offered (none available)", "", false]' device_state
 expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "Show command"], ["Pending", "Not reported"]]' drawn_status

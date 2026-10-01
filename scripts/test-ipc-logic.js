@@ -18,6 +18,7 @@ const IMPORTS = [
     [path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js"), path.join("shell", "Ui", "icons", "Lucide.js")],
     [path.join(CORE, "PackageManagers.js"), path.join("shell", "Core", "PackageManagers.js")],
     [path.join(CORE, "HyprlandLayer.js"), path.join("shell", "Core", "HyprlandLayer.js")],
+    [path.join(__dirname, "..", "shell", "Commons", "SettingValues.js"), path.join("shell", "Commons", "SettingValues.js")],
 ];
 
 let failures = 0;

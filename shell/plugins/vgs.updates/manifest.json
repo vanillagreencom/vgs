@@ -31,9 +31,20 @@
     "placement": "center"
   },
   "schema": {
-    "intervalHours": { "type": "number", "label": "Check interval", "description": "Hours between automatic update checks", "min": 1, "max": 48, "step": 1, "group": "Cadence" },
+    "intervalHours": { "type": "number", "label": "Check interval", "description": "Hours between automatic update checks", "min": 1, "max": 48, "step": 1, "unit": "hours", "group": "Cadence" },
     "hideWhenCurrent": { "type": "boolean", "label": "Hide when current", "description": "Hide the bar icon while the last check succeeded and no source has updates; a failed, stale or running check still shows", "group": "Display" },
-    "aurCommand": { "type": "string", "label": "AUR command", "description": "Blank lets the update TUI choose paru -Sua or yay -Sua", "group": "Update TUI" },
+    "aurCommand": {
+      "type": "string",
+      "label": "AUR command",
+      "description": "Which AUR update command the update TUI runs",
+      "group": "Update TUI",
+      "allowCustom": true,
+      "presets": [
+        { "value": "", "label": "Automatic" },
+        { "value": "paru -Sua" },
+        { "value": "yay -Sua" }
+      ]
+    },
     "snapshot": { "type": "enum", "label": "Snapshot", "description": "Automatic snapshots when the update TUI can find a snapshot tool", "options": ["auto", "off"], "group": "Update TUI" },
     "trustPluginUpdates": { "type": "boolean", "label": "Trust plugin updates", "description": "Let the update TUI pass --yes to plugin and theme updates, so it shows their diffs without asking", "group": "Update TUI" },
     "placement": { "type": "enum", "label": "Flyout placement", "description": "Where the updates flyout opens when summoned without its bar icon", "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"], "group": "Display" }

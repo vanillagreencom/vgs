@@ -150,6 +150,11 @@ def inside(j, i):
         if j == i: return True
         j = rows[j]["parent"]
     return False
+def visible(j):
+    while j != -1:
+        if not rows[j].get("visible", True): return False
+        j = rows[j]["parent"]
+    return True
 def right(r): return r["box"][0] + r["box"][2]
 def mid_y(r): return r["box"][1] + r["box"][3] / 2
 def check(name, got, want):
@@ -265,7 +270,13 @@ section_names() { ipc smoke itemTexts window vgs.settings SectionHeader | py_rep
 expect_poll "the page draws one section per schema group, ungrouped first" '["Settings", "Layout", "Behaviour", "Look"]' section_names
 page_fields() { ipc smoke drawnFields window vgs.settings | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["acme.probe"], sum(v for k, v in d.items() if k != "acme.probe")]))'; }
 expect_poll "the page draws one field per schema entry and no other plugin's" '[9, 0]' page_fields
-sliders() { ipc smoke descendantGeometry window vgs.settings | py_reply 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["type"] == "Slider"))'; }
+sliders() { ipc smoke descendantGeometry window vgs.settings | py_reply 'import json,sys; rows=json.load(sys.stdin)
+def shown(i):
+    while i != -1:
+        if not rows[i].get("visible", True): return False
+        i = rows[i]["parent"]
+    return True
+print(sum(1 for i,r in enumerate(rows) if r["type"] == "Slider" and shown(i)))'; }
 expect "the two bounded numbers draw sliders" 2 sliders
 # page_alignment SETTINGS KEYS: [] when the shown page draws SETTINGS
 # setting fields and KEYS key rows and every inline field, the details and
@@ -291,6 +302,11 @@ def inside(j, i):
         if j == i: return True
         j = rows[j]["parent"]
     return False
+def visible(j):
+    while j != -1:
+        if not rows[j].get("visible", True): return False
+        j = rows[j]["parent"]
+    return True
 def right(r): return r["box"][0] + r["box"][2]
 def mid_y(r): return r["box"][1] + r["box"][3] / 2
 def check(name, got, want):
@@ -310,8 +326,10 @@ for n, i in enumerate(headers):
     labels = [j for j, r in enumerate(rows) if r["type"] == "Label" and inside(j, i) and r.get("role") == "eyebrow"]
     if len(labels) != 1: out.append("section%d labels=%d" % (n, len(labels))); continue
     check("section%d.x" % n, rows[labels[0]]["box"][0], content_left)
-fields = [i for i, r in enumerate(rows) if r["type"] in ("SettingField", "KeyField", "Field") and inside(i, page[0])]
-counts = [sum(1 for i in fields if rows[i]["type"] == kind) for kind in ("SettingField", "KeyField")]
+setting_roots = [i for i, r in enumerate(rows) if r["type"] == "SettingField" and inside(i, page[0]) and visible(i)]
+key_roots = [i for i, r in enumerate(rows) if r["type"] == "KeyField" and inside(i, page[0]) and visible(i)]
+fields = [i for i, r in enumerate(rows) if r["type"] in ("KeyField", "Field") and inside(i, page[0]) and visible(i)]
+counts = [len(setting_roots), len(key_roots)]
 if counts != [want_settings, want_keys]: out.append("settings,keys=%s want=%s" % (counts, [want_settings, want_keys]))
 for n, i in enumerate(fields):
     name = "%s%d" % (rows[i]["type"], n)
@@ -663,27 +681,27 @@ expect_poll "the page is open again" '"acme.probe"' settings_page
 # `size.control.md` tall; the back button's glyph, not its box, sits on the
 # content edge the description starts at; the title's capital centre sits
 # on the row's centre; each read-only metadata row (Author, Version,
-# Source) is at least `row.compactHeight` tall and no taller than that or
-# its tallest text, and consecutive ones sit `stack.row` apart. Each check
-# holds within one pixel and reads minimums and containment, so a larger
-# theme font passes. The control plants a copy of the same reading with
-# the back button 8 px right, the title 8 px down and the first metadata
-# row 8 px taller, which the check refuses on each rule. `[]` is the pass.
+# Source) use the same `row.height` as the Enabled row and setting rows,
+# and consecutive metadata rows sit `stack.row` apart. Each check holds
+# within one pixel and reads containment, so a larger theme font passes.
+# The control plants a copy of the same reading with the back button 8 px
+# right, the title 8 px down and the first key/value row 8 px taller,
+# which the check refuses on each rule. `[]` is the pass.
 page_geometry() { # [PLANT]
-  local rows md compact gap glyph cap
+  local rows md row_height gap glyph cap
   rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
   md="$(ipc smoke themeValue size.control.md)" || return
-  compact="$(ipc smoke themeValue row.compactHeight)" || return
+  row_height="$(ipc smoke themeValue row.height)" || return
   gap="$(ipc smoke themeValue stack.row)" || return
   glyph="$(ipc smoke readShownDescendant window vgs.settings IconButton glyphStart)" || return
   cap="$(ipc smoke readShownDescendant window vgs.settings TitleButton capCentre)" || return
-  python3 - "$rows" "$md" "$compact" "$gap" "$glyph" "$cap" "${1:-}" <<'PY'
+  python3 - "$rows" "$md" "$row_height" "$gap" "$glyph" "$cap" "${1:-}" <<'PY'
 import json, re, sys
 # A failure word from the probe is the answer, never a traceback.
 words = [a for a in sys.argv[1:7] if not re.match(r"^(\[|-?[0-9])", a)]
 if words:
     print(json.dumps(["unread=%s" % ",".join(words)])); sys.exit()
-rows, md, compact, gap, glyph, cap = (json.loads(a) for a in sys.argv[1:7])
+rows, md, row_height, gap, glyph, cap = (json.loads(a) for a in sys.argv[1:7])
 plant = sys.argv[7] == "shift"
 out = []
 def inside(j, i):
@@ -713,19 +731,23 @@ for i in under("Field"):
     texts = [rows[j] for j, r in enumerate(rows) if r["type"] == "Label" and inside(j, i) and shown(r)]
     if any(t.get("text") in ("Author", "Version", "Source") for t in texts):
         field = rows[i]
-        if plant and not fields: field = dict(field, box=field["box"][:3] + [field["box"][3] + 8])
         fields.append((field, max(t["box"][3] for t in texts)))
 if len(fields) != 3: out.append("metadata=%d" % len(fields))
 for n, (field, tallest) in enumerate(fields):
-    h = field["box"][3]
-    if h < compact - 1 or h > max(compact, tallest) + 1: out.append("metadata%d.height=%.2f compact=%d tallest=%.2f" % (n, h, compact, tallest))
     if n: check("metadata%d.gap" % n, field["box"][1] - (fields[n - 1][0]["box"][1] + fields[n - 1][0]["box"][3]), gap)
+field_rows = [dict(r) for i, r in enumerate(rows) if r.get("name") == "fieldRow" and inside(i, pages[0]) and shown(r)]
+if plant and field_rows:
+    field_rows[0]["box"] = field_rows[0]["box"][:3] + [field_rows[0]["box"][3] + 8]
+if not field_rows:
+    out.append("fieldRows=0")
+for n, row in enumerate(field_rows):
+    check("fieldRow%d.height" % n, row["box"][3], row_height)
 print(json.dumps(out))
 PY
 }
-geometry expect_poll "the plugin page's header puts the back glyph on the content edge and the title on its centre, and its metadata rows are compact" '[]' page_geometry
-page_planted() { page_geometry shift | py_reply 'import json,sys; o=json.load(sys.stdin); print(all(any(e.startswith(p) for e in o) for p in ("back.glyph.x=", "title.capCentre=", "metadata0.height=")))'; }
-expect "control: a shifted back glyph, a lowered title and a taller metadata row are each refused" True page_planted
+geometry expect_poll "the plugin page's header puts the back glyph on the content edge, the title on its centre and each key/value row at one height" '[]' page_geometry
+page_planted() { page_geometry shift | py_reply 'import json,sys; o=json.load(sys.stdin); print(all(any(e.startswith(p) for e in o) for p in ("back.glyph.x=", "title.capCentre=", "fieldRow0.height=")))'; }
+expect "control: a shifted back glyph, a lowered title and a taller key/value row are each refused" True page_planted
 type_keys -k Escape || fail "sending Escape to the page failed"
 expect_poll "Escape pops the page" '""' settings_page
 type_keys -k Escape || fail "sending Escape to the list failed"

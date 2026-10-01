@@ -47,7 +47,7 @@ Item {
         y: 680
         Rectangle { id: disclosed; width: parent.width; height: 10 }
     }
-    Field { id: compactField; label: "Version"; inline: true; compact: true; width: 300; y: 760; Label { role: "item"; text: "0.1.0" } }
+    Field { id: inlineField; label: "Version"; inline: true; width: 300; y: 760; Label { role: "item"; text: "0.1.0" } }
     Text {
         id: clearingProbeText
         text: "A message long enough to wrap after the inset grows and makes the line narrower."
@@ -193,8 +193,8 @@ Item {
 
         // A section's heading sits on the content edge and its rows take
         // its row spacing; a disclosure's content starts at the row's text
-        // column; a compact inline field is `row.compactHeight` tall.
-        function test_section_disclosure_and_compact_field() {
+        // column; an inline field uses the same row height for read-only text.
+        function test_section_disclosure_and_inline_field() {
             compare(section.children[0].leftPadding, 0);
             const rows = section.children[1];
             compare(rows.spacing, Theme.stack.row);
@@ -204,8 +204,8 @@ Item {
             const inset = Theme.listItem.paddingX + Theme.icon.size.md + Theme.listItem.iconGap;
             compare(disclosed.parent.x, inset);
             compare(disclosed.width, disclosure.width - inset - Theme.listItem.paddingX);
-            compare(compactField.children[1].height, Theme.row.compactHeight);
-            compare(compactField.height, Theme.row.compactHeight);
+            compare(inlineField.children[1].height, Theme.row.height);
+            compare(inlineField.height, Theme.row.height);
         }
 
         function test_toast_text_clears_a_rounded_corner() {

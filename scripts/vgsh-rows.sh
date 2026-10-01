@@ -178,7 +178,7 @@ theme_tree() { # SHIPPED_TARGET...
   cp -- "$repo/config/shell.json" "$tree/config/"
   cp -- "$repo/shell/Core/PluginLogic.js" "$repo/shell/Core/PackageManagers.js" "$repo/shell/Core/HyprlandLayer.js" "$tree/shell/Core/"
   cp -- "$repo/shell/Ui/icons/Lucide.js" "$tree/shell/Ui/icons/"
-  cp -- "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
+  cp -- "$repo/shell/Commons/SettingValues.js" "$repo/shell/Commons/ThemeLogic.js" "$repo/shell/Commons/Tokens.js" "$tree/shell/Commons/"
   theme_path="$tmp/theme-path"; stubs="$tmp/stubs"; mkdir -p "$theme_path" "$stubs"
   local tool tool_bin
   for tool in bash readlink dirname mkdir flock awk git mktemp mv rm; do

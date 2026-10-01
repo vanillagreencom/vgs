@@ -23,7 +23,7 @@ import qs.Ui
 // value draws at line height 1, centred on its label. The description
 // draws in the hint role in the muted colour; the two switches, the
 // listing metadata and Manage are one key/value group `stack.row` apart,
-// the read-only metadata in compact rows.
+// with one key/value row height.
 FocusScope {
     id: page
 
@@ -224,7 +224,6 @@ FocusScope {
                         width: body.width
                         label: modelData[0]
                         inline: true
-                        compact: true
                         Label { role: "value"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
                     }
                 }

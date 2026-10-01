@@ -36,7 +36,8 @@
       "description": "Seconds a normal toast stays on screen; a low-urgency one stays for at most 5",
       "min": 2,
       "max": 30,
-      "step": 1
+      "step": 1,
+      "unit": "seconds"
     },
     "customEmoji": {
       "type": "boolean",

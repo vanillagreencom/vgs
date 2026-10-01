@@ -88,7 +88,7 @@ REQUIRED_HEADS = ("vgsh", "sudo")
 # table or index of a list.
 FIELDS = (
     ("name",), ("description",), ("author",),
-    ("schema", "*", "label"), ("schema", "*", "description"), ("schema", "*", "group"), ("schema", "*", "options", "*"),
+    ("schema", "*", "label"), ("schema", "*", "description"), ("schema", "*", "group"), ("schema", "*", "options", "*"), ("schema", "*", "presets", "*", "label"),
     ("status", "*", "label"), ("status", "*", "group"), ("status", "*", "hint"), ("status", "*", "action", "label"),
     ("requirements", "*", "purpose"),
     ("tui", "*", "title"), ("tui", "*", "entry", "label"), ("tui", "*", "entry", "group"),
@@ -100,7 +100,7 @@ FIELDS = (
 EXEMPT = (
     ("schemaVersion",), ("id",), ("version",), ("license",), ("icon",), ("kinds",), ("entryPoints",),
     ("capabilities",), ("systemSteps",), ("settings",), ("defaultSection",), ("appearance",), ("extras",),
-    ("schema", "*", "type"), ("schema", "*", "optionsFrom"), ("schema", "*", "min"), ("schema", "*", "max"), ("schema", "*", "step"),
+    ("schema", "*", "type"), ("schema", "*", "optionsFrom"), ("schema", "*", "presets", "*", "value"), ("schema", "*", "allowCustom"), ("schema", "*", "format"), ("schema", "*", "unit"), ("schema", "*", "min"), ("schema", "*", "max"), ("schema", "*", "step"),
     ("status", "*", "type"), ("status", "*", "hidden"), ("status", "*", "command"),
     ("status", "*", "action", "tui"), ("status", "*", "action", "install"), ("status", "*", "action", "system"),
     ("requirements", "*", "command"), ("requirements", "*", "packages"), ("requirements", "*", "optional"),

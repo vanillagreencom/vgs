@@ -13,9 +13,10 @@ set -euo pipefail
 source "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/vgsh-rows.sh"
 
 tree="$tmp/tree"
-mkdir -p "$tree/shell/Core" "$tree/shell/Ui/icons" "$tree/shell/plugins" "$tree/config"
+mkdir -p "$tree/shell/Core" "$tree/shell/Commons" "$tree/shell/Ui/icons" "$tree/shell/plugins" "$tree/config"
 cp -R -- "$repo/bin" "$tree/"
 cp -- "$repo/shell/Core/PluginLogic.js" "$repo/shell/Core/PackageManagers.js" "$repo/shell/Core/HyprlandLayer.js" "$tree/shell/Core/"
+cp -- "$repo/shell/Commons/SettingValues.js" "$tree/shell/Commons/"
 cp -- "$repo/shell/Ui/icons/Lucide.js" "$tree/shell/Ui/icons/"
 printf '{ "version": 1, "plugins": [], "disabledPlugins": [] }\n' >"$tree/config/shell.json"
 

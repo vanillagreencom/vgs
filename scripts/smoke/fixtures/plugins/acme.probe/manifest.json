@@ -4,13 +4,13 @@
   "defaultSection": "right",
   "settings": { "label": "probe", "tags": ["a", "b"], "size": 12, "gap": 4, "compact": false, "mode": "calm", "delay": 800, "notes": "", "accent": true, "badge": "dot" },
   "schema": {
-    "label": { "type": "string", "label": "Label" },
+    "label": { "type": "string", "label": "Label", "allowCustom": true, "presets": [{ "value": "alpha", "label": "Alpha" }, { "value": "beta", "label": "Beta" }] },
     "size": { "type": "number", "label": "Size", "description": "A bounded number, drawn as a slider", "min": 8, "max": 40, "step": 1, "group": "Layout" },
     "gap": { "type": "number", "label": "Gap", "description": "An unbounded number, drawn as a text field", "group": "Layout" },
     "compact": { "type": "boolean", "label": "Compact", "group": "Layout" },
     "mode": { "type": "enum", "label": "Mode", "options": ["calm", "busy", "off"], "group": "Behaviour" },
     "delay": { "type": "number", "label": "Delay", "description": "Milliseconds", "min": 0, "max": 5000, "step": 100, "group": "Behaviour" },
-    "notes": { "type": "string", "label": "Notes", "group": "Behaviour" },
+    "notes": { "type": "string", "label": "Notes", "group": "Behaviour", "allowCustom": true, "presets": [{ "value": "", "label": "None" }, { "value": "watch" }] },
     "accent": { "type": "boolean", "label": "Accent", "group": "Look" },
     "badge": { "type": "enum", "label": "Badge", "options": ["dot", "count", "none"], "group": "Look" }
   },

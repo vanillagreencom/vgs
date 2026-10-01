@@ -396,6 +396,14 @@ Scope {
             }
             return root.json({ model: editor.model, index: editor.currentIndex, text: editor.currentText, value: field.value, enabled: editor.enabled });
         }
+        if (name === "fieldCustom" || name === "editFieldCustom") {
+            const a = JSON.parse(arg);
+            const field = fieldOf(item, a.id, a.key);
+            if (field === null) return "absent";
+            if (name === "editFieldCustom")
+                return field.smokeEditCustom === undefined ? "absent" : field.smokeEditCustom(a.text);
+            return field.smokeCustomState === undefined ? "absent" : root.json(field.smokeCustomState());
+        }
         if (name === "applyKey") {
             // A drawn Keys row's edit, as the row emits it: `key` absent
             // is a reset.
@@ -910,7 +918,7 @@ Scope {
         }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
         // Every item under an instance, the instance first, breadth first:
-        // its type name as typeName writes it, its box in screen
+        // its type name as typeName writes it, its objectName, its box in screen
         // coordinates, its implicit size, the index of its parent in the
         // list, a Label's role and a text's line height, at which only 1
         // makes a box its glyphs. A row measures alignment from it, so the
@@ -926,6 +934,8 @@ Scope {
                     box: [at.x, at.y, child.width, child.height],
                     implicit: [child.implicitWidth, child.implicitHeight],
                     parent: items.indexOf(child.parent),
+                    name: child.objectName,
+                    visible: child.visible,
                     role: child.role,
                     lineHeight: child.lineHeight,
                     text: child.text,

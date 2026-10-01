@@ -31,10 +31,22 @@
     "idleLockSeconds": {
       "type": "number",
       "label": "Lock after idle",
-      "description": "Seconds without input before the session locks; 0 never locks on idle",
+      "description": "Time without input before the session locks",
       "min": 0,
       "max": 86400,
       "step": 30,
+      "unit": "seconds",
+      "allowCustom": true,
+      "presets": [
+        { "value": 0, "label": "Never" },
+        { "value": 60 },
+        { "value": 120 },
+        { "value": 300 },
+        { "value": 600 },
+        { "value": 900 },
+        { "value": 1800 },
+        { "value": 3600 }
+      ],
       "group": "Lock"
     },
     "lockBeforeSleep": {

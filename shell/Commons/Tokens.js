@@ -317,14 +317,12 @@ var TOKENS = {
     // a field pad their content `paddingX` a side; a row's inline label is
     // `labelWidth` wide and `gap` from its control; `lineGap` separates a
     // label from the line it names. `height` is a one-line row with a
-    // control, `twoLineHeight` one with a secondary line, and
-    // `compactHeight` a read-only key/value row that holds text alone.
+    // control, and `twoLineHeight` one with a secondary line.
     // Row density is its own scale, apart from `size.control`. A label
     // column holds 17 characters of the `label` role.
     row: {
         height: length(36),
         twoLineHeight: length(56),
-        compactHeight: length(28),
         paddingX: length("{space.lg}"),
         gap: length("{space.lg}"),
         labelWidth: length(140),

@@ -105,7 +105,7 @@ const DEFAULTS = [
     // and mul(4, 4) = 16 a side and mul(4, 1) = 4, 8 and mul(4, 3) = 12
     // icon gaps; mul(4, 3) = 12 for a row's padding and its label gap,
     // 140 px labels, 17 characters of the 12 px label role, mul(4, 1) = 4
-    // between lines. Rows keep their own 36, 56 and 28 px heights.
+    // between lines. Rows keep their own 36 and 56 px heights.
     ["size.control.sm", 24],
     ["size.control.md", 32],
     ["size.control.lg", 40],
@@ -119,7 +119,6 @@ const DEFAULTS = [
     ["row.gap", 12],
     ["row.height", 36],
     ["row.twoLineHeight", 56],
-    ["row.compactHeight", 28],
     ["row.labelWidth", 140],
     ["row.lineGap", 4],
     ["stack.row", 4],

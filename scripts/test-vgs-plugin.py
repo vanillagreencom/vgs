@@ -3,7 +3,7 @@
 
 Its template table covers exactly the kinds shell/Core/PluginLogic.js hosts
 (read under node through bin/lib/qml-library.js, never restated here); `new`
-then `check` round-trips a plugin of two kinds in a temporary directory, with
+then `check` round-trips a plugin of two kinds in a scratch directory, with
 the bar widget's label default and its schema entry landing in the manifest;
 the icon given, `package` by default, lands in the manifest; a quoted
 description lands as a valid manifest; and each refusal is pinned by its keyed
@@ -18,9 +18,9 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
-import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, ".."))
@@ -135,13 +135,17 @@ def main():
     report("the template table covers exactly PluginLogic.KINDS", sorted(table) == sorted(kinds), f"table={sorted(table)} kinds={sorted(kinds)}")
     report("every template file in the table exists", all(os.path.isfile(os.path.join(os.path.dirname(SCAFFOLD), "..", "templates", t)) for t, _ in table.values()), str(table))
 
-    with tempfile.TemporaryDirectory() as tmp:
+    tmp = os.path.join(REPO, "tmp", f"test-vgs-plugin-{os.getpid()}")
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    try:
         made = scaffold("new", "acme.probe", "--kinds", "bar-widget,service", "--dir", tmp)
         target = os.path.join(tmp, "acme.probe")
         report("new writes a plugin of two kinds and its check passes", made.returncode == 0 and made.stdout.rstrip().endswith("vgs-plugin: check ok"), f"exit={made.returncode}\n{made.stdout}{made.stderr}")
         report("new writes one entry point per kind", sorted(os.listdir(target)) == ["Service.qml", "Widget.qml", "manifest.json"] if os.path.isdir(target) else False, str(os.listdir(target) if os.path.isdir(target) else "absent"))
         manifest = json.load(open(os.path.join(target, "manifest.json"))) if os.path.isfile(os.path.join(target, "manifest.json")) else {}
-        report("a bar widget's manifest carries the label default, its schema entry and a section", manifest.get("settings") == {"label": "Probe"} and sorted(manifest.get("schema", {})) == ["label"] and manifest["schema"]["label"].get("type") == "string" and manifest.get("defaultSection") == "right", json.dumps(manifest))
+        label_schema = manifest.get("schema", {}).get("label", {})
+        report("a bar widget's manifest carries the label default, its schema entry and a section", manifest.get("settings") == {"label": "Probe"} and sorted(manifest.get("schema", {})) == ["label"] and label_schema.get("type") == "string" and label_schema.get("allowCustom") is True and label_schema.get("presets") == [{"value": "Probe"}] and manifest.get("defaultSection") == "right", json.dumps(manifest))
         report("new names the default icon", manifest.get("icon") == "package", json.dumps(manifest))
         checked = scaffold("check", target)
         report("check passes on the plugin new wrote", checked.returncode == 0 and first_line(checked.stdout.rstrip().rsplit("\n", 1)[-1]) == "vgs-plugin: check ok", f"exit={checked.returncode}\n{checked.stdout}{checked.stderr}")
@@ -178,6 +182,8 @@ def main():
         report("check refuses a directory without a manifest", unchecked.returncode == 2 and first_line(unchecked.stdout) == f"vgs-plugin: refused: no-manifest={empty}", f"exit={unchecked.returncode}\n{unchecked.stdout}{unchecked.stderr}")
         pointer_cursor_rows(tmp)
         user_command_rows(tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
     if failures:
         print(f"test-vgs-plugin: failed={failures}")

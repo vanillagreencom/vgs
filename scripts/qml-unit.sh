@@ -90,12 +90,12 @@ ln -s -- "$repo/shell/assets" "$imports/qs/assets"
 # qmldir names Paths, Time and Workspaces too, whose Quickshell types do
 # not load outside the shell, and a type a linked file names is resolved
 # when that file compiles.
-for file in Theme.qml Tokens.js ThemeLogic.js Inset.js SessionLockState.js ClearingInset.qml WatchedFile.qml; do
+for file in Theme.qml Tokens.js ThemeLogic.js Inset.js SettingValues.js SessionLockState.js ClearingInset.qml WatchedFile.qml; do
   [[ -f $commons/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$commons/$file" >&2; exit 2; }
   ln -s -- "$commons/$file" "$imports/qs/Commons/$file"
 done
 cp -- "$tests/stand-ins/ThemeSource.qml" "$imports/qs/Commons/ThemeSource.qml"
-printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nInset 1.0 Inset.js\nSessionLockState 1.0 SessionLockState.js\nClearingInset 1.0 ClearingInset.qml\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
+printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nInset 1.0 Inset.js\nSettingValues 1.0 SettingValues.js\nSessionLockState 1.0 SessionLockState.js\nClearingInset 1.0 ClearingInset.qml\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
 for file in TuiRecords.qml SessionLock.qml ShortcutRegistry.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
   [[ -f $core/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$core/$file" >&2; exit 2; }
   ln -s -- "$core/$file" "$imports/qs/Core/$file"

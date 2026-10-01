@@ -1,4 +1,5 @@
 .pragma library
+.import "../Commons/SettingValues.js" as SettingValues
 .import "../Ui/icons/Lucide.js" as Lucide
 .import "PackageManagers.js" as PackageManagers
 .import "HyprlandLayer.js" as HyprlandLayer
@@ -36,11 +37,14 @@ var TOAST_MESSAGE_MAX = 600;
 var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"];
 
 // The types a settings schema entry may declare, and the keys an entry may
-// carry. `min`, `max` and `step` bound a number's control; `group` names the
-// section heading the entry is drawn under.
+// carry. `presets`, `allowCustom`, `format` and `unit` choose the Settings
+// editor; `min`, `max` and `step` bound a number's control; `group` names
+// the section heading the entry is drawn under.
 var SETTING_TYPES = ["string", "number", "boolean", "enum"];
-var SCHEMA_ENTRY_KEYS = ["type", "label", "description", "options", "optionsFrom", "min", "max", "step", "group"];
+var SCHEMA_ENTRY_KEYS = ["type", "label", "description", "options", "optionsFrom", "presets", "allowCustom", "format", "unit", "min", "max", "step", "group"];
 var NUMBER_BOUND_KEYS = ["min", "max", "step"];
+var PRESET_KEYS = ["value", "label"];
+var PRESET_LABEL_MAX = 40;
 
 // The icon a plugin without a manifest `icon` is listed with.
 var DEFAULT_ICON = "package";
@@ -284,15 +288,31 @@ function configError(config) {
     return "";
 }
 
+function presetValues(entry) {
+    return Array.isArray(entry.presets) ? entry.presets.map(function (preset) { return preset.value; }) : [];
+}
+
+function presetMembershipError(entry, value) {
+    return entry.presets !== undefined && entry.allowCustom !== true && presetValues(entry).indexOf(value) === -1 ? "want=one-of-presets" : "";
+}
+
 // Why `value` does not fit a schema entry, or "" when it does. A number
 // outside the entry's `min` or `max` does not fit; `step` refuses nothing.
+// A preset list without `allowCustom` accepts only one of its values.
 function settingError(entry, value) {
-    if (entry.type === "string") return typeof value === "string" ? "" : "want=string";
+    if (entry.type === "string") {
+        if (typeof value !== "string") return "want=string";
+        if (entry.format === "datetime") {
+            var problem = SettingValues.datetimeFormatProblem(value);
+            if (problem !== "") return "want=datetime-format reason=" + problem;
+        }
+        return presetMembershipError(entry, value);
+    }
     if (entry.type === "number") {
         if (typeof value !== "number" || !isFinite(value)) return "want=number";
         if (entry.min !== undefined && value < entry.min) return "want=at-least:" + entry.min;
         if (entry.max !== undefined && value > entry.max) return "want=at-most:" + entry.max;
-        return "";
+        return presetMembershipError(entry, value);
     }
     if (entry.type === "boolean") return typeof value === "boolean" ? "" : "want=boolean";
     if (entry.type === "enum") return entry.options.indexOf(value) !== -1 ? "" : "want=one-of:" + entry.options.join("|");
@@ -302,10 +322,13 @@ function settingError(entry, value) {
 // The first defect of a settings schema, or "". Every entry names a type
 // from SETTING_TYPES and a label; an enum entry lists its options; a number
 // entry may bound its control with finite `min` below finite `max` and a
-// positive `step`, which no other type carries; `group`, when present, is a
-// non-empty string; every entry has a default of its type, inside its
-// bounds, in `settings`, so a form always has a value to show. optionsFrom
-// connects a string to a declared choices status, never to another plugin.
+// positive `step`, which no other type carries; `unit` names a number's
+// words; `group`, when present, is a non-empty string; every entry has a
+// default of its type, inside its bounds, in `settings`, so a form always
+// has a value to show. A string declares `presets` or `optionsFrom`.
+// optionsFrom connects a string to a declared choices status, never to
+// another plugin. Presets declare the picker values, and `allowCustom` lets
+// another fitting value write.
 function schemaError(schema, settings, status) {
     if (!isPlainObject(schema))
         return "schema must be an object";
@@ -346,6 +369,61 @@ function schemaError(schema, settings, status) {
                 return at + ".optionsFrom must name a status key";
             if (!hasOwn(status, entry.optionsFrom) || status[entry.optionsFrom].type !== "choices")
                 return at + ".optionsFrom must name a choices status entry";
+        }
+        if (entry.presets !== undefined && entry.optionsFrom !== undefined)
+            return at + " must not declare both presets and optionsFrom";
+        if (entry.allowCustom !== undefined && entry.presets === undefined)
+            return at + ".allowCustom needs presets";
+        if (entry.format !== undefined && entry.presets === undefined)
+            return at + ".format needs presets";
+        if (entry.type === "string" && entry.presets === undefined && entry.optionsFrom === undefined)
+            return at + " with type string must declare presets or optionsFrom";
+        if (entry.presets !== undefined) {
+            if (entry.type !== "string" && entry.type !== "number")
+                return at + ".presets needs type string or number";
+            if (!Array.isArray(entry.presets) || entry.presets.length === 0)
+                return at + ".presets must be a non-empty array";
+            var seenPresets = [];
+            for (var p = 0; p < entry.presets.length; p++) {
+                var preset = entry.presets[p];
+                var presetAt = at + ".presets." + p;
+                if (!isPlainObject(preset))
+                    return presetAt + " must be an object";
+                var presetKeys = Object.keys(preset);
+                for (var pk = 0; pk < presetKeys.length; pk++) {
+                    if (PRESET_KEYS.indexOf(presetKeys[pk]) === -1)
+                        return presetAt + " has unknown key " + JSON.stringify(presetKeys[pk]);
+                }
+                if (!hasOwn(preset, "value"))
+                    return presetAt + ".value is required";
+                if (preset.label !== undefined && !isPrintableLine(preset.label, PRESET_LABEL_MAX))
+                    return presetAt + ".label must be a printable line of 1 to " + PRESET_LABEL_MAX + " characters";
+                if (preset.value === "" && preset.label === undefined)
+                    return presetAt + ".label is required when value is empty";
+                var presetKey = JSON.stringify(preset.value);
+                if (seenPresets.indexOf(presetKey) !== -1)
+                    return at + ".presets must hold distinct values";
+                seenPresets.push(presetKey);
+                var badPreset = settingError(Object.assign({}, entry, { allowCustom: true }), preset.value);
+                if (badPreset !== "")
+                    return presetAt + ".value does not fit its schema: " + badPreset;
+            }
+        }
+        if (entry.allowCustom !== undefined) {
+            if (typeof entry.allowCustom !== "boolean")
+                return at + ".allowCustom must be a boolean";
+        }
+        if (entry.format !== undefined) {
+            if (entry.type !== "string")
+                return at + ".format needs type string";
+            if (SettingValues.FORMATS.indexOf(entry.format) === -1)
+                return at + ".format must be one of " + SettingValues.FORMATS.join(", ") + ", got " + JSON.stringify(entry.format);
+        }
+        if (entry.unit !== undefined) {
+            if (entry.type !== "number")
+                return at + ".unit needs type number";
+            if (SettingValues.UNITS.indexOf(entry.unit) === -1)
+                return at + ".unit must be one of " + SettingValues.UNITS.join(", ") + ", got " + JSON.stringify(entry.unit);
         }
         for (var n = 0; n < NUMBER_BOUND_KEYS.length; n++) {
             var bound = NUMBER_BOUND_KEYS[n];

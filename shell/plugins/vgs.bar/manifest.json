@@ -27,7 +27,20 @@
     "clockFormat": {
       "type": "string",
       "label": "Clock format",
-      "description": "Qt date format, for example HH:mm"
+      "description": "How the bar's clock shows the date and time",
+      "format": "datetime",
+      "allowCustom": true,
+      "presets": [
+        { "value": "ddd d MMM  HH:mm" },
+        { "value": "ddd d MMM  h:mm AP" },
+        { "value": "dddd HH:mm" },
+        { "value": "dddd h:mm AP" },
+        { "value": "HH:mm" },
+        { "value": "h:mm AP" },
+        { "value": "HH:mm:ss" },
+        { "value": "yyyy-MM-dd HH:mm" },
+        { "value": "ddd d MMM" }
+      ]
     }
   }
 }

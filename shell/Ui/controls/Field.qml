@@ -14,9 +14,6 @@ import qs.Ui
 // container's content edge and its control ends on that edge. An inline
 // label too long for its column wraps to a second line before it elides.
 // `valueX` is where the value column starts, for content that belongs
-// under it. A `compact`
-// inline row is `row.compactHeight` tall, for a read-only value that holds
-// text alone.
 Column {
     id: root
 
@@ -24,7 +21,6 @@ Column {
     property string hint: ""
     property string error: ""
     property bool inline: Theme.field.inline
-    property bool compact: false
     default property alias control: slot.data
     // The width the label, the control's row and the hint share: the
     // column's own, less its padding, since a positioner does not narrow
@@ -46,8 +42,11 @@ Column {
 
     Row {
         id: controlRow
+        // Smoke rows read this hook to verify all key/value rows use one
+        // height without depending on the private tree shape.
+        objectName: "fieldRow"
         width: root.bodyWidth
-        height: root.inline ? Math.max(root.compact ? Theme.row.compactHeight : Theme.row.height, inlineLabel.implicitHeight, slot.childrenRect.height) : slot.childrenRect.height
+        height: root.inline ? Math.max(Theme.row.height, inlineLabel.implicitHeight, slot.childrenRect.height) : slot.childrenRect.height
         spacing: Theme.field.labelGap
 
         Label {

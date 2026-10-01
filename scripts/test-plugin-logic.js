@@ -5,7 +5,6 @@
 // row or control fails.
 "use strict";
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { load } = require("../bin/lib/qml-library.js");
 
@@ -13,6 +12,7 @@ const LOGIC = path.join(__dirname, "..", "shell", "Core", "PluginLogic.js");
 const LUCIDE = path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js");
 const MANAGERS = path.join(__dirname, "..", "shell", "Core", "PackageManagers.js");
 const LAYER = path.join(__dirname, "..", "shell", "Core", "HyprlandLayer.js");
+const SETTING_VALUES = path.join(__dirname, "..", "shell", "Commons", "SettingValues.js");
 // The core's own requirements, judged by the function a manifest's are.
 const CORE_REQUIREMENTS = path.join(__dirname, "..", "config", "requirements.json");
 
@@ -88,15 +88,15 @@ function suite(ctx, check) {
         ["schema not an object", { schema: [] }, "schema must be an object"],
         ["schema entry carrying the id key", { schema: { id: { type: "string", label: "x" } } }, "schema must not carry an id key"],
         ["schema entry not an object", { settings: { a: "x" }, schema: { a: "string" } }, "schema.a must be an object"],
-        ["schema entry with an unknown key", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", format: 1 } } }, "schema.a has unknown key"],
+        ["schema entry with an unknown key", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", bogus: 1 } } }, "schema.a has unknown key"],
         ["icon naming a shipped icon", { icon: "settings" }, null],
         ["icon naming no shipped icon", { icon: "not-an-icon" }, "icon must name an icon of the shipped set"],
         ["icon that is not a string", { icon: 3 }, "icon must name an icon of the shipped set"],
         ["icon naming a prototype member", { icon: "constructor" }, "icon must name an icon of the shipped set"],
         ["a bounded, grouped number entry", { settings: { a: 8 }, schema: { a: { type: "number", label: "A", min: 2, max: 30, step: 1, group: "Timing" } } }, null],
         ["a number bounded on one side", { settings: { a: 8 }, schema: { a: { type: "number", label: "A", min: 0 } } }, null],
-        ["a grouped string entry", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", group: "Look" } } }, null],
-        ["min on a string entry", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", min: 1 } } }, "schema.a.min needs type number"],
+        ["a grouped string entry", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }], group: "Look" } } }, null],
+        ["min on a string entry", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }], min: 1 } } }, "schema.a.min needs type number"],
         ["step on a boolean entry", { settings: { a: true }, schema: { a: { type: "boolean", label: "A", step: 1 } } }, "schema.a.step needs type number"],
         ["max on an enum entry", { settings: { a: "x" }, schema: { a: { type: "enum", label: "A", options: ["x"], max: 1 } } }, "schema.a.max needs type number"],
         ["a min that is not a number", { settings: { a: 8 }, schema: { a: { type: "number", label: "A", min: "1" } } }, "schema.a.min must be a finite number"],
@@ -105,14 +105,14 @@ function suite(ctx, check) {
         ["min above max", { settings: { a: 8 }, schema: { a: { type: "number", label: "A", min: 30, max: 2 } } }, "schema.a.min must be less than max"],
         ["a zero step", { settings: { a: 8 }, schema: { a: { type: "number", label: "A", step: 0 } } }, "schema.a.step must be positive"],
         ["a negative step", { settings: { a: 8 }, schema: { a: { type: "number", label: "A", step: -1 } } }, "schema.a.step must be positive"],
-        ["an empty group", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", group: "" } } }, "schema.a.group must be a non-empty string"],
-        ["a group that is not a string", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", group: 2 } } }, "schema.a.group must be a non-empty string"],
+        ["an empty group", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }], group: "" } } }, "schema.a.group must be a non-empty string"],
+        ["a group that is not a string", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }], group: 2 } } }, "schema.a.group must be a non-empty string"],
         ["a default under its min", { settings: { a: 1 }, schema: { a: { type: "number", label: "A", min: 2, max: 30 } } }, "settings.a does not fit its schema: want=at-least:2"],
         ["a default over its max", { settings: { a: 31 }, schema: { a: { type: "number", label: "A", min: 2, max: 30 } } }, "settings.a does not fit its schema: want=at-most:30"],
         ["a default off its step fits", { settings: { a: 2.5 }, schema: { a: { type: "number", label: "A", min: 2, max: 30, step: 1 } } }, null],
         ["schema entry with an unknown type", { settings: { a: "x" }, schema: { a: { type: "color", label: "A" } } }, "schema.a.type must be one of"],
-        ["schema entry without a label", { settings: { a: "x" }, schema: { a: { type: "string" } } }, "schema.a.label must be a non-empty string"],
-        ["schema entry with a non-string description", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", description: 1 } } }, "schema.a.description must be a string"],
+        ["schema entry without a label", { settings: { a: "x" }, schema: { a: { type: "string", presets: [{ value: "x" }] } } }, "schema.a.label must be a non-empty string"],
+        ["schema entry with a non-string description", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }], description: 1 } } }, "schema.a.description must be a string"],
         ["enum entry without options", { settings: { a: "x" }, schema: { a: { type: "enum", label: "A" } } }, "schema.a.options must be a non-empty array"],
         ["enum entry with a repeated option", { settings: { a: "x" }, schema: { a: { type: "enum", label: "A", options: ["x", "x"] } } }, "schema.a.options must hold distinct"],
         ["options on a non-enum entry", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", options: ["x"] } } }, "schema.a.options needs type enum"],
@@ -128,8 +128,27 @@ function suite(ctx, check) {
         ["optionsFrom inherited", { settings: { a: "" }, schema: { a: { type: "string", label: "A", optionsFrom: "constructor" } } }, "schema.a.optionsFrom must name a choices status entry"],
         ["optionsFrom names text", { capabilities: ["status"], status: { devices: { type: "text", label: "Devices" } }, settings: { a: "" }, schema: { a: { type: "string", label: "A", optionsFrom: "devices" } } }, "schema.a.optionsFrom must name a choices status entry"],
         ["options and optionsFrom cannot coexist", { capabilities: ["status"], status: { devices: { type: "choices", label: "Devices" } }, settings: { a: "" }, schema: { a: { type: "string", label: "A", options: ["x"], optionsFrom: "devices" } } }, "schema.a.options needs type enum"],
-        ["schema entry without a default", { schema: { a: { type: "string", label: "A" } } }, "schema.a has no default in settings"],
-        ["default of the wrong type", { settings: { a: 3 }, schema: { a: { type: "string", label: "A" } } }, "settings.a does not fit its schema: want=string"],
+        ["a string entry needs presets or optionsFrom", { settings: { a: "x" }, schema: { a: { type: "string", label: "A" } } }, "schema.a with type string must declare presets or optionsFrom"],
+        ["presets and optionsFrom cannot coexist", { capabilities: ["status"], status: { devices: { type: "choices", label: "Devices" } }, settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }], optionsFrom: "devices" } } }, "schema.a must not declare both presets and optionsFrom"],
+        ["presets need string or number", { settings: { a: true }, schema: { a: { type: "boolean", label: "A", presets: [{ value: true }] } } }, "schema.a.presets needs type string or number"],
+        ["presets must be non-empty", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [] } } }, "schema.a.presets must be a non-empty array"],
+        ["preset rows are objects", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: ["x"] } } }, "schema.a.presets.0 must be an object"],
+        ["preset rows have known keys", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x", name: "X" }] } } }, "schema.a.presets.0 has unknown key \"name\""],
+        ["preset value is required", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ label: "X" }] } } }, "schema.a.presets.0.value is required"],
+        ["preset label is printable", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x", label: "A\nB" }] } } }, "schema.a.presets.0.label must be a printable line"],
+        ["empty preset needs a label", { settings: { a: "" }, schema: { a: { type: "string", label: "A", presets: [{ value: "" }] } } }, "schema.a.presets.0.label is required when value is empty"],
+        ["preset values are distinct", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }, { value: "x" }] } } }, "schema.a.presets must hold distinct values"],
+        ["preset value fits schema", { settings: { a: 2 }, schema: { a: { type: "number", label: "A", min: 2, max: 4, presets: [{ value: 1 }] } } }, "schema.a.presets.0.value does not fit its schema: want=at-least:2"],
+        ["allowCustom needs presets", { settings: { a: 2 }, schema: { a: { type: "number", label: "A", allowCustom: true } } }, "schema.a.allowCustom needs presets"],
+        ["allowCustom is boolean", { settings: { a: 2 }, schema: { a: { type: "number", label: "A", presets: [{ value: 2 }], allowCustom: "yes" } } }, "schema.a.allowCustom must be a boolean"],
+        ["format needs string", { settings: { a: 2 }, schema: { a: { type: "number", label: "A", presets: [{ value: 2 }], format: "datetime" } } }, "schema.a.format needs type string"],
+        ["format needs presets", { settings: { a: "HH:mm" }, schema: { a: { type: "string", label: "A", format: "datetime" } } }, "schema.a.format needs presets"],
+        ["format names datetime", { settings: { a: "HH:mm" }, schema: { a: { type: "string", label: "A", presets: [{ value: "HH:mm" }], format: "strftime" } } }, "schema.a.format must be one of datetime"],
+        ["datetime presets are judged", { settings: { a: "HH:mm" }, schema: { a: { type: "string", label: "A", presets: [{ value: "'abc" }], format: "datetime" } } }, "schema.a.presets.0.value does not fit its schema: want=datetime-format reason=unclosed-quote"],
+        ["unit needs number", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }], unit: "seconds" } } }, "schema.a.unit needs type number"],
+        ["unit is known", { settings: { a: 2 }, schema: { a: { type: "number", label: "A", unit: "weeks" } } }, "schema.a.unit must be one of seconds, minutes, hours, days"],
+        ["schema entry without a default", { schema: { a: { type: "string", label: "A", presets: [{ value: "x" }] } } }, "schema.a has no default in settings"],
+        ["default of the wrong type", { settings: { a: 3 }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }] } } }, "settings.a does not fit its schema: want=string"],
         ["enum default outside its options", { settings: { a: "z" }, schema: { a: { type: "enum", label: "A", options: ["x", "y"] } } }, "settings.a does not fit its schema: want=one-of:x|y"],
         ["configure without a schema", { capabilities: ["configure"] }, "capability configure needs a schema"],
         ["configure with a schema", { capabilities: ["configure"], settings: { a: true }, schema: { a: { type: "boolean", label: "A" } } }, null],
@@ -485,7 +504,7 @@ function suite(ctx, check) {
     // A plugin with a settings schema, for the setting rows.
     const tunable = ctx.validateManifest({ schemaVersion: 1, id: "acme.tune", name: "T", version: "1", author: "a", description: "d", kinds: ["service", "bar-widget"], entryPoints: { service: "S.qml", "bar-widget": "W.qml" },
         settings: { label: "x", size: 2, on: true, mode: "a", free: 1, limit: 8 },
-        schema: { label: { type: "string", label: "Label" }, size: { type: "number", label: "Size" }, on: { type: "boolean", label: "On" }, mode: { type: "enum", label: "Mode", options: ["a", "b"] }, limit: { type: "number", label: "Limit", min: 2, max: 30, step: 1, group: "Timing" } } }, "/p").manifest;
+        schema: { label: { type: "string", label: "Label", presets: [{ value: "x" }], allowCustom: true }, size: { type: "number", label: "Size" }, on: { type: "boolean", label: "On" }, mode: { type: "enum", label: "Mode", options: ["a", "b"] }, limit: { type: "number", label: "Limit", min: 2, max: 30, step: 1, group: "Timing" } } }, "/p").manifest;
     if (tunable === undefined) throw new Error("fixture manifest refused: acme.tune");
 
     // settingRefusal rows: [name, key, value, want]
@@ -550,6 +569,25 @@ function suite(ctx, check) {
     ];
     for (const [name, key, value, want] of refusalRows) {
         check("settingRefusal: " + name, ctx.settingRefusal(tunable, key, value), want);
+    }
+    const presetManifest = ctx.validateManifest({ schemaVersion: 1, id: "acme.presets", name: "P", version: "1", author: "a", description: "d", kinds: ["service"], entryPoints: { service: "S.qml" },
+        settings: { mode: "short", delay: 60, clock: "HH:mm" },
+        schema: {
+            mode: { type: "string", label: "Mode", presets: [{ value: "short" }, { value: "long" }] },
+            delay: { type: "number", label: "Delay", presets: [{ value: 60 }, { value: 300 }], unit: "seconds" },
+            clock: { type: "string", label: "Clock", presets: [{ value: "HH:mm" }], allowCustom: true, format: "datetime" }
+        } }, "/p").manifest;
+    if (presetManifest === undefined) throw new Error("fixture manifest refused: acme.presets");
+    const presetRefusals = [
+        ["a preset string fits", "mode", "long", ""],
+        ["a non-preset string is refused", "mode", "other", "refused: setting=mode want=one-of-presets"],
+        ["a preset number fits", "delay", 300, ""],
+        ["a non-preset number is refused", "delay", 120, "refused: setting=delay want=one-of-presets"],
+        ["a custom datetime format fits", "clock", "ddd HH:mm", ""],
+        ["a bad datetime format is refused", "clock", "'abc", "refused: setting=clock want=datetime-format reason=unclosed-quote"],
+    ];
+    for (const [name, key, value, want] of presetRefusals) {
+        check("settingRefusal presets: " + name, ctx.settingRefusal(presetManifest, key, value), want);
     }
 
     // settingTargets rows: [name, config, manifest, want]
@@ -716,6 +754,26 @@ const CONTROLS = [
     ["optionsFrom needs a string", "if (entry.type !== \"string\")\n                return at + \".optionsFrom needs type string\";", "if (false)\n                return at + \".optionsFrom needs type string\";"],
     ["optionsFrom names a status key", "if (typeof entry.optionsFrom !== \"string\" || !STATUS_KEY_PATTERN.test(entry.optionsFrom))", "if (false)"],
     ["optionsFrom names its own choices entry", "if (!hasOwn(status, entry.optionsFrom) || status[entry.optionsFrom].type !== \"choices\")", "if (false)"],
+    ["a string entry needs presets or optionsFrom", "if (entry.type === \"string\" && entry.presets === undefined && entry.optionsFrom === undefined)", "if (false)"],
+    ["presets and optionsFrom cannot coexist", "if (entry.presets !== undefined && entry.optionsFrom !== undefined)", "if (false)"],
+    ["presets need a string or number", "if (entry.type !== \"string\" && entry.type !== \"number\")\n                return at + \".presets needs type string or number\";", "if (false)\n                return at + \".presets needs type string or number\";"],
+    ["presets are a non-empty list", "if (!Array.isArray(entry.presets) || entry.presets.length === 0)", "if (false)"],
+    ["a preset is an object", "if (!isPlainObject(preset))\n                    return presetAt + \" must be an object\";", "if (false)\n                    return presetAt + \" must be an object\";"],
+    ["a preset carries known keys", "if (PRESET_KEYS.indexOf(presetKeys[pk]) === -1)", "if (false)"],
+    ["a preset has a value", "if (!hasOwn(preset, \"value\"))\n                    return presetAt + \".value is required\";", "if (false)\n                    return presetAt + \".value is required\";"],
+    ["a preset label is printable", "if (preset.label !== undefined && !isPrintableLine(preset.label, PRESET_LABEL_MAX))", "if (false)"],
+    ["an empty preset value has a label", "if (preset.value === \"\" && preset.label === undefined)", "if (false)"],
+    ["preset values are distinct", "if (seenPresets.indexOf(presetKey) !== -1)", "if (false)"],
+    ["preset values fit the schema", "if (badPreset !== \"\")\n                    return presetAt + \".value does not fit its schema: \" + badPreset;", "if (false)\n                    return presetAt + \".value does not fit its schema: \" + badPreset;"],
+    ["allowCustom needs presets", "if (entry.allowCustom !== undefined && entry.presets === undefined)", "if (false)"],
+    ["allowCustom is boolean", "if (typeof entry.allowCustom !== \"boolean\")\n                return at + \".allowCustom must be a boolean\";", "if (false)\n                return at + \".allowCustom must be a boolean\";"],
+    ["format needs type string", "if (entry.type !== \"string\")\n                return at + \".format needs type string\";", "if (false)\n                return at + \".format needs type string\";"],
+    ["format needs presets", "if (entry.format !== undefined && entry.presets === undefined)", "if (false)"],
+    ["format names a known format", "if (SettingValues.FORMATS.indexOf(entry.format) === -1)", "if (false)"],
+    ["unit needs type number", "if (entry.type !== \"number\")\n                return at + \".unit needs type number\";", "if (false)\n                return at + \".unit needs type number\";"],
+    ["unit names a known unit", "if (SettingValues.UNITS.indexOf(entry.unit) === -1)", "if (false)"],
+    ["datetime settings are judged", "if (entry.format === \"datetime\") {\n            var problem = SettingValues.datetimeFormatProblem(value);", "if (false) {\n            var problem = SettingValues.datetimeFormatProblem(value);"],
+    ["preset settings without custom accept only presets", "return entry.presets !== undefined && entry.allowCustom !== true && presetValues(entry).indexOf(value) === -1 ? \"want=one-of-presets\" : \"\";", "return \"\";"],
     ["packages is an object", "if (!isPlainObject(config.packages))\n            return \"packages must be an object\";", "if (false)\n            return \"packages must be an object\";"],
     ["packages.elevate is an elevation command", "config.packages.elevate !== undefined && PackageManagers.ELEVATORS.indexOf(config.packages.elevate) === -1", "false"],
     ["icon is a manifest key", "\"license\", \"icon\", \"kinds\"", "\"license\", \"kinds\""],
@@ -835,10 +893,13 @@ const CONTROLS = [
     ["placement needs the widget kind", "return manifest.kinds.indexOf(\"bar-widget\") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1;", "return layoutIds(config).indexOf(manifest.id) !== -1;"],
 ];
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-logic-control-"));
+const temp = path.join(__dirname, "..", "tmp", "plugin-logic-control-" + process.pid);
+fs.rmSync(temp, { recursive: true, force: true });
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
+    fs.mkdirSync(path.join(temp, "shell", "Commons"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
+    fs.symlinkSync(SETTING_VALUES, path.join(temp, "shell", "Commons", "SettingValues.js"));
     fs.symlinkSync(LUCIDE, path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
     fs.symlinkSync(MANAGERS, path.join(temp, "shell", "Core", "PackageManagers.js"));
     fs.symlinkSync(LAYER, path.join(temp, "shell", "Core", "HyprlandLayer.js"));

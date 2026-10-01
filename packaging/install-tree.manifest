@@ -35,6 +35,7 @@ f share/vgs/shell/Commons/ClearingInset.qml
 f share/vgs/shell/Commons/Inset.js
 f share/vgs/shell/Commons/Paths.qml
 f share/vgs/shell/Commons/SessionLockState.js
+f share/vgs/shell/Commons/SettingValues.js
 f share/vgs/shell/Commons/Theme.qml
 f share/vgs/shell/Commons/ThemeLogic.js
 f share/vgs/shell/Commons/ThemeSource.qml

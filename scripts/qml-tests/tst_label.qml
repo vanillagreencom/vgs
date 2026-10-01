@@ -34,7 +34,6 @@ Item {
     Label { id: bar; role: "bar"; text: "10"; y: 170 }
     FontMetrics { id: barMetrics; font: bar.font }
     Field { id: pair; label: "Agents running"; inline: true; width: 300; y: 190; Label { id: pairValue; role: "value"; text: "3" } }
-    Field { id: compactPair; label: "Version"; inline: true; compact: true; width: 300; y: 230; Label { id: compactValue; role: "value"; text: "0.1.0" } }
 
     TestCase {
         name: "label"
@@ -125,8 +124,7 @@ Item {
         }
 
         // A key/value row's label and its value: capitals within a pixel of
-        // one height, and baselines within a pixel on the row, whether the
-        // row holds a control's height or is compact.
+        // one height, and baselines within a pixel on the row.
         function test_a_label_and_its_value_read_as_one_line() {
             const label = pair.children.find(child => child.spacing === Theme.field.labelGap).children[0];
             compare(label.role, "label");
@@ -135,12 +133,9 @@ Item {
             const valueMetrics = Qt.createQmlObject("import QtQuick\nFontMetrics {}", root);
             valueMetrics.font = pairValue.font;
             verify(Math.abs(labelMetrics.capitalHeight - valueMetrics.capitalHeight) <= 1, "capitals " + labelMetrics.capitalHeight + " and " + valueMetrics.capitalHeight);
-            for (const [field, value] of [[pair, pairValue], [compactPair, compactValue]]) {
-                const key = field.children.find(child => child.spacing === Theme.field.labelGap).children[0];
-                const keyBase = key.mapToItem(field, 0, key.baselineOffset).y;
-                const valueBase = value.mapToItem(field, 0, value.baselineOffset).y;
-                verify(Math.abs(keyBase - valueBase) <= 1, field.label + " baselines " + keyBase + " and " + valueBase);
-            }
+            const keyBase = label.mapToItem(pair, 0, label.baselineOffset).y;
+            const valueBase = pairValue.mapToItem(pair, 0, pairValue.baselineOffset).y;
+            verify(Math.abs(keyBase - valueBase) <= 1, pair.label + " baselines " + keyBase + " and " + valueBase);
             labelMetrics.destroy();
             valueMetrics.destroy();
         }

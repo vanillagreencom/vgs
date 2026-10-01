@@ -3,17 +3,13 @@ import QtQuick.Templates as T
 import qs.Commons
 import qs.Ui
 
-// One settings field from a schema entry, beside the entry's label in a
-// Field: a switch for a boolean, a select for an enum or a string with
-// optionsFrom, a slider with its
-// value beside it for a number with both `min` and `max`, and a text field
-// for any other number or a string. `apply` carries the new value; the
-// field then shows what the configuration holds again, so a refused write
-// leaves the old value in place. An empty or non-numeric number field
-// sends NaN, which the schema refuses. The slider sends its value when a
-// drag ends or a key moves it. Only Select.activated writes a choice.
-// A model refresh changes the display without writing the configuration.
-Field {
+// Draw the least-effort editor for one schema entry. Booleans use Switch.
+// Enums of at most three options use SegmentedControl because each choice
+// fits in one row. Larger enums and status-fed strings use Select. String
+// and number presets use Select, with Custom… last when custom values are
+// allowed. A custom datetime string validates before it writes. A bounded
+// number uses Slider, and a unit makes its value read as a quantity.
+Column {
     id: root
 
     property string pluginId: ""
@@ -22,17 +18,76 @@ Field {
     property var value
     property var choices: []
     property bool editable: true
+    property bool customChosen: false
+    readonly property int segmentedLimit: 3 // More choices read better in a vertical Select list.
     readonly property bool bounded: spec.type === "number" && spec.min !== undefined && spec.max !== undefined
+    readonly property bool hasPresets: spec.presets !== undefined && Array.isArray(spec.presets)
+    readonly property bool allowCustom: hasPresets && spec.allowCustom === true
+    readonly property int selectedPresetIndex: presetIndex(value)
+    readonly property bool customVisible: allowCustom && (customChosen || selectedPresetIndex < 0)
+    readonly property string labelText: spec.label !== undefined ? String(spec.label) : key
+    readonly property string hintText: spec.description !== undefined ? String(spec.description) : ""
+    readonly property var presetModel: {
+        const now = Time.now;
+        if (!root.hasPresets) return [];
+        const out = [];
+        for (const preset of root.spec.presets) {
+            out.push({ label: SettingValues.presetText(root.spec, preset, v => Qt.formatDateTime(now, v)), value: preset.value, custom: false });
+        }
+        if (root.allowCustom) out.push({ label: "Custom…", value: root.value, custom: true });
+        return out;
+    }
     signal apply(var value)
 
-    label: spec.label !== undefined ? String(spec.label) : key
-    hint: spec.description !== undefined ? String(spec.description) : ""
-    inline: true
+    width: parent === null ? implicitWidth : parent.width
+    spacing: Theme.field.gap
 
-    Loader {
-        id: loader
-        width: parent.width
-        sourceComponent: root.spec.type === "boolean" ? toggle : root.spec.type === "enum" || root.spec.optionsFrom !== undefined ? choice : root.bounded ? slider : text
+    onValueChanged: if (presetIndex(value) >= 0) customChosen = false
+
+    function sameValue(a, b) { return a === b; }
+    function presetIndex(v) {
+        if (!hasPresets) return -1;
+        for (let i = 0; i < spec.presets.length; i++)
+            if (sameValue(spec.presets[i].value, v)) return i;
+        return -1;
+    }
+    function displayNumber(v) { return spec.unit === undefined ? String(v) : SettingValues.quantityText(v, spec.unit); }
+    function smokeCustomState() { return customLoader.item === null ? { visible: false } : customLoader.item.smokeState(); }
+    function smokeEditCustom(text) { return customLoader.item === null || customLoader.item.smokeEdit === undefined ? "absent" : customLoader.item.smokeEdit(text); }
+
+    Field {
+        id: primary
+        width: root.width
+        label: root.labelText
+        hint: root.customVisible ? "" : root.hintText
+        inline: true
+
+        Loader {
+            id: loader
+            width: parent.width
+            sourceComponent: root.spec.type === "boolean" ? toggle
+                : root.spec.type === "enum" && root.spec.options !== undefined && root.spec.options.length <= root.segmentedLimit ? segmented
+                : root.spec.type === "enum" || root.spec.optionsFrom !== undefined ? choice
+                : root.hasPresets ? presetChoice
+                : root.bounded ? slider
+                : text
+        }
+    }
+
+    Field {
+        id: customField
+        width: root.width
+        visible: root.customVisible
+        label: ""
+        hint: root.hintText
+        error: customLoader.item === null || customLoader.item.problemText === undefined ? "" : customLoader.item.problemText
+        inline: true
+
+        Loader {
+            id: customLoader
+            width: parent.width
+            sourceComponent: root.spec.type === "number" && root.bounded ? slider : customText
+        }
     }
 
     Component {
@@ -40,12 +95,60 @@ Field {
         TextField {
             id: input
             width: parent.width
-            text: String(root.value)
+            text: root.value === undefined ? "" : String(root.value)
             readOnly: !root.editable
             onEditingFinished: {
                 const typed = text;
-                text = Qt.binding(() => String(root.value));
+                text = Qt.binding(() => root.value === undefined ? "" : String(root.value));
                 root.apply(root.spec.type === "number" ? (typed.trim() === "" ? NaN : Number(typed)) : typed);
+            }
+        }
+    }
+
+    Component {
+        id: customText
+        Item {
+            id: custom
+            width: parent.width
+            implicitHeight: Math.max(input.implicitHeight, preview.implicitHeight)
+            readonly property string problemCode: root.spec.format === "datetime" ? SettingValues.datetimeFormatProblem(input.text) : ""
+            readonly property string problemText: problemCode === "" ? "" : SettingValues.PROBLEM_TEXT[problemCode]
+
+            function smokeState() { return { visible: customField.visible, text: input.text, preview: preview.text, error: problemText }; }
+            function smokeEdit(text) {
+                input.forceActiveFocus();
+                input.text = text;
+                input.editingFinished();
+                return "edited";
+            }
+
+            TextField {
+                id: input
+                text: root.value === undefined ? "" : String(root.value)
+                readOnly: !root.editable
+                error: custom.problemText !== ""
+                width: preview.visible ? Math.max(Theme.size.panel.sm / 3, parent.width - preview.width - Theme.stack.inline) : parent.width
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                onEditingFinished: {
+                    const typed = text;
+                    if (custom.problemText !== "") return;
+                    text = Qt.binding(() => root.value === undefined ? "" : String(root.value));
+                    root.apply(root.spec.type === "number" ? (typed.trim() === "" ? NaN : Number(typed)) : typed);
+                }
+            }
+
+            Label {
+                id: preview
+                role: "hint"
+                visible: root.spec.format === "datetime"
+                text: custom.problemText === "" && input.text !== "" ? Qt.formatDateTime(Time.now, input.text) : ""
+                width: Math.min(implicitWidth, Theme.size.panel.sm / 2)
+                elide: Text.ElideRight
+                anchors.left: input.right
+                anchors.leftMargin: Theme.stack.inline
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
             }
         }
     }
@@ -84,10 +187,52 @@ Field {
     }
 
     Component {
+        id: segmented
+        SegmentedControl {
+            model: root.spec.options
+            currentIndex: root.spec.options.indexOf(root.value)
+            enabled: root.editable
+            onActivated: index => {
+                currentIndex = Qt.binding(() => root.spec.options.indexOf(root.value));
+                root.apply(root.spec.options[index]);
+            }
+        }
+    }
+
+    Component {
+        id: presetChoice
+        Select {
+            width: parent.width
+            model: root.presetModel
+            textRole: "label"
+            currentIndex: root.selectedPresetIndex >= 0 ? root.selectedPresetIndex : root.allowCustom ? root.presetModel.length - 1 : -1
+            enabled: root.editable
+            onActivated: index => {
+                const chosen = root.presetModel[index];
+                currentIndex = Qt.binding(() => root.selectedPresetIndex >= 0 ? root.selectedPresetIndex : root.allowCustom ? root.presetModel.length - 1 : -1);
+                if (chosen.custom === true) {
+                    root.customChosen = true;
+                    return;
+                }
+                root.customChosen = false;
+                if (chosen.value !== root.value) root.apply(chosen.value);
+            }
+        }
+    }
+
+    Component {
         id: slider
         Item {
+            id: sliderRow
             width: parent.width
             implicitHeight: Math.max(bar.implicitHeight, shown.implicitHeight)
+
+            function smokeState() { return { visible: customField.visible, value: bar.value, preview: shown.text, error: "" }; }
+            function commit() {
+                const wanted = bar.value;
+                bar.value = Qt.binding(() => root.value);
+                if (wanted !== root.value) root.apply(wanted);
+            }
 
             Slider {
                 id: bar
@@ -99,20 +244,16 @@ Field {
                 snapMode: root.spec.step === undefined ? T.Slider.NoSnap : T.Slider.SnapAlways
                 value: root.value
                 enabled: root.editable
-                // Commit once the drag ends, or at once for a key.
-                function commit() {
-                    const wanted = value;
-                    value = Qt.binding(() => root.value);
-                    if (wanted !== root.value) root.apply(wanted);
-                }
-                onPressedChanged: if (!pressed) commit()
-                onMoved: if (!pressed) commit()
+                onPressedChanged: if (!pressed) sliderRow.commit()
+                onMoved: if (!pressed) sliderRow.commit()
             }
+            Label { id: minProbe; visible: false; role: "label"; text: root.displayNumber(root.spec.min) }
+            Label { id: maxProbe; visible: false; role: "label"; text: root.displayNumber(root.spec.max) }
             Label {
                 id: shown
                 role: "label"
-                text: String(bar.value)
-                width: Math.max(implicitWidth, Theme.size.control.lg)
+                text: root.displayNumber(bar.value)
+                width: Math.max(minProbe.implicitWidth, maxProbe.implicitWidth, Theme.size.control.lg)
                 horizontalAlignment: Text.AlignRight
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter

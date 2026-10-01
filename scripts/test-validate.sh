@@ -520,6 +520,7 @@ for consumer in 'node scripts/test-plugin-logic.js' 'node scripts/test-dispatch.
   if grep -qxF "$consumer" <<<"$out"; then ok "shared loader selects $consumer"; else fail "shared loader omitted $consumer"; fi
 done
 if grep -qxF 'node scripts/test-inset.js' <<<"$out"; then ok "shared loader selects node scripts/test-inset.js"; else fail "shared loader omitted node scripts/test-inset.js"; fi
+if grep -qxF 'node scripts/test-setting-values.js' <<<"$out"; then ok "shared loader selects node scripts/test-setting-values.js"; else fail "shared loader omitted node scripts/test-setting-values.js"; fi
 if grep -qF 'heap-profile' <<<"$out"; then fail "shared loader selected unrelated heap tests"; else ok "shared loader omits unrelated heap tests"; fi
 
 # bin/vgsh holds the preflight floors the recipe check and the README check

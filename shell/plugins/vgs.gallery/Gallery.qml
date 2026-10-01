@@ -84,9 +84,9 @@ Item {
                 Column {
                     width: parent.width
                     spacing: Theme.stack.row
-                    Field { label: "Agents running"; inline: true; compact: true; width: parent.width; Label { role: "value"; text: "3"; width: parent.width; elide: Text.ElideRight } }
-                    Field { label: "Last check"; inline: true; compact: true; width: parent.width; Label { role: "value"; text: "9/30/26 3:57 PM"; width: parent.width; elide: Text.ElideRight } }
-                    Field { label: "Warden"; inline: true; compact: true; width: parent.width; Badge { text: "Checking"; tone: "success" } }
+                    Field { label: "Agents running"; inline: true; width: parent.width; Label { role: "value"; text: "3"; width: parent.width; elide: Text.ElideRight } }
+                    Field { label: "Last check"; inline: true; width: parent.width; Label { role: "value"; text: "9/30/26 3:57 PM"; width: parent.width; elide: Text.ElideRight } }
+                    Field { label: "Warden"; inline: true; width: parent.width; Badge { text: "Checking"; tone: "success" } }
                 }
                 ImageText {
                     width: parent.width
@@ -235,8 +235,8 @@ Item {
                         Field { id: wardenRow; label: "Warden"; inline: true; hint: "Keeps AI agents within their memory and task limits"; width: parent.width; Badge { text: "Checking"; tone: "success" } }
                         CommandDisclosure { x: wardenRow.valueX; width: parent.width - x; command: "systemctl --user start agent-warden.timer" }
                     }
-                    Field { label: "Agents running"; inline: true; compact: true; width: groups.width; Label { role: "value"; text: "3"; width: parent.width; elide: Text.ElideRight } }
-                    Field { label: "Last check"; inline: true; compact: true; width: groups.width; Label { role: "value"; text: "9/30/26 3:57 PM"; width: parent.width; elide: Text.ElideRight } }
+                    Field { label: "Agents running"; inline: true; width: groups.width; Label { role: "value"; text: "3"; width: parent.width; elide: Text.ElideRight } }
+                    Field { label: "Last check"; inline: true; width: groups.width; Label { role: "value"; text: "9/30/26 3:57 PM"; width: parent.width; elide: Text.ElideRight } }
                     Column {
                         width: groups.width
                         spacing: Theme.field.gap

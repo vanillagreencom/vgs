@@ -76,8 +76,9 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 
 - Rows of one group sit `stack.row` 4 apart. Blocks of one body, such as a description, a line of badges, a key/value grid and a code block, sit `stack.group` 12 apart. A section sits `stack.section` 24 after the block before it. Two controls in one line sit `stack.inline` 8 apart.
 - A row with lines of its own, such as a hint, an action or a command, is a group. Its lines sit `field.gap` 4 apart, and groups sit `groupList.gap` 12 apart with a `groupList.divider` hairline centred between them: `GroupList` ([design-layout.md § Groups](design-layout.md#groups)).
-- An editable key/value row is `row.height` 36. A read-only key/value row, such as a version or a source, is `row.compactHeight` 28 (`Field.compact`), with no hint slot.
+- Every key/value row is `row.height` 36 unless its control is taller. Metadata rows and editable setting rows use the same height.
 - A label is `text.label` in the `row.labelWidth` column and centres on its value's first line by capital height. A read-only text value is `text.value`.
+- A setting uses the lowest-effort control its schema permits: presets or runtime choices before free text, a segmented control for a short enum, and a unit label for a number.
 - A row whose actions take more than half its text's room moves them under the text.
 - A disclosure's content starts at its row's text column.
 - A section heading sits on the content edge.

@@ -174,7 +174,7 @@ const MANIFESTS = [
     ["appearance alone", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { borders: "setBorders" } } }, null],
     ["appearance unknown group", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { gaps: "setBorders" } } }, "hyprland.appearance.gaps must be one of borders, radius, motion"],
     ["appearance missing schema key", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { borders: "missing" } } }, "hyprland.appearance.borders names no schema entry \"missing\""],
-    ["appearance non-boolean schema key", { capabilities: ["theme"], settings: { setBorders: "yes" }, schema: { setBorders: { type: "string", label: "Set borders" } }, hyprland: { appearance: { borders: "setBorders" } } }, "hyprland.appearance.borders must name a boolean schema entry"],
+    ["appearance non-boolean schema key", { capabilities: ["theme"], settings: { setBorders: "yes" }, schema: { setBorders: { type: "string", label: "Set borders", presets: [{ value: "yes" }] } }, hyprland: { appearance: { borders: "setBorders" } } }, "hyprland.appearance.borders must name a boolean schema entry"],
     ["appearance without theme capability", { settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { borders: "setBorders" } } }, "hyprland.appearance needs capability theme"],
     ["appearance empty", { capabilities: ["theme"], hyprland: { appearance: {} } }, "hyprland.appearance must be a non-empty object"],
     ["binds without capability shortcut", { capabilities: [], hyprland: { binds: [toggle] } }, "hyprland.binds needs capability shortcut"],
@@ -711,7 +711,9 @@ const CONTROLS = [
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "hyprland-layer-control-"));
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
+    fs.mkdirSync(path.join(temp, "shell", "Commons"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
+    fs.symlinkSync(path.join(__dirname, "..", "shell", "Commons", "SettingValues.js"), path.join(temp, "shell", "Commons", "SettingValues.js"));
     fs.symlinkSync(path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js"), path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
     fs.symlinkSync(path.join(__dirname, "..", "shell", "Core", "PackageManagers.js"), path.join(temp, "shell", "Core", "PackageManagers.js"));
     fs.symlinkSync(layerFile, path.join(temp, "shell", "Core", "HyprlandLayer.js"));
