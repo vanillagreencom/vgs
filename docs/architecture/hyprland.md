@@ -63,4 +63,4 @@ Hyprland is configured in Lua alone; a classic `hyprland.conf` is unsupported. T
 
 ## Decisions
 
-[D028](../decisions/D028-one-generated-hyprland-layer.md), [DXXX](../decisions/DXXX-hyprland-options-rendered-from-data.md), [D044](../decisions/D044-application-windows-are-hyprland-toplevels.md), [D048](../decisions/D048-theme-owned-hyprland-appearance.md), [D067](../decisions/D067-overlay-keyboard-capture.md), [D062](../decisions/D062-native-lock-and-polkit-plugins.md), [D021](../decisions/D021-theme-apply-writes-beside-each-destination.md).
+[D028](../decisions/D028-one-generated-hyprland-layer.md), [D080](../decisions/D080-hyprland-options-rendered-from-data.md), [D044](../decisions/D044-application-windows-are-hyprland-toplevels.md), [D048](../decisions/D048-theme-owned-hyprland-appearance.md), [D067](../decisions/D067-overlay-keyboard-capture.md), [D062](../decisions/D062-native-lock-and-polkit-plugins.md), [D021](../decisions/D021-theme-apply-writes-beside-each-destination.md).

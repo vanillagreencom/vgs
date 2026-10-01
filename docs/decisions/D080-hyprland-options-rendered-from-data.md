@@ -1,4 +1,4 @@
-# DXXX: Hyprland options and monitor rules are rendered from data and written only when set
+# D080: Hyprland options and monitor rules are rendered from data and written only when set
 
 [← Decision Index](INDEX.md)
 
