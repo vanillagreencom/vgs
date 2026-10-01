@@ -1,13 +1,17 @@
 // One owner for capture, playback, the local echo loader and the sidecar feed.
-// Speech consumers supply PCM sinks/sources. Audio never transcribes, counts
-// heard frames, selects echo parameters or changes a default device.
+// Speech consumers supply PCM sinks/sources. Audio never transcribes,
+// selects echo parameters or changes a default device.
 "use strict";
 const cp = require("node:child_process");
 const path = require("node:path");
-const { once } = require("node:events");
+const { Readable } = require("node:stream");
 
 const PCM_RATE = 24000;
 const BUFFER_BYTES = 64 * 1024;
+const PLAYBACK_LEAD_MS = 60;
+const NODE_LATENCY_MS = 20;
+const PLAYBACK_QUEUE_BYTES = PCM_RATE * 2 * 30;
+const TRANSCRIPT_BYTES = 64 * 1024;
 const DISCOVERY_BYTES = 1024 * 1024;
 const STREAM_PROPERTIES = JSON.stringify({ "node.dont-fallback": true, "node.dont-reconnect": true });
 
@@ -35,6 +39,7 @@ class Audio {
         this.playback = null;
         this.feed = null;
         this.playbackFeed = null;
+        this.lastPlayback = null;
         this.lastLevel = -Infinity;
         this.levels = { capture: 0, playback: 0 };
         this.release = Promise.resolve();
@@ -44,7 +49,12 @@ class Audio {
         };
         this.playbackPort = {
             start: (e, done, failed) => this.startPlayback(e, done, failed),
-            flush: (e, done) => this.teardown("interrupt", ["playback"]).then(done)
+            flush: (e, done) => {
+                const release = this.teardown("interrupt", ["playback"]);
+                const result = this.lastPlayback;
+                return release.then(() => done(result !== null && result.gen === e.gen
+                    && result.op === e.target ? result : null));
+            }
         };
     }
 
@@ -238,7 +248,8 @@ class Audio {
         if (this.capture !== null && this.capture.target !== null
                 && !devices.microphones.some(item => item.value === this.capture.target))
             this.failCapture("device-lost", "");
-        if (this.playback !== null && !devices.speakers.some(item => item.value === this.playback.target))
+        if (this.playback !== null && this.playback.target !== null
+                && !devices.speakers.some(item => item.value === this.playback.target))
             this.failPlayback("device-lost");
     }
 
@@ -376,22 +387,154 @@ class Audio {
         }
     }
 
+    /** Return a lower bound, never received PCM or an estimate of word timing. */
+    playbackResult(playback) {
+        const heardFrames = Math.max(0, playback.written - Math.ceil(
+            PCM_RATE * (PLAYBACK_LEAD_MS + NODE_LATENCY_MS) / 1000));
+        let end = 0;
+        for (const word of playback.words) {
+            if (word.frame > heardFrames) break;
+            end = word.end;
+        }
+        return Object.freeze({ gen: playback.e.gen, op: playback.e.op, source: playback.e.source,
+            writtenFrames: playback.written, heardFrames, heardText: playback.text.slice(0, end).trimEnd() });
+    }
+
+    // One waiter belongs to the playback operation, whether blocked on input,
+    // the clock or pw-cat. Teardown wakes it and removes every listener/timer.
+    waitPlayback(playback, stream, event, ms) {
+        return new Promise((resolve, reject) => {
+            let timer = null;
+            const finish = error => {
+                if (timer !== null) this.clock.clear(timer);
+                if (stream !== null) {
+                    stream.removeListener(event, ready);
+                    stream.removeListener("close", ready);
+                    stream.removeListener("end", ready);
+                    stream.removeListener("error", finish);
+                }
+                playback.wake = null;
+                if (error) reject(error); else resolve();
+            };
+            const ready = () => finish();
+            playback.wake = ready;
+            if (stream !== null) {
+                stream.once(event, ready);
+                stream.once("close", ready);
+                stream.once("end", ready);
+                stream.once("error", finish);
+            } else timer = this.clock.set(ready, ms);
+        });
+    }
+
+    playbackPacket(playback, packet) {
+        const pcm = Buffer.isBuffer(packet) ? packet : packet && packet.pcm;
+        if (!Buffer.isBuffer(pcm) || pcm.length > BUFFER_BYTES || pcm.length % 2 !== 0)
+            throw new Error("playback-frame");
+        const sentence = Buffer.isBuffer(packet) ? undefined : packet && packet.sentence;
+        if (sentence !== undefined) {
+            if (sentence === null || typeof sentence.text !== "string" || sentence.text.trim() === ""
+                    || !Number.isSafeInteger(sentence.frames) || sentence.frames < pcm.length / 2
+                    || sentence.frames > PCM_RATE * 30 || playback.received < playback.sentenceEnd)
+                throw new Error("playback-sentence");
+            const separator = playback.text === "" ? "" : " ";
+            if (Buffer.byteLength(playback.text + separator + sentence.text) > TRANSCRIPT_BYTES)
+                throw new Error("playback-transcript-overflow");
+            const base = playback.text.length + separator.length;
+            const words = sentence.words === undefined
+                ? [{ frame: sentence.frames, end: sentence.text.length }] : sentence.words;
+            if (!Array.isArray(words) || words.length === 0 || playback.words.length + words.length > 4096)
+                throw new Error("playback-words");
+            let frame = 0, end = 0;
+            for (const word of words) {
+                // Providers supply actual alignment, not proportional guesses.
+                // A missing alignment credits only the completed sentence.
+                if (word === null || typeof word !== "object"
+                        || !Number.isSafeInteger(word.frame) || word.frame <= frame || word.frame > sentence.frames
+                        || !Number.isSafeInteger(word.end) || word.end <= end || word.end > sentence.text.length
+                        || (word.end < sentence.text.length
+                            && !/\s/u.test(sentence.text[word.end - 1]) && !/\s/u.test(sentence.text[word.end])))
+                    throw new Error("playback-words");
+                frame = word.frame;
+                end = word.end;
+                playback.words.push({ frame: playback.received + frame, end: base + end });
+            }
+            if (frame !== sentence.frames || end !== sentence.text.length) throw new Error("playback-words");
+            playback.text += separator + sentence.text;
+            playback.sentenceEnd = playback.received + sentence.frames;
+        }
+        playback.received += pcm.length / 2;
+        return pcm;
+    }
+
+    async writePlayback(playback, owner, frame) {
+        let offset = 0;
+        while (offset < frame.length && this.playback === playback && !owner.stopping) {
+            const now = this.clock.now();
+            // Rebase after starvation or a stalled event loop. No catch-up burst.
+            playback.frontier = Math.max(playback.frontier === null ? now : playback.frontier, now);
+            const available = Math.floor((now + PLAYBACK_LEAD_MS - playback.frontier) * PCM_RATE / 1000);
+            const needed = Math.min((frame.length - offset) / 2, PCM_RATE * NODE_LATENCY_MS / 1000);
+            if (available < needed) {
+                await this.waitPlayback(playback, null, null,
+                    Math.max(1, Math.ceil(playback.frontier - now - PLAYBACK_LEAD_MS + needed * 1000 / PCM_RATE)));
+                continue;
+            }
+            const bytes = needed * 2;
+            const pcm = frame.subarray(offset, offset + bytes);
+            if (owner.child.stdin.writableLength + bytes > BUFFER_BYTES) throw new Error("playback-overflow");
+            const flowing = owner.child.stdin.write(pcm);
+            playback.written += bytes / 2;
+            playback.frontier += bytes * 1000 / (PCM_RATE * 2);
+            offset += bytes;
+            this.reportLevel(playback.e.gen, "playback", pcm);
+            if (!flowing) {
+                await this.waitPlayback(playback, owner.child.stdin, "drain");
+                if (this.playback !== playback || owner.stopping) return;
+                if (owner.exit !== null || owner.child.stdin.destroyed)
+                    throw new Error("playback-pipe-closed");
+            }
+        }
+    }
+
     async startPlayback(e, done, failed) {
-        let playback = null;
+        if (this.playback !== null) { failed("playback-busy"); return; }
+        // Install the operation before the first await. An immediate flush must
+        // retire startup too, even before there is a source or audio child.
+        const playback = { kind: "starting", e, failed, target: null, wake: null,
+            written: 0, received: 0, frontier: null, text: "", words: [], sentenceEnd: 0 };
+        this.playback = playback;
         try {
             await this.release;
+            if (this.playback !== playback) return;
             if (!this.allowed("playback")) throw new Error("playback-refused");
             if (this.playbackSource === null) throw new Error("playback-source-unavailable");
             const target = this.selected("speakers", "speaker");
+            playback.target = target;
             const source = this.playbackSource(e.source);
-            playback = { kind: "starting", e, failed, target };
-            this.playback = playback;
+            if (source === null) throw new Error("playback-source-unavailable");
+            if (!(source instanceof Readable)) throw new Error("playback-source");
             this.playbackFeed = source;
             source.on("error", error => {
-                if (this.playback === playback) this.fault("playback-source: " + error.message);
+                if (this.playback === playback) this.failPlayback("playback-source: " + error.message);
             });
+            if (this.playback !== playback) {
+                await this.teardown("playback-retired", ["playback"]);
+                return;
+            }
+            const unit = source.readableObjectMode ? BUFFER_BYTES : 1;
+            const duplex = source.writableHighWaterMark !== undefined;
+            const queueLimit = Math.floor((PLAYBACK_QUEUE_BYTES - (duplex ? 3 : 2) * BUFFER_BYTES)
+                / unit / (duplex ? 2 : 1));
+            // A compliant stream can cross its high-water mark by one chunk.
+            const queueAllowance = queueLimit + BUFFER_BYTES / unit;
+            if (!Number.isSafeInteger(source.readableHighWaterMark) || source.readableHighWaterMark > queueLimit
+                    || (duplex && (!Number.isSafeInteger(source.writableHighWaterMark)
+                        || source.writableHighWaterMark > queueLimit))
+                    || source.readableEncoding !== null)
+                throw new Error("playback-source-buffer");
             const owner = await this.spawn("playback", "pw-cat", [
-                "--playback", "--raw", "--latency", "20ms", "--rate", String(PCM_RATE),
+                "--playback", "--raw", "--latency", String(NODE_LATENCY_MS) + "ms", "--rate", String(PCM_RATE),
                 "--channels", "1", "--format", "s16", "--target", target,
                 "--properties", STREAM_PROPERTIES, "-"
             ]);
@@ -401,31 +544,34 @@ class Audio {
             playback.kind = "feeding";
             owner.closed.then(() => {
                 if (this.playback === playback && playback.kind === "feeding" && !owner.stopping)
-                    source.destroy(new Error("playback-exit-" + (owner.exit.signal || owner.exit.code)));
+                    this.failPlayback("playback-exit-" + (owner.exit.signal || owner.exit.code));
             });
-            for await (const frame of source) {
-                if (owner.stopping || this.playback !== playback) return;
-                if (!Buffer.isBuffer(frame) || frame.length > BUFFER_BYTES || frame.length % 2 !== 0)
-                    throw new Error("playback-frame");
-                if (owner.child.stdin.writableLength + frame.length > BUFFER_BYTES)
-                    throw new Error("playback-overflow");
-                if (!owner.child.stdin.write(frame)) {
-                    await Promise.race([once(owner.child.stdin, "drain"), owner.closed]);
-                    if (owner.stopping) return;
-                    if (owner.exit !== null) throw new Error("playback-exit-" + (owner.exit.signal || owner.exit.code));
+            while (this.playback === playback && !owner.stopping) {
+                if (source.readableLength > queueAllowance || (duplex && source.writableLength > queueAllowance))
+                    throw new Error("playback-source-buffer");
+                const packet = source.read(source.readableObjectMode ? undefined
+                    : Math.min(BUFFER_BYTES, source.readableLength || BUFFER_BYTES));
+                if (packet === null) {
+                    if (source.readableEnded) break;
+                    if (source.destroyed) throw new Error("playback-source-closed");
+                    await this.waitPlayback(playback, source, "readable");
+                    continue;
                 }
-                this.reportLevel(e.gen, "playback", frame);
+                const frame = this.playbackPacket(playback, packet);
+                await this.writePlayback(playback, owner, frame);
             }
+            if (this.playback !== playback || owner.stopping) return;
+            if (playback.received < playback.sentenceEnd) throw new Error("playback-sentence-incomplete");
             playback.kind = "draining";
             owner.child.stdin.end();
             await owner.closed;
             if (!owner.stopping) {
                 if (owner.exit.code !== 0) throw new Error("playback-exit-" + (owner.exit.signal || owner.exit.code));
                 await this.teardown("playback-complete", ["playback"]);
-                done();
+                done(this.playbackResult(playback));
             }
         } catch (error) {
-            if (playback !== null && this.playback !== playback) return;
+            if (this.playback !== playback) return;
             await this.teardown("playback-failed", ["playback"]);
             failed(error.message);
         }
@@ -458,13 +604,19 @@ class Audio {
                 this.feed = null;
             }
         }
-        if (kinds.includes("playback") && this.playbackFeed) {
+        if (kinds.includes("playback")) {
             this.levels.playback = 0;
-            if (this.playback !== null && this.playback.kind !== "failed") this.playback.kind = "retired";
+            if (this.playback !== null) {
+                this.lastPlayback = this.playbackResult(this.playback);
+                if (this.playback.kind !== "failed") this.playback.kind = "retired";
+                if (this.playback.wake !== null) this.playback.wake();
+            }
             this.playback = null;
-            if (!this.playbackFeed.closed) feeds.push(new Promise(resolve => this.playbackFeed.once("close", resolve)));
-            this.playbackFeed.destroy();
-            this.playbackFeed = null;
+            if (this.playbackFeed !== null) {
+                if (!this.playbackFeed.closed) feeds.push(new Promise(resolve => this.playbackFeed.once("close", resolve)));
+                this.playbackFeed.destroy();
+                this.playbackFeed = null;
+            }
         }
         const release = Promise.all(owners.map(owner => owner.closed).concat(feeds)).then(() => {});
         this.release = Promise.all([this.release, release]).then(() => {});

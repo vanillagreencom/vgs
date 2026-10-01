@@ -30,7 +30,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Audio.js, shell/plugins/vgs.jarvis/back
 
 The shipping daemon supplies no speech sink, playback source or echo configuration. Its gate remains unconfigured until the speech engine and mapped indicator exist. Capture collection still belongs to speech. It never returns a successful transcript from an unavailable port.
 
-Playback consumes the speech owner's PCM stream and owns the real `pw-cat` process. Playback pacing and heard-frame accounting remain with the plan's playback-accounting row. Echo verification and module parameters remain with its echo-cancellation row. Sidecar protocol and model lifetime remain with the local-adapter row. These later owners must use Audio's existing lifetime, not start a second audio process.
+Playback consumes the speech owner's PCM stream and owns the real `pw-cat` process. [Playback accounting](jarvis-playback.md) defines its pacing, heard-prefix reports and speech-source contract. Echo verification and module parameters remain with the plan's echo-cancellation row. Sidecar protocol and model lifetime remain with the local-adapter row. These later owners must use Audio's existing lifetime, not start a second audio process.
 
 ## Device discovery
 
@@ -67,7 +67,7 @@ Debian's [util-linux file list](https://packages.debian.org/trixie/amd64/util-li
 - The same suite proves device offers, retained unavailable ids, monitor removal and recovery, early stream exit, retry bounds, level rate, explicit environment scrubbing, bounded capture and discovery buffers, playback interruption and provider-feed release. Echo-mode overlap cases prove that Session's capture-close and playback-flush effects release independent owners. It includes provider failure during startup and an exited player with a pending provider stream. Mutations break the owning lifetime, recovery, rate, environment, routing and buffer rules.
 - `scripts/test-jarvis-audio-daemon.js` instruments disposable daemon copies to supply the later speech and indicator owners. It proves EOF, lock and SIGKILL while real fixture capture is active. A copy without the PID boundary leaves a detached lock held and fails the same assertion. The wrong-parent case pins the bootstrap's startup-race refusal.
 - `scripts/test-jarvis-session.js` and `scripts/test-jarvis-session-runner.js` prove failure identity and retries. The protocol suite proves choices and level refusals. The nested Jarvis and read-only-prefix rows read the real service's offers through status. The Jarvis row proves that offers after an audio fault cannot hide that fault, with a control that restores offer-driven success.
-- All process tests use the [private Jarvis world](validation-jarvis.md). Audio commands are stand-ins. Auth commands have no executable on the child's PATH.
+- All process tests use the [private Jarvis world](validation-jarvis.md). These lifetime suites use stand-in audio commands. The [playback suite](jarvis-playback.md#evidence) also reads actual audio from a private PipeWire null sink. Auth commands have no executable on the child's PATH.
 
 ## Omarchy comparison
 

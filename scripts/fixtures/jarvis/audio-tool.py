@@ -85,6 +85,8 @@ if name == "pw-record":
 elif name == "pw-cat":
     if (home / "playback-exits").exists():
         sys.exit(1)
+    while (home / "playback-blocks").exists():
+        time.sleep(0.01)
     while os.read(0, 4096):
         pass
 elif name == "pw-cli":

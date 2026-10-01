@@ -14,6 +14,8 @@ The pure Jarvis guidance, speech text and language suites select from their modu
 
 The task record and event-producer rows exercise the [coding-task contract](jarvis-tasks.md) through that environment. Their selection includes the shared record owner, producer, isolation helper and fresh-export fixture dependencies.
 
+The [playback rows](jarvis-playback.md#evidence) select on Audio, its child bootstrap, the Session judge and their shared test world. The private PipeWire row also selects on its null-sink configuration. It reads actual monitor PCM after interruption, not bytes sent to the player.
+
 The [Jarvis audit](jarvis-audit.md#evidence) has a redaction row in `logic` and a real-file writer row in `cli`. Both select on the tool schemas, shared fixture and private environment.
 
 The [wire brain rows](jarvis-brain.md#evidence) select both drivers on shared history, release, transport, secret and stream inputs. Each driver's vendor scripts select its own row. The [Messages row](jarvis-anthropic.md#evidence) includes schema-pinned loopback and cancellation controls.

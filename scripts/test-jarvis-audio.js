@@ -470,10 +470,10 @@ async function inside() {
         "false && (pcm.length > BUFFER_BYTES || feed.writableLength + pcm.length > BUFFER_BYTES)", overflow);
     await control("discovery-bound", "const DISCOVERY_BYTES = 1024 * 1024;",
         "const DISCOVERY_BYTES = 2 * 1024 * 1024;", discoveryOverflow);
-    await control("playback-release", 'kinds.includes("playback") && this.playbackFeed',
-        'false && kinds.includes("playback") && this.playbackFeed', playback);
-    await control("playback-level", 'this.reportLevel(e.gen, "playback", frame);',
-        'if (false) this.reportLevel(e.gen, "playback", frame);', playback);
+    await control("playback-release", 'if (this.playbackFeed !== null)',
+        'if (false && this.playbackFeed !== null)', playback);
+    await control("playback-level", 'this.reportLevel(playback.e.gen, "playback", pcm);',
+        'if (false) this.reportLevel(playback.e.gen, "playback", pcm);', playback);
     await control("node-cache-bound", 'this.nodes.set(node.id, { group, label: label.slice(0, 60), value });',
         'this.nodes.set(node.id, { ...props, group, label: label.slice(0, 60), value });', cacheBound);
     await control("closed-owner", 'this.lifetime.kind === "closed" || (kind !== "discovery"',
@@ -488,8 +488,8 @@ async function inside() {
         'if (false && this.capture === capture) this.failCapture("provider-disconnected", error.message);', startupFailure);
     await control("retired-provider", 'if (this.capture === capture) this.failCapture("provider-disconnected", error.message);',
         'if (true || this.capture === capture) this.failCapture("provider-disconnected", error.message);', retiredSink);
-    await control("player-exit", 'source.destroy(new Error("playback-exit-" + (owner.exit.signal || owner.exit.code)));',
-        'if (false) source.destroy(new Error("playback-exit-" + (owner.exit.signal || owner.exit.code)));', playbackExit);
+    await control("player-exit", 'this.failPlayback("playback-exit-" + (owner.exit.signal || owner.exit.code));',
+        'if (false) this.failPlayback("playback-exit-" + (owner.exit.signal || owner.exit.code));', playbackExit);
     await control("device-fallback", '"node.dont-fallback": true', '"node.dont-fallback": false', playback);
     await control("device-reconnect", '"node.dont-reconnect": true', '"node.dont-reconnect": false', playback);
     await control("flush-owner", 'this.teardown("interrupt", ["playback"])',
