@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/TaskRunner.js, shell/plugins/vgs.jarvis/backend/AgentProfiles.js, shell/plugins/vgs.jarvis/backend/task-run.py, shell/plugins/vgs.jarvis/tui/task.sh, scripts/test-jarvis-task-runner.js, scripts/fixtures/jarvis/task-agent.py, scripts/smoke/rows/jarvis-tasks.sh
 
-This file holds how Jarvis launches a coding agent, judges which processes belong to a task, stops them and shows them. [jarvis-tasks.md](jarvis-tasks.md) owns the records this control writes. [DNNN](../decisions/DNNN-jarvis-task-control.md) records the choice. The [Jarvis plan § Coding-task delegation](../plans/v2-jarvis-plan.md#7-coding-task-delegation) sets the scope: control is separate from display.
+This file holds how Jarvis launches a coding agent, judges which processes belong to a task, stops them and shows them. [jarvis-tasks.md](jarvis-tasks.md) owns the records this control writes. [D087](../decisions/D087-jarvis-task-control.md) records the choice. The [Jarvis plan § Coding-task delegation](../plans/v2-jarvis-plan.md#7-coding-task-delegation) sets the scope: control is separate from display.
 
 ## Owners
 
