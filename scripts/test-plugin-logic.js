@@ -676,6 +676,7 @@ function suite(ctx, check) {
         ["an exclusive capability held by another plugin refuses", { lock: "acme.other" }, ["lock", "run"], "refused: capability=lock held-by=acme.other"],
         ["a plugin may hold what it already holds", { polkit: "acme.tune" }, ["polkit"], ""],
         ["a shared capability is never refused", { lock: "acme.other" }, ["run", "screens"], ""],
+        ["the Bluetooth agent held by another plugin refuses", { bluetoothAgent: "acme.other" }, ["bluetoothAgent", "ipc"], "refused: capability=bluetoothAgent held-by=acme.other"],
     ];
     for (const [name, held, capabilities, want] of lendRows) {
         check("lendRefusal: " + name, ctx.lendRefusal(held, Object.assign({}, tunable, { capabilities: capabilities })), want);
@@ -796,7 +797,8 @@ suite(load(LOGIC), report);
 // package-manager table and the Hyprland layer's table it imports.
 const CONTROLS = [
     ["session is a known capability", '"lock", "session",', '"lock", ("session" && "planted"),'],
-    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"].concat(["session"]);'],
+    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent"].concat(["session"]);'],
+    ["the Bluetooth agent is exclusive", '"polkit", "bluetoothAgent"];', '"polkit"];'],
     ["optionsFrom needs a string", "if (entry.type !== \"string\")\n                return at + \".optionsFrom needs type string\";", "if (false)\n                return at + \".optionsFrom needs type string\";"],
     ["hyprland options need the capability", "if (options !== undefined && capabilities.indexOf(\"hyprland\") === -1)\n        return \"hyprland.options needs capability hyprland\";", "if (false)\n        return \"hyprland.options needs capability hyprland\";"],
     ["hyprland option names are setting names", "if (!STATUS_KEY_PATTERN.test(name))\n            return at + \" must be a setting name\";", "if (false)\n            return at + \" must be a setting name\";"],
@@ -848,7 +850,7 @@ const CONTROLS = [
     ["status is a manifest key", "\"requirements\", \"status\", \"tui\", \"secrets\", ", "\"requirements\", \"tui\", \"secrets\", "],
     ["secrets is a manifest key", "\"status\", \"tui\", \"secrets\", \"extras\"];", "\"status\", \"tui\", \"extras\"];"],
     ["secrets is a capability", "\"doctor\", \"secrets\", ", "\"doctor\", "],
-    ["hyprland is a capability", "\"secrets\", \"hyprland\"];", "\"secrets\"];"],
+    ["hyprland is a capability", "\"secrets\", \"hyprland\", ", "\"secrets\", "],
     ["options is a hyprland key", "\"appearance\", \"options\"];", "\"appearance\"];"],
     ["options alone declare something", " && options === undefined)", ")"],
     ["options are judged", "return hyprlandOptionsError(options, schema);", "return \"\";"],

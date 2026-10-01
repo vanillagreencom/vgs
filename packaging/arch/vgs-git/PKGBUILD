@@ -27,6 +27,7 @@ optdepends=(
   'pipewire: Jarvis audio capture, playback, discovery and echo cancellation'
   'fd: launcher file and folder search'
   'fzf: launcher file search matching and the package pickers in floating TUIs'
+  'bluez-utils: bluetoothctl, the Bluetooth pairing agent that answers pairing prompts'
   'file: launcher open-with list for a found file'
   'grim: launcher Screenshot'
   'slurp: launcher Screenshot region selection'

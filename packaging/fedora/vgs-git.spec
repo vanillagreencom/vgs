@@ -38,6 +38,7 @@ Requires:       pipewire-utils
 Recommends:     xdg-terminal-exec
 Recommends:     gum
 Recommends:     fzf
+Recommends:     bluez
 Recommends:     less
 Recommends:     libnotify
 Recommends:     cronie

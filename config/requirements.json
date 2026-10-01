@@ -46,5 +46,11 @@
     "packages": { "pacman": "fzf", "apt": "fzf", "dnf": "fzf", "xbps": "fzf", "emerge": "app-shells/fzf", "nix": "fzf" },
     "optional": true,
     "purpose": "Draws the package pickers inside floating TUIs"
+  },
+  {
+    "command": "bluetoothctl",
+    "packages": { "pacman": "bluez-utils", "apt": "bluez", "dnf": "bluez", "xbps": "bluez", "emerge": "net-wireless/bluez", "nix": "bluez" },
+    "optional": true,
+    "purpose": "Registers the Bluetooth pairing agent that answers pairing prompts"
   }
 ]

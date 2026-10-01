@@ -27,6 +27,7 @@ Singleton {
         id: hyprlandState
         active: root.holderIds("hyprland").length > 0
     }
+    BluetoothAgent { id: bluetoothAgent }
     readonly property alias sessionLock: sessionLock
     readonly property alias themes: themes
     readonly property alias tuis: tuis
@@ -161,6 +162,7 @@ Singleton {
         theme: themes.provider,
         tui: tuis.provider,
         system: systemSteps.provider,
+        bluetoothAgent: bluetoothAgent.provider,
         secrets: secrets.provider,
         hyprland: hyprlandState.provider,
         // `missing`: the plugin's own requirement commands the last scan did
@@ -286,6 +288,7 @@ Singleton {
             theme: themes.record(),
             tui: tuis.record(),
             system: systemSteps.record(),
+            bluetoothAgent: bluetoothAgent.record(),
             notices: Notices.record(),
             hyprland: hyprlandState.record()
         });

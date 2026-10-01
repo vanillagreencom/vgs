@@ -44,6 +44,8 @@ f share/vgs/shell/Commons/Tokens.js
 f share/vgs/shell/Commons/WatchedFile.qml
 f share/vgs/shell/Commons/Workspaces.qml
 f share/vgs/shell/Commons/qmldir
+f share/vgs/shell/Core/BluetoothAgent.qml
+f share/vgs/shell/Core/BluetoothAgentModel.js
 f share/vgs/shell/Core/Capabilities.qml
 f share/vgs/shell/Core/Compositor.qml
 f share/vgs/shell/Core/Config.qml
