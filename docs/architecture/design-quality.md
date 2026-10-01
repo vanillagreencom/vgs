@@ -65,7 +65,7 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 | tooltip | `tooltip.paddingX` 8 | none | none | wraps at `tooltip.maxWidth` 280 |
 
 - Every window, panel, popover, dialog and overlay composes `Pane` ([D050](../decisions/D050-container-layout-contract.md), [design-layout.md](design-layout.md)). Left and right insets are equal, and the scroll bar sits inside the right inset.
-- A menu and a select list have no inset box: their rows fill the list inside the border, each row insets its own text, and the scroll bar draws over a strip each row keeps clear ([design-layout.md § Lists in a popover](design-layout.md#lists-in-a-popover)).
+- A menu and a select list have no inset box: their rows fill the list inside the border, each row insets its own text, and the scroll bar draws over a strip each row keeps clear ([design-layout.md § Lists in a popover](design-layout.md#lists-in-a-popover), [D078](../decisions/D078-lists-in-a-popover-carry-no-inset.md)).
 - A header row's height is its control size. Every item in it centres on the row, and a title centres by its capital height.
 - A back or close `IconButton` at the start or end of a header puts its glyph's painted bounds, not its box, on the content edge ([design-layout.md § Headers](design-layout.md#headers)).
 - A title that opens a menu draws its caret at rest and its underline on hover, on focus and while the menu is open.
