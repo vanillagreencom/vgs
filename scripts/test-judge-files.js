@@ -100,6 +100,15 @@ function verify(helper, root, file) {
     again.release();
     const waited = helper.lockFile(path.join(lockDir, "waited.lock"), true);
     assert.equal(waited.state, "held", "lockFile: a wait on a free lock holds it");
+    // A bounded wait on a lock another descriptor holds ends busy.
+    const blocker = helper.lockFile(path.join(lockDir, "bounded.lock"), false);
+    const startedAt = Date.now();
+    assert.deepEqual(helper.lockFile(path.join(lockDir, "bounded.lock"), 0.3), { state: "busy" }, "lockFile: a bounded wait on a held lock ends busy");
+    assert.ok(Date.now() - startedAt >= 250, "lockFile: a bounded wait waits its bound");
+    blocker.release();
+    const bounded = helper.lockFile(path.join(lockDir, "bounded.lock"), 0.3);
+    assert.equal(bounded.state, "held", "lockFile: a bounded wait on a free lock holds it");
+    bounded.release();
     waited.release();
     fs.writeFileSync(path.join(lockDir, "plain"), "");
     assert.deepEqual(helper.lockFile(path.join(lockDir, "plain", "probe.lock"), false), { state: "failed", error: "EEXIST" }, "lockFile: a lock that cannot be made fails");
@@ -142,7 +151,8 @@ try {
         ["a PATH entry is absolute", "        if (!path.isAbsolute(dir)) continue;\n", ""],
         ["a refusal's detail is printed", "e.first + \"\\n\" + detail)", "e.first + \"\\n\")"],
         ["a returned promise's refusal is caught", "result.catch(end);", "undefined;"],
-        ["a lock another holds is busy", 'if (!wait && taken.status === 75) return { state: "busy" };', ""],
+        ["a lock another holds is busy", 'if (wait !== true && taken.status === 75) return { state: "busy" };', ""],
+        ["a bounded wait is bounded", ': ["-w", String(wait), "-E", "75", "3"];', ': ["-n", "-E", "75", "3"];'],
         ["a held lock is held", 'if (taken.status === 0) return { state: "held"', 'if (taken.status === 0 || taken.status === 75) return { state: "held"'],
         ["a released lock is free", "release() { fs.closeSync(fd); } };", "release() {} };"],
         ["a lock that cannot be made fails", 'return { state: "failed", error: e.code };', 'return { state: "busy" };']

@@ -6,22 +6,39 @@ It answers `--instance SIG -j monitors all`, `--instance SIG eval LINE` and
 JSON object whose `outputs` list each output as `monitors -j all` prints it,
 and appends one JSON line per call to STANDIN_CALLS: { argv, signature },
 the signature HYPRLAND_INSTANCE_SIGNATURE held. An eval of an
-`hl.monitor({ ... })` line changes the named output's fields, found by
-connector or by `desc:` and the description, and answers `ok`; a line
-`evalFail` maps to a reply answers that reply instead and changes nothing;
-a mode in `fallback`, `{ "<WxH>": "<WxH>" }`, reads as the other size. A
-reload answers `ok` and changes no output: no file rule names one, and a
-reload leaves an output no file rule names as it is
+`hl.monitor({ ... })` line answers `ok` and changes the named output's
+fields, found by connector or by `desc:` and the description, only on a
+later `monitors` read, as Hyprland applies the rule on its next monitor
+refresh (docs/architecture/runtime-hyprland-monitors.md): the read after
+the eval still shows the output as it was, the next one shows the change.
+A line `evalFail` maps to a reply answers that reply instead and changes
+nothing, as does one `evalFailOnce` maps, once; a line in `neverLands`
+answers `ok` and never changes anything; a mode in `fallback`,
+`{ "<WxH>": "<WxH>" }`, reads as the other size. While `failReads` is
+above 0 a `monitors` read fails, exit 1, and counts it down. A reload
+answers `ok` and changes no output: no file rule names one, and a reload
+leaves an output no file rule names as it is
 (docs/architecture/runtime-hyprland.md). Anything else exits 2.
+
+With STANDIN_OBSERVE set, the call is the test's own reading: it lands
+every pending eval, prints the outputs and logs nothing.
 """
+import fcntl
 import json
 import os
 import re
 import sys
 
 state_path = os.environ["STANDIN_STATE"]
-with open(os.environ["STANDIN_CALLS"], "a", encoding="utf-8") as calls:
-    calls.write(json.dumps({"argv": sys.argv[1:], "signature": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")}) + "\n")
+observe = bool(os.environ.get("STANDIN_OBSERVE"))
+if not observe:
+    with open(os.environ["STANDIN_CALLS"], "a", encoding="utf-8") as calls:
+        calls.write(json.dumps({"argv": sys.argv[1:], "signature": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")}) + "\n")
+
+# One call at a time reads and changes the state: the test's readings run
+# beside a guard's calls.
+state_lock = open(state_path + ".lock", "a")
+fcntl.flock(state_lock, fcntl.LOCK_EX)
 
 args = sys.argv[1:]
 if len(args) < 3 or args[0] != "--instance":
@@ -45,21 +62,9 @@ def find(selector):
     return None
 
 
-if args == ["-j", "monitors", "all"]:
-    print(json.dumps(state["outputs"], indent=4))
-elif len(args) == 2 and args[0] == "eval":
-    line = args[1]
+def land(line):
     m = re.fullmatch(r'hl\.monitor\(\{ output = "([^"]*)"(.*) \}\)', line)
-    if m is None:
-        print("stand-in hyprctl: unknown eval " + line)
-        sys.exit(0)
     output = find(m.group(1))
-    if output is None:
-        print("stand-in hyprctl: no output " + m.group(1))
-        sys.exit(0)
-    if line in state.get("evalFail", {}):
-        print(state["evalFail"][line])
-        sys.exit(0)
     fields = dict(re.findall(r', (\w+) = ("[^"]*"|[^,]+)', m.group(2)))
     unquote = lambda v: v[1:-1] if v.startswith('"') else v
     if "disabled" in fields:
@@ -80,7 +85,49 @@ elif len(args) == 2 and args[0] == "eval":
     if "mirror" in fields:
         target = find(unquote(fields["mirror"])) if unquote(fields["mirror"]) else None
         output["mirrorOf"] = "none" if target is None else str(target["id"])
+
+
+if observe:
+    for entry in state.get("pending", []):
+        land(entry["line"])
+    state["pending"] = []
     save()
+    print(json.dumps(state["outputs"]))
+elif args == ["-j", "monitors", "all"]:
+    if state.get("failReads", 0) > 0:
+        state["failReads"] -= 1
+        save()
+        sys.stderr.write("stand-in hyprctl: read failed\n")
+        sys.exit(1)
+    # A pending eval seen by one read lands before the next.
+    pending = []
+    for entry in state.get("pending", []):
+        if entry["seen"]:
+            land(entry["line"])
+        else:
+            pending.append({"line": entry["line"], "seen": True})
+    state["pending"] = pending
+    save()
+    print(json.dumps(state["outputs"], indent=4))
+elif len(args) == 2 and args[0] == "eval":
+    line = args[1]
+    m = re.fullmatch(r'hl\.monitor\(\{ output = "([^"]*)"(.*) \}\)', line)
+    if m is None:
+        print("stand-in hyprctl: unknown eval " + line)
+        sys.exit(0)
+    if find(m.group(1)) is None:
+        print("stand-in hyprctl: no output " + m.group(1))
+        sys.exit(0)
+    if line in state.get("evalFail", {}):
+        print(state["evalFail"][line])
+        sys.exit(0)
+    if line in state.get("evalFailOnce", {}):
+        print(state["evalFailOnce"].pop(line))
+        save()
+        sys.exit(0)
+    if line not in state.get("neverLands", []):
+        state.setdefault("pending", []).append({"line": line, "seen": False})
+        save()
     print("ok")
 elif args and args[0] == "reload":
     print("ok")
