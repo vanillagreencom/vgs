@@ -32,6 +32,7 @@ f share/vgs/config/requirements.json
 f share/vgs/config/shell.json
 f share/vgs/config/system/udev/60-vgs-apple-displays.rules
 f share/vgs/shell/Commons/ClearingInset.qml
+f share/vgs/shell/Commons/DesktopLaunch.js
 f share/vgs/shell/Commons/Inset.js
 f share/vgs/shell/Commons/Paths.qml
 f share/vgs/shell/Commons/SessionLockState.js

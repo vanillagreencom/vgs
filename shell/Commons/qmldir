@@ -9,3 +9,4 @@ Inset 1.0 Inset.js
 SettingValues 1.0 SettingValues.js
 ClearingInset 1.0 ClearingInset.qml
 SessionLockState 1.0 SessionLockState.js
+DesktopLaunch 1.0 DesktopLaunch.js

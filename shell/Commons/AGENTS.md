@@ -4,4 +4,5 @@ The singletons every QML file may read, module `qs.Commons`: `Theme`, `Paths`, `
 
 - `Tokens.js` and `ThemeLogic.js` are `.pragma library` files with no import of each other and no Qt object, so node runs them through `bin/lib/qml-library.js`. A token change is pinned in `scripts/test-theme-logic.js`; a new top-level group is a property of `Theme.qml`, which `scripts/check-design-tokens.py` enforces.
 - `SessionLockState.js` is the one reading of whether Hyprland holds a session lock, from `hyprctl -j monitors`: a `.pragma library` file with no Qt object, read by the core's session lock, `vgs.lock` and, under node, the runner in `bin/vgsh`. `scripts/test-session-lock-state.js` pins it; `docs/architecture/lock-polkit.md` states its use.
+- `DesktopLaunch.js` is the one rule for the argv that starts a desktop entry or opens a file or link, read by `vgs.launcher` and, under node, by the Jarvis daemon: a `.pragma library` file with no Qt object. `scripts/test-desktop-launch.js` pins it.
 - `ThemeSource.qml` is internal to the module and owns the theme file; `Theme.qml` publishes frozen objects of primitives and nothing else.

@@ -483,10 +483,7 @@ Item {
             rebuildDisplay();
             return;
         }
-        // `command` is a QML list; the run capability takes an array.
-        const argv = Array.from(entry.command);
-        const command = entry.runInTerminal ? ["xdg-terminal-exec"].concat(argv) : argv;
-        if (runArgv(command) === "ok") dismiss();
+        if (runArgv(DesktopLaunch.entry(entry)) === "ok") dismiss();
     }
 
     function activateIndex(index, fromPointer) {
@@ -501,7 +498,7 @@ Item {
             return;
         case "file":
         case "folder":
-            if (runArgv(["gio", "open", row.path]) === "ok") dismiss();
+            if (runArgv(DesktopLaunch.open(row.path)) === "ok") dismiss();
             return;
         case "openwith":
             runOpenWith(row.target, row.path);
@@ -648,7 +645,7 @@ Item {
 
     function runOpenWith(action, path) {
         let argv;
-        if (action === "reveal") argv = ["gio", "open", path.substring(0, path.lastIndexOf("/")) || "/"];
+        if (action === "reveal") argv = DesktopLaunch.open(path.substring(0, path.lastIndexOf("/")) || "/");
         else if (action === "copy") argv = ["wl-copy", "--", path];
         else argv = ["gio", "launch", action, path];
         if (runArgv(argv) === "ok") dismiss();
