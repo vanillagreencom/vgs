@@ -14,6 +14,7 @@ A floating TUI is a themed terminal window that floats over the session and runs
 - The manifest key `tui` and the capability `tui` let a plugin open the scripts it declares, and list and open any listed TUI: [tui-capability.md](tui-capability.md).
 - An exit record tells the core when a run started and ended and with which code, so a caller learns that its TUI ended and a second click raises the open window. `wait` makes the end independent of directory change delivery: [tui-records.md § Exit records](tui-records.md#exit-records).
 - `vgsh sudo` is the core's time-boxed passwordless sudo grant, which the core TUI `core/sudo-grant` runs: [tui-sudo.md](tui-sudo.md).
+- `vgsh system` is the core's closed table of one-time root setup, which the core TUI `core/system` runs for a plugin's status action: [tui-system.md](tui-system.md).
 
 ## The window
 

@@ -22,6 +22,7 @@ Singleton {
     ThemeRunner { id: themes }
     TuiRunner { id: tuis }
     SecretWriter { id: secrets }
+    SystemSteps { id: systemSteps; active: root.systemHeld }
     readonly property alias sessionLock: sessionLock
     readonly property alias themes: themes
     readonly property alias tuis: tuis
@@ -35,6 +36,7 @@ Singleton {
         return out;
     }
     readonly property bool polkitHeld: holderIds("polkit").length > 0
+    readonly property bool systemHeld: holderIds("system").length > 0
     property int polkitFlows: 0
 
     function holderIds(name) {
@@ -153,6 +155,7 @@ Singleton {
         }),
         theme: themes.provider,
         tui: tuis.provider,
+        system: systemSteps.provider,
         secrets: secrets.provider,
         // `missing`: the plugin's own requirement commands the last scan did
         // not find, in declaration order, a copy per read; bindable.
@@ -186,8 +189,10 @@ Singleton {
     }
 
     // The manager's act on plugin ID's status entry KEY (D061): the
-    // plugin's own declared TUI through TuiRunner.runFor, or its own
-    // requirement commands through the requirement notice after a scan, as
+    // plugin's own declared TUI through TuiRunner.runFor, its own
+    // requirement commands through the requirement notice after a scan, or
+    // its own system step in the core TUI `core/system`, after whose end
+    // the steps are probed again (D081), as
     // PluginLogic.statusActionRequest decides from its published values.
     function managerAct(id, key) {
         const subject = managerSubject(id);
@@ -196,8 +201,9 @@ Singleton {
         switch (request.kind) {
         case "tui": return tuis.runFor(id, request.name);
         case "install": return Notices.chosen(id, request.commands);
+        case "system": return root.managerCoreTui("system", request.args, () => systemSteps.probe());
         }
-        throw new Error("manager: action kind " + JSON.stringify(request.kind) + " is not one of tui, install");
+        throw new Error("manager: action kind " + JSON.stringify(request.kind) + " is not one of tui, install, system");
     }
 
     // The manager's store or clear (VERB) of plugin ID's ACCOUNT, listed in
@@ -214,10 +220,11 @@ Singleton {
     }
 
     // Opens the core TUI `core/<name>` for the manager and returns the
-    // shared shown answer from PluginLogic.tuiShownAnswer.
-    function managerCoreTui(name, args) {
+    // shared shown answer from PluginLogic.tuiShownAnswer; `done`, when
+    // given, receives the run's end as TuiRunner.openCore hands it.
+    function managerCoreTui(name, args, done) {
         const key = "core/" + name;
-        return Logic.tuiShownAnswer(key, tuis.openCore(name, args));
+        return Logic.tuiShownAnswer(key, tuis.openCore(name, args, done));
     }
 
     // The compositor places anchored surfaces relative to the item's own
@@ -272,6 +279,7 @@ Singleton {
             status: PluginStatus.record(),
             theme: themes.record(),
             tui: tuis.record(),
+            system: systemSteps.record(),
             notices: Notices.record()
         });
     }

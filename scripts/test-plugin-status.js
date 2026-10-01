@@ -281,6 +281,43 @@ function suite(ctx, check) {
     ];
     for (const [name, manifest, enabled, values, key, want] of actRows)
         check("statusActionRequest: " + name, ctx.statusActionRequest(manifest, "acme.gone", enabled, values, key), want);
+    // A system step's action opens the core TUI with `apply` and its step (D081).
+    const mSystem = ctx.validateManifest({ schemaVersion: 1, id: "acme.displays", name: "D", version: "1", author: "a", description: "d", kinds: ["service"], entryPoints: { service: "S.qml" }, capabilities: ["status", "system"], systemSteps: ["apple-displays"], status: { apple: { type: "state", label: "Apple displays", action: { label: "Allow", system: "apple-displays" } } } }, "/p").manifest;
+    const allow = ctx.statusWrite(mSystem, {}, "apple", { tone: "warning", text: "Brightness needs access", action: true }).values;
+    check("statusActionRequest: an offered system step applies it in the core TUI", ctx.statusActionRequest(mSystem, "acme.displays", true, allow, "apple"), { ok: true, kind: "system", args: ["apply", "apple-displays"] });
+    check("statusActionRequest: a system step not offered is refused", ctx.statusActionRequest(mSystem, "acme.displays", true, ctx.statusWrite(mSystem, {}, "apple", { tone: "ok", text: "Ready" }).values, "apple"), { ok: false, answer: "refused: action=apple reason=not-offered" });
+
+    // systemReport: [name, completion, stdout, stderr, want line or null for a
+    // report]. A report that fails reads every step unknown.
+    const stepsOf = (state, reason) => Object.fromEntries(ctx.SYSTEM_STEPS.map(step => [step, { state: state, reason: reason }]));
+    const reportText = steps => JSON.stringify({ steps: steps });
+    const good = Object.assign(stepsOf("absent", "no-device"), { "apple-displays": { state: "needed", reason: "hidraw-denied" }, "service-bluetooth": { state: "ready", reason: "active" } });
+    const done = { code: 0, status: 0 };
+    const reportRows = [
+        ["a report of every step", done, reportText(good), "", null],
+        ["each state of the table", done, reportText(Object.assign(stepsOf("nixos", "inactive"), { "i2c-dev": { state: "denied", reason: "no-uaccess-rule" }, "service-tailscaled": { state: "unknown", reason: "systemctl-failed" } })), "", null],
+        ["a run that never started", null, "", "", "system: probe=unstarted"],
+        ["a run that failed", { code: 1, status: 0 }, reportText(good), "boom\nmore", "system: probe=failed exit=1 status=0 boom"],
+        ["a run that crashed", { code: 0, status: 1 }, reportText(good), "", "system: probe=failed exit=0 status=1 "],
+        ["output that is no JSON", done, "{", "", "system: probe=malformed reason=json"],
+        ["a report with another key", done, JSON.stringify({ steps: good, extra: 1 }), "", "system: probe=malformed reason=shape"],
+        ["a report whose steps are a list", done, JSON.stringify({ steps: [] }), "", "system: probe=malformed reason=shape"],
+        ["a report missing a step", done, reportText(Object.fromEntries(Object.entries(good).slice(1))), "", "system: probe=malformed reason=steps"],
+        ["a report with a step outside the table in place of one", done, reportText(Object.assign(Object.fromEntries(Object.entries(good).slice(1)), { "etc-shadow": { state: "ready", reason: "granted" } })), "", "system: probe=malformed reason=steps"],
+        ["a report with a step outside the table", done, reportText(Object.assign({}, good, { "etc-shadow": { state: "ready", reason: "granted" } })), "", "system: probe=malformed reason=steps"],
+        ["a state outside the table", done, reportText(Object.assign({}, good, { "i2c-dev": { state: "granted", reason: "granted" } })), "", "system: probe=malformed reason=step step=i2c-dev"],
+        ["a reason that is no key", done, reportText(Object.assign({}, good, { "i2c-dev": { state: "ready", reason: "Granted!" } })), "", "system: probe=malformed reason=step step=i2c-dev"],
+        ["a step with another key", done, reportText(Object.assign({}, good, { "i2c-dev": { state: "ready", reason: "granted", ok: true } })), "", "system: probe=malformed reason=step step=i2c-dev"],
+    ];
+    for (const [name, completion, stdout, stderr, want] of reportRows) {
+        const got = ctx.systemReport(completion, stdout, stderr);
+        check("systemReport: " + name, [got.line, got.steps], want === null ? ["", JSON.parse(stdout).steps] : [want, stepsOf("unknown", "probe-failed")]);
+    }
+    check("systemStepsEqual: the same report", ctx.systemStepsEqual(good, JSON.parse(reportText(good)).steps), true);
+    check("systemStepsEqual: a changed reason", ctx.systemStepsEqual(good, Object.assign({}, good, { "apple-displays": { state: "needed", reason: "other" } })), false);
+    check("systemStepsEqual: a changed state", ctx.systemStepsEqual(good, Object.assign({}, good, { "service-bluetooth": { state: "needed", reason: "active" } })), false);
+    check("systemStateOf: the declared steps alone, in the manifest's order", ctx.systemStateOf(good, ["service-bluetooth", "apple-displays"]), { "service-bluetooth": { state: "ready", reason: "active" }, "apple-displays": { state: "needed", reason: "hidraw-denied" } });
+    check("systemStateOf does not alias the held steps", (() => { ctx.systemStateOf(good, ["apple-displays"])["apple-displays"].state = "ready"; return good["apple-displays"].state; })(), "needed");
 
     // secretRequest: [name, manifest, enabled, values, key, account, verb, secret, want].
     const items = ctx.statusWrite(m, {}, "tokens", [{ label: "Acme", value: "absent", secret: "acme:T1" }, { label: "Globex", value: "present", secret: "acme:T2" }, { label: "Hooli", value: "unavailable", secret: "acme:T3" }, { label: "Plain", value: "absent" }]).values;
@@ -388,6 +425,20 @@ const CONTROLS = [
     ["a secret is judged", "if (!secretValueValid(secret))", "if (false)"],
     ["a secret has a ceiling", "secret.length <= SECRET_VALUE_MAX &&", ""],
     ["a secret goes on stdin, never the argv", ".concat(attributes), input: secret };", ".concat(attributes, [secret]), input: secret };"],
+    ["an offered system action applies its own step", "return { ok: true, kind: \"system\", args: [\"apply\", entry.action.system] };", "return { ok: true, kind: \"system\", args: [entry.action.system] };"],
+    ["a system report needs a started run", "if (completion === null)\n        return failed(\"system: probe=unstarted\");", ""],
+    ["a system report needs a clean exit", "if (completion.status !== 0 || completion.code !== 0)\n        return failed(\"system: probe=failed", "if (completion.code !== 0)\n        return failed(\"system: probe=failed"],
+    ["a system report is JSON", "return failed(\"system: probe=malformed reason=json\");", "doc = {};"],
+    ["a system report has only its steps", "if (!isPlainObject(doc) || Object.keys(doc).length !== 1 || !isPlainObject(doc.steps))", "if (!isPlainObject(doc) || !isPlainObject(doc.steps))"],
+    ["a system report names every step and no other", "if (names.length !== SYSTEM_STEPS.length || ", "if ("],
+    ["a system report names each step", "!SYSTEM_STEPS.every(function (step) { return hasOwn(doc.steps, step); }))", "false)"],
+    ["a system step reads a state of the table", "SYSTEM_STATES.indexOf(entry.state) === -1 ||", ""],
+    ["a system step's reason is a key", "!SYSTEM_REASON_PATTERN.test(entry.reason))", "false)"],
+    ["a system step holds only a state and a reason", "Object.keys(entry).length !== 2 || ", ""],
+    ["a failed system report reads unknown", "return { steps: systemUnknown(\"probe-failed\"), line: line };", "return { steps: systemUnknown(\"unprobed\"), line: line };"],
+    ["system steps compare by reason", "a[step].state === b[step].state && a[step].reason === b[step].reason", "a[step].state === b[step].state"],
+    ["a plugin reads its declared steps alone", "declared.forEach(function (step) { out[step] =", "SYSTEM_STEPS.forEach(function (step) { out[step] ="],
+    ["a plugin reads a copy of the steps", "out[step] = { state: steps[step].state, reason: steps[step].reason };", "out[step] = steps[step];"],
     ["a secret account is named as JSON when malformed", "SECRET_ACCOUNT_PATTERN.test(account) ? account : JSON.stringify(String(account));", "SECRET_ACCOUNT_PATTERN.test(account) ? account : String(account);"],
 ];
 

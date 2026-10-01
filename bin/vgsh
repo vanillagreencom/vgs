@@ -71,6 +71,10 @@
 #   vgsh sudo install              install the grant's root half and its boot cleanup, once; sudo asks for the password;
 #                                  on NixOS, report skipped=nixos-config
 #   vgsh sudo uninstall            remove every grant, then the root half and its boot cleanup; on NixOS, report skipped=nixos-config
+#   vgsh system status [--json]    each system step's state: ready, needed, denied, absent, unknown or nixos
+#   vgsh system apply <step>       show a system step's root commands, ask, and run them through sudo; on NixOS,
+#                                  print the configuration snippet and change nothing
+#   vgsh system undo <step>        revert only what VGS changed for the step, after showing the commands and asking
 #   vgsh --version                 print `vgs <version>`, with the commit distance in a git checkout
 #   vgsh version [--json]          the same; --json prints `{ version, describe }` as one JSON line
 #   vgsh self status [--json]      how this tree was installed, the newest version its channel offers, and whether it is behind
@@ -357,6 +361,12 @@
 # the owner runs `sudo install`. On NixOS, every sudo verb writes nothing,
 # reports `skipped=nixos-config`, and `grant` prints the
 # `security.sudo.extraRules` snippet: docs/architecture/tui-sudo.md.
+#
+# `system` runs bin/vgsh-system, which holds the closed table of system
+# steps and states its output and refusals. `apply` and `undo` ask one
+# question and run sudo, so each needs a terminal; the core floating TUI
+# `core/system` runs `vgsh system apply <step>` when a plugin's status
+# action names the step: docs/architecture/tui-system.md.
 #
 # `tui present` hands argv, never a shell string, to `bin/vgsh-tui launch`
 # with the full presentation, titled by --title or else by the command's
@@ -2044,6 +2054,12 @@ case "$cmd" in
     case "${1:-}" in
       status|grant|revoke|install|uninstall) exec "$root/bin/vgsh-sudo-grant" "$@" ;;
       *) printf 'vgsh: refused: sudo-subcommand=%s\n' "${1:-missing}" >&2; usage; exit 2 ;;
+    esac
+    ;;
+  system)
+    case "${1:-}" in
+      status|apply|undo) exec "$root/bin/vgsh-system" "$@" ;;
+      *) printf 'vgsh: refused: system-subcommand=%s\n' "${1:-missing}" >&2; usage; exit 2 ;;
     esac
     ;;
   tui)

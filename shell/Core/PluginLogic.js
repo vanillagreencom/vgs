@@ -17,7 +17,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "window", "service
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "requirements", "doctor", "secrets"];
+var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "system", "requirements", "doctor", "secrets"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -59,7 +59,7 @@ var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bo
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements", "status", "tui", "secrets", "extras"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "systemSteps", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements", "status", "tui", "secrets", "extras"];
 
 // What one entry of a manifest's `extras` may carry: the status entries and
 // the requirement commands that serve that extra alone (extrasError).
@@ -120,15 +120,29 @@ var STATUS_CHOICE_KEYS = ["label", "value"];
 
 // A status entry's `action` (D061): the one-click setup step the Settings
 // page draws as a button beside the entry. It carries a printable `label`
-// and exactly one of `tui`, a name of the manifest's own `tui` key the core
-// opens in a floating terminal, or `install`, a list of the manifest's own
-// requirement commands the core offers through the requirement notice. An
-// entry of a type in STATUS_ACTION_TYPES takes one; a `command` is shown
-// only as the "Show command" disclosure beside it, so it needs one.
-var STATUS_ACTION_KEYS = ["label", "tui", "install"];
+// and exactly one route, STATUS_ACTION_ROUTES: `tui`, a name of the
+// manifest's own `tui` key the core opens in a floating terminal;
+// `install`, a list of the manifest's own requirement commands the core
+// offers through the requirement notice; or `system`, a step of the
+// manifest's own `systemSteps` the core applies in its `core/system` TUI
+// (D081). An entry of a type in STATUS_ACTION_TYPES takes one; a `command`
+// is shown only as the "Show command" disclosure beside it, so it needs
+// one.
+var STATUS_ACTION_ROUTES = ["tui", "install", "system"];
+var STATUS_ACTION_KEYS = ["label"].concat(STATUS_ACTION_ROUTES);
 var STATUS_ACTION_TYPES = ["presence", "state"];
 // The refusal reasons of the `manager` capability's `act`.
 var STATUS_ACTION_REASONS = ["undeclared", "disabled", "not-offered"];
+
+// The system steps (D081): the closed table bin/vgsh-system holds, which a
+// manifest's `systemSteps` names from, in the order `vgsh-system status`
+// prints them, and the states a probe reads each one in. The script is the
+// table's owner; scripts/test-vgsh-system.sh reads its status back against
+// this list.
+var SYSTEM_STEPS = ["apple-displays", "i2c-dev", "service-bluetooth", "service-tailscaled", "tailscale-operator"];
+var SYSTEM_STATES = ["ready", "needed", "denied", "absent", "unknown", "nixos"];
+// A probe's reason: a short key of lower case letters and dashes.
+var SYSTEM_REASON_PATTERN = /^[a-z][a-z-]{0,39}$/;
 
 // A manifest's `secrets` (D061): the libsecret items the core stores and
 // clears for the plugin from a masked field on its Settings page, never
@@ -374,8 +388,9 @@ function isPrintableLine(text, max) {
 // `group`, `hint`, `command`, `hidden` or `action`. A plugin publishes status
 // only through its `status` capability, so the key needs the capability,
 // and the capability needs at least one entry. TUI is the manifest's `tui`
-// key or undefined, REQUIREMENTS its judged `requirements` list.
-function statusError(status, capabilities, tui, requirements) {
+// key or undefined, REQUIREMENTS its judged `requirements` list, SYSTEM
+// its judged `systemSteps` or undefined.
+function statusError(status, capabilities, tui, requirements, system) {
     if (!isPlainObject(status))
         return "status must be an object";
     var keys = Object.keys(status);
@@ -409,7 +424,7 @@ function statusError(status, capabilities, tui, requirements) {
         if (entry.hidden !== undefined && typeof entry.hidden !== "boolean")
             return at + ".hidden must be a boolean when present";
         if (entry.action !== undefined) {
-            var badAction = statusActionError(entry, at + ".action", tui, requirements);
+            var badAction = statusActionError(entry, at + ".action", tui, requirements, system);
             if (badAction !== "")
                 return badAction;
         }
@@ -429,10 +444,11 @@ function statusError(status, capabilities, tui, requirements) {
 // The first defect of status entry ENTRY's `action`, AT its path, or "": an
 // object of STATUS_ACTION_KEYS on an entry whose type is in
 // STATUS_ACTION_TYPES, a printable `label` of at most STATUS_LABEL_MAX
-// characters, and exactly one of `tui`, a name the manifest's TUI key
-// declares, and `install`, a non-empty list of commands the manifest's
-// REQUIREMENTS declare, each once.
-function statusActionError(entry, at, tui, requirements) {
+// characters, and exactly one of STATUS_ACTION_ROUTES: `tui`, a name the
+// manifest's TUI key declares; `install`, a non-empty list of commands the
+// manifest's REQUIREMENTS declare, each once; `system`, a step the
+// manifest's SYSTEM, its `systemSteps`, declares.
+function statusActionError(entry, at, tui, requirements, system) {
     var action = entry.action;
     if (STATUS_ACTION_TYPES.indexOf(entry.type) === -1)
         return at + " needs a type whose value says when it applies, one of " + STATUS_ACTION_TYPES.join(", ");
@@ -445,8 +461,13 @@ function statusActionError(entry, at, tui, requirements) {
     }
     if (!isPrintableLine(action.label, STATUS_LABEL_MAX))
         return at + ".label must be a printable line of 1 to " + STATUS_LABEL_MAX + " characters";
-    if ((action.tui === undefined) === (action.install === undefined))
-        return at + " must name exactly one of tui and install";
+    if (STATUS_ACTION_ROUTES.filter(function (route) { return action[route] !== undefined; }).length !== 1)
+        return at + " must name exactly one of " + STATUS_ACTION_ROUTES.join(", ");
+    if (action.system !== undefined) {
+        if (typeof action.system !== "string" || !Array.isArray(system) || system.indexOf(action.system) === -1)
+            return at + ".system must name a step of the manifest's systemSteps, got " + JSON.stringify(action.system);
+        return "";
+    }
     if (action.tui !== undefined) {
         if (typeof action.tui !== "string" || !isPlainObject(tui) || !hasOwn(tui, action.tui))
             return at + ".tui must name a script of the manifest's tui key, got " + JSON.stringify(action.tui);
@@ -462,6 +483,86 @@ function statusActionError(entry, at, tui, requirements) {
             return at + ".install." + n + " repeats " + JSON.stringify(action.install[n]);
     }
     return "";
+}
+
+// The first defect of a manifest's `systemSteps`, or "": a non-empty list
+// of SYSTEM_STEPS, each once. The plugin reads their states through
+// capability `system`, which the manifest must name, and the capability
+// needs the key.
+function systemStepsError(steps, capabilities) {
+    if (!Array.isArray(steps) || steps.length === 0)
+        return "systemSteps must be a non-empty list of steps of the core's table";
+    if (capabilities.indexOf("system") === -1)
+        return "systemSteps needs capability system";
+    for (var i = 0; i < steps.length; i++) {
+        if (typeof steps[i] !== "string" || SYSTEM_STEPS.indexOf(steps[i]) === -1)
+            return "systemSteps." + i + " must be one of " + SYSTEM_STEPS.join(", ") + ", got " + JSON.stringify(steps[i]);
+        if (steps.indexOf(steps[i]) !== i)
+            return "systemSteps." + i + " repeats " + JSON.stringify(steps[i]);
+    }
+    return "";
+}
+
+// Every step of SYSTEM_STEPS as { state: "unknown", reason: REASON }.
+function systemUnknown(reason) {
+    var out = {};
+    SYSTEM_STEPS.forEach(function (step) { out[step] = { state: "unknown", reason: reason }; });
+    return out;
+}
+
+// What the SystemSteps owner holds after one run of `bin/vgsh-system
+// status --json`, COMPLETION { code, status } or null for a run that never
+// started, STDOUT its output: { steps, line }. `steps` maps every step of
+// SYSTEM_STEPS to { state, reason }, a state of SYSTEM_STATES and a reason
+// SYSTEM_REASON_PATTERN admits. A run that gives no such report reads
+// every step `unknown` with reason `probe-failed`, never ready, and `line`
+// is the log line naming why: `system: probe=unstarted`, `system:
+// probe=failed exit=<code> status=<status> <first stderr line>`, or
+// `system: probe=malformed` with what the report lacks. `line` is ""
+// otherwise.
+function systemReport(completion, stdout, stderr) {
+    var failed = function (line) { return { steps: systemUnknown("probe-failed"), line: line }; };
+    if (completion === null)
+        return failed("system: probe=unstarted");
+    if (completion.status !== 0 || completion.code !== 0)
+        return failed("system: probe=failed exit=" + completion.code + " status=" + completion.status + " " + String(stderr).split("\n")[0]);
+    var doc;
+    try {
+        doc = JSON.parse(stdout);
+    } catch (e) {
+        return failed("system: probe=malformed reason=json");
+    }
+    if (!isPlainObject(doc) || Object.keys(doc).length !== 1 || !isPlainObject(doc.steps))
+        return failed("system: probe=malformed reason=shape");
+    var names = Object.keys(doc.steps);
+    if (names.length !== SYSTEM_STEPS.length || !SYSTEM_STEPS.every(function (step) { return hasOwn(doc.steps, step); }))
+        return failed("system: probe=malformed reason=steps");
+    var steps = {};
+    for (var i = 0; i < SYSTEM_STEPS.length; i++) {
+        var step = SYSTEM_STEPS[i];
+        var entry = doc.steps[step];
+        if (!isPlainObject(entry) || Object.keys(entry).length !== 2 || SYSTEM_STATES.indexOf(entry.state) === -1 ||
+            typeof entry.reason !== "string" || !SYSTEM_REASON_PATTERN.test(entry.reason))
+            return failed("system: probe=malformed reason=step step=" + step);
+        steps[step] = { state: entry.state, reason: entry.reason };
+    }
+    return { steps: steps, line: "" };
+}
+
+// Whether two `steps` of systemReport read the same states and reasons.
+function systemStepsEqual(a, b) {
+    return SYSTEM_STEPS.every(function (step) {
+        return a[step].state === b[step].state && a[step].reason === b[step].reason;
+    });
+}
+
+// The states the `system` capability lends a plugin: one { state, reason }
+// of STEPS per step of DECLARED, its manifest's `systemSteps`, in that
+// order, each a copy.
+function systemStateOf(steps, declared) {
+    var out = {};
+    declared.forEach(function (step) { out[step] = { state: steps[step].state, reason: steps[step].reason }; });
+    return out;
 }
 
 // The first defect of a manifest's `extras` key, or "". An extra is a
@@ -863,7 +964,9 @@ function statusActionRefusal(key, reason) {
 // of plugin MANIFEST, null for an id no plugin has, ENABLED and VALUES its
 // published values: { ok: true, kind: "tui", name } to open the plugin's own
 // TUI NAME, { ok: true, kind: "install", commands } to offer its own
-// requirement COMMANDS through the requirement notice, or { ok: false,
+// requirement COMMANDS through the requirement notice, { ok: true, kind:
+// "system", args } to open the core TUI `core/system` with ARGS, `apply`
+// and its declared step, or { ok: false,
 // answer } with `unknown: <id>` or statusActionRefusal's line: `undeclared`
 // for an entry without an action, `disabled` for a disabled plugin and
 // `not-offered` while the published value does not call for it.
@@ -879,6 +982,8 @@ function statusActionRequest(manifest, id, enabled, values, key) {
         return { ok: false, answer: statusActionRefusal(key, "not-offered") };
     if (entry.action.tui !== undefined)
         return { ok: true, kind: "tui", name: entry.action.tui };
+    if (entry.action.system !== undefined)
+        return { ok: true, kind: "system", args: ["apply", entry.action.system] };
     return { ok: true, kind: "install", commands: entry.action.install.slice() };
 }
 
@@ -1403,7 +1508,9 @@ var TUI_RUN_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 // the table when this file loads. The package pickers run in the default
 // size, the window Omarchy's floating terminal gives omarchy-pkg-install.
 // `requirements-install` is not listed: the requirement notice opens it
-// through tuiCore with the arguments PluginLogic.noticeView names.
+// through tuiCore with the arguments PluginLogic.noticeView names. `system`
+// is not listed either: the `manager` capability's act opens it with
+// `apply <step>` for a status action that names a system step (D081).
 // `plugin-update` and `plugin-remove` are not listed either: the `manager`
 // capability opens them with one plugin id (MANAGER_TUIS). A plugin update
 // shows its incoming diff, so it opens wide.
@@ -1467,6 +1574,13 @@ var CORE_TUIS = coreTuiTable({
     "plugin-remove": {
         argv: ["vgsh", "plugin", "remove"],
         title: "Remove a plugin",
+        size: "default",
+        presentation: "full",
+        entry: null
+    },
+    "system": {
+        argv: ["vgsh", "system"],
+        title: "System setup",
         size: "default",
         presentation: "full",
         entry: null
@@ -2212,8 +2326,16 @@ function validateManifest(raw, sourceDir) {
     var badRequirements = requirementsError(requirements);
     if (badRequirements !== "")
         return { ok: false, error: badRequirements };
+    // The system steps before the status: an action names a step from them.
+    if (raw.systemSteps !== undefined) {
+        var badSteps = systemStepsError(raw.systemSteps, capabilities);
+        if (badSteps !== "")
+            return { ok: false, error: badSteps };
+    } else if (capabilities.indexOf("system") !== -1) {
+        return { ok: false, error: "capability system needs a systemSteps declaration" };
+    }
     if (raw.status !== undefined) {
-        var badStatus = statusError(raw.status, capabilities, raw.tui, requirements);
+        var badStatus = statusError(raw.status, capabilities, raw.tui, requirements, raw.systemSteps);
         if (badStatus !== "")
             return { ok: false, error: badStatus };
     } else if (capabilities.indexOf("status") !== -1) {
@@ -2260,6 +2382,7 @@ function validateManifest(raw, sourceDir) {
     manifest.settings = clone(settings);
     manifest.schema = clone(schema);
     manifest.status = raw.status === undefined ? {} : clone(raw.status);
+    manifest.systemSteps = raw.systemSteps === undefined ? [] : raw.systemSteps.slice();
     manifest.extras = {};
     Object.keys(raw.extras === undefined ? {} : raw.extras).forEach(function (name) {
         manifest.extras[name] = { status: clone(raw.extras[name].status || []), requirements: clone(raw.extras[name].requirements || []) };

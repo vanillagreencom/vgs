@@ -10,7 +10,7 @@ The manifest's `status` key maps a status key to `{ type, label, group?, hint?, 
 
 - A key matches `PluginLogic.STATUS_KEY_PATTERN`, a plain identifier such as `slackTokens`.
 - `type` is one of `PluginLogic.STATUS_TYPES`, the table below. `label` and `group` are printable lines of at most 60 characters, `hint` of at most 200, `command` of at most 300. `hidden` keeps a typed entry off the Settings page.
-- `action` is the entry's one-click setup step, on a `presence` or `state` entry alone: `{ label, tui }`, one of the manifest's own `tui` scripts, or `{ label, install }`, a list of its own requirement commands, each once. `PluginLogic.statusActionError` judges it.
+- `action` is the entry's one-click setup step, on a `presence` or `state` entry alone: `{ label, tui }`, one of the manifest's own `tui` scripts, `{ label, install }`, a list of its own requirement commands, each once, or `{ label, system }`, a step of its own `systemSteps` ([tui-system.md](tui-system.md)). `PluginLogic.statusActionError` judges it.
 - `command` is text, and needs an `action`: the page shows it only behind that action's Show command disclosure, a `CommandDisclosure`, and never runs it.
 - A `data` entry carries no `group`, `hint`, `action`, `command` or `hidden`, because the page never draws it.
 - `status` needs capability `status`, and capability `status` needs at least one entry.

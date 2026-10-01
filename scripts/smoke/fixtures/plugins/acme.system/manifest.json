@@ -1,0 +1,8 @@
+{ "schemaVersion": 1, "id": "acme.system", "name": "System step", "version": "0.1.0", "author": "acme", "description": "smoke fixture offering a system step",
+  "icon": "shield-check",
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" },
+  "capabilities": ["status", "system"],
+  "systemSteps": ["apple-displays"],
+  "status": {
+    "apple": { "type": "state", "label": "Apple displays", "action": { "label": "Allow", "system": "apple-displays" }, "command": "vgsh system apply apple-displays" }
+  } }

@@ -25,10 +25,12 @@ f share/vgs/bin/vgsh-pkg
 f share/vgs/bin/vgsh-plugin-judge
 f share/vgs/bin/vgsh-scan
 f share/vgs/bin/vgsh-sudo-grant
+f share/vgs/bin/vgsh-system
 f share/vgs/bin/vgsh-theme-judge
 f share/vgs/bin/vgsh-tui
 f share/vgs/config/requirements.json
 f share/vgs/config/shell.json
+f share/vgs/config/system/udev/60-vgs-apple-displays.rules
 f share/vgs/shell/Commons/ClearingInset.qml
 f share/vgs/shell/Commons/Inset.js
 f share/vgs/shell/Commons/Paths.qml
@@ -62,6 +64,7 @@ f share/vgs/shell/Core/SecretWriter.qml
 f share/vgs/shell/Core/ServiceGate.qml
 f share/vgs/shell/Core/SessionLock.qml
 f share/vgs/shell/Core/ShortcutRegistry.qml
+f share/vgs/shell/Core/SystemSteps.qml
 f share/vgs/shell/Core/ThemeRunner.qml
 f share/vgs/shell/Core/Toasts.qml
 f share/vgs/shell/Core/TuiRecords.qml

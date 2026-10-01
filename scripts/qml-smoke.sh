@@ -209,6 +209,7 @@ smoke_row launcher
 smoke_row list-motion
 smoke_row notifications
 smoke_row automations
+smoke_row system-steps
 smoke_row polkit
 # The device fakes the System rows build on; they stay up after it.
 smoke_row device-fakes

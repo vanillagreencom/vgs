@@ -1,0 +1,673 @@
+#!/usr/bin/env bash
+# vgsh-system: the system steps, the closed table of one-time root setup a
+# plugin's status action can ask for.
+#
+#   vgsh-system status [--json]   probe every step and print its state
+#   vgsh-system apply <step>      show the step's root commands, ask once, run them through sudo
+#   vgsh-system undo <step>       show the commands that revert what VGS changed for the step,
+#                                 ask once, run them through sudo
+#
+# The table, and nothing else, names what may change:
+#
+#   apple-displays       install config/system/udev/60-vgs-apple-displays.rules as
+#                        /etc/udev/rules.d/60-vgs-apple-displays.rules, then
+#                        `udevadm control --reload` and
+#                        `udevadm trigger --subsystem-match=hidraw --action=change --settle`
+#   i2c-dev              `modprobe i2c-dev`; the ddcutil package's own udev rule and
+#                        modules-load.d file grant the access and load it at boot
+#   service-bluetooth    `systemctl enable --now bluetooth.service`
+#   service-tailscaled   `systemctl enable --now tailscaled.service`
+#   tailscale-operator   `tailscale set --operator=<the caller's own login name>`
+#
+# Each step's state is one of:
+#
+#   ready     the probe reads the access the step grants
+#   needed    the probe reads it missing, and apply grants it
+#   denied    the probe reads it missing, and apply cannot grant it
+#   absent    the step has nothing to act on: no such device, unit or command
+#   unknown   the probe could not answer; never read as ready
+#   nixos     needed, on NixOS, where the configuration grants it
+#
+# Probes read real access, never a file's presence: the hidraw node of each
+# Apple display, 05ac:1114 or 05ac:9243 by the HID_ID of its sysfs device,
+# opens read-write; a display-class i2c adapter's node (an ancestor's sysfs
+# `class` starting 0x03, ddcutil's own match) opens read-write once the
+# i2c-dev class exists; `systemctl is-active` holds for the unit; `tailscale
+# get operator` names the caller. A rule VGS did not write, v1's included,
+# therefore reads ready when it grants the access.
+#
+# `status` prints one `system=<step> state=<state> reason=<key>` line per
+# step in table order; `--json` prints one line, the text the shell's
+# SystemSteps owner reads:
+#   {"steps":{"<step>":{"state":"<state>","reason":"<key>"},...}}
+# with every step of the table. Each reason is a key of lower case letters
+# and dashes. status exits 0 whatever the states are.
+#
+# `apply` probes the step first: `ready` prints `ok system=<step>
+# state=ready` and runs nothing; `denied`, `absent` and `unknown` refuse as
+# `state=<state> reason=<key>`. For `needed` it prints each exact root
+# command, every program named by its path in the system directories,
+# then asks one question, which VGS_TUI_UNATTENDED never answers, and only
+# after a yes starts one sudo session (bin/lib/tui.sh's
+# vgs_tui_sudo_session). Nothing is written and no sudo runs before the
+# answer. It then holds a flock on the record directory, plans again and
+# refuses `plan=changed` if the plan differs from the one shown, writes the
+# step's record, runs the commands, and probes again: `ok system=<step>
+# state=ready`, or a refusal naming the state still read.
+#
+# The record: /var/lib/vgs/system/<step>, root's, one `key=value` per line,
+# written before the step's commands run, so a command that fails partway
+# leaves what it may have changed on record. `uid` is the caller's, and
+# each step records only what it changed: `rule=<sha256>` of the rule it
+# installs; `loaded=1` with the `boot` id for the module it loaded;
+# `enabled=1` for a unit that was not enabled, `started=1` with the `boot`
+# id for one that was not active; `operator=<name>` and `previous=<name>`
+# for the operator it set. `undo` reverts only that: it removes the rule
+# only while its bytes still hash to the record, unloads the module and
+# stops the unit only in the boot that changed them, disables only a unit
+# it enabled, resets the operator only while it still names the recorded
+# user, and refuses a record another uid wrote. With no record it prints
+# `ok system=<step> state=untouched` and runs nothing.
+#
+# A destination the table names is refused when it is a symbolic link, and
+# a rule file at it whose bytes no record of VGS's hashes to is refused as
+# foreign, never overwritten. A directory the commands write into, and a
+# record, must be root's and writable by no one else.
+#
+# On NixOS, detected through the package-manager table when a step reads
+# needed, `needed` reads `nixos`, `apply` prints `ok system=<step>
+# skipped=nixos-config` and the configuration snippet, and `undo` prints
+# `ok system=<step> skipped=nixos-config`; neither writes or runs sudo. A
+# detection that fails reads such a step `unknown`, reason
+# `system-undetected`, and refuses apply and undo as `system=undetected`.
+#
+# Every refusal prints one keyed line first: `vgs-system: refused:
+# <key>=<value>`. It runs as the caller only and refuses root. Every system
+# path derives from `prefix`, empty in production, and every command
+# resolves in the system directories alone. Exit 0 on success, 1 on a
+# refusal, 2 on a bad invocation, 130 when the question is cancelled.
+# docs/architecture/tui-system.md, docs/decisions/D081.
+set -euo pipefail
+
+# Every system path below derives from prefix, empty in production.
+prefix=
+safe_path="$prefix/usr/local/sbin:$prefix/usr/local/bin:$prefix/usr/sbin:$prefix/usr/bin:$prefix/sbin:$prefix/bin:$prefix/run/current-system/sw/bin"
+# Only the NixOS package-manager check reads the caller's PATH.
+caller_path="${PATH-}"
+# A bare command resolves in the system directories alone, so no checkout
+# or user-writable directory supplies sudo, gum, udevadm or tailscale.
+export PATH="$safe_path"
+umask 022
+shopt -s nullglob
+
+self="$(readlink -f -- "${BASH_SOURCE[0]}")"
+bin_dir="${self%/*}"
+lib_dir="$bin_dir/lib"
+rule_source="${bin_dir%/*}/config/system/udev/60-vgs-apple-displays.rules"
+rules_dir="$prefix/etc/udev/rules.d"
+rule_dest="$rules_dir/60-vgs-apple-displays.rules"
+record_dir="$prefix/var/lib/vgs/system"
+sys="$prefix/sys"
+dev="$prefix/dev"
+boot_id_file="$prefix/proc/sys/kernel/random/boot_id"
+
+# The closed table, in the order status prints it.
+steps=(apple-displays i2c-dev service-bluetooth service-tailscaled tailscale-operator)
+
+# Character classes spelled out: a range follows the collation of the
+# caller's locale, which this script keeps for gum.
+digit='[0123456789]'
+hex='[0123456789abcdefABCDEF]'
+lower='[abcdefghijklmnopqrstuvwxyz]'
+name_pattern="^($lower|_)($lower|$digit|[_-])*\\\$?$"
+
+refuse() { # STATUS FIRST_LINE [ENGLISH...]
+  local status="$1"
+  printf 'vgs-system: refused: %s\n' "$2" >&2
+  shift 2
+  (($# == 0)) || printf '%s\n' "$@" >&2
+  exit "$status"
+}
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$self" >&2; }
+bad_invocation() { # FIRST_LINE
+  printf 'vgs-system: refused: %s\n' "$1" >&2
+  usage
+  exit 2
+}
+
+known_step() { # NAME
+  local step
+  for step in "${steps[@]}"; do [[ $step == "$1" ]] && return 0; done
+  return 1
+}
+
+# Sets unit to service STEP's systemd unit.
+unit_of() { # STEP
+  case "$1" in
+    service-bluetooth) unit=bluetooth.service ;;
+    service-tailscaled) unit=tailscaled.service ;;
+    *) refuse 1 "internal=unit-of step=$1" "only a service step names a unit" ;;
+  esac
+}
+
+# Whether PATH is a real directory or regular file root owns that only root can write.
+trusted() { # PATH
+  local info
+  [[ (-d $1 || -f $1) && ! -L $1 ]] || return 1
+  info="$(stat -c '%u %a' -- "$1")" || return 1
+  [[ $info == "0 "* ]] && (((8#${info#* } & 8#022) == 0))
+}
+
+# Sets VAR to the path NAME resolves to in the system directories. The
+# helpers that refuse set a variable rather than print, since a refusal
+# inside a command substitution would end only the subshell.
+program() { # VAR NAME
+  local found
+  found="$(command -v -- "$2")" || refuse 1 "command=missing name=$2" "the step needs $2 in the system directories"
+  [[ $found == /* ]] || refuse 1 "command=not-a-file name=$2"
+  printf -v "$1" '%s' "$found"
+}
+
+# Whether NODE exists and opens for reading and writing: the real access a
+# device grant gives, which a mode or a rule file alone does not prove.
+opens_rw() { # NODE
+  local fd
+  [[ -e $1 ]] || return 1
+  { exec {fd}<>"$1"; } 2>/dev/null || return 1
+  exec {fd}>&-
+}
+
+# Sets boot to this boot's id.
+read_boot_id() {
+  boot="$(<"$boot_id_file")" || refuse 1 "boot-id=unreadable path=$boot_id_file"
+  [[ $boot =~ ^($hex|-){36}$ ]] || refuse 1 "boot-id=malformed path=$boot_id_file"
+}
+
+# Sets sum to FILE's sha256.
+sha256_of() { # FILE
+  sum="$(sha256sum -- "$1")" || refuse 1 "hash=failed path=$1"
+  sum="${sum%% *}"
+  [[ $sum =~ ^$hex{64}$ ]] || refuse 1 "hash=malformed path=$1"
+}
+
+# ---------------------------------------------------------------- probes
+
+set_probe() { probe_state="$1" probe_reason="$2"; }
+
+# The vendor:product of a HID device's uevent, lower case, `none` when it
+# names no HID_ID; 1 when the file cannot be read.
+hid_id() { # UEVENT
+  local line
+  [[ -f $1 && -r $1 ]] || return 1
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line =~ ^HID_ID=$hex{4}:$hex{4}($hex{4}):$hex{4}($hex{4})$ ]]; then
+      printf '%s:%s\n' "${BASH_REMATCH[1],,}" "${BASH_REMATCH[2],,}"
+      return 0
+    fi
+  done <"$1" || return 1
+  echo none
+}
+
+probe_apple_displays() {
+  local entry id node found=0 denied=0
+  for entry in "$sys"/class/hidraw/hidraw*; do
+    id="$(hid_id "$entry/device/uevent")" || { set_probe unknown sysfs-unreadable; return; }
+    case "$id" in 05ac:1114|05ac:9243) ;; *) continue ;; esac
+    found=1
+    node="$dev/${entry##*/}"
+    [[ -e $node ]] || { set_probe unknown node-missing; return; }
+    opens_rw "$node" || denied=1
+  done
+  if ((found == 0)); then set_probe absent no-device
+  elif ((denied == 1)); then set_probe needed hidraw-denied
+  else set_probe ready granted
+  fi
+}
+
+# Whether the i2c adapter at sysfs PATH serves a display: an ancestor's
+# `class` attribute starts 0x03, the match ddcutil's own rule makes.
+display_adapter() { # PATH
+  local dir class
+  dir="$(readlink -f -- "$1")" || return 2
+  while [[ $dir == "$sys/devices/"* ]]; do
+    if [[ -f $dir/class ]]; then
+      class="$(<"$dir/class")" || return 2
+      [[ $class == 0x03* ]] && return 0
+    fi
+    dir="${dir%/*}"
+  done
+  return 1
+}
+
+probe_i2c_dev() {
+  local entry name status found=0 granted=0
+  for entry in "$sys"/bus/i2c/devices/i2c-*; do
+    name="${entry##*/}"
+    [[ $name =~ ^i2c-$digit+$ ]] || continue
+    status=0
+    display_adapter "$entry" || status=$?
+    case "$status" in
+      0) ;;
+      1) continue ;;
+      *) set_probe unknown sysfs-unreadable; return ;;
+    esac
+    if ((found == 0)) && [[ ! -d $sys/class/i2c-dev ]]; then
+      set_probe needed module-not-loaded
+      return
+    fi
+    found=1
+    [[ -e $dev/$name ]] || { set_probe unknown node-missing; return; }
+    opens_rw "$dev/$name" && granted=1
+  done
+  if ((found == 0)); then set_probe absent no-adapter
+  elif ((granted == 1)); then set_probe ready granted
+  else set_probe denied no-uaccess-rule
+  fi
+}
+
+probe_service() { # UNIT
+  local load
+  command -v systemctl >/dev/null || { set_probe unknown systemctl-missing; return; }
+  if systemctl is-active --quiet "$1"; then set_probe ready active; return; fi
+  load="$(systemctl show --property=LoadState --value "$1" 2>/dev/null)" || { set_probe unknown systemctl-failed; return; }
+  case "$load" in
+    loaded) set_probe needed inactive ;;
+    not-found) set_probe absent unit-missing ;;
+    masked) set_probe denied unit-masked ;;
+    *) set_probe unknown load-state ;;
+  esac
+}
+
+# Sets operator to the operator tailscaled names; 1 when it cannot be read.
+read_operator() {
+  operator="$(tailscale get operator 2>/dev/null)" || return 1
+  [[ -z $operator || $operator =~ $name_pattern ]] || return 1
+}
+
+probe_tailscale_operator() {
+  command -v tailscale >/dev/null || { set_probe absent tailscale-missing; return; }
+  read_operator || { set_probe unknown tailscaled-unreachable; return; }
+  if [[ $operator == "$user" ]]; then set_probe ready granted
+  elif [[ -z $operator ]]; then set_probe needed operator-unset
+  else set_probe denied operator-other
+  fi
+}
+
+probe() { # STEP
+  case "$1" in
+    apple-displays) probe_apple_displays ;;
+    i2c-dev) probe_i2c_dev ;;
+    service-bluetooth|service-tailscaled) unit_of "$1"; probe_service "$unit" ;;
+    tailscale-operator) probe_tailscale_operator ;;
+    *) refuse 1 "internal=probe step=$1" "the step table has no probe for it" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- NixOS
+
+# Reads the package-manager table the same way `vgsh pkg detect` does, and
+# sets detected_system to the first line's primary id or none.
+detect_system() {
+  local first status=0
+  system_detect_output="$(env PATH="$caller_path" node "$bin_dir/vgsh-pkg" detect 2>&1)" || status=$?
+  system_detect_status="$status"
+  first="${system_detect_output%%$'\n'*}"
+  detected_system=
+  ((status == 0)) || return 1
+  if [[ $first == primary=none ]]; then detected_system=none; return 0; fi
+  [[ $first =~ ^primary=($lower($lower|$digit|[_-])*)\ binary=.+$ ]] || return 1
+  detected_system="${BASH_REMATCH[1]}"
+}
+
+detect_or_refuse() {
+  detect_system && return
+  refuse 1 "system=undetected exit=$system_detect_status" "${system_detect_output:-the package manager detector printed no first line}"
+}
+
+nixos_snippet() { # STEP
+  case "$1" in
+    apple-displays)
+      printf 'services.udev.extraRules = %s\n' "''"
+      awk '!/^[[:space:]]*(#|$)/ { print "  " $0 }' "$rule_source"
+      printf "'';\n"
+      ;;
+    i2c-dev) printf 'boot.kernelModules = [ "i2c-dev" ];\n' ;;
+    service-bluetooth) printf 'hardware.bluetooth.enable = true;\n' ;;
+    service-tailscaled) printf 'services.tailscale.enable = true;\n' ;;
+    tailscale-operator) printf 'services.tailscale.extraSetFlags = [ "--operator=%s" ];\n' "$user" ;;
+    *) refuse 1 "internal=nixos-snippet step=$1" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- records
+
+# Reads STEP's record into the associative array `record`: returns 1 with
+# it empty when there is none, and refuses a record that is not root's, not
+# of its step's keys or written for another uid.
+read_record() { # STEP
+  local file line key value allowed
+  file="$record_dir/$1"
+  record=()
+  [[ -e $file || -L $file ]] || return 1
+  trusted "$record_dir" || refuse 1 "untrusted=$record_dir"
+  trusted "$file" && [[ -f $file ]] || refuse 1 "record=untrusted path=$file"
+  case "$1" in
+    apple-displays) allowed=' uid rule ' ;;
+    i2c-dev) allowed=' uid loaded boot ' ;;
+    service-*) allowed=' uid enabled started boot ' ;;
+    tailscale-operator) allowed=' uid operator previous ' ;;
+    *) refuse 1 "internal=record step=$1" ;;
+  esac
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line == *=* ]] || refuse 1 "record=malformed path=$file"
+    key="${line%%=*}" value="${line#*=}"
+    [[ $allowed == *" $key "* && -z ${record[$key]+set} ]] || refuse 1 "record=malformed path=$file"
+    case "$key" in
+      uid) [[ $value =~ ^$digit+$ ]] ;;
+      rule) [[ $value =~ ^$hex{64}$ ]] ;;
+      loaded|enabled|started) [[ $value == 1 ]] ;;
+      boot) [[ $value =~ ^($hex|-){36}$ ]] ;;
+      operator) [[ $value =~ $name_pattern ]] ;;
+      previous) [[ -z $value || $value =~ $name_pattern ]] ;;
+    esac || refuse 1 "record=malformed path=$file"
+    record[$key]="$value"
+  done <"$file" || refuse 1 "record=unreadable path=$file"
+  [[ -n ${record[uid]+set} ]] || refuse 1 "record=malformed path=$file"
+  [[ ${record[uid]} == "$uid" ]] || refuse 1 "record=other-uid uid=${record[uid]} path=$file" "another account applied this step; only it can undo it"
+}
+
+# ---------------------------------------------------------------- plans
+
+# A plan is a function that calls `cmd` once per root command. Run with
+# mode=show it appends each command's text to `shown`; with mode=run it
+# runs them through sudo. Both passes resolve the same programs.
+mode=show
+shown=""
+cmd() { # ARGV...
+  local status=0
+  case "$mode" in
+    show) shown+="sudo$(printf ' %q' "$@")"$'\n' ;;
+    run)
+      sudo -- "$@" </dev/null || status=$?
+      ((status == 0)) || refuse 1 "command=failed exit=$status argv=$(printf '%q' "$*")"
+      ;;
+    *) refuse 1 "internal=mode value=$mode" ;;
+  esac
+}
+# The same, with TEXT on the command's stdin and its stdout dropped.
+cmd_in() { # TEXT ARGV...
+  local text="$1" status=0
+  shift
+  case "$mode" in
+    show) shown+="sudo$(printf ' %q' "$@") <<<$(printf '%q' "$text")"$'\n' ;;
+    run)
+      sudo -- "$@" <<<"$text" >/dev/null || status=$?
+      ((status == 0)) || refuse 1 "command=failed exit=$status argv=$(printf '%q' "$*")"
+      ;;
+    *) refuse 1 "internal=mode value=$mode" ;;
+  esac
+}
+
+# Writes STEP's record, TEXT, to a dotted name and renames it into place.
+record_put() { # STEP TEXT
+  local tee mv
+  program tee tee
+  program mv mv
+  cmd_in "$2" "$tee" -- "$record_dir/.$1"
+  cmd "$mv" -fT -- "$record_dir/.$1" "$record_dir/$1"
+}
+record_drop() { # STEP
+  local rm
+  program rm rm
+  cmd "$rm" -f -- "$record_dir/$1"
+}
+
+udev_reload() {
+  local udevadm
+  program udevadm udevadm
+  cmd "$udevadm" control --reload
+  cmd "$udevadm" trigger --subsystem-match=hidraw --action=change --settle
+}
+
+# Sets dest_state for the rule file at the destination: `none`, or `own`
+# when its bytes hash to HASH, VGS's record; refuses any other file.
+rule_dest_state() { # HASH
+  [[ ! -L $rule_dest ]] || refuse 1 "destination=symlink path=$rule_dest"
+  if [[ ! -e $rule_dest ]]; then dest_state=none; return; fi
+  [[ -f $rule_dest ]] || refuse 1 "destination=not-a-file path=$rule_dest"
+  sha256_of "$rule_dest"
+  [[ -n $1 && $sum == "$1" ]] || refuse 1 "destination=foreign path=$rule_dest" "a rule VGS did not write is never overwritten"
+  dest_state=own
+}
+
+apply_apple_displays() {
+  local hash recorded="" install
+  [[ -f $rule_source && ! -L $rule_source ]] || refuse 1 "source=missing path=$rule_source"
+  trusted "$rules_dir" || refuse 1 "untrusted=$rules_dir"
+  sha256_of "$rule_source"
+  hash="$sum"
+  if read_record apple-displays; then recorded="${record[rule]}"; fi
+  # Leaves sum at the destination's hash when the file there is VGS's.
+  rule_dest_state "$recorded"
+  record_put apple-displays "uid=$uid"$'\n'"rule=$hash"
+  if [[ $dest_state == none || $sum != "$hash" ]]; then
+    program install install
+    cmd "$install" -m 0644 -o root -g root -T -- "$rule_source" "$rule_dest"
+  fi
+  udev_reload
+}
+
+apply_i2c_dev() {
+  local modprobe
+  program modprobe modprobe
+  record_put i2c-dev "uid=$uid"$'\n'"loaded=1"$'\n'"boot=$boot"
+  cmd "$modprobe" i2c-dev
+}
+
+apply_service() { # STEP
+  local unit systemctl text="uid=$uid"
+  unit_of "$1"
+  program systemctl systemctl
+  systemctl is-enabled --quiet "$unit" || text+=$'\n'"enabled=1"
+  text+=$'\n'"started=1"$'\n'"boot=$boot"
+  record_put "$1" "$text"
+  cmd "$systemctl" enable --now "$unit"
+}
+
+apply_tailscale_operator() {
+  local tailscale
+  program tailscale tailscale
+  record_put tailscale-operator "uid=$uid"$'\n'"operator=$user"$'\n'"previous="
+  cmd "$tailscale" set "--operator=$user"
+}
+
+undo_apple_displays() {
+  local rm
+  rule_dest_state "${record[rule]}"
+  if [[ $dest_state == own ]]; then
+    program rm rm
+    cmd "$rm" -f -- "$rule_dest"
+    udev_reload
+  fi
+  record_drop apple-displays
+}
+
+undo_i2c_dev() {
+  local modprobe
+  if [[ ${record[boot]} == "$boot" && -d $sys/class/i2c-dev ]]; then
+    program modprobe modprobe
+    cmd "$modprobe" -r i2c-dev
+  fi
+  record_drop i2c-dev
+}
+
+undo_service() { # STEP
+  local unit systemctl
+  unit_of "$1"
+  program systemctl systemctl
+  [[ -z ${record[enabled]+set} ]] || cmd "$systemctl" disable "$unit"
+  [[ -z ${record[started]+set} || ${record[boot]} != "$boot" ]] || cmd "$systemctl" stop "$unit"
+  record_drop "$1"
+}
+
+undo_tailscale_operator() {
+  local tailscale
+  program tailscale tailscale
+  read_operator || refuse 1 "operator=unreadable" "tailscaled did not answer; nothing was changed"
+  [[ $operator != "${record[operator]}" ]] || cmd "$tailscale" set "--operator=${record[previous]}"
+  record_drop tailscale-operator
+}
+
+# Calls VERB's plan for STEP in the current mode.
+plan() { # VERB STEP
+  case "$2" in
+    apple-displays) "$1_apple_displays" ;;
+    i2c-dev) "$1_i2c_dev" ;;
+    service-bluetooth|service-tailscaled) "$1_service" "$2" ;;
+    tailscale-operator) "$1_tailscale_operator" ;;
+    *) refuse 1 "internal=plan step=$2" ;;
+  esac
+}
+
+# Shows VERB's plan for STEP, asks once, then under one sudo session and
+# the record directory's lock plans again and runs it.
+confirm_and_run() { # VERB STEP
+  local verb="$1" step="$2" planned make_dir="" install line answer=0 lock
+  mode=show shown=""
+  plan "$verb" "$step"
+  planned="$shown"
+  if [[ ! -d $record_dir ]]; then
+    program install install
+    make_dir="sudo$(printf ' %q' "$install" -d -m 0755 -o root -g root -- "$record_dir")"$'\n'
+  fi
+  # shellcheck source=lib/tui.sh
+  source "$lib_dir/tui.sh" || refuse 1 "library=missing path=$lib_dir/tui.sh"
+  vgs_tui_step "vgsh system $verb $step runs, as root:"
+  while IFS= read -r line; do printf '  %s\n' "$line"; done <<<"$make_dir${planned%$'\n'}"
+  # A root command is never answered for the user, unattended or not.
+  VGS_TUI_UNATTENDED='' vgs_tui_confirm "Run these commands as root?" || answer=$?
+  case "$answer" in
+    0) ;;
+    1) refuse 1 "declined=$verb step=$step" "No change made." ;;
+    *) exit "$answer" ;;
+  esac
+  vgs_tui_sudo_session start || refuse 1 "sudo=not-authorized"
+  mode=run
+  if [[ -n $make_dir ]]; then cmd "$install" -d -m 0755 -o root -g root -- "$record_dir"; fi
+  trusted "$record_dir" || refuse 1 "untrusted=$record_dir"
+  exec {lock}<"$record_dir" || refuse 1 "lock=open path=$record_dir"
+  flock -w 60 "$lock" || refuse 1 "lock=busy path=$record_dir" "another system step held the lock for 60 s"
+  mode=show shown=""
+  plan "$verb" "$step"
+  [[ $shown == "$planned" ]] || refuse 1 "plan=changed step=$step" "the commands differ from the ones shown; nothing more was run"
+  mode=run
+  plan "$verb" "$step"
+  vgs_tui_sudo_session end
+}
+
+# ---------------------------------------------------------------- verbs
+
+json_status() {
+  local step out="" sep=""
+  for step in "${steps[@]}"; do
+    out+="$sep\"$step\":{\"state\":\"${state_of[$step]}\",\"reason\":\"${reason_of[$step]}\"}"
+    sep=,
+  done
+  printf '{"steps":{%s}}\n' "$out"
+}
+
+# Probes every step into state_of and reason_of, reading needed as nixos
+# on NixOS and as unknown when the system cannot be told.
+probe_all() {
+  local step needed=0
+  declare -gA state_of=() reason_of=()
+  for step in "${steps[@]}"; do
+    probe "$step"
+    state_of[$step]="$probe_state" reason_of[$step]="$probe_reason"
+    [[ $probe_state != needed ]] || needed=1
+  done
+  ((needed == 1)) || return 0
+  if ! detect_system; then
+    for step in "${steps[@]}"; do
+      [[ ${state_of[$step]} != needed ]] || state_of[$step]=unknown reason_of[$step]=system-undetected
+    done
+  elif [[ $detected_system == nix ]]; then
+    for step in "${steps[@]}"; do
+      [[ ${state_of[$step]} != needed ]] || state_of[$step]=nixos
+    done
+  fi
+}
+
+verb_status() { # [--json]
+  local step
+  probe_all
+  if [[ ${1:-} == --json ]]; then json_status; return; fi
+  for step in "${steps[@]}"; do
+    printf 'system=%s state=%s reason=%s\n' "$step" "${state_of[$step]}" "${reason_of[$step]}"
+  done
+}
+
+verb_apply() { # STEP
+  local step="$1"
+  probe "$step"
+  case "$probe_state" in
+    ready) printf 'ok system=%s state=ready\n' "$step"; return ;;
+    needed) ;;
+    denied|absent|unknown) refuse 1 "state=$probe_state reason=$probe_reason step=$step" ;;
+    *) refuse 1 "internal=state value=$probe_state" ;;
+  esac
+  detect_or_refuse
+  if [[ $detected_system == nix ]]; then
+    printf 'ok system=%s skipped=nixos-config\n' "$step"
+    printf 'NixOS builds the system from its configuration, so VGS changes nothing here.\n'
+    printf 'Add this to your system configuration, then rebuild it:\n'
+    nixos_snippet "$step"
+    return
+  fi
+  read_boot_id
+  confirm_and_run apply "$step"
+  probe "$step"
+  [[ $probe_state == ready ]] ||
+    refuse 1 "state=$probe_state reason=$probe_reason step=$step" "the commands ran, but the access is still missing"
+  printf 'ok system=%s state=ready\n' "$step"
+}
+
+verb_undo() { # STEP
+  local step="$1"
+  detect_or_refuse
+  if [[ $detected_system == nix ]]; then
+    printf 'ok system=%s skipped=nixos-config\n' "$step"
+    printf 'VGS changed nothing on NixOS. Remove the lines from your system configuration and rebuild it.\n'
+    return
+  fi
+  if ! read_record "$step"; then
+    printf 'ok system=%s state=untouched\n' "$step"
+    return
+  fi
+  read_boot_id
+  confirm_and_run undo "$step"
+  printf 'ok system=%s state=undone\n' "$step"
+}
+
+main() {
+  local verb="${1:-}"
+  (($# == 0)) || shift
+  case "$verb" in
+    status)
+      (($# == 0)) || [[ $# == 1 && $1 == --json ]] || bad_invocation "argument=$(printf '%q' "$1")"
+      ;;
+    apply|undo)
+      (($# == 1)) || bad_invocation "count=$# verb=$verb"
+      known_step "$1" || bad_invocation "step=$(printf '%q' "$1")"
+      ;;
+    *) bad_invocation "verb=$(printf '%q' "$verb")" ;;
+  esac
+  ((EUID != 0)) || refuse 1 "caller=root" "run vgsh system as your own user; sudo asks for the password"
+  uid="$(id -u)" || refuse 1 "user=unknown"
+  user="$(id -un)" || refuse 1 "user=unknown"
+  [[ $user =~ $name_pattern ]] || refuse 1 "user=unsupported name=$(printf '%q' "$user")"
+  declare -gA record=()
+  "verb_$verb" "$@"
+}
+
+main "$@"

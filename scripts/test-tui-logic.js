@@ -265,8 +265,8 @@ function suite(ctx, check) {
     check("coreTuiTable throws on a row's first defect", thrown({ doctor: doctor, bad: without("argv") }), "tui: core/bad needs key argv");
 
     // The shipped table: the package pickers, the passwordless sudo grant,
-    // the requirement report, the plugin and theme adds, the requirement
-    // notice's install and the plugin manager's rows for one plugin, each
+    // the requirement report, the plugin and theme adds, the system steps,
+    // the requirement notice's install and the plugin manager's rows for one plugin, each
     // command a file of the core's bin/ its owner may run.
     const shipped = {
         "pkg-install": { argv: ["vgsh", "pkg", "install"], title: "Install packages", size: "default", presentation: "full", entry: { label: "Install packages", icon: "package-plus", group: "Packages" } },
@@ -275,6 +275,7 @@ function suite(ctx, check) {
         "doctor": { argv: ["vgsh", "doctor"], title: "Requirements", size: "default", presentation: "full", entry: { label: "Check requirements", icon: "stethoscope", group: "System" } },
         "plugin-add": { argv: ["vgsh", "plugin", "add"], title: "Add a plugin", size: "default", presentation: "full", entry: { label: "Add a plugin", icon: "circle-plus", group: "Plugins" } },
         "theme-add": { argv: ["vgsh", "theme", "add"], title: "Add a theme", size: "default", presentation: "full", entry: { label: "Add a theme", icon: "palette", group: "Themes" } },
+        "system": { argv: ["vgsh", "system"], title: "System setup", size: "default", presentation: "full", entry: null },
         "requirements-install": { argv: ["vgsh", "pkg", "run", "install"], title: "Install requirements", size: "default", presentation: "full", entry: null },
         "plugin-update": { argv: ["vgsh", "plugin", "update"], title: "Update a plugin", size: "wide", presentation: "full", entry: null },
         "plugin-remove": { argv: ["vgsh", "plugin", "remove"], title: "Remove a plugin", size: "default", presentation: "full", entry: null },
