@@ -138,6 +138,42 @@ world(() => {
             assert.equal(w.runner.state.approval.text, "Type this exact text:\n" + exact);
             assert.equal(w.runner.state.approval.physical, true);
         }],
+        ["approval-size", implementation => {
+            const w = make(implementation, Session, { profile: "trusted" });
+            w.target({ kind: "terminal", id: "terminal" });
+            const label = "Type this exact text:\n";
+            const textAtBound = "x".repeat(16384 - Buffer.byteLength(label));
+            assert.equal(w.call("input.text", { text: textAtBound }).kind, "held");
+            assert.equal(Buffer.byteLength(w.runner.state.approval.text), 16384);
+            w.dispatch({ type: "cancel" }); w.newTurn();
+            assert.equal(w.call("input.text", { text: textAtBound + "x" }).reason, "approval-size");
+            assert.equal(w.starts.length, 0);
+        }],
+        ["result-size", implementation => {
+            for (const [name, content, clipped] of [
+                ["at-bound", "x".repeat(16384), false],
+                ["past-bound", "x".repeat(16385), true],
+                ["unicode-past-bound", "語".repeat(5462), true]
+            ]) {
+                const w = make(implementation);
+                w.call("windows.list");
+                w.answers[0]({ outcome: "completed", content });
+                const delivered = w.results.at(-1).results[0].item.content;
+                assert.ok(Buffer.byteLength(delivered) <= 16384, name);
+                assert.equal(delivered.endsWith("\n[result clipped]"), clipped, name);
+                assert.equal(delivered.includes("\ufffd"), false, "valid text stays valid at a byte cut");
+                if (!clipped) assert.equal(delivered, content, "the accepted boundary stays unchanged");
+            }
+        }],
+        ["unavailable-executor", implementation => {
+            const w = make(implementation);
+            let answer;
+            assert.doesNotThrow(() => { answer = w.call("media.play"); }, "an unavailable tool returns a refusal");
+            assert.equal(answer.reason, "executor-unavailable");
+            assert.equal(w.refusal().reason, "executor-unavailable");
+            assert.equal(w.rows().at(-1).decision, "refuse");
+            assert.equal(w.starts.length, 0);
+        }],
         ...[
             ["synthetic-id", { id: "11111111-1111-4111-8111-111111111111" }],
             ["forged-digest", { digest: "0".repeat(64) }],
@@ -388,6 +424,10 @@ world(() => {
             ["target-rejudge", "fresh.scope === prior.scope", "(true || fresh.scope === prior.scope)", "target-rejudge"],
             ["digest", 'value.call.id + "\\n" + canonical(value.call.args)', 'value.call.id + "\\n" + "{}"', "immutable-digest"],
             ["sentence", 'sentence(value.call, decision.scope)', '"model text"', "typed-sentence"],
+            ["approval-size", "Buffer.byteLength(text) > RESULT_BYTES", "false", "approval-size"],
+            ["result-size", "bytes.length <= RESULT_BYTES", "true", "result-size"],
+            ["unavailable-executor", 'if (value.executor === null) return refuse(value, "executor-unavailable");',
+                'if (false) return refuse(value, "executor-unavailable");', "unavailable-executor"],
             ["command-offer", "refined.command === null || executor.commands.includes(refined.command)",
                 "true", "offer"]
         ];
