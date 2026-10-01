@@ -22,8 +22,6 @@ The [wire brain rows](jarvis-brain.md#evidence) select both drivers on shared hi
 
 The [Jarvis account suites](jarvis-accounts.md#evidence) select from the account judge, provider declaration, secret owner, terminal and private fixtures. Their CLI rows use the shared isolated world. The nested Jarvis row reads account status and core TUI completion.
 
-The [bar widget rows](jarvis-widget.md#evidence) select the pure view row in `logic` on the view, the Session judge and the icon set. Both QML unit rows also select on the widget, its view and the Session judge.
-
 The standalone GPU instrument and passive-layer presentation checks are in [validation-shaders.md](validation-shaders.md).
 
 The [local setup contract](jarvis-setup.md#evidence) adds installer controls in `tools` and a nested Settings/TUI row. The installer doubles run inside J09 and never download or install a real runtime.
