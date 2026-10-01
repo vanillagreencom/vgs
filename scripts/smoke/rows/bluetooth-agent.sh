@@ -12,7 +12,9 @@
 # `default-agent`; the confirm prompt the transcript prints shows as one
 # request with its code; answering it true writes `yes`; release writes
 # `agent off`, closes stdin, and the lending record reads no child and no
-# lease. Over the second: a copy of the fixture under another id, which
+# lease. The core writes each of its own commands after 17 spaces, so no
+# held prompt accepts one (docs/architecture/bluetooth-agent.md), and the
+# stand-in reads them so. Over the second: a copy of the fixture under another id, which
 # names the capability, is not built while acme.pairing holds it and is
 # built once acme.pairing is disabled; disabling acme.pairing with its lease
 # held ends the child after `agent off` and EOF and releases its hold. The
@@ -49,12 +51,12 @@ off='{"leases": [], "refusal": "", "requests": 0, "running": false, "state": "of
 # drawn again after it, the agent's prompt in bold with no newline.
 device_transcript '[
   {"out": "Waiting to connect to bluetoothd...\r[bluetoothctl]> \r\u001b[KAgent registered\n[bluetoothctl]> "},
-  {"in": "default-agent"},
-  {"out": "default-agent\n[bluetoothctl]> \r\u001b[KDefault agent request successful\n[bluetoothctl]> \r\u001b[KRequest confirmation\n[bluetoothctl]> \r\u001b[1;39m\u001b[1;39m[agent] Confirm passkey 004821 (yes/no): \u001b[0m\u001b[0m"},
+  {"in": "                 default-agent"},
+  {"out": "                 default-agent\n[bluetoothctl]> \r\u001b[KDefault agent request successful\n[bluetoothctl]> \r\u001b[KRequest confirmation\n[bluetoothctl]> \r\u001b[1;39m\u001b[1;39m[agent] Confirm passkey 004821 (yes/no): \u001b[0m\u001b[0m"},
   {"in": "yes"},
   {"out": "yes\n[bluetoothctl]> "},
-  {"in": "agent off"},
-  {"out": "agent off\n[bluetoothctl]> \r\u001b[KAgent unregistered\n[bluetoothctl]> "}
+  {"in": "                 agent off"},
+  {"out": "                 agent off\n[bluetoothctl]> \r\u001b[KAgent unregistered\n[bluetoothctl]> "}
 ]'
 expect "rescan after adding the pairing fixtures answers ok" ok ipc shell rescanPlugins
 expect_poll "the pairing fixture is discovered" True plugin_known acme.pairing
@@ -71,16 +73,16 @@ expect "the child is bluetoothctl with the agent's capability" '[["--agent", "Ke
 expect_poll "the planted confirm prompt is one request with its code" '[{"code": "004821", "entered": 0, "id": 1, "kind": "confirm", "service": ""}]' pairing_requests
 expect "answering the request true answers ok" ok pairing answer '1|true'
 expect_poll "the request is answered" '[]' pairing_requests
-expect_poll "the stand-in read default-agent, then yes" '["default-agent", "yes"]' agent_stdin_since "$before"
+expect_poll "the stand-in read default-agent, then yes" '["                 default-agent", "yes"]' agent_stdin_since "$before"
 expect "releasing the lease answers ok" ok pairing release
-expect_poll "release unregisters the agent and closes the child's stdin" '["default-agent", "yes", "agent off", "EOF"]' agent_stdin_since "$before"
+expect_poll "release unregisters the agent and closes the child's stdin" '["                 default-agent", "yes", "                 agent off", "EOF"]' agent_stdin_since "$before"
 expect_poll "the lending record reads no child and no lease" "$off" agent_lent
 
 device_transcript '[
   {"out": "Agent registered\n"},
-  {"in": "default-agent"},
+  {"in": "                 default-agent"},
   {"out": "Default agent request successful\n"},
-  {"in": "agent off"},
+  {"in": "                 agent off"},
   {"out": "Agent unregistered\n"}
 ]'
 before="$(agent_count)" || { fail "bluetooth agent: the stand-in's calls are unreadable"; return 0; }
@@ -91,7 +93,7 @@ expect "enabling the rival is allowed" ok ipc shell setPluginEnabled acme.pairin
 expect_log "the rival is refused while the fixture holds the agent" 1 'plugins: acme\.pairing-rival refused: capability=bluetoothAgent held-by=acme\.pairing'
 expect "the rival has no instance" False record_exists acme.pairing-rival
 expect "disabling the fixture with its lease held is allowed" ok ipc shell setPluginEnabled acme.pairing false
-expect_poll "disable ends the child after agent off and EOF" '["default-agent", "agent off", "EOF"]' agent_stdin_since "$before"
+expect_poll "disable ends the child after agent off and EOF" '["                 default-agent", "                 agent off", "EOF"]' agent_stdin_since "$before"
 expect_poll "the lending record reads no child and no lease after disable" "$off" agent_lent
 expect_poll "the rival builds once the fixture let go" True record_exists acme.pairing-rival
 expect_poll "the rival holds the agent" '["acme.pairing-rival"]' agent_holders
@@ -101,7 +103,7 @@ expect_poll "no plugin holds the agent" null agent_holders
 # Control: a refused default role leaves the same lease refused.
 device_transcript '[
   {"out": "Agent registered\n"},
-  {"in": "default-agent"},
+  {"in": "                 default-agent"},
   {"out": "Failed to request default agent: org.bluez.Error.Failed\n"}
 ]'
 refusal="refused: agent=busy reason=default-failed error=org.bluez.Error.Failed"
