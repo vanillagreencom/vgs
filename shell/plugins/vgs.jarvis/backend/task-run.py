@@ -8,9 +8,11 @@ with the group's identity, and only then lets it exec. It records `exited`
 when the leader ends, as 128+N for a death by signal N. It never signals the
 group; stopping a task belongs to TaskRunner.js.
 
-Exit: the agent's code; 2 arguments; 65 a refused spec; 74 an I/O failure or
-a record that could not be written (a held child is killed first and never
-execs).
+Exit: the agent's code below 128, and 0 for a death by signal, which a stop,
+a Ctrl-C or a closed terminal causes: the record keeps 128+N, and the
+floating TUI closes without a failure prompt that would hold it busy. 2
+arguments; 65 a refused spec; 74 an I/O failure or a record that could not
+be written (a held child is killed first and never execs).
 Stderr carries one keyed `jarvis: task-run=` line per failure.
 See docs/architecture/jarvis-task-control.md § Launch.
 """
@@ -194,7 +196,7 @@ def main(argv):
     if failed:
         print("jarvis: task-run=" + failed + " id=" + spec["id"], file=sys.stderr)
     record(spec, "exited", {"code": code})
-    return code
+    return 0 if code >= 128 else code
 
 
 if __name__ == "__main__":

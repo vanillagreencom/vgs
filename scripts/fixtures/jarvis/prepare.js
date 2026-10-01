@@ -6,9 +6,10 @@ const path = require("node:path");
 const cp = require("node:child_process");
 const { standins } = require("./audio.js");
 
-// Synthetic Tasks.js v1 records from the Jarvis plan, 2026-09-30.
-function seedTaskEvents(folder, count) {
-    for (let seq = 1; seq <= count; seq++)
+// Synthetic Tasks.js v1 records from the Jarvis plan, 2026-09-30: working
+// events FROM through COUNT, after any events the folder already holds.
+function seedTaskEvents(folder, count, from = 1) {
+    for (let seq = from; seq <= count; seq++)
         fs.writeFileSync(path.join(folder, String(seq).padStart(4, "0") + ".json"),
             JSON.stringify({ v: 1, seq, at: seq, kind: "working", data: {} }) + "\n", { mode: 0o600 });
 }
@@ -136,13 +137,14 @@ function audioFaultThenDevices(file) {
 
 // The smoke's task row: the daemon sends one task TUI request per gate file
 // request-N under GATES, with spec path GATES/spec-N.json, and logs each
-// reply and each task TUI state the service forwards. Nothing launches a task.
+// reply, each task TUI state and each task-stop intent the service sends.
+// Nothing launches a task.
 function taskRequests(file, gates) {
     const source = fs.readFileSync(file, "utf8");
     const observe = "if (first) void tasks.observe();";
     const forward = "tasks.tuiState(message.running);";
-    assert.equal(source.split(observe).length - 1, 1);
-    assert.equal(source.split(forward).length - 1, 1);
+    const stop = "const task = message.task;";
+    for (const needle of [observe, forward, stop]) assert.equal(source.split(needle).length - 1, 1);
     const fixture = `
                 if (first) {
                     const fixtureFs = require("node:fs");
@@ -160,7 +162,10 @@ function taskRequests(file, gates) {
     const log = `require("node:fs").appendFileSync(path.join(${JSON.stringify(gates)}, "tui-states.jsonl"),
                         JSON.stringify(message.running) + "\\n");
                     `;
-    const changed = source.replace(observe, observe + fixture).replace(forward, log + forward);
+    const stopLog = `
+                    require("node:fs").appendFileSync(path.join(${JSON.stringify(gates)}, "task-stops.jsonl"),
+                        JSON.stringify(task) + "\\n");`;
+    const changed = source.replace(observe, observe + fixture).replace(forward, log + forward).replace(stop, stop + stopLog);
     assert.notEqual(changed, source);
     fs.writeFileSync(file, changed);
 }

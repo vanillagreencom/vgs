@@ -5,7 +5,8 @@ No vendor program, hook or recording. argv: MODE MARKER BRIEF.
 children, ignore-int, ignore-term: fork two children into the leader's own
 process group, write MARKER, then wait; the named signals are ignored by the
 leader and its children. exit-N exits N; self-term dies by SIGTERM;
-report-ok runs the brief's success command, then exits 0.
+report-ok runs the brief's success command, then exits 0. orphan forks the
+two children, writes MARKER and exits 0, leaving the children in its group.
 """
 import json
 import os
@@ -38,7 +39,7 @@ if mode == "report-ok":
     subprocess.run(["sh", "-c", command], check=True)
     ready([])
     sys.exit(0)
-ignored = {"children": [], "ignore-int": [signal.SIGINT],
+ignored = {"children": [], "orphan": [], "ignore-int": [signal.SIGINT],
            "ignore-term": [signal.SIGINT, signal.SIGTERM]}[mode]
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 for number in ignored:
@@ -51,5 +52,7 @@ for _ in range(2):
             time.sleep(60)
     children.append(pid)
 ready(children)
+if mode == "orphan":
+    sys.exit(0)
 while True:
     time.sleep(60)

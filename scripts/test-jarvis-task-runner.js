@@ -10,6 +10,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const cp = require("node:child_process");
 const { once } = require("node:events");
+const { seedTaskEvents } = require("./fixtures/jarvis/prepare.js");
 const tree = path.resolve(__dirname, "..");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -26,6 +27,7 @@ async function inside() {
     const cwd = path.join(root, "home");
     const groups = new Set();
     const runners = [];
+    const launchers = [];
     let cases = 0, controls = 0, marker = 0;
 
     // Real processes cross exec, a pipe and the producer's lock. Bound each wait.
@@ -71,13 +73,16 @@ async function inside() {
         const display = { run(args) {
             seen.display.push(args);
             if (options.answer !== undefined) return Promise.resolve(options.answer);
+            if (options.display !== undefined) return options.display(runner, args);
             // A terminal runs its command in a session of its own.
             const child = cp.spawn("python3", [path.join(backend, "task-run.py"), "--spec", args[0]],
                 { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-            const entry = { child, stderr: "", closed: once(child, "close") };
+            // closed waits for the pipes too, which a surviving agent holds open.
+            const entry = { child, stderr: "", closed: once(child, "close"), exited: once(child, "exit") };
             child.stderr.on("data", chunk => { entry.stderr += chunk; });
             child.on("close", () => runner.tuiState(false));
             seen.launchers.push(entry);
+            launchers.push(child);
             runner.tuiState(true);
             return Promise.resolve("ok");
         } };
@@ -91,11 +96,12 @@ async function inside() {
             clock: { now: () => Date.now() + (options.offset ?? 0), set: setTimeout, clear: clearTimeout },
             processes: { ...Runner.PROCESSES, kill(target, signal) {
                 seen.kills.push([target, signal]);
-                if (signal === "SIGKILL" && options.onKill) options.onKill();
+                if (options.onKill) options.onKill(target, signal);
                 return Runner.PROCESSES.kill(target, signal);
             } },
             spawn: (file, args, { env: childEnv, input }) => new Promise((resolve, reject) => {
                 seen.writes.push(args.slice(3));
+                if (options.beforeWrite) options.beforeWrite(args.slice(3));
                 if (args[4] === "stopped") seen.atStopped.push(groupState(readTask(args[3], args[2]).identity.pgid));
                 const child = cp.spawn(file, args, { env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
                 let stdout = "", stderr = "";
@@ -151,6 +157,9 @@ async function inside() {
             return true;
         });
         for (const runner of runners) runner.close();
+        for (const child of launchers) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        // A launcher ended here may not have consumed its spec yet.
+        fs.rmSync(path.join(directories.runtime, "tasks"), { recursive: true, force: true });
         // A mutant can leave a launched task this suite never read: end every
         // recorded live group by its recorded pgid.
         for (const task of new Tasks.Store(directories.state).list())
@@ -180,14 +189,41 @@ async function inside() {
     }
     await oneFloating(current);
     await control("floating-one-at-a-time", "TaskRunner.js",
-        'if (kind === "floating" && (requesting || tui !== "idle")) return { reason: "floating-display-busy" };', "", oneFloating);
+        'if (kind === "floating" && tui !== "idle") return { reason: "floating-display-busy" };', "", oneFloating);
+
+    // Reports apply in message order: a run that ended before the reply's
+    // continuation ran leaves the display idle, not busy.
+    async function replyOrder(modules) {
+        const w = world(modules, { display: (runner, args) => {
+            runner.tuiState(true);
+            runner.tuiState(false);
+            return Promise.resolve("ok");
+        } });
+        try {
+            const first = await w.start({ agent: "fixture" });
+            assert.equal(first.outcome, "completed", first.content);
+            const second = await w.start({ agent: "fixture" });
+            assert.equal(second.outcome, "completed", "a reply cannot overwrite a later idle report: " + second.content);
+        } finally {
+            // This display runs no launcher, so no spec was consumed.
+            for (const [spec] of w.seen.display) fs.rmSync(spec, { force: true });
+        }
+        w.runner.close();
+        cases++;
+    }
+    await replyOrder(current);
+    await control("reply-order", "TaskRunner.js", "if (reports === before) tui = \"busy\";", "tui = \"busy\";", replyOrder);
 
     // Acceptance 1: stopped is written only after the group reads empty. The
     // launcher is held stopped, so the killed leader stays an unreaped zombie
     // in its group until the launcher resumes.
     async function stopAfterEmpty(modules, resume = true) {
-        let launcher = null;
-        const w = world(modules, { onKill: () => { if (resume) setTimeout(() => launcher.kill("SIGCONT"), 400); } });
+        let launcher = null, killed = false, resumed = false;
+        // Resume on the first empty read after SIGKILL, not after a delay.
+        const w = world(modules, { onKill: (target, signal) => {
+            if (signal === "SIGKILL") killed = true;
+            else if (signal === 0 && killed && resume && !resumed) { resumed = true; launcher.kill("SIGCONT"); }
+        } });
         const { task, agent } = await w.started(await w.start({ agent: "fixture" }, "ignore-term"));
         launcher = w.seen.launchers[0].child;
         assert.equal(agent.children.length, 2);
@@ -269,6 +305,124 @@ async function inside() {
         cases++;
     }
 
+    // A gone process whose stat fields identify a group that no longer exists.
+    async function goneIdentity() {
+        const gone = cp.spawn("true", [], { detached: true, stdio: "ignore" });
+        const stat = fs.readFileSync("/proc/" + gone.pid + "/stat", "utf8").split(") ")[1].split(" ");
+        await once(gone, "exit");
+        return { pid: gone.pid, pgid: Number(stat[2]), sid: Number(stat[3]), startTime: stat[19] };
+    }
+
+    // lost is compare-and-set: when the launcher's exit lands between the
+    // controller's read and its lost, the producer answers stale and the
+    // controller reads the task again instead of failing.
+    async function staleLost(modules) {
+        const ids = ["race-observe-" + (++marker), "race-stop-" + marker];
+        for (const id of ids) {
+            producer("create", id, { goal: "Fixture goal", cwd, agent: "fixture", account: "" });
+            producer("started", id, await goneIdentity());
+        }
+        const landed = new Set();
+        const w = world(modules, { beforeWrite: ([id, kind]) => {
+            if (kind === "lost" && ids.includes(id) && !landed.has(id)) {
+                landed.add(id);
+                producer("exited", id, { code: 0 });
+            }
+        } });
+        assert.equal(await w.runner.stop(ids[1]), "not-alive", "a stop that met the exit reads the task again");
+        await w.runner.observe();
+        for (const id of ids) assert.deepEqual(readTask(id).process, { kind: "exited", code: 0 }, id);
+        assert.deepEqual(w.seen.failures, []);
+        w.runner.close();
+        cases += 2;
+    }
+    await staleLost(current);
+    await control("stale-lost", "TaskRunner.js", 'if (answer !== null && answer.reason === "stale" && kind === "lost") return "stale";',
+        "void 0;", staleLost);
+
+    // The member rule: with the leader gone, the group's members in the
+    // recorded session that started after it are the task's, and a stop ends them.
+    async function members(modules) {
+        const w = world(modules);
+        const { task, agent } = await w.started(await w.start({ agent: "fixture" }));
+        const launcher = w.seen.launchers[0];
+        launcher.child.kill("SIGKILL");
+        await launcher.exited;
+        process.kill(agent.leader, "SIGKILL");
+        await until("leader reaped", () => !fs.existsSync("/proc/" + agent.leader));
+        assert.equal(readTask(task.id).process.kind, "alive");
+        assert.equal(await w.runner.stop(task.id), "stopped", "members of a gone leader are the task's");
+        assert.deepEqual(w.seen.kills.filter(([, signal]) => signal !== 0), [[-task.identity.pgid, "SIGINT"]]);
+        for (const pid of agent.children) await until("member ended " + pid, () => !fs.existsSync("/proc/" + pid));
+        w.runner.close();
+        cases++;
+    }
+    await members(current);
+    await control("member-rule", "TaskRunner.js", '>= BigInt(startTime))\n            ? "match" : "mismatch";',
+        '>= BigInt(startTime))\n            ? "mismatch" : "mismatch";', members);
+    async function memberSession(modules) {
+        const bystander = cp.spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+        const exited = once(bystander, "exit");
+        try {
+            const stat = fs.readFileSync("/proc/" + bystander.pid + "/stat", "utf8").split(") ")[1].split(" ");
+            const id = "other-session-" + (++marker);
+            producer("create", id, { goal: "Fixture goal", cwd, agent: "fixture", account: "" });
+            producer("started", id, { ...await goneIdentity(), pgid: bystander.pid, sid: Number(stat[3]) + 1, startTime: "1" });
+            const w = world(modules);
+            assert.equal(await w.runner.stop(id), "identity-mismatch", "a member of another session is not the task's");
+            assert.deepEqual(w.seen.kills, []);
+            assert.equal(groupState(bystander.pid), "present");
+            assert.equal(readTask(id).process.kind, "lost");
+            w.runner.close();
+            cases++;
+        } finally { bystander.kill("SIGKILL"); await exited; }
+    }
+    await memberSession(current);
+    await control("member-session", "TaskRunner.js", "members.every(member => member.sid === sid && ",
+        "members.every(member => ", memberSession);
+
+    // A leader's exit leaves its background children in the group: a stop
+    // still admits the exited task and ends them.
+    async function orphans(modules) {
+        const w = world(modules);
+        const answer = await w.start({ agent: "fixture" }, "orphan");
+        const [status] = await w.seen.launchers[0].exited;
+        assert.equal(status, 0);
+        const task = readTask(answer.result.task);
+        const agent = JSON.parse(fs.readFileSync(answer.marker, "utf8"));
+        groups.add(task.identity.pgid);
+        assert.deepEqual(task.process, { kind: "exited", code: 0 });
+        assert.equal(groupState(task.identity.pgid), "present");
+        assert.equal(await w.runner.stop(task.id), "stopped", "an exited task's surviving members stop");
+        assert.equal(readTask(task.id).state, "stopped");
+        for (const pid of agent.children) await until("orphan ended " + pid, () => !fs.existsSync("/proc/" + pid));
+        assert.equal(await w.runner.stop(task.id), "not-alive");
+        w.runner.close();
+        cases++;
+    }
+    await orphans(current);
+    await control("exited-members", "TaskRunner.js",
+        'if (!alive && (task.process.kind !== "exited" || task.identity === null)) return "not-alive";',
+        'if (!alive) return "not-alive";', orphans);
+
+    // Past the event ceiling a stop and the launcher's exit go to the noisy
+    // marker; both count as recorded, and neither fails the daemon.
+    async function capped(modules) {
+        const w = world(modules);
+        const { task } = await w.started(await w.start({ agent: "fixture" }));
+        seedTaskEvents(path.join(directories.state, "tasks", task.id, "events"), 2000, 2);
+        assert.equal(await w.runner.stop(task.id), "stopped", "a stop past the event ceiling is recorded");
+        const [status] = await w.seen.launchers[0].closed;
+        assert.equal(status, 0);
+        const record = readTask(task.id);
+        assert.deepEqual([record.process.kind, record.noisy, record.terminal.kind], ["stopped", true, "stopped"]);
+        assert.deepEqual(w.seen.failures, []);
+        w.runner.close();
+        cases++;
+    }
+    await capped(current);
+    await control("capped-stop", "TaskRunner.js", 'answer.reason === "event-count" && Tasks.terminalKind(kind)', "false", capped);
+
     // Observation: lost where due, a stale spec removed, the live count published.
     async function observation(modules) {
         const bystander = cp.spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
@@ -306,7 +460,7 @@ async function inside() {
         assert.deepEqual(w.seen.counts, [1], "a starting task inside the launch window is live");
         assert.equal(readTask("young", state).state, "starting");
         // A task TUI's end is observed at once.
-        producer("lost", "young", {}, state);
+        producer("lost", "young", { seq: 0 }, state);
         w.runner.tuiState(true);
         w.runner.tuiState(false);
         await until("count after the TUI ended", () => w.seen.counts.length === 2);
@@ -355,7 +509,9 @@ async function inside() {
         assert.equal(added.length, record ? 1 : 0, reason);
         if (record) assert.equal(readTask(added[0]).state, "lost");
         assert.deepEqual(fs.existsSync(path.join(directories.runtime, "tasks"))
-            ? fs.readdirSync(path.join(directories.runtime, "tasks")) : [], [], "no spec is left behind");
+            ? fs.readdirSync(path.join(directories.runtime, "tasks")) : [], [], "no spec is left behind: " + reason + " "
+            + (fs.existsSync(path.join(directories.runtime, "tasks")) ? fs.readdirSync(path.join(directories.runtime, "tasks"))
+                .map(name => fs.readFileSync(path.join(directories.runtime, "tasks", name), "utf8").slice(0, 400)).join(" | ") : ""));
         w.runner.close();
         cases++;
     }
@@ -426,14 +582,16 @@ async function inside() {
     }
     async function launcher(modules) {
         const file = path.join(modules.copy ?? backend, "task-run.py");
-        const exits = [["exit-3", 3], ["self-term", 143]];
-        for (const [mode, code] of exits) {
+        // A death by signal is recorded as 128+N; the launcher exits 0 so the
+        // floating window closes without a failure prompt.
+        const exits = [["exit-3", 3, 3], ["self-term", 143, 0]];
+        for (const [mode, code, status] of exits) {
             const id = "run-" + mode + "-" + (++marker);
             producer("create", id, { goal: "Fixture goal", cwd, agent: "fixture", account: "" });
             const result = await taskRun(file, id, undefined, mode);
-            assert.equal(result.status, code, result.stderr);
+            assert.equal(result.status, status, "launcher status after " + mode + ": " + result.stderr);
             assert.deepEqual(readTask(id).events.map(event => event.kind), ["started", "exited"]);
-            assert.deepEqual(readTask(id).events[1].data, { code });
+            assert.deepEqual(readTask(id).events[1].data, { code }, "recorded code after " + mode);
             assert.equal(fs.existsSync(result.spec), false, "the spec is consumed");
             const again = await launch(file, result.spec);
             assert.equal(again.status, 65);
@@ -447,11 +605,21 @@ async function inside() {
         assert.match(broken.stderr, /^jarvis: task-run=record kind=started status=1 /);
         assert.equal(fs.existsSync(path.join(marks, held)), false, "a held child never execs without started");
         assert.deepEqual(readTask(held).events, []);
-        cases += exits.length + 1;
+        // Past the event ceiling the exit goes to the noisy marker and counts.
+        const full = "run-capped-" + (++marker);
+        producer("create", full, { goal: "Fixture goal", cwd, agent: "fixture", account: "" });
+        seedTaskEvents(path.join(directories.state, "tasks", full, "events"), 1999);
+        const ceiling = await taskRun(file, full, undefined, "exit-3");
+        assert.equal(ceiling.status, 3, ceiling.stderr);
+        assert.deepEqual([readTask(full).process, readTask(full).noisy], [{ kind: "exited", code: 3 }, true]);
+        cases += exits.length + 2;
     }
     await launcher(current);
     await control("launcher-one-shot", "task-run.py", "    os.unlink(path)\n", "    pass\n", launcher);
     await control("launcher-signal-code", "task-run.py", "        code = 128 - code\n", "        code = -code\n", launcher);
+    await control("launcher-signal-status", "task-run.py", "    return 0 if code >= 128 else code\n", "    return code\n", launcher);
+    await control("launcher-capped-exit", "task-run.py", 'if result.returncode == 75 and kind == "exited":',
+        "if False:", launcher);
     await control("launcher-held", "task-run.py", "        os.kill(pid, signal.SIGKILL)\n",
         "        os.write(release_write, b\"x\")\n", launcher);
     producer("create", "run-exec", { goal: "Fixture goal", cwd, agent: "fixture", account: "" });

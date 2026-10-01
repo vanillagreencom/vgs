@@ -107,8 +107,9 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
     const base = Profiles.base(environment);
     const stopping = new Set();
     // The `task` TUI as the service last reported it; unknown until it does.
+    // reports counts those reports, so a reply never overrides a later one.
     let tui = "unknown";
-    let requesting = false;
+    let reports = 0;
     let observing = null;
     let again = false;
     let timer = null;
@@ -117,15 +118,17 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
 
     const sleep = ms => new Promise(resolve => clock.set(resolve, ms));
 
+    // "recorded", or "stale" for a lost observation the record has passed.
     async function write(task, kind, data = {}) {
         const result = await spawn(process.execPath, [task.engine, "--state", state, task.id, kind],
             { env: { PATH: environment.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" }, input: JSON.stringify(data) });
-        if (result.signal === null && result.code === 0) return;
-        // The noisy marker retains a terminal observation past the event ceiling.
-        if (result.signal === null && result.code === 75 && Tasks.terminalKind(kind)) {
+        if (result.signal === null && result.code === 0) return "recorded";
+        if (result.signal === null && result.code === 75) {
             let answer = null;
             try { answer = JSON.parse(result.stdout); } catch { answer = null; }
-            if (answer !== null && answer.reason === "event-count") return;
+            // The noisy marker retains a terminal observation past the event ceiling.
+            if (answer !== null && answer.reason === "event-count" && Tasks.terminalKind(kind)) return "recorded";
+            if (answer !== null && answer.reason === "stale" && kind === "lost") return "stale";
         }
         fail("record kind=" + kind + " id=" + task.id + " status=" + result.code + " signal=" + result.signal
             + " cause=" + (result.stderr.trim().split("\n")[0] || "none"));
@@ -157,10 +160,18 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
         }
     }
 
-    async function stopTask(id) {
-        if (!fs.existsSync(path.join(store.root, id))) return "task-unknown";
-        const task = store.read(id);
-        if (task.process.kind !== "alive") return "not-alive";
+    // lost carries the event count this read saw; the producer refuses it as
+    // stale once a later event, an exit or a stop landed.
+    const lose = task => write(task, "lost", { seq: task.events.length });
+
+    async function stopOnce(id) {
+        const task = store.find(id);
+        if (task === null) return "task-unknown";
+        // A leader's exit can leave members of its group running. They are
+        // still the task's under the identity member rule, and a stop ends them.
+        const alive = task.process.kind === "alive";
+        if (!alive && (task.process.kind !== "exited" || task.identity === null)) return "not-alive";
+        const ended = async answer => !alive ? answer : await lose(task) === "stale" ? "stale" : answer;
         const row = Object.hasOwn(profiles, task.agent) ? profiles[task.agent] : null;
         const steps = [[row === null ? "SIGINT" : row.interrupt.signal, row === null ? ESCALATE_MS : row.interruptMs],
             ["SIGTERM", ESCALATE_MS], ["SIGKILL", ESCALATE_MS]];
@@ -168,21 +179,31 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
         for (const [signal, window] of steps) {
             const seen = await identity(task);
             if (closed) return "daemon-ending";
-            if (seen === "mismatch") { await write(task, "lost"); return "identity-mismatch"; }
+            if (seen === "mismatch") return ended("identity-mismatch");
             if (seen === "empty") break;
             const sent = processes.kill(-task.identity.pgid, signal);
-            if (sent === "denied") { await write(task, "lost"); return "identity-mismatch"; }
+            if (sent === "denied") return ended("identity-mismatch");
             if (sent === "empty") break;
             signalled = true;
             const probe = await settle(task.identity.pgid, window);
-            if (probe === "denied") { await write(task, "lost"); return "identity-mismatch"; }
+            if (probe === "denied") return ended("identity-mismatch");
             if (probe === "empty") break;
             if (closed) return "daemon-ending";
             if (signal === "SIGKILL") return "stop-incomplete";
         }
         // The group read empty. Before any signal that is an ended task, not a stop.
-        await write(task, signalled ? "stopped" : "lost");
-        return signalled ? "stopped" : "already-ended";
+        if (!signalled) return alive ? ended("already-ended") : "not-alive";
+        await write(task, "stopped");
+        return "stopped";
+    }
+
+    // A stale lost means the record moved under this stop: read it again.
+    async function stopTask(id) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const answer = await stopOnce(id);
+            if (answer !== "stale") return answer;
+        }
+        return "task-changed";
     }
 
     /** Stop one task: answers "stopped" or a keyed refusal; one stop per task. */
@@ -214,10 +235,10 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
             if (task.process.kind === "starting") {
                 if (clock.now() - task.createdAt < LAUNCH_WINDOW_MS) { live++; continue; }
                 await removeSpec(task.id);
-                await write(task, "lost");
+                if (await lose(task) === "stale") again = true;
             } else if (task.process.kind === "alive") {
                 if (stopping.has(task.id) || await identity(task) === "match") live++;
-                else await write(task, "lost");
+                else if (await lose(task) === "stale") again = true;
             }
         }
         if (closed) return;
@@ -240,6 +261,7 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
 
     /** The service's report of the `task` TUI. Its end is observed at once. */
     function tuiState(running) {
+        reports++;
         const ended = tui === "busy" && !running;
         tui = running ? "busy" : "idle";
         if (ended) void observe();
@@ -270,8 +292,10 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
     // Show the launcher's terminal: null once it runs, else a keyed refusal.
     async function show(kind, id, cwd, file) {
         if (kind === "floating") {
+            const before = reports;
             const answer = await display.run([file]);
-            if (answer === "ok") { tui = "busy"; return null; }
+            // A report that arrived with or after the reply is newer than it.
+            if (answer === "ok") { if (reports === before) tui = "busy"; return null; }
             return / reason=busy$/.test(answer) ? "floating-display-busy" : "floating-launch-refused";
         }
         const result = await spawn(tmux, ["-S", socket, "new-session", "-d", "-s", "jarvis-" + id, "-c", cwd, "--",
@@ -289,30 +313,28 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
         if (account !== "" && entry.row.account === null) return { reason: "account-unsupported" };
         const kind = terminal();
         if (kind === null) return { reason: "tmux-missing" };
-        if (kind === "floating" && (requesting || tui !== "idle")) return { reason: "floating-display-busy" };
-        if (kind === "floating") requesting = true;
+        // The router runs one action at a time, so no second start overlaps.
+        if (kind === "floating" && tui !== "idle") return { reason: "floating-display-busy" };
+        if (await release(args.goal, agent, account) !== "send") return { reason: "release-refused" };
+        const id = crypto.randomUUID();
+        const task = { id, engine };
+        await write(task, "create", { goal: args.goal, cwd: args.cwd, agent, account });
+        const file = path.join(specs, id + ".json");
+        let refusal = "launch-failed";
         try {
-            if (await release(args.goal, agent, account) !== "send") return { reason: "release-refused" };
-            const id = crypto.randomUUID();
-            const task = { id, engine };
-            await write(task, "create", { goal: args.goal, cwd: args.cwd, agent, account });
-            const file = path.join(specs, id + ".json");
-            let refusal = "launch-failed";
-            try {
-                const brief = Profiles.brief({ goal: args.goal, engine, state, id });
-                await writeSpec(file, { v: 1, id, state, engine, cwd: args.cwd,
-                    argv: Profiles.command(entry.row, { brief, cwd: args.cwd, account }),
-                    env: Profiles.environment(entry.row, account, environment) });
-                refusal = await show(kind, id, args.cwd, file);
-            } finally {
-                if (refusal !== null) {
-                    await removeSpec(id);
-                    await write(task, "lost");
-                }
+            const brief = Profiles.brief({ goal: args.goal, engine, state, id });
+            await writeSpec(file, { v: 1, id, state, engine, cwd: args.cwd,
+                argv: Profiles.command(entry.row, { brief, cwd: args.cwd, account }),
+                env: Profiles.environment(entry.row, account, environment) });
+            refusal = await show(kind, id, args.cwd, file);
+        } finally {
+            if (refusal !== null) {
+                await removeSpec(id);
+                await write(task, "lost", { seq: 0 });
             }
-            void observe();
-            return refusal === null ? { task: id, terminal: kind } : { reason: refusal };
-        } finally { requesting = false; }
+        }
+        void observe();
+        return refusal === null ? { task: id, terminal: kind } : { reason: refusal };
     }
 
     /**
