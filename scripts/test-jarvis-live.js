@@ -19,7 +19,7 @@ const file = path.join(backend, "GptLive.js");
 const Protocol = load(path.join(tree, "shell/plugins/vgs.jarvis/JarvisProtocol.js"));
 const KEY = "test-key-must-stay-private";
 const PRIVATE = "fixture-private-provider-text";
-// The bounds jarvis-live.md § Bounds states, in the units the engine reads.
+// The bounds docs/architecture/jarvis-live.md § Bounds states, in the units the engine reads.
 const BACKLOG = 256 * 1024;
 const FRAME = 1024 * 1024;
 const OPENING = 24000 * 2 * 20;
