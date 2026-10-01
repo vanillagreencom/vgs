@@ -10,10 +10,11 @@
 # the row stands over the udevadm stand-in with a script that opens the
 # node while the VGS rule exists and then runs the stand-in, which
 # records the call. The rest of the tree is not a device: the records,
-# the rules directory, a boot id, coreutils, a stat that reports the
-# user's own files as root's as they read under the stand-in sudo's
-# unshare -r, and as sudo a copy of the harness's sudo sentinel, which
-# logs to the one authentication log and runs nothing. No probe or command
+# the rules directory, a boot id, coreutils, the bash the stand-ins start
+# under, since the step resolves every command in this tree alone, a stat
+# that reports the user's own files as root's as they read under the
+# stand-in sudo's unshare -r, and as sudo a copy of the harness's sudo
+# sentinel, which logs to the one authentication log and runs nothing. No probe or command
 # reaches the host's /dev, /sys, systemctl, tailscale or sudo.
 #
 # The fixture acme.system declares the apple-displays step and publishes
@@ -49,7 +50,7 @@ system_question="Run these commands as root?"
 mkdir -p "$system_bin" "$system_root/etc/udev/rules.d" "$system_root/var/lib" "$system_root/proc/sys/kernel/random"
 ln -s -- "$devices_sysfs_root" "$system_root/sys"
 ln -s -- "$devices_dev_root" "$system_root/dev"
-for tool in awk cat chmod env flock id install mkdir mv readlink rm sed sha256sum sleep kill tee touch; do
+for tool in awk bash cat chmod env flock id install mkdir mv readlink rm sed sha256sum sleep kill tee touch; do
   tool_bin="$(command -v "$tool")" || { fail "system steps: $tool is missing"; return 0; }
   ln -s -- "$tool_bin" "$system_bin/$tool"
 done
