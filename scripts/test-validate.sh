@@ -357,7 +357,7 @@ cases=(
   "fedora-recipe|packaging/fedora/vgs.spec|all|$fedora_plan$recipe_plan"
   "copr-entry|.copr/Makefile|all|scripts/test-fedora-srpm.sh"$'\n'"$repo_plan"
   # test-validate.sh runs the mutation planner of the QML unit controls.
-  "qml-unit-planner|scripts/test-qml-unit.sh|tools|$repo_plan"$'\nscripts/test-validate.sh'
+  "qml-unit-planner|scripts/test-qml-unit.sh|tools|scripts/test-validate.sh"
   "heap|scripts/attribute-heap-profile.py|offline|$heap_plan"
   "suite|scripts/test-attribute-heap-profile.py|offline|$heap_plan"
   "jarvis-env|scripts/lib/jarvis-env.sh|all|$jarvis_owner_plan"$'\nscripts/qml-smoke.sh'
