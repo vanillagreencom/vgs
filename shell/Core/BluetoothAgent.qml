@@ -99,6 +99,12 @@ Scope {
         id: agent
         property var completion: null
         command: ["bluetoothctl", "--agent", "KeyboardDisplay"]
+        // readline counts the colour codes inside an agent prompt as visible
+        // (src/shared/shell.c:1624-1629 marks only the outer ones), so a
+        // service prompt passes 80 columns: under TERM dumb or unset it is
+        // never drawn, and under an xterm TERM it wraps. A wide fixed screen
+        // draws every prompt whole (bluetooth-agent.md § The child).
+        environment: ({ COLUMNS: "1000", TERM: "dumb" })
         stdout: SplitParser {
             splitMarker: ""
             onRead: data => root.apply(Model.output(root.model, data))

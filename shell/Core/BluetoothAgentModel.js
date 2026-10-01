@@ -22,11 +22,18 @@ var UNREGISTER_GRACE_MS = 2000;
 var EXIT_GRACE_MS = 2000;
 // Output with no line end past this many characters is dropped.
 var OUTPUT_CAP = 8192;
-// bluetoothctl sends any line as the PIN, `no` included, and ignores an
-// empty one. BlueZ refuses a PIN longer than 16 characters with
-// org.bluez.Error.InvalidArgs and fails the request (src/agent.c:491-499,
-// pincode_reply), so this line declines a PIN prompt.
-var PIN_DECLINE = "00000000000000000";
+// No line the core writes is accepted by a PIN or passkey prompt unless
+// the user typed it. bluetoothctl prints a device's name raw, line breaks
+// included, so any line of its output may come from a device in radio
+// range, and a held prompt takes the next stdin line whatever it says
+// (src/shared/shell.c:887-918). So every line the core writes on its own
+// starts with 17 spaces: bluetoothctl's wordexp drops them from a command
+// (src/shared/shell.c:1500), BlueZ refuses a PIN longer than 16 characters
+// (src/agent.c:491-499), a passkey prompt reads no number and cancels, and
+// a yes/no prompt reads neither word and cancels (client/agent.c:52-91).
+var COMMAND_PAD = "                 ";
+// The one decline, for every prompt the holder or the core turns down.
+var DECLINE = command("no");
 var REASON_MAX = 80;
 var LOG_TEXT_MAX = 80;
 
@@ -79,6 +86,17 @@ function initial() {
 }
 
 function clone(s) { return JSON.parse(JSON.stringify(s)); }
+
+// A line the core writes on its own, never one a prompt accepts.
+function command(words) { return COMMAND_PAD + words; }
+
+// bluetoothctl holds a prompt the model knows of: its next stdin line is
+// that prompt's answer.
+function held(s) { return s.prompt.kind === "awaiting" || s.prompt.kind === "open"; }
+
+// An unknown text for a log line: every digit run becomes `#`, so a
+// passkey or PIN inside it is never logged.
+function logged(text) { return JSON.stringify(text.replace(/[0-9]+/g, "#").slice(0, LOG_TEXT_MAX)); }
 
 function ready(s) { return s.phase === "ready"; }
 
@@ -160,48 +178,50 @@ function entryIndex(s, id) {
     return -1;
 }
 
-function declineLine(kind) { return kind === "pin" ? PIN_DECLINE : "no"; }
-
-// Answers the prompt bluetoothctl holds open, if any, with its rejection:
-// while one is open the next line written is its answer, whatever it says.
-// Returns the open entry's index, or -1.
+// Declines the prompt bluetoothctl holds, if any: while one is held the
+// next line written is its answer, whatever it says. Its entry, if listed,
+// becomes `cancel` for the holder to dismiss.
 function decline(s, effects) {
     var p = s.prompt;
-    if (p.kind === "awaiting") {
-        effects.push({ kind: "write", line: declineLine(REQUESTS[p.request].kind) });
-        s.prompt = { kind: "answered", text: null };
-        return -1;
-    }
-    if (p.kind !== "open") return -1;
+    if (!held(s)) return;
+    effects.push({ kind: "write", line: DECLINE });
+    s.prompt = { kind: "answered", text: p.kind === "open" ? p.text : null };
+    if (p.kind !== "open") return;
     var index = entryIndex(s, p.id);
     if (index === -1) throw new Error("bluetoothAgent: open prompt " + p.id + " has no entry");
-    effects.push({ kind: "write", line: declineLine(s.requests[index].kind) });
-    s.prompt = { kind: "answered", text: p.text };
-    return index;
+    s.requests[index].kind = "cancel";
 }
 
 // BlueZ released the agent or went away: bluetoothctl keeps an open prompt
 // after BlueZ released the agent (client/agent.c agent_release drops the
 // request before agent_release_prompt looks for it), so it is declined
-// before any later command, and its entry is cancelled for the holder.
+// before any later command.
 function lose(s, effects) {
-    var index = decline(s, effects);
-    if (index !== -1) s.requests[index].kind = "cancel";
+    decline(s, effects);
     setLeases(s, "ready", "pending");
     s.phase = "starting";
     effects.push({ kind: "timer", ms: 0 });
 }
 
+// TEXT is a request line or prompt the model cannot answer: one the table
+// does not know, or one that arrives while another is held, which BlueZ
+// never sends (it serialises requests per agent) and a device name can
+// print. A held prompt is declined, otherwise TEXT's prompt is.
+// ANSWERED_TEXT is the declined prompt's text, whose redraws are ignored,
+// or null while it is not drawn yet; an open prompt keeps its own.
 function unknownPrompt(s, effects, text, answeredText) {
-    effects.push({ kind: "write", line: "no" });
-    effects.push({ kind: "log", line: "bluetoothAgent: refused: prompt=unknown text=" + JSON.stringify(text.slice(0, LOG_TEXT_MAX)) });
+    effects.push({ kind: "log", line: "bluetoothAgent: refused: prompt=unknown text=" + logged(text) });
+    if (held(s)) {
+        decline(s, effects);
+        if (s.prompt.text === null) s.prompt.text = answeredText;
+        return;
+    }
+    effects.push({ kind: "write", line: DECLINE });
     s.prompt = { kind: "answered", text: answeredText };
 }
 
 function requestLine(s, effects, key, text) {
-    if (s.prompt.kind === "open")
-        throw new Error("bluetoothAgent: request " + JSON.stringify(text) + " while prompt " + s.prompt.id + " is open; BlueZ sends one request per agent at a time");
-    if (key === null) unknownPrompt(s, effects, text, null);
+    if (key === null || held(s)) unknownPrompt(s, effects, text, null);
     else s.prompt = { kind: "awaiting", request: key };
 }
 
@@ -217,8 +237,20 @@ function display(s, code, entered) {
 
 function strip(raw) { return raw.replace(ESCAPES, "").replace(CONTROLS, ""); }
 
-// One newline-terminated line, RAW with its colours.
+// TEXT, stripped, is an agent prompt: `[agent] ...: ` and not the start of
+// a display line.
+function isPrompt(text) {
+    return text.indexOf("[agent] ") === 0 && text.slice(-2) === ": " && DISPLAY_PREFIXES.indexOf(text) === -1;
+}
+
+// One newline-terminated line, RAW with its colours. A prompt wider than
+// readline's screen is drawn with a line break inside, so a line that is a
+// whole prompt is one shown.
 function line(s, effects, raw) {
+    if (isPrompt(strip(raw))) {
+        shown(s, effects, strip(raw));
+        return;
+    }
     var text = strip(raw).trim();
     if (Object.prototype.hasOwnProperty.call(REQUESTS, text)) {
         if (ANSWERING.indexOf(s.phase) !== -1) requestLine(s, effects, text, text);
@@ -230,11 +262,13 @@ function line(s, effects, raw) {
         if (m !== null) kind = LINES[i][1];
     }
     switch (kind) {
+    // A registration while ready follows a bluetoothd restart, which drops
+    // every request; with a prompt held it is no reason to write.
     case "registered":
-        if (s.phase !== "starting" && s.phase !== "ready") return;
+        if (s.phase !== "starting" && (s.phase !== "ready" || held(s))) return;
         setLeases(s, "ready", "pending");
         s.phase = "defaulting";
-        effects.push({ kind: "write", line: "default-agent" }, { kind: "timer", ms: ACK_TIMEOUT_MS });
+        effects.push({ kind: "write", line: command("default-agent") }, { kind: "timer", ms: ACK_TIMEOUT_MS });
         return;
     case "register-failed":
         if (s.phase !== "starting") return;
@@ -264,10 +298,13 @@ function line(s, effects, raw) {
         effects.push({ kind: "log", line: "bluetoothAgent: unregister=failed error=" + m[1] });
         closeChild(s, effects);
         return;
+    // bluetoothctl prints this with the prompt still saved, draws the prompt
+    // again, then lets it go (client/agent.c:252-261), so that redraw is
+    // the answered prompt's.
     case "canceled":
-        if (ANSWERING.indexOf(s.phase) === -1) return;
+        if (ANSWERING.indexOf(s.phase) === -1 || !held(s)) return;
         if (s.prompt.kind === "open") s.requests[entryIndex(s, s.prompt.id)].kind = "cancel";
-        s.prompt = { kind: "none" };
+        s.prompt = { kind: "answered", text: s.prompt.kind === "open" ? s.prompt.text : null };
         return;
     case "display-passkey":
         if (ANSWERING.indexOf(s.phase) === -1) return;
@@ -290,8 +327,7 @@ function line(s, effects, raw) {
 // Text shown and not ended by a newline: a prompt bluetoothctl drew, or a
 // redraw of it after another message.
 function shown(s, effects, text) {
-    if (ANSWERING.indexOf(s.phase) === -1) return;
-    if (text.indexOf("[agent] ") !== 0 || text.slice(-2) !== ": " || DISPLAY_PREFIXES.indexOf(text) !== -1) return;
+    if (ANSWERING.indexOf(s.phase) === -1 || !isPrompt(text)) return;
     var p = s.prompt;
     switch (p.kind) {
     case "awaiting":
@@ -307,8 +343,8 @@ function shown(s, effects, text) {
         s.prompt = { kind: "open", id: entry.id, text: text };
         return;
     case "open":
-        if (text === p.text) return;
-        throw new Error("bluetoothAgent: prompt " + JSON.stringify(text) + " while prompt " + p.id + " is open; BlueZ sends one request per agent at a time");
+        if (text !== p.text) unknownPrompt(s, effects, text, null);
+        return;
     case "answered":
         if (p.text === null) p.text = text;
         else if (text !== p.text) unknownPrompt(s, effects, text, text);
@@ -354,7 +390,7 @@ function release(s, id) {
         decline(t, effects);
         t.requests = [];
         t.phase = "releasing";
-        effects.push({ kind: "write", line: "agent off" }, { kind: "timer", ms: UNREGISTER_GRACE_MS });
+        effects.push({ kind: "write", line: command("agent off") }, { kind: "timer", ms: UNREGISTER_GRACE_MS });
         break;
     case "failed":
         if (t.leases.length === 0) t.phase = "off";
@@ -443,16 +479,16 @@ function answer(s, id, value) {
     case "confirm":
     case "authorize":
         want = "boolean";
-        if (typeof value === "boolean") reply = value ? "yes" : "no";
+        if (typeof value === "boolean") reply = value ? "yes" : DECLINE;
         break;
     case "pin":
         want = "pin";
-        if (value === false) reply = PIN_DECLINE;
+        if (value === false) reply = DECLINE;
         else if (typeof value === "string" && PIN_PATTERN.test(value)) reply = value;
         break;
     case "passkey-entry":
         want = "passkey";
-        if (value === false) reply = "no";
+        if (value === false) reply = DECLINE;
         else if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 999999) reply = String(value);
         break;
     default:
