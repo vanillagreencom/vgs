@@ -24,12 +24,16 @@
 #   always run. --list prints selected commands without executing them.
 #   Without a scope flag, compare against the default branch's merge base.
 #   --full explicitly selects every row in the area.
+#   Every executed row prints `validate: secs=<seconds> exit=<status> row=<label>`.
 #
 # VGS_VALIDATE_BASE: the commit the whitespace row diffs the tree against;
 #   used as the default change base too. --changed overrides it. Unset,
 #   whitespace_base below resolves the base; an unavailable base exits 77.
 # DEV_VALIDATE_BASE: the fix-round base supplied by Kendex; used when neither
 #   --changed nor --full is present.
+# VGS_VALIDATE_CHANGED: on a readable diff-scoped run, the NUL-delimited file
+#   of changed paths a row may read to narrow its own work. Unset means
+#   everything changed.
 # The document byte ceiling row reads none of --changed, VGS_VALIDATE_BASE
 #   and DEV_VALIDATE_BASE for its growth margin: it measures growth from the
 #   branch point, the default branch's merge base, and exits 77 when no
@@ -86,10 +90,14 @@ failed=()
 skipped=()
 
 run() { # LABEL CMD...
-  local label="$1"; shift
+  local label="$1" started status elapsed
+  shift
   echo "== $label"
-  local status=0
+  started=$SECONDS
+  status=0
   "$@" || status=$?
+  elapsed=$((SECONDS - started))
+  printf 'validate: secs=%s exit=%s row=%s\n' "$elapsed" "$status" "$label"
   case "$status" in
     0) ;;
     77) skipped+=("$label") ;;
@@ -176,7 +184,7 @@ rows=(
   "manifests|bundled manifests|node bin/lib/check-manifests.js|shell/plugins/* bin/vgsh-scan shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "manifests|smoke fixture manifests|node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins|scripts/smoke/fixtures/* bin/vgsh-scan shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
   "manifests|manifest check controls|node scripts/test-check-manifests.js|bin/lib/check-manifests.js bin/vgsh-scan shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
-  "cli|runner CLI controls|scripts/test-vgsh.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json shell/plugins/*"
+  "cli|runner CLI controls|scripts/test-vgsh.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json shell/plugins/*/manifest.json"
   "cli|runner lifetime controls|scripts/test-vgsh-run.sh|scripts/vgsh-rows.sh bin/vgsh bin/lib/ipc-reply.sh bin/lib/qml-library.js shell/Commons/SessionLockState.js"
   "cli|version controls|scripts/test-vgsh-version.sh|scripts/vgsh-rows.sh bin/vgsh VERSION"
   "cli|install tree controls|scripts/test-install-tree.sh|packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md scripts/fixtures/jarvis-voice/installed.js"
@@ -188,12 +196,12 @@ rows=(
   "cli|README install runner host-side controls|scripts/test-readme-install.sh|scripts/readme-install.sh scripts/check-readme.js README.md VERSION bin/vgsh bin/vgsh-scan install.sh docs/architecture/runtime.md packaging/arch/* shell/plugins/* scripts/preflight-floor.js"
   "cli|plugin list controls|scripts/test-vgsh-plugin-list.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-plugin-judge bin/vgsh-pkg bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js"
   "cli|add and remove question controls|scripts/test-vgsh-prompts.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json"
-  "cli|requirement report controls|scripts/test-vgsh-requirements.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-plugin-judge bin/vgsh-pkg bin/vgsh-scan bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json config/requirements.json shell/plugins/*"
+  "cli|requirement report controls|scripts/test-vgsh-requirements.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-plugin-judge bin/vgsh-pkg bin/vgsh-scan bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json config/requirements.json shell/plugins/*/manifest.json"
   "cli|self status and update controls|scripts/test-vgsh-self.sh|scripts/vgsh-rows.sh bin/vgsh bin/vgsh-pkg bin/lib/* shell/Core/PackageManagers.js packaging/install-system.sh config/shell.json"
   "cli|curl installer controls|scripts/test-install-sh.sh|install.sh scripts/vgsh-rows.sh bin/vgsh bin/vgsh-pkg bin/lib/* shell/Core/PackageManagers.js packaging/install-system.sh config/requirements.json config/shell.json"
   "cli|release script controls|scripts/test-release.sh|scripts/release scripts/lib/release-tarball.sh scripts/arch-packages.sh scripts/fedora-container.sh packaging/arch/* scripts/vgsh-rows.sh install.sh packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh VERSION"
   "cli|AUR publisher controls|scripts/test-publish-aur.sh|scripts/publish-aur.sh scripts/vgsh-rows.sh scripts/check-packaging.js packaging/aur-known-hosts packaging/arch/* packaging/fedora/* bin/vgsh config/requirements.json shell/plugins/*/manifest.json VERSION shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js bin/vgsh-scan"
-  "cli|outdated controls|scripts/test-vgsh-outdated.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json shell/plugins/*"
+  "cli|outdated controls|scripts/test-vgsh-outdated.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json shell/plugins/*/manifest.json"
   "cli|theme reload controls|scripts/test-vgsh-reload.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json"
   "cli|theme target controls|scripts/test-vgsh-targets.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json"
   "cli|theme package symlink controls|scripts/test-vgsh-package-links.sh|scripts/vgsh-rows.sh bin/vgsh* bin/lib/* shell/Commons/ThemeLogic.js shell/Commons/Tokens.js themes/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json"
@@ -234,9 +242,10 @@ rows=(
   "boundary|pointer cursor|python3 scripts/check-pointer-cursor.py|shell/* .agents/skills/vgs-plugin/templates/* bin/vgsh-scan scripts/qml_source.py"
   "boundary|pointer cursor controls|python3 scripts/test-check-pointer-cursor.py|scripts/check-pointer-cursor.py shell/* .agents/skills/vgs-plugin/templates/* bin/vgsh-scan scripts/qml_source.py"
   "boundary|user command text|python3 scripts/check-user-commands.py|shell/* bin/* config/requirements.json scripts/qml_source.py bin/lib/qml-library.js"
-  "boundary|user command text controls|python3 scripts/test-check-user-commands.py|scripts/check-user-commands.py shell/* bin/* config/requirements.json scripts/qml_source.py bin/lib/qml-library.js"
+  "boundary|user command text controls|python3 scripts/test-check-user-commands.py|scripts/check-user-commands.py shell/plugins/*/manifest.json shell/Core/PluginLogic.js shell/Core/PackageManagers.js bin/* config/requirements.json scripts/qml_source.py bin/lib/qml-library.js"
   "tools|memory sampler report|scripts/test-sample-shell-memory.sh|scripts/sample-shell-memory.sh bin/vgsh"
   "tools|heap profile attribution|python3 scripts/test-attribute-heap-profile.py|scripts/attribute-heap-profile.py"
+  "tools|landing time controls|python3 scripts/test-landing-times.py|scripts/landing-times.py"
   "tools|smoke verdict controls|scripts/test-smoke-verdict.sh|scripts/smoke/verdict.sh"
   "tools|mode hold controls|scripts/test-mode-hold.sh|scripts/smoke/mode-hold.sh scripts/smoke/verdict.sh"
   "tools|smoke row readers|python3 scripts/check-smoke-readers.py|scripts/smoke/rows/*"
@@ -264,9 +273,9 @@ rows=(
   "unit|qml unit tests|scripts/qml-unit.sh|shell/Ui/* shell/Commons/* shell/Core/TuiRecords.qml shell/Core/SessionLock.qml shell/Core/ShortcutRegistry.qml shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Core/HyprlandLayer.js shell/assets/* scripts/qml-tests/*"
   "unit|qml unit controls|scripts/test-qml-unit.sh|scripts/qml-unit.sh scripts/qml-tests/* shell/Ui/* shell/Commons/* shell/Core/TuiRecords.qml shell/Core/SessionLock.qml shell/Core/ShortcutRegistry.qml shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Core/HyprlandLayer.js"
   "unit|session lock controls|scripts/test-session-lock.sh|shell/Core/SessionLock.qml shell/Commons/SessionLockState.js scripts/qml-unit.sh scripts/qml-tests/tst_session_lock.qml"
-  "nix|nix flake package|scripts/test-flake.sh|flake.nix flake.lock config/requirements.json packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION LICENSE README.md"
+  "nix|nix flake package|scripts/test-flake.sh|flake.nix flake.lock config/requirements.json packaging/install-system.sh packaging/install-tree.manifest scripts/check-install-tree.sh bin/* shell/* config/* themes/* VERSION"
   "package|Arch package build|scripts/arch-packages.sh|scripts/lib/release-tarball.sh packaging/arch/* packaging/install-system.sh"
-  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION LICENSE README.md scripts/smoke/* scripts/sample-shell-memory.sh scripts/lib/jarvis-env.sh scripts/fixtures/jarvis/* scripts/fixtures/jarvis-voice/installed.js scripts/test-task-event.js"
+  "qml|nested smoke|scripts/qml-smoke.sh|shell/* bin/* config/* themes/* packaging/install-system.sh packaging/install-tree.manifest VERSION scripts/smoke/* scripts/sample-shell-memory.sh scripts/lib/jarvis-env.sh scripts/fixtures/jarvis/* scripts/fixtures/jarvis-voice/installed.js scripts/test-task-event.js"
   "qml|shader GPU cost|scripts/measure-shader.sh|scripts/measure-shader.sh scripts/shader/* scripts/check-voiceorb-shader.py shell/Ui/feedback/VoiceOrb.qml shell/Ui/feedback/shaders/* shell/Commons/* config/shell.json bin/lib/qml-library.js shell/Core/HyprlandLayer.js scripts/smoke/harness.sh scripts/smoke/mode-hold.sh scripts/smoke/teardown.sh scripts/smoke/verdict.sh scripts/smoke/tree.sh scripts/smoke/shot.sh scripts/smoke/app-window.sh scripts/smoke/pointer/* scripts/smoke/toplevel/* scripts/smoke/keyboard/*"
 )
 
@@ -561,6 +570,7 @@ fi
 if [[ -n $change_base ]]; then
   export VGS_VALIDATE_BASE="$change_base"
 fi
+unset VGS_VALIDATE_CHANGED
 affected=()
 for i in "${!rows[@]}"; do affected[i]=true; done
 if [[ -n $change_base ]]; then
@@ -600,11 +610,14 @@ if [[ -n $change_base ]]; then
     done
     if [[ $full == true ]]; then
       for i in "${!rows[@]}"; do affected[i]=true; done
+    else
+      export VGS_VALIDATE_CHANGED="$paths_file"
     fi
   fi
 fi
 
 selected_count=0
+validate_started=$SECONDS
 for i in "${!rows[@]}"; do
   IFS='|' read -r row_area label command inputs <<<"${rows[i]}"
   case "$area" in
@@ -621,8 +634,11 @@ for i in "${!rows[@]}"; do
     run "$label" $command
   fi
 done
-printf 'validate: selected=%s area=%s\n' "$selected_count" "$area" >&2
-[[ $list_only == true ]] && exit 0
+if [[ $list_only == true ]]; then
+  printf 'validate: selected=%s area=%s\n' "$selected_count" "$area" >&2
+  exit 0
+fi
+printf 'validate: selected=%s area=%s secs=%s\n' "$selected_count" "$area" "$((SECONDS - validate_started))" >&2
 
 if [[ ${#failed[@]} -gt 0 ]]; then
   printf 'validate: failed=%s\n' "$(IFS=';'; echo "${failed[*]}")"

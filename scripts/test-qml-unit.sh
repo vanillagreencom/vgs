@@ -9,34 +9,30 @@
 # prints.
 #
 # Exit 0 when every row holds, 1 otherwise, 77 when qmltestrunner is absent,
-# since a mutation nothing runs proves nothing.
+# since a mutation nothing runs proves nothing. With --plan, no runner starts:
+# the script prints the mutation rows that would run or skip, using the same
+# scoping rule as the real run. When VGS_VALIDATE_CHANGED names a readable
+# NUL-delimited changed-path list, only mutations for a changed target, a
+# changed test file, or a changed harness or stand-in module run. An unset
+# or empty VGS_VALIDATE_CHANGED runs every mutation. A shared file can weaken
+# a test of a component it did not touch; that is test strength, not product
+# behavior. Product QML unit tests still run in full, and direct runs or
+# scripts/validate --full check every mutation.
 set -euo pipefail
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
 runner="$repo/scripts/qml-unit.sh"
-
-if ! out="$("$runner" --tests "$repo/scripts/qml-tests" "$repo/scripts/qml-tests/tst_module.qml" 2>&1)"; then
-  if [[ $out == *"status=not-measured missing=qmltestrunner"* ]]; then
-    echo "test-qml-unit: status=not-measured missing=qmltestrunner"
-    exit 77
-  fi
-  echo "test-qml-unit: the module test does not pass on the shipped tree:"
-  printf '%s\n' "$out" | tail -n 20
-  exit 1
+plan_only=false
+case "${1:-}" in
+  "") ;;
+  --plan) plan_only=true; shift ;;
+  *) printf 'test-qml-unit: refused: argument=%s\n' "$1" >&2; exit 2 ;;
+esac
+if [[ $# -ne 0 ]]; then
+  printf 'test-qml-unit: refused: argument=%s\n' "$1" >&2
+  exit 2
 fi
-
-tmp="$(mktemp -d)"
-trap 'rm -rf -- "${tmp:?}"' EXIT
-failures=0
-ok() { printf '  ok    %s\n' "$*"; }
-fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
-
-# One fresh copy of the module under test at $1.
-fresh() {
-  rm -rf -- "$1"
-  cp -R -- "$repo/shell/Ui" "$1"
-}
 
 # Rows: label | file under shell/Ui | text to replace | replacement | the
 # test file that must go red. A file under ../Commons or ../Core is a copy
@@ -539,12 +535,109 @@ mutations=(
   "an on switch presses like its hover|controls/Switch.qml|root.down ? Theme.toggle.onPressed : root.hovered|root.down ? Theme.toggle.onHover : root.hovered|tst_toggles.qml"
 )
 
+mutation_target_path() { # FILE-FIELD
+  local file="$1"
+  case "$file" in
+    ../Commons/*) printf 'shell/Commons/%s\n' "${file#../Commons/}" ;;
+    ../Core/*) printf 'shell/Core/%s\n' "${file#../Core/}" ;;
+    ../plugins/*) printf 'shell/plugins/%s\n' "${file#../plugins/}" ;;
+    *) printf 'shell/Ui/%s\n' "$file" ;;
+  esac
+}
+
+changed_paths=()
+scope=all
+if [[ -n ${VGS_VALIDATE_CHANGED:-} ]]; then
+  if [[ ! -r $VGS_VALIDATE_CHANGED ]]; then
+    printf 'test-qml-unit: refused: changed-list=unreadable path=%s\n' "$VGS_VALIDATE_CHANGED"
+    exit 1
+  fi
+  scope=changed
+  while IFS= read -r -d '' changed_path; do
+    changed_paths+=("$changed_path")
+  done <"$VGS_VALIDATE_CHANGED"
+fi
+
+path_changed() { # REPO-PATH
+  local wanted="$1" changed
+  for changed in "${changed_paths[@]}"; do
+    [[ $changed == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+shared_change=false
+if [[ $scope == changed ]]; then
+  for changed_path in "${changed_paths[@]}"; do
+    case "$changed_path" in
+      scripts/qml-unit.sh|scripts/test-qml-unit.sh) shared_change=true ;;
+      scripts/qml-tests/*)
+        base_name="${changed_path##*/}"
+        [[ $base_name == tst_*.qml ]] || shared_change=true ;;
+    esac
+  done
+fi
+
+mutation_selected() { # FILE-FIELD TEST-FILE
+  local file="$1" test="$2"
+  [[ $scope == all ]] && return 0
+  [[ $shared_change == true ]] && return 0
+  path_changed "$(mutation_target_path "$file")" && return 0
+  path_changed "scripts/qml-tests/$test" && return 0
+  return 1
+}
+
+mutation_plan=()
+ran_mutations=0
+skipped_mutations=0
+for row in "${mutations[@]}"; do
+  IFS='|' read -r label file _needle _replacement test <<<"$row"
+  if mutation_selected "$file" "$test"; then
+    mutation_plan+=("run $label")
+    ran_mutations=$((ran_mutations + 1))
+  else
+    mutation_plan+=("skip $label")
+    skipped_mutations=$((skipped_mutations + 1))
+  fi
+done
+printf 'test-qml-unit: scope=%s mutations=%s/%s\n' "$scope" "$ran_mutations" "${#mutations[@]}"
+if [[ $plan_only == true ]]; then
+  printf '%s\n' "${mutation_plan[@]}"
+  exit 0
+fi
+
+if ! out="$("$runner" --tests "$repo/scripts/qml-tests" "$repo/scripts/qml-tests/tst_module.qml" 2>&1)"; then
+  if [[ $out == *"status=not-measured missing=qmltestrunner"* ]]; then
+    echo "test-qml-unit: status=not-measured missing=qmltestrunner"
+    exit 77
+  fi
+  echo "test-qml-unit: the module test does not pass on the shipped tree:"
+  printf '%s\n' "$out" | tail -n 20
+  exit 1
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf -- "${tmp:?}"' EXIT
+failures=0
+ok() { printf '  ok    %s\n' "$*"; }
+fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
+
+# One fresh copy of the module under test at $1.
+fresh() {
+  rm -rf -- "$1"
+  cp -R -- "$repo/shell/Ui" "$1"
+}
+
 copy="$tmp/ui"
 fresh "$copy"
 if out="$("$runner" --ui "$copy" 2>&1)"; then ok "the unmutated copy passes"; else fail "the unmutated copy fails"; printf '%s\n' "$out" | tail -n 20; fi
 
-for row in "${mutations[@]}"; do
+for index in "${!mutations[@]}"; do
+  row="${mutations[index]}"
   IFS='|' read -r label file needle replacement test <<<"$row"
+  if [[ ${mutation_plan[index]} == skip\ * ]]; then
+    continue
+  fi
   # A `|` inside a field shifts the rest, and a runner handed a test that is
   # not there fails, which would read as a red mutation.
   if [[ ! -f $repo/scripts/qml-tests/$test ]]; then fail "$label: the row's test is not a file: $test"; continue; fi
@@ -636,7 +729,7 @@ for row in "${logs[@]}"; do
 done
 
 if [[ $failures -eq 0 ]]; then
-  echo "test-qml-unit: ok mutations=${#mutations[@]} logs=${#logs[@]}"
+  echo "test-qml-unit: ok mutations=$ran_mutations skipped=$skipped_mutations logs=${#logs[@]}"
   exit 0
 fi
 echo "test-qml-unit: failed=$failures"

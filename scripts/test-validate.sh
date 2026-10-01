@@ -29,6 +29,7 @@ mkdir -p "$tmp/home/.config" "$tmp/home/.cache" "$tmp/home/.local/share" "$tmp/h
 chmod 700 "$tmp/runtime"
 base_env=(env -i PATH="$(dirname -- "$node_bin"):$PATH" HOME="$tmp/home" LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
   XDG_CONFIG_HOME="$tmp/home/.config" XDG_CACHE_HOME="$tmp/home/.cache" XDG_DATA_HOME="$tmp/home/.local/share" XDG_STATE_HOME="$tmp/home/.local/state" XDG_RUNTIME_DIR="$tmp/runtime"
+  TMPDIR="$tmp"
   GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
   GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z)
 
@@ -68,13 +69,63 @@ row() {
   out="$(cd -- "$dir" && "${base_env[@]}" $extra bash scripts/validate "${test_area:-repo}" "${test_args[@]}" 2>&1)" || status=$?
   for line in "$@"; do
     if [[ $line == '!'* ]]; then
-      ! grep -qF -e "${line#!}" <<<"$out" || present+="[${line#!}]"
+      ! grep -qF -e "${line:1}" <<<"$out" || present+="[${line:1}]"
     else
       grep -qxF -e "$line" <<<"$out" || missing+="[$line]"
     fi
   done
   if [[ $status == "$want_exit" && -z $missing && -z $present ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit missing=$missing present=$present"; printf '%s\n' "$out" | sed 's/^/        /'; fi
 }
+
+row_re() {
+  local name="$1" dir="$2" want_exit="$3" extra="$4" out status=0 line missing="" present=""
+  shift 4
+  # shellcheck disable=SC2086
+  out="$(cd -- "$dir" && "${base_env[@]}" $extra bash scripts/validate "${test_area:-repo}" "${test_args[@]}" 2>&1)" || status=$?
+  for line in "$@"; do
+    if [[ ${line:0:1} == '!' ]]; then
+      ! grep -qF -e "${line:1}" <<<"$out" || present+="[${line:1}]"
+    elif [[ ${line:0:1} == '~' ]]; then
+      grep -qF -e "${line:1}" <<<"$out" || missing+="[${line:1}]"
+    else
+      grep -qxF -e "$line" <<<"$out" || missing+="[$line]"
+    fi
+  done
+  if [[ $status == "$want_exit" && -z $missing && -z $present ]]; then ok "$name"; else fail "$name: exit=$status want=$want_exit missing=$missing present=$present"; printf '%s\n' "$out" | sed 's/^/        /'; fi
+}
+
+plan_case() {
+  local name="$1" changed="$2" want_scope="$3" want_runs="$4" want_total="$5" out status=0 run_count skip_count
+  out="$(printf '%s\0' "$changed" >"$tmp/qml-plan.paths" && VGS_VALIDATE_CHANGED="$tmp/qml-plan.paths" "$repo/scripts/test-qml-unit.sh" --plan 2>&1)" || status=$?
+  run_count="$(grep -c '^run ' <<<"$out" || true)"
+  skip_count="$(grep -c '^skip ' <<<"$out" || true)"
+  if [[ $status == 0 ]] &&
+     grep -qxF "test-qml-unit: scope=changed mutations=$want_scope" <<<"$out" &&
+     [[ $run_count == "$want_runs" && $((run_count + skip_count)) == "$want_total" ]]; then
+    ok "$name"
+  else
+    fail "$name: status=$status runs=$run_count total=$((run_count + skip_count))"
+    printf '%s\n' "$out" | sed 's/^/        /'
+  fi
+}
+
+if out="$(env -u VGS_VALIDATE_CHANGED "$repo/scripts/test-qml-unit.sh" --plan 2>&1)" &&
+   grep -qxF "test-qml-unit: scope=all mutations=492/492" <<<"$out" &&
+   [[ "$(grep -c '^run ' <<<"$out")" == 492 ]]; then
+  ok "qml mutation planning runs every row when the changed list is unset"
+else
+  fail "qml mutation planning with no changed list"
+  printf '%s\n' "$out" | sed 's/^/        /'
+fi
+plan_case "qml mutation planning narrows to a changed Radio target" "shell/Ui/controls/Radio.qml" "2/492" 2 492
+plan_case "qml mutation planning runs every row for a harness change" "scripts/qml-unit.sh" "492/492" 492 492
+status=0
+out="$(VGS_VALIDATE_CHANGED="$tmp/missing-qml-plan.paths" "$repo/scripts/test-qml-unit.sh" --plan 2>&1)" || status=$?
+if [[ $status == 1 && $out == "test-qml-unit: refused: changed-list=unreadable path=$tmp/missing-qml-plan.paths" ]]; then
+  ok "qml mutation planning refuses an unreadable changed list"
+else
+  fail "qml mutation planning unreadable list: status=$status output=$out"
+fi
 
 d="$tmp/clean"; fresh "$d"
 trunk="$("${base_env[@]}" git -C "$d" rev-parse refs/remotes/origin/trunk)"
@@ -244,6 +295,7 @@ installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\nscript
 # The README check reads VERSION, bin/vgsh, install.sh, the Arch recipes,
 # the plugins, README.md and docs/architecture/runtime.md.
 readme_rows=$'node scripts/check-readme.js\nnode scripts/test-check-readme.js\nscripts/test-readme-install.sh\n'
+readme_rows_trimmed="${readme_rows%$'\n'}"
 readme_plan="$readme_rows$repo_plan"
 curl_installer_plan="$readme_rows"$'scripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 heap_plan=$'python3 scripts/test-attribute-heap-profile.py\n'"$repo_plan"
@@ -259,11 +311,11 @@ jarvis_fixture_plan=$'node scripts/test-jarvis-protocol.js\nnode scripts/test-ja
 jarvis_guidance_plan=$'node scripts/test-jarvis-guidance.js\n'"$repo_plan"
 jarvis_speakable_plan=$'node scripts/test-jarvis-speakable.js\n'"$repo_plan"
 jarvis_language_plan=$'node scripts/test-jarvis-guidance.js\nnode scripts/test-jarvis-speakable.js\nnode scripts/test-jarvis-speech-language.js\n'"$repo_plan"
-dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\npython3 scripts/test-check-user-commands.py\n'"$repo_plan"
-session_plan=$'scripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\npython3 scripts/test-check-user-commands.py\n'"$repo_plan"$'\nscripts/qml-unit.sh\nscripts/test-qml-unit.sh\nscripts/test-session-lock.sh\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
+dispatch_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\n'"$repo_plan"
+session_plan=$'scripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\n'"$repo_plan"$'\nscripts/qml-unit.sh\nscripts/test-qml-unit.sh\nscripts/test-session-lock.sh\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
 fixture_plan=$'node bin/lib/check-manifests.js --base scripts/smoke/fixtures/plugins\npython3 scripts/check-plugin-boundary.py --shell scripts/smoke/fixtures\npython3 scripts/check-design-tokens.py\n'"$repo_plan"$'\nscripts/test-validate.sh\nscripts/qml-smoke.sh'
 smoke_plan=$'python3 scripts/check-smoke-readers.py\npython3 scripts/test-check-smoke-readers.py\npython3 scripts/check-smoke-terminal.py\npython3 scripts/test-check-smoke-terminal.py\n'"$repo_plan"$'\nscripts/qml-smoke.sh'
-orb_shader_plan=$'scripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-voiceorb-shader.py\npython3 scripts/test-check-voiceorb-shader.py\npython3 scripts/test-measure-shader.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\npython3 scripts/test-check-user-commands.py\n'"$repo_plan"$'\nscripts/qml-unit.sh\nscripts/test-qml-unit.sh\nscripts/test-flake.sh\nscripts/qml-smoke.sh\nscripts/measure-shader.sh'
+orb_shader_plan=$'scripts/test-install-tree.sh\npython3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-voiceorb-shader.py\npython3 scripts/test-check-voiceorb-shader.py\npython3 scripts/test-measure-shader.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\n'"$repo_plan"$'\nscripts/qml-unit.sh\nscripts/test-qml-unit.sh\nscripts/test-flake.sh\nscripts/qml-smoke.sh\nscripts/measure-shader.sh'
 orb_check_plan=$'python3 scripts/check-voiceorb-shader.py\npython3 scripts/test-check-voiceorb-shader.py\npython3 scripts/test-measure-shader.py\n'"$repo_plan"
 shader_measure_plan=$'python3 scripts/test-measure-shader.py\n'"$repo_plan"$'\nscripts/measure-shader.sh'
 keyboard_plan="$repo_plan"$'\nscripts/qml-smoke.sh\nscripts/measure-shader.sh'
@@ -292,7 +344,7 @@ cases=(
   "docs-html|docs/guide.html|offline|$repo_plan"$'\ndoc_limits_check'
   "root-markdown|NOTES.md|offline|$repo_plan"$'\ndoc_limits_check'
   "version|VERSION|offline|$version_plan"
-  "licence|LICENSE|all|$install_plan"$'\nscripts/test-flake.sh\nscripts/qml-smoke.sh'
+  "licence|LICENSE|all|$install_plan"
   "flake|flake.nix|all|$repo_plan"$'\nscripts/test-flake.sh'
   "flake-offline|flake.nix|offline|$repo_plan"
   "installer|packaging/install-system.sh|offline|$installer_plan"
@@ -335,16 +387,16 @@ cases=(
   "jarvis-audit-suite|scripts/test-jarvis-audit.js|offline|node scripts/test-jarvis-audit.js"$'\n'"$repo_plan"
   "jarvis-policy-fixture|scripts/fixtures/jarvis/policy.js|offline|$jarvis_policy_rows$jarvis_daemon_plan"
   "jarvis-tools-input|shell/plugins/vgs.jarvis/backend/Tools.js|logic|node scripts/test-jarvis-tools.js"$'\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js'
-  "jarvis-audit-input|shell/plugins/vgs.jarvis/backend/Audit.js|cli|node scripts/test-jarvis-audit.js"$'\n'"${jarvis_daemon_plan%$repo_plan}"$'scripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
+  "jarvis-audit-input|shell/plugins/vgs.jarvis/backend/Audit.js|cli|node scripts/test-jarvis-audit.js"$'\n'"${jarvis_daemon_plan%$repo_plan}"$'scripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-redact-input|shell/plugins/vgs.jarvis/backend/Redact.js|logic|node scripts/test-jarvis-redact.js"
   "jarvis-policy-input|shell/plugins/vgs.jarvis/backend/Policy.js|logic|node scripts/test-jarvis-policy.js"$'\nnode scripts/test-jarvis-release.js'
-  "jarvis-policy-net-input|shell/plugins/vgs.jarvis/backend/Policy.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
+  "jarvis-policy-net-input|shell/plugins/vgs.jarvis/backend/Policy.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-net-input|shell/plugins/vgs.jarvis/backend/net.js|logic|node scripts/test-jarvis-release.js"
-  "jarvis-net-cli-input|shell/plugins/vgs.jarvis/backend/net.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
-  "jarvis-add-key-input|shell/plugins/vgs.jarvis/backend/keys.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
+  "jarvis-net-cli-input|shell/plugins/vgs.jarvis/backend/net.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-add-key-input|shell/plugins/vgs.jarvis/backend/keys.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-denied-input|shell/plugins/vgs.jarvis/backend/Denied.js|logic|node scripts/test-jarvis-policy.js"
-  "jarvis-denied-cli-input|shell/plugins/vgs.jarvis/backend/Denied.js|cli|node scripts/test-jarvis-denied.js"$'\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
-  "jarvis-sandbox-input|shell/plugins/vgs.jarvis/backend/Sandbox.js|cli|node scripts/test-jarvis-sandbox.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-vgsh.sh\nscripts/test-install-tree.sh\n'"$readme_rows"$'scripts/test-vgsh-requirements.sh\nscripts/test-vgsh-outdated.sh'
+  "jarvis-denied-cli-input|shell/plugins/vgs.jarvis/backend/Denied.js|cli|node scripts/test-jarvis-denied.js"$'\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-sandbox-input|shell/plugins/vgs.jarvis/backend/Sandbox.js|cli|node scripts/test-jarvis-sandbox.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-forbidden-input|scripts/fixtures/jarvis/forbidden.js|logic|"
   "jarvis-forbidden-cli-input|scripts/fixtures/jarvis/forbidden.js|cli|node scripts/test-jarvis-sandbox.js"$'\nnode scripts/test-jarvis-daemon.js'
   "jarvis-sandbox-datagram-input|scripts/fixtures/jarvis/sandbox-datagram.py|cli|node scripts/test-jarvis-sandbox.js"$'\nnode scripts/test-jarvis-daemon.js'
@@ -404,7 +456,7 @@ printf 'source\n' >"$d/shell/Core/Dispatch.js"
 "${base_env[@]}" git -C "$d" mv shell/Core/Dispatch.js README.md
 # The removed path's consumers, and README.md's: the install tree and the
 # README check, and the ceiling row, since README.md is a document.
-rename_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\n'"$readme_rows"$'python3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\npython3 scripts/test-check-user-commands.py\n'"$repo_plan"
+rename_plan=$'node scripts/test-dispatch.js\nscripts/test-install-tree.sh\n'"$readme_rows"$'python3 scripts/check-plugin-boundary.py\npython3 scripts/check-design-tokens.py\npython3 scripts/check-pointer-cursor.py\npython3 scripts/test-check-pointer-cursor.py\npython3 scripts/check-user-commands.py\n'"$repo_plan"
 if out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate offline --changed HEAD --list 2>"$tmp/plan.err")" && [[ $out == "$rename_plan"$'\ndoc_limits_check' ]]; then ok "a rename selects consumers of the removed source path"; else fail "rename omitted the old path's consumers: $out"; fi
 
 d="$tmp/plan-shared"; fresh "$d"
@@ -599,6 +651,70 @@ path.write_text(source.replace('export VGS_TEST_RUN=1\n', ''))
 PY
 "${base_env[@]}" git -C "$d" commit -q -am control
 row "a validate without the marker export fails the planted row" "$d" 1 "" "validate: failed=test-run marker (exit 1)"
+
+# A diff-scoped run exports its NUL-delimited changed-path file to rows.
+# A full run unsets even an inherited value, so no stale caller value can
+# narrow a row accidentally.
+d="$tmp/changed-export"; fresh "$d"
+cat >"$d/scripts/changed-list.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'changed-env=%s\n' "${VGS_VALIDATE_CHANGED:-unset}"
+if [[ -n ${VGS_VALIDATE_CHANGED:-} ]]; then
+  python3 - "$VGS_VALIDATE_CHANGED" <<'PY'
+import sys
+with open(sys.argv[1], "rb") as source:
+    for path in source.read().split(b"\0"):
+        if path:
+            print("changed-path=" + path.decode())
+PY
+fi
+SH
+chmod +x "$d/scripts/changed-list.sh"
+python3 - "$d/scripts/validate" <<'PY'
+from pathlib import Path
+import re
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+row = '  "tools|changed list echo|scripts/changed-list.sh|changed.txt"'
+source, count = re.subn(r'rows=\(\n.*?\n\)\n', 'rows=(\n' + row + '\n)\n', source, count=1, flags=re.S)
+assert count == 1
+path.write_text(source)
+PY
+"${base_env[@]}" git -C "$d" add -A
+"${base_env[@]}" git -C "$d" commit -q -m changed-list-row
+printf 'changed\n' >"$d/changed.txt"
+test_area=tools
+test_args=(--changed HEAD)
+row_re "a diff-scoped run exports the changed path list to rows" "$d" 0 "" \
+  "~changed-env=" "changed-path=changed.txt" "~validate: secs=" "validate: ok"
+test_args=(--full)
+row "a full run unsets the changed path list inherited from the caller" "$d" 0 "VGS_VALIDATE_CHANGED=/x" \
+  "changed-env=unset" "!changed-path=changed.txt" "validate: ok"
+test_area=offline
+test_args=()
+
+# The vgsh suites read bundled plugins through their manifests. A QML
+# plugin edit in the cli area no longer selects them, while a manifest edit
+# still does.
+d="$tmp/plugin-vgsh-selection"; fresh "$d"
+for file in shell/plugins/acme.x/Panel.qml shell/plugins/acme.x/manifest.json; do
+  mkdir -p -- "$d/$(dirname -- "$file")"
+  printf 'changed\n' >"$d/$file"
+  out="$(cd -- "$d" && "${base_env[@]}" bash scripts/validate cli --changed HEAD --list 2>"$tmp/plan.err")"
+  case "$file" in
+    */Panel.qml)
+      for consumer in scripts/test-vgsh.sh scripts/test-vgsh-requirements.sh scripts/test-vgsh-outdated.sh; do
+        if grep -qxF "$consumer" <<<"$out"; then fail "plugin QML selected $consumer"; else ok "plugin QML omits $consumer"; fi
+      done ;;
+    */manifest.json)
+      for consumer in scripts/test-vgsh.sh scripts/test-vgsh-requirements.sh scripts/test-vgsh-outdated.sh; do
+        if grep -qxF "$consumer" <<<"$out"; then ok "plugin manifest selects $consumer"; else fail "plugin manifest omitted $consumer"; fi
+      done ;;
+  esac
+  rm -rf -- "$d/shell/plugins/acme.x"
+done
 
 # The document byte ceiling row. Its fixture carries the doc-limits checker,
 # a 1 KiB class for every Markdown file and a committed 900-byte grown.md,
