@@ -6,7 +6,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Audit.js, shell/plugins/vgs.jarvis/back
 
 ## Integration
 
-`Audit.js::create` supplies the writer interface for the [tool router](jarvis-approval.md), the [tool bridge](jarvis-bridge.md#calls-and-results) and the network door. The daemon acquires its writer on first hello. Approval refusals and privacy cleanup produce records even though no brain calls the registered [desktop executors](jarvis-desktop-tools.md) yet. It exposes no outbound transfer. The module tests invoke the real audit boundary with fixture callbacks, not production executors.
+`Audit.js::create` supplies the writer interface for the [tool router](jarvis-approval.md), the [tool bridge](jarvis-bridge.md#calls-and-results) and the network door. The daemon acquires its writer on first hello. Approval refusals and privacy cleanup produce records. The [chained engine](jarvis-engine.md) audits each transfer before it starts. The module tests invoke the real audit boundary with fixture callbacks, not production executors.
 
 J19 owns authorization, serial execution and approval binding. Its router must call `before` after authorization and before it starts an executor. J22 must use the same boundary before an authorized outbound transfer. Held, refused, expired and replaced decisions use `record` without starting work. Later outcomes use `record` with the original generation and operation identity. Recording an outcome never cancels or reverses an action that already started.
 

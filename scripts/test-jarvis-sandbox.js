@@ -379,7 +379,7 @@ async function main() {
     assert.equal(invalid.kind, "stopped");
     assert.equal(invalid.reason, "output-limit");
     assert(Buffer.byteLength(invalid.stdout) <= 65536);
-    await control("output-bound", "if (bytes > LIMIT) end", "if (false) end", bound);
+    await control("output-bound", "limit: LIMIT,", "limit: LIMIT + 1,", bound);
     // Readiness, not a real sleep, triggers the injected deadline/cancellation.
     const marker = w.project + "/ready";
     const held = js(`const f=require("node:fs");f.writeFileSync(${quoted(marker)},"ready");setInterval(()=>{},1000)`);
@@ -399,9 +399,9 @@ async function main() {
         assert.equal(result.reason, "timeout");
     }
     await timeout(Sandbox);
-    // The mutant uses a fixture's exit, so a removed timeout never hangs.
+    // The mutant uses a fixture's exit, so a changed deadline never hangs.
     const finiteHeld = js(`const f=require("node:fs");f.writeFileSync(${quoted(marker)},"ready");setTimeout(()=>process.exit(0),100)`);
-    await control("timeout", 'end("timeout")', 'void child.stdin', async s => {
+    await control("deadline", "deadline: DEADLINE,", "deadline: DEADLINE + 1,", async s => {
         fs.rmSync(marker, { force: true });
         const result = await s.run(request(finiteHeld, w.project), w.roots, { clock: { set(fn, ms) { assert.equal(ms, 120000); setImmediate(fn); return 1; }, clear() {} } });
         assert.equal(result.kind, "stopped");
@@ -456,7 +456,7 @@ async function main() {
     exited(await run(missing), 77);
     // Unavailable bootstrap never executes the requested fixture.
     const empty = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "missing-bwrap-"));
-    for (const sibling of ["Denied.js", "Tools.js"]) fs.copyFileSync(path.join(path.dirname(sourceFile), sibling), path.join(empty, sibling));
+    for (const sibling of ["Child.js", "Denied.js", "Tools.js"]) fs.copyFileSync(path.join(path.dirname(sourceFile), sibling), path.join(empty, sibling));
     const original = fs.readFileSync(sourceFile, "utf8");
     const needle = 'for (const file of ["/usr/bin/bwrap", "/bin/bwrap"])';
     assert.equal(original.split(needle).length - 1, 1);
@@ -467,9 +467,9 @@ async function main() {
     fs.rmSync(empty, { recursive: true });
     await control("status-required",
         'if (records.length !== 2 || !Number.isSafeInteger(records[0]["child-pid"])\n'
-        + '                || records[0]["child-pid"] <= 0 || !Number.isInteger(records[1]["exit-code"])\n'
-        + '                || records[1]["exit-code"] < 0 || records[1]["exit-code"] > 255\n'
-        + '                || records[1]["exit-code"] !== code || killed !== null)',
+        + '        || records[0]["child-pid"] <= 0 || !Number.isInteger(records[1]["exit-code"])\n'
+        + '        || records[1]["exit-code"] < 0 || records[1]["exit-code"] > 255\n'
+        + '        || records[1]["exit-code"] !== code || killed !== null)',
         'if (false)', async s =>
         assert.equal((await s.run(request(["/absent/executable"], w.project), w.roots)).reason, "launch-status"));
     console.log("jarvis-sandbox: real-bwrap forbidden operations and controls passed");

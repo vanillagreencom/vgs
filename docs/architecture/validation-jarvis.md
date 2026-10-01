@@ -24,6 +24,8 @@ The [task control suite](jarvis-task-control.md#evidence) runs the real launcher
 
 The [tool bridge suite](jarvis-bridge.md#evidence) adds the real `mcp-shim` as a child with an explicit environment. Each case's socket lives in a short directory directly under the world root, so its path stays shorter than the session bus socket that the world's length guard measures. The suite speaks MCP itself; no harness program, account or network is involved. An injected clock fires the hello deadline. Its MCP fixtures name their schema, commit and date and pass the shared schema checker.
 
+The [desktop tool suite](jarvis-tools.md#evidence) puts one stand-in under each desktop command name in this world's stand-in directory. The stand-ins record their calls to scratch files and reach no clipboard, audio server, backlight, notification daemon or device node. Its probe cases point PATH at scratch directories of inert files. The [bounded child suite](jarvis-tools.md#evidence) runs only node scripts it writes.
+
 ## Ownership
 
 - `scripts/lib/jarvis-env.sh::jarvis_env_run` owns one scratch world per invocation. Its header defines the caller contract. A suite starts its fixture servers, daemon and children inside that invocation, so they share the same loopback network.

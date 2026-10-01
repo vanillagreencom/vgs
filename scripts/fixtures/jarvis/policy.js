@@ -109,7 +109,7 @@ async function moduleCopy(file, edits, check) {
         source = changed;
     }
     const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "sb-mutant-"));
-    for (const sibling of ["Denied.js", "Tools.js"])
+    for (const sibling of ["Child.js", "Denied.js", "Tools.js"])
         fs.copyFileSync(path.join(path.dirname(file), sibling), path.join(folder, sibling));
     fs.writeFileSync(path.join(folder, path.basename(file)), source);
     try { return await check(require(path.join(folder, path.basename(file)))); }

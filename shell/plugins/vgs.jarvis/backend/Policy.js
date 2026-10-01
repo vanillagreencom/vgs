@@ -1,5 +1,5 @@
 // The action and release judges. Routing, approvals, audit and confinement
-// belong to their separate owners. Production registers no action executor.
+// belong to their separate owners.
 "use strict";
 const Tools = require("./Tools.js");
 

@@ -23,7 +23,7 @@ function freshSuite(tree, suite, root) {
         "shell/Core", "shell/Commons", "shell/plugins/vgs.jarvis/backend"])
         fs.mkdirSync(path.join(clone, folder), { recursive: true });
     for (const file of [relative, "scripts/fixtures/jarvis/prepare.js", "scripts/lib/jarvis-env.sh",
-        "bin/lib/qml-library.js", "shell/plugins/vgs.jarvis/JarvisProtocol.js",
+        "bin/lib/qml-library.js", "bin/lib/judge-files.js", "shell/plugins/vgs.jarvis/JarvisProtocol.js",
         "shell/plugins/vgs.jarvis/Session.js", "shell/plugins/vgs.jarvis/backend/session-runner.js",
         "shell/plugins/vgs.jarvis/backend/jarvisd.js", "shell/plugins/vgs.jarvis/backend/Tasks.js",
         "shell/plugins/vgs.jarvis/backend/task-event", "shell/plugins/vgs.jarvis/manifest.json",

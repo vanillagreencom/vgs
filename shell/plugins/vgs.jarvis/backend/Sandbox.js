@@ -3,14 +3,12 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
-const { StringDecoder } = require("node:string_decoder");
+const Child = require("./Child.js");
 const Denied = require("./Denied.js");
 const Tools = require("./Tools.js");
 
 const LIMIT = 64 * 1024;
 const DEADLINE = 120000;
-const CLOCK = { set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
 const within = (file, root) => file === root || file.startsWith(root + "/");
 
 function socketFilter() {
@@ -139,80 +137,43 @@ function mounts(args, masks, home, cwd) {
 }
 
 /**
- * Own acquisition, bounded output, cancellation and namespace teardown.
- * Only bwrap's separate status descriptor can establish successful exec.
- * A command cannot hide launch errors with stdout, stderr or its exit code.
- * The outside monitor closes that descriptor before the sandbox child runs.
+ * Own acquisition, cancellation and namespace teardown. Child bounds the
+ * output and lifetime. Only bwrap's separate status descriptor can establish
+ * successful exec. A command cannot hide launch errors with stdout, stderr or
+ * its exit code. The outside monitor closes that descriptor before the sandbox
+ * child runs. bwrap's die-with-parent ends PID 1, then the kernel ends every
+ * descendant, including children which called setsid themselves, so Child
+ * ends bwrap alone rather than a process group.
  */
-function launch(binary, args, { signal, clock = CLOCK } = {}) {
-    return new Promise(resolve => {
-        if (signal && signal.aborted) { resolve({ kind: "stopped", reason: "cancelled", stdout: "", stderr: "" }); return; }
-        let filter;
-        try { filter = socketFilter(); }
-        catch (error) { resolve({ kind: "error", reason: "socket-filter", error: error.message }); return; }
-        const child = spawn(binary, args, {
-            env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" }, stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"]
-        });
-        let stop = null;
-        let error = null;
-        let timer = null;
-        let bytes = 0;
-        let status = "";
-        const output = { stdout: [], stderr: [] };
-        const decoders = { stdout: new StringDecoder("utf8"), stderr: new StringDecoder("utf8") };
-        const end = reason => {
-            if (stop !== null) return;
-            stop = reason;
-            // bwrap's die-with-parent ends PID 1, then the kernel ends every
-            // descendant, including children which called setsid themselves.
-            child.kill("SIGKILL");
-        };
-        const cancel = () => end("cancelled");
-        if (signal) signal.addEventListener("abort", cancel, { once: true });
-        timer = clock.set(() => end("timeout"), DEADLINE);
-        const collect = (name, chunk) => {
-            // Count the text the consumer receives. Invalid UTF-8 becomes a
-            // replacement character, which can use more bytes than its input.
-            const encoded = Buffer.from(chunk, "utf8");
-            const remaining = LIMIT - bytes;
-            output[name].push(encoded.subarray(0, Math.max(0, remaining)));
-            bytes += encoded.length;
-            if (bytes > LIMIT) end("output-limit");
-        };
-        for (const name of ["stdout", "stderr"]) {
-            child[name].on("data", chunk => collect(name, decoders[name].write(chunk)));
-            child[name].on("end", () => collect(name, decoders[name].end()));
+async function launch(binary, args, { signal, clock } = {}) {
+    let filter;
+    try { filter = socketFilter(); }
+    catch (error) { return { kind: "error", reason: "socket-filter", error: error.message }; }
+    let status = "";
+    const result = await Child.run(binary, args, {
+        env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" }, limit: LIMIT, deadline: DEADLINE,
+        group: false, extra: 2, signal, clock, attach: (child, end) => {
+            child.stdio[3].on("data", chunk => {
+                status += chunk.toString("utf8");
+                if (status.length > 8192) end("status-limit");
+            });
+            // The bootstrap reads this pipe before exec and closes it. No filter
+            // file or inherited endpoint exists in the sandbox.
+            child.stdio[4].on("error", cause => { if (cause.code !== "EPIPE") end("filter-write"); });
+            child.stdio[4].end(filter);
         }
-        child.stdio[3].on("data", chunk => {
-            status += chunk.toString("utf8");
-            if (status.length > 8192) end("status-limit");
-        });
-        // The bootstrap reads this pipe before exec and closes it. No filter
-        // file or inherited endpoint exists in the sandbox.
-        child.stdio[4].on("error", cause => {
-            if (cause.code !== "EPIPE") { error = cause.code || cause.message; end("filter-write"); }
-        });
-        child.stdio[4].end(filter);
-        child.on("error", cause => { error = cause.code || cause.message; });
-        child.on("close", (code, killed) => {
-            clock.clear(timer);
-            if (signal) signal.removeEventListener("abort", cancel);
-            const text = Object.fromEntries(Object.entries(output).map(([key, chunks]) =>
-                [key, new TextDecoder().decode(Buffer.concat(chunks), { stream: true })]));
-            if (stop !== null) { resolve({ kind: "stopped", reason: stop, ...text }); return; }
-            if (error !== null) { resolve({ kind: "error", reason: "spawn", error, ...text }); return; }
-            let records;
-            try { records = status.trim().split("\n").map(line => JSON.parse(line)); }
-            catch { resolve({ kind: "error", reason: "launch-status", ...text }); return; }
-            if (records.length !== 2 || !Number.isSafeInteger(records[0]["child-pid"])
-                || records[0]["child-pid"] <= 0 || !Number.isInteger(records[1]["exit-code"])
-                || records[1]["exit-code"] < 0 || records[1]["exit-code"] > 255
-                || records[1]["exit-code"] !== code || killed !== null) {
-                resolve({ kind: "error", reason: "launch-status", ...text }); return;
-            }
-            resolve({ kind: "exited", code, ...text });
-        });
     });
+    if (result.kind !== "exited") return result;
+    const { code, signal: killed, stdout, stderr } = result;
+    let records;
+    try { records = status.trim().split("\n").map(line => JSON.parse(line)); }
+    catch { return { kind: "error", reason: "launch-status", stdout, stderr }; }
+    if (records.length !== 2 || !Number.isSafeInteger(records[0]["child-pid"])
+        || records[0]["child-pid"] <= 0 || !Number.isInteger(records[1]["exit-code"])
+        || records[1]["exit-code"] < 0 || records[1]["exit-code"] > 255
+        || records[1]["exit-code"] !== code || killed !== null)
+        return { kind: "error", reason: "launch-status", stdout, stderr };
+    return { kind: "exited", code, stdout, stderr };
 }
 
 function command(args, argv) {

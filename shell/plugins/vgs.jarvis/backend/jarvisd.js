@@ -32,13 +32,14 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const Audit = require("./Audit.js");
     const ToolRouter = require("./ToolRouter.js");
     const ShellRequests = require("./ShellRequests.js");
-    const Desktop = require("./Desktop.js");
+    const DesktopSession = require("./DesktopSession.js");
+    const Executors = require("./Executors.js");
     const TaskRunner = require("./TaskRunner.js");
     const ToolBridge = require("./ToolBridge.js");
     const ChainedEngine = require("./ChainedEngine.js");
     const { Accounts } = require("./Accounts.js");
     const { load } = require(path.join(process.argv[3], "bin/lib/qml-library.js"));
-    const { onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
+    const { commandFile, onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
     const Dispatch = load(path.join(process.argv[3], "shell/Core/Dispatch.js"));
     const Launch = load(path.join(process.argv[3], "shell/Commons/DesktopLaunch.js"));
@@ -54,6 +55,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let requests = null;
     let desktop = null;
     let engine = null;
+    let executors = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
@@ -65,6 +67,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         if (engine !== null) engine.close();
         if (desktop !== null) desktop.close();
         if (requests !== null) requests.close();
+        if (executors !== null) executors.close();
         if (audit !== null) audit.close();
         if (tasks !== null) tasks.close();
     }
@@ -287,7 +290,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     Object.assign(runner.ports, router.ports);
                     requests = ShellRequests.create({ Protocol, clock, write: fields =>
                         write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
-                    desktop = Desktop.install({ router, Dispatch, Launch, request: requests.send, clock,
+                    desktop = DesktopSession.install({ router, Dispatch, Launch, request: requests.send, clock,
                         environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) });
                     // The task executor needs an agent profile and a release port
                     // for the conversation's recipients. Neither exists yet, so
@@ -311,6 +314,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     runner.ports.playback = engine.playback(audio.playbackPort);
                     audio.captureSink = engine.captureSink;
                     audio.playbackSource = engine.playbackSource;
+                    executors = Executors.register(router, { find: commandFile, environment: process.env });
                 }
                 if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,

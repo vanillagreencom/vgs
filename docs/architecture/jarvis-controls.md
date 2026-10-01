@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/manifest.json, shell/plugins/vgs.jarvis/Service.qml, shell/plugins/vgs.jarvis/JarvisProtocol.js, shell/plugins/vgs.jarvis/Session.js, shell/plugins/vgs.jarvis/backend/jarvisd.js, shell/plugins/vgs.jarvis/backend/session-runner.js, scripts/fixtures/jarvis/scripted.js, scripts/smoke/rows/jarvis-keys.sh, scripts/test-jarvis-daemon.js, scripts/test-jarvis-protocol.js
 
-The [Jarvis architecture](jarvis.md) owns the service, child lease and Session regions. The installed daemon remains unconfigured. It installs real [audio ports](jarvis-audio.md), while speech and indicator prerequisites remain unavailable. Its [router](jarvis-approval.md) registers only the [desktop executors](jarvis-desktop-tools.md). The controls cannot open a microphone, speaker or provider.
+The [Jarvis architecture](jarvis.md) owns the service, child lease and Session regions. The installed daemon remains unconfigured. It installs real [audio ports](jarvis-audio.md), while speech and indicator prerequisites remain unavailable. Its [router](jarvis-approval.md) registers the [window and application executors](jarvis-desktop-tools.md) and [clipboard, media and notify executors](jarvis-tools.md), which no brain calls yet. The controls cannot open a microphone, speaker or provider.
 
 ## Keys and modes
 

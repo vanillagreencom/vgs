@@ -188,21 +188,27 @@ function editFile(key, file, create, edit) {
     return null;
 }
 
-// Whether COMMAND is an executable file in an absolute directory of PATH. A
-// relative entry names no fixed directory and is skipped; a directory that
-// cannot be searched holds no command, as it holds none for a shell.
-function onPath(command) {
+// The first executable file named COMMAND in an absolute directory of PATH,
+// or null. A relative entry names no fixed directory and is skipped; a
+// directory that cannot be searched holds no command, as it holds none for a
+// shell. Nothing is run.
+function commandFile(command) {
     for (const dir of (process.env.PATH || "").split(path.delimiter)) {
         if (!path.isAbsolute(dir)) continue;
         const file = path.join(dir, command);
         try {
             fs.accessSync(file, fs.constants.X_OK);
-            if (fs.statSync(file).isFile()) return true;
+            if (fs.statSync(file).isFile()) return file;
         } catch (e) {
             if (!["ENOENT", "ENOTDIR", "EACCES"].includes(e.code)) throw e;
         }
     }
-    return false;
+    return null;
+}
+
+// Whether COMMAND is on PATH, by commandFile's rule.
+function onPath(command) {
+    return commandFile(command) !== null;
 }
 
 // A change to the user's system runs only where its user sees and answers
@@ -229,4 +235,4 @@ function shellWord(word) {
     return "'" + word.replace(/'/g, "'\\''") + "'";
 }
 
-module.exports = { Refusal, refuse, main, readJson, readConfig, writing, replaceFile, lockFile, editFile, onPath, refuseOutsideTerminal, shellWord };
+module.exports = { Refusal, refuse, main, readJson, readConfig, writing, replaceFile, lockFile, editFile, commandFile, onPath, refuseOutsideTerminal, shellWord };

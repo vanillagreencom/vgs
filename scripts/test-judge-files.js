@@ -3,8 +3,9 @@
 // `replaceFile`, whose staging copy of a file kept with a mode is created
 // owner-only before any byte is written, so a private settings file never
 // has a readable copy beside it. Every mode below was written by hand.
-// `onPath`, which answers whether a command is an executable file in an
-// absolute directory of PATH, is pinned against a PATH built here.
+// `commandFile`, which answers the executable file a command names in an
+// absolute directory of PATH, and `onPath`, whether there is one, are pinned
+// against a PATH built here.
 // `main` ends a process on a refusal with its line, its detail and its
 // status, thrown or rejected by a returned promise; each row runs in a child
 // node process. `lockFile` holds a flock one holder at a time.
@@ -34,8 +35,9 @@ fs.writeFileSync = function (file, ...rest) {
 
 const modeOf = file => fs.statSync(file).mode & 0o777;
 
-// onPath rows: the name, the command, PATH's entries (a leading `/` marks one
-// made absolute under the row's directory), whether the command is found.
+// PATH rows: the name, the command, PATH's entries (a leading `/` marks one
+// made absolute under the row's directory), whether the command is found in
+// abs/.
 const PATH_ROWS = [
     ["an executable file in an absolute entry is found", "tool", ["/abs"], true],
     ["a file without the execute bit is not a command", "plain", ["/abs"], false],
@@ -130,6 +132,7 @@ function verify(helper, root, file) {
         for (const [name, command, entries, want] of PATH_ROWS) {
             process.env.PATH = entries.map(e => e.startsWith("/") ? path.join(bin, e) : e).join(path.delimiter);
             assert.equal(helper.onPath(command), want, name);
+            assert.equal(helper.commandFile(command), want ? path.join(bin, "abs", command) : null, name + ": its file");
         }
     } finally {
         process.env.PATH = savedPath;
@@ -147,7 +150,8 @@ try {
         ["stale staging removed", "                fs.rmSync(tmp, { force: true });\n", ""],
         ["kept mode", "                fs.chmodSync(tmp, mode);\n", ""],
         ["a command is executable", "fs.accessSync(file, fs.constants.X_OK);", "fs.accessSync(file, fs.constants.F_OK);"],
-        ["a command is a file", "if (fs.statSync(file).isFile()) return true;", "return true;"],
+        ["a command is a file", "if (fs.statSync(file).isFile()) return file;", "return file;"],
+        ["onPath answers by commandFile", "return commandFile(command) !== null;", "return commandFile(command) === null;"],
         ["a PATH entry is absolute", "        if (!path.isAbsolute(dir)) continue;\n", ""],
         ["a refusal's detail is printed", "e.first + \"\\n\" + detail)", "e.first + \"\\n\")"],
         ["a returned promise's refusal is caught", "result.catch(end);", "undefined;"],

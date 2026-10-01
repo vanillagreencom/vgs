@@ -249,8 +249,11 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/AnthropicMessages.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audio.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ChainedEngine.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Child.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Desktop.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/DesktopSession.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Executors.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/GptLive.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Mcp.js

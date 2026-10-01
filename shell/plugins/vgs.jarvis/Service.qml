@@ -374,6 +374,9 @@ Item {
             XDG_CONFIG_HOME: Quickshell.env("XDG_CONFIG_HOME"), XDG_STATE_HOME: Quickshell.env("XDG_STATE_HOME"),
             XDG_DATA_HOME: Quickshell.env("XDG_DATA_HOME"), XDG_RUNTIME_DIR: Quickshell.env("XDG_RUNTIME_DIR"),
             HYPRLAND_INSTANCE_SIGNATURE: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"),
+            // The desktop tool executors hand these to their commands alone.
+            WAYLAND_DISPLAY: Quickshell.env("WAYLAND_DISPLAY"),
+            DBUS_SESSION_BUS_ADDRESS: Quickshell.env("DBUS_SESSION_BUS_ADDRESS"),
             LANG: "C.UTF-8"
         })
         stdout: SplitParser { splitMarker: ""; onRead: data => root.receive(data) }

@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API or local account when you request it. The installed daemon has no speech or conversation engine. It holds window, workspace and application tools, but nothing calls them yet.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API or local account when you request it. The installed daemon has no speech or conversation engine, so nothing calls its desktop tools yet.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -27,6 +27,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Login hints and local-server presence are not verified inference access.
 - Jarvis watches its recorded coding tasks and shows how many are running in Settings.
 - Stopping a coding task interrupts its agent, escalates until every one of its processes has ended, and only then records it as stopped.
+- Desktop tools read and copy clipboard text, play, pause and skip media, set and mute the speaker volume, set screen brightness and show a notification.
+- A clipboard read refuses a copied password and anything that is not text.
 
 ## Requirements
 
@@ -35,6 +37,8 @@ The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and
 The optional command sandbox needs bubblewrap and available user namespaces. This skeleton offers no shell tools. Opening a file or web link needs gio.
 
 Several coding tasks at once need tmux, which is optional. Without it, a coding task opens in a floating terminal, one task at a time. Task records need flock and Python.
+
+The desktop tools need wl-clipboard, playerctl, WirePlumber, brightnessctl and libnotify. A missing command removes only its own tools; Jarvis finds a newly installed one when it next starts.
 
 ## How it works
 
