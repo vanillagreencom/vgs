@@ -91,6 +91,7 @@ FIELDS = (
     ("schema", "*", "label"), ("schema", "*", "description"), ("schema", "*", "group"), ("schema", "*", "options", "*"), ("schema", "*", "presets", "*", "label"),
     ("status", "*", "label"), ("status", "*", "group"), ("status", "*", "hint"), ("status", "*", "action", "label"),
     ("requirements", "*", "purpose"),
+    ("pane", "group"),
     ("tui", "*", "title"), ("tui", "*", "entry", "label"), ("tui", "*", "entry", "group"),
     ("secrets", "label"),
 )
@@ -99,7 +100,7 @@ FIELDS = (
 # disclosure itself.
 EXEMPT = (
     ("schemaVersion",), ("id",), ("version",), ("license",), ("icon",), ("kinds",), ("entryPoints",),
-    ("capabilities",), ("systemSteps",), ("settings",), ("defaultSection",), ("appearance",), ("extras",),
+    ("capabilities",), ("systemSteps",), ("settings",), ("defaultSection",), ("pane", "order"), ("appearance",), ("extras",),
     ("schema", "*", "type"), ("schema", "*", "optionsFrom"), ("schema", "*", "presets", "*", "value"), ("schema", "*", "allowCustom"), ("schema", "*", "format"), ("schema", "*", "unit"), ("schema", "*", "min"), ("schema", "*", "max"), ("schema", "*", "step"),
     ("status", "*", "type"), ("status", "*", "hidden"), ("status", "*", "command"),
     ("status", "*", "action", "tui"), ("status", "*", "action", "install"), ("status", "*", "action", "system"),

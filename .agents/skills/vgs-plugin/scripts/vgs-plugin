@@ -52,6 +52,7 @@ TEMPLATE_FOR = {
     "overlay": ("Panel.qml", "Overlay.qml"),
     "menu": ("Panel.qml", "Menu.qml"),
     "window": ("Window.qml", "Window.qml"),
+    "pane": ("Pane.qml", "Pane.qml"),
     "service": ("Service.qml", "Service.qml"),
     "background": ("Background.qml", "Background.qml"),
 }
@@ -102,6 +103,8 @@ def cmd_new(args):
         data["defaultSection"] = "right"
         data["settings"] = {"label": name}
         data["schema"] = {"label": {"type": "string", "label": "Label", "description": "The text the widget shows", "allowCustom": True, "presets": [{"value": name}]}}
+    if "pane" in kinds:
+        data["pane"] = {"group": "General", "order": 100}
     manifest = json.dumps(data, indent=2) + "\n"
     # The repository's one manifest judge decides the id and the shape before
     # anything is written, on the manifest text that will be written, so a

@@ -35,6 +35,12 @@ function suite(ctx, check) {
     // same fixture does not pass for it.
     const manifestRows = [
         ["valid bar manifest", {}, null],
+        ["valid pane manifest", { kinds: ["pane"], entryPoints: { pane: "Pane.qml" }, pane: { group: "System", order: 10 } }, null],
+        ["kind pane without pane key", { kinds: ["pane"], entryPoints: { pane: "Pane.qml" } }, "kind pane needs a pane declaration"],
+        ["pane key without pane kind", { pane: { group: "System", order: 10 } }, "pane needs kind pane"],
+        ["pane key with unknown key", { kinds: ["pane"], entryPoints: { pane: "Pane.qml" }, pane: { group: "System", order: 10, x: 1 } }, "pane has unknown key"],
+        ["pane group is one printable line", { kinds: ["pane"], entryPoints: { pane: "Pane.qml" }, pane: { group: "", order: 10 } }, "pane.group must be a printable line"],
+        ["pane order is finite", { kinds: ["pane"], entryPoints: { pane: "Pane.qml" }, pane: { group: "System", order: null } }, "pane.order must be a finite number"],
         ["session is a shared capability", { capabilities: ["session"] }, null],
         ["unknown top-level key", { keepLoaded: true }, "unknown key"],
         ["schemaVersion 2", { schemaVersion: 2 }, "schemaVersion must be 1"],
@@ -273,6 +279,7 @@ function suite(ctx, check) {
     check("hyprland.options setting names are schema setting names", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: Object.assign({}, optionSettings, { "bad\nos.exit()": "us" }), schema: Object.assign({}, optionSchema, { "bad\nos.exit()": { type: "string", label: "Bad", presets: [{ value: "us" }] } }), hyprland: { options: { "bad\nos.exit()": "input.kb_layout" } } }), "/p").error, "hyprland.options.bad\nos.exit() must be a setting name");
     check("hyprland is a known capability", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"] }), "/p").ok, true);
     check("monitors is a known capability", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["monitors"] }), "/p").ok, true);
+    check("panes is a known capability", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["panes"] }), "/p").ok, true);
     check("a normalised manifest carries its options", (() => {
         const m = ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").manifest;
         return m.hyprland.options;
@@ -363,6 +370,7 @@ function suite(ctx, check) {
     manifests["acme.widget"] = ctx.validateManifest(noSection, "/p").manifest;
     manifests["vgs.widgetpanel"] = ctx.validateManifest(Object.assign({}, clock, { id: "vgs.widgetpanel", kinds: ["bar-widget", "panel"], entryPoints: { "bar-widget": "W.qml", panel: "P.qml" }, defaultSection: "right" }), "/p").manifest;
     manifests["acme.both"] = ctx.validateManifest({ schemaVersion: 1, id: "acme.both", name: "B", version: "1", author: "a", description: "d", kinds: ["service", "bar-widget"], entryPoints: { service: "S.qml", "bar-widget": "W.qml" }, defaultSection: "right", settings: { label: "probe" } }, "/p").manifest;
+    manifests["acme.pane"] = ctx.validateManifest({ schemaVersion: 1, id: "acme.pane", name: "Pane", version: "1", author: "a", description: "d", kinds: ["service", "bar-widget", "pane"], entryPoints: { service: "S.qml", "bar-widget": "W.qml", pane: "Pane.qml" }, defaultSection: "right", pane: { group: "System", order: 2 }, settings: { label: "probe" }, schema: { label: { type: "string", label: "Label", presets: [{ value: "probe" }], allowCustom: true } }, capabilities: ["configure"] }, "/p").manifest;
     for (const id of Object.keys(manifests)) if (manifests[id] === undefined) { throw new Error("fixture manifest refused: " + id); }
 
     // isEnabled rows: [name, config, id, want]
@@ -645,6 +653,7 @@ function suite(ctx, check) {
         ["a service writes its plugins row", shipped, manifests["acme.svc"], ["plugins"]],
         ["a bar writes its plugins row", shipped, manifests["vgs.bar"], ["plugins"]],
         ["a placed widget-plus-service writes both", tunePlaced, tunable, ["layout", "plugins"]],
+        ["a placed pane plugin writes both", ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [], right: [{ id: "acme.pane" }] } } }), manifests["acme.pane"], ["layout", "plugins"]],
     ];
     for (const [name, config, manifest, want] of targetRows) {
         check("settingTargets: " + name, ctx.settingTargets(config, manifest), want);
@@ -679,6 +688,7 @@ function suite(ctx, check) {
         ["a shared capability is never refused", { lock: "acme.other" }, ["run", "screens"], ""],
         ["the Bluetooth agent held by another plugin refuses", { bluetoothAgent: "acme.other" }, ["bluetoothAgent", "ipc"], "refused: capability=bluetoothAgent held-by=acme.other"],
         ["the monitor rules serve one plugin", { monitors: "acme.other" }, ["monitors", "ipc"], "refused: capability=monitors held-by=acme.other"],
+        ["the panes holder serves one plugin", { panes: "acme.other" }, ["panes", "ipc"], "refused: capability=panes held-by=acme.other"],
     ];
     for (const [name, held, capabilities, want] of lendRows) {
         check("lendRefusal: " + name, ctx.lendRefusal(held, Object.assign({}, tunable, { capabilities: capabilities })), want);
@@ -803,9 +813,10 @@ suite(load(LOGIC), report);
 // package-manager table and the Hyprland layer's table it imports.
 const CONTROLS = [
     ["session is a known capability", '"lock", "session",', '"lock", ("session" && "planted"),'],
-    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"].concat(["session"]);'],
-    ["the Bluetooth agent is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "monitors"];'],
-    ["monitors is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent"];'],
+    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"].concat(["session"]);'],
+    ["the Bluetooth agent is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "monitors"];'],
+    ["monitors is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "panes"];'],
+    ["panes is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];'],
     ["monitors is a capability", "\"hyprland\", \"bluetoothAgent\", \"monitors\"];", "\"hyprland\", \"bluetoothAgent\"];"],
     ["optionsFrom needs a string", "if (entry.type !== \"string\")\n                return at + \".optionsFrom needs type string\";", "if (false)\n                return at + \".optionsFrom needs type string\";"],
     ["hyprland options need the capability", "if (options !== undefined && capabilities.indexOf(\"hyprland\") === -1)\n        return \"hyprland.options needs capability hyprland\";", "if (false)\n        return \"hyprland.options needs capability hyprland\";"],
@@ -921,7 +932,11 @@ const CONTROLS = [
     ["status hidden is a boolean", "if (entry.hidden !== undefined && typeof entry.hidden !== \"boolean\")", "if (false)"],
     ["a data entry is never drawn", "if (entry[drawn[d]] !== undefined)", "if (false)"],
     ["an absent status is normalised", "manifest.status = raw.status === undefined ? {} : clone(raw.status);", "manifest.status = clone(raw.status);"],
-    ["window is a kind", "\"menu\", \"window\", \"service\"", "\"menu\", \"service\""],
+    ["window is a kind", "\"menu\", \"window\", \"pane\", \"service\"", "\"menu\", \"pane\", \"service\""],
+    ["pane is a kind", "\"window\", \"pane\", \"service\"", "\"window\", \"service\""],
+    ["pane is a manifest key", "\"defaultSection\", \"pane\", \"appearance\"", "\"defaultSection\", \"appearance\""],
+    ["pane key is judged", "var badPane = paneError(raw.pane, raw.kinds);", "var badPane = \"\";"],
+    ["kind pane needs pane key", "} else if (raw.kinds.indexOf(\"pane\") !== -1) {", "} else if (false) {"],
     ["window is summonable", "\"menu\", \"window\"];", "\"menu\"];"],
     ["a window is a toplevel", "if (kind === \"window\") return \"window\";", ""],
     ["an anchored window is a toplevel", "if (kind === \"window\") return \"window\";", "if (kind === \"window\" && !anchored) return \"window\";"],

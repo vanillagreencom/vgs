@@ -112,7 +112,10 @@ Singleton {
             return out;
         },
         configure: ctx => ({
-            set: (key, value) => Plugins.writeSetting(ctx.id, key, value, [Logic.settingTargetOf(ctx.kind)], ctx.locator)
+            set: (key, value) => {
+                const targets = ctx.kind === "pane" ? Logic.settingTargets(Config.effective, ctx.manifest) : [Logic.settingTargetOf(ctx.kind)];
+                return Plugins.writeSetting(ctx.id, key, value, targets, ctx.locator);
+            }
         }),
         idle: idleWatches.provider,
         ipc: commands.provider,
@@ -145,13 +148,14 @@ Singleton {
             storeSecret: (id, key, account, secret, done) => root.managerSecret(ctx, "store", id, key, account, secret, done),
             clearSecret: (id, key, account, done) => root.managerSecret(ctx, "clear", id, key, account, null, done)
         }),
+        panes: ctx => root.panesProvider(ctx),
         builtins: ctx => ({
             register: (name, item) => Plugins.recordBuiltin(ctx, name, item)
         }),
         surfaces: ctx => ({
-            summon: (kind, payloadJson, anchor) => Plugins.route("summon", kind, ctx.id, payloadJson || "", root.origin(ctx, anchor)),
-            hide: kind => Plugins.route("hide", kind, ctx.id, "", null),
-            toggle: (kind, payloadJson, anchor) => Plugins.route("toggle", kind, ctx.id, payloadJson || "", root.origin(ctx, anchor))
+            summon: (kind, payloadJson, anchor) => root.surfaceRoute(ctx, "summon", kind, payloadJson, anchor),
+            hide: kind => root.surfaceRoute(ctx, "hide", kind, "", null),
+            toggle: (kind, payloadJson, anchor) => root.surfaceRoute(ctx, "toggle", kind, payloadJson, anchor)
         }),
         toasts: ctx => ({
             show: options => Toasts.show(ctx, options)
@@ -183,6 +187,113 @@ Singleton {
             get missing() { return Registry.enabledOwnerMissing(); }
         })
     })
+
+
+    Component {
+        id: paneMountComponent
+        Item {
+            property var destroyPane: null
+            Component.onDestruction: if (destroyPane !== null) destroyPane(false)
+        }
+    }
+
+    function panesProvider(ctx) {
+        let mount = null;
+        function disposeCurrent(destroyWrapper) {
+            if (mount === null) return;
+            const current = mount;
+            mount = null;
+            if (current.instance !== null) {
+                try {
+                    current.instance.close();
+                } catch (e) {
+                    console.error("panes: " + current.id + " close() failed: " + e.message);
+                }
+                Plugins.destroyInstance(current.instance, ctx.hostKey);
+            }
+            current.wrapper.destroyPane = null;
+            if (destroyWrapper) current.wrapper.destroy();
+        }
+        ctx.onDispose(() => disposeCurrent(true));
+        return {
+            get list() { return Registry.paneRows; },
+            mount: (id, container, payloadJson) => {
+                const listed = Registry.paneRows.some(row => row.id === id);
+                if (!listed) return "unknown: " + id;
+                if (container === null || container === undefined || typeof container !== "object") return "refused: pane-container=missing";
+                disposeCurrent(true);
+                const wrapper = paneMountComponent.createObject(container);
+                if (wrapper === null) return "refused: pane-container=create-failed";
+                wrapper.anchors.fill = container;
+                const result = Plugins.createInstance(id, "pane", wrapper, ctx.hostKey, null, {}, ctx.screen, null);
+                if (result.state !== "built") {
+                    wrapper.destroy();
+                    return "refused: pane=" + id + " reason=" + result.state;
+                }
+                result.instance.anchors.fill = wrapper;
+                try {
+                    result.instance.open(payloadJson || "");
+                } catch (e) {
+                    console.error("panes: " + id + " open() failed: " + e.message);
+                    Plugins.destroyInstance(result.instance, ctx.hostKey);
+                    wrapper.destroy();
+                    return "refused: open-failed=" + id;
+                }
+                const focusTarget = result.instance.initialFocus !== undefined && result.instance.initialFocus !== null ? result.instance.initialFocus : result.instance;
+                if (typeof focusTarget.forceActiveFocus === "function") focusTarget.forceActiveFocus(Qt.ShortcutFocusReason);
+                mount = { id: id, wrapper: wrapper, instance: result.instance };
+                wrapper.destroyPane = disposeCurrent;
+                return () => {
+                    if (mount !== null && mount.wrapper === wrapper) disposeCurrent(true);
+                };
+            },
+            setPlaced: (id, placed) => {
+                if (typeof placed !== "boolean") return "refused: placed=" + JSON.stringify(placed) + " want=boolean";
+                if (!Registry.paneRows.some(row => row.id === id)) return "unknown: " + id;
+                return Plugins.setPlaced(id, placed);
+            }
+        };
+    }
+
+    function panePayload(ctx, payloadJson) {
+        let payload = {};
+        if (payloadJson !== undefined && payloadJson !== null && payloadJson !== "") {
+            if (typeof payloadJson === "string") {
+                try {
+                    payload = JSON.parse(payloadJson);
+                } catch (e) {
+                    return { ok: false, answer: "refused: pane-payload=json" };
+                }
+            } else if (typeof payloadJson === "object") {
+                payload = payloadJson;
+            } else {
+                return { ok: false, answer: "refused: pane-payload=object" };
+            }
+        }
+        if (payload === null || Array.isArray(payload) || typeof payload !== "object")
+            return { ok: false, answer: "refused: pane-payload=object" };
+        const out = {};
+        for (const key of Object.keys(payload)) out[key] = payload[key];
+        out.pane = ctx.id;
+        return { ok: true, payloadJson: JSON.stringify(out) };
+    }
+
+    function panesHolderId() {
+        const held = holderIds("panes");
+        if (held.length > 0) return held[0];
+        return Registry.panesHolderId();
+    }
+
+    function surfaceRoute(ctx, verb, kind, payloadJson, anchor) {
+        if (kind !== "pane")
+            return Plugins.route(verb, kind, ctx.id, payloadJson || "", root.origin(ctx, anchor));
+        const holder = root.panesHolderId();
+        if (holder === "") return "refused: panes=no-holder";
+        if (verb === "hide") return Plugins.route("hide", "window", holder, "", null);
+        const payload = panePayload(ctx, payloadJson);
+        if (!payload.ok) return payload.answer;
+        return Plugins.route(verb, "window", holder, payload.payloadJson, root.origin(ctx, anchor));
+    }
 
     // Every `manager` TUI member opens a core TUI in a floating terminal,
     // so a question such as update's diff review stays a question (D007).

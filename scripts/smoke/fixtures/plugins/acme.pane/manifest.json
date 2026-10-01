@@ -1,0 +1,7 @@
+{ "schemaVersion": 1, "id": "acme.pane", "name": "Pane", "version": "0.1.0", "author": "acme", "description": "smoke pane fixture",
+  "icon": "panel-right-open", "kinds": ["service", "bar-widget", "pane"],
+  "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml", "pane": "Pane.qml" },
+  "defaultSection": "right", "pane": { "group": "Fixtures", "order": 10 },
+  "settings": { "label": "pane-default" },
+  "schema": { "label": { "type": "string", "label": "Label", "group": "Pane", "allowCustom": true, "presets": [{ "value": "pane-default", "label": "Default" }, { "value": "pane-service", "label": "Service" }, { "value": "pane-edited", "label": "Edited" }] } },
+  "capabilities": ["configure", "surfaces"] }

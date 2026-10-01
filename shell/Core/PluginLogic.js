@@ -14,11 +14,11 @@
 
 // The kinds the core hosts. A manifest naming any other kind is refused. A
 // kind's entry point is keyed by the kind name in `entryPoints`.
-var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "window", "service", "background"];
+var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "window", "pane", "service", "background"];
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "system", "requirements", "doctor", "secrets", "hyprland", "bluetoothAgent", "monitors"];
+var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "panes", "toasts", "theme", "layers", "status", "tui", "system", "requirements", "doctor", "secrets", "hyprland", "bluetoothAgent", "monitors"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -32,10 +32,10 @@ var TOAST_TITLE_MAX = 120;
 var TOAST_MESSAGE_MAX = 600;
 
 // Capabilities whose core object serves one plugin at a time: the session
-// lock, the polkit agent, the Bluetooth pairing agent and the monitor
-// rules, a session-wide role. A second plugin naming one is not built while
-// another plugin holds it.
-var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];
+// lock, the polkit agent, the Bluetooth pairing agent, the monitor
+// rules and the panes holder, each a session-wide role. A second plugin
+// naming one is not built while another plugin holds it.
+var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];
 
 // The types a settings schema entry may declare, and the keys an entry may
 // carry. `presets`, `allowCustom`, `format` and `unit` choose the Settings
@@ -61,10 +61,14 @@ var SUMMONABLE_KINDS = ["panel", "overlay", "menu", "window"];
 // absent.
 var PLACEMENTS = ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"];
 
+// A pane plugin supplies one section of the System window. The manifest's
+// `pane` key groups and orders it in the one holder's list.
+var PANE_KEYS = ["group", "order"];
+var PANE_GROUP_MAX = 60;
 
 // Every key a manifest may carry. An unknown key is refused, so a misspelt
 // key fails loudly instead of being carried and ignored.
-var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "systemSteps", "settings", "schema", "defaultSection", "appearance", "hyprland", "requirements", "status", "tui", "secrets", "extras"];
+var MANIFEST_KEYS = ["schemaVersion", "id", "name", "version", "author", "description", "license", "icon", "kinds", "entryPoints", "capabilities", "systemSteps", "settings", "schema", "defaultSection", "pane", "appearance", "hyprland", "requirements", "status", "tui", "secrets", "extras"];
 
 // What one entry of a manifest's `extras` may carry: the status entries and
 // the requirement commands that serve that extra alone (extrasError).
@@ -743,6 +747,26 @@ function activeManifest(manifest, settings) {
     });
     out.requirements = manifest.requirements.filter(function (r) { return commandsOff.indexOf(r.command) === -1; });
     return out;
+}
+
+// The first defect of a manifest's `pane` key, or "": a plugin of kind
+// `pane` needs { group, order } so the one panes holder can list it; a
+// manifest without the kind may not carry the key.
+function paneError(pane, kinds) {
+    if (kinds.indexOf("pane") === -1)
+        return "pane needs kind pane";
+    if (!isPlainObject(pane))
+        return "pane must be an object";
+    var keys = Object.keys(pane);
+    for (var i = 0; i < keys.length; i++) {
+        if (PANE_KEYS.indexOf(keys[i]) === -1)
+            return "pane has unknown key " + JSON.stringify(keys[i]);
+    }
+    if (!isPrintableLine(pane.group, PANE_GROUP_MAX))
+        return "pane.group must be a printable line of 1 to " + PANE_GROUP_MAX + " characters";
+    if (typeof pane.order !== "number" || !isFinite(pane.order))
+        return "pane.order must be a finite number";
+    return "";
 }
 
 // The first defect of a manifest's `secrets` key, or "": an object of
@@ -2597,6 +2621,13 @@ function validateManifest(raw, sourceDir) {
         if (SECTIONS.indexOf(raw.defaultSection) === -1)
             return { ok: false, error: "defaultSection must be one of " + SECTIONS.join(", ") + ", got " + JSON.stringify(raw.defaultSection) };
     }
+    if (raw.pane !== undefined) {
+        var badPane = paneError(raw.pane, raw.kinds);
+        if (badPane !== "")
+            return { ok: false, error: badPane };
+    } else if (raw.kinds.indexOf("pane") !== -1) {
+        return { ok: false, error: "kind pane needs a pane declaration" };
+    }
     if (raw.hyprland !== undefined) {
         var badHyprland = hyprlandError(raw.hyprland, capabilities, schema);
         if (badHyprland !== "")
@@ -2621,6 +2652,7 @@ function validateManifest(raw, sourceDir) {
     manifest.settings = clone(settings);
     manifest.schema = clone(schema);
     manifest.status = raw.status === undefined ? {} : clone(raw.status);
+    if (raw.pane !== undefined) manifest.pane = clone(raw.pane);
     manifest.systemSteps = raw.systemSteps === undefined ? [] : raw.systemSteps.slice();
     manifest.extras = {};
     Object.keys(raw.extras === undefined ? {} : raw.extras).forEach(function (name) {

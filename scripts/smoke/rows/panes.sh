@@ -1,0 +1,107 @@
+# Pane kind and panes capability: a holder window lists enabled pane
+# plugins, mounts a pane with that pane plugin's own shell, owns one mount
+# at a time and refuses a second panes holder while it holds the capability.
+# The pane's configure writes every configuration entry its plugin reads.
+set -euo pipefail
+
+pane_file="$home/.config/vgs/shell.json"
+pane_saved="$sandbox/shell-before-panes.json"
+pane_bar_key=""
+cp -- "$pane_file" "$pane_saved"
+
+install_plugin_copy() { # SOURCE ID NAME [ORDER]
+  local source="$1" id="$2" name="$3" order="${4:-10}" target
+  target="$home/.config/vgs/plugins/$id"
+  rm -rf -- "${target:?}"
+  mkdir -p -- "$target"
+  cp -R "$repo/scripts/smoke/fixtures/plugins/$source/." "$target/"
+  python3 - "$target/manifest.json" "$id" "$name" "$order" <<'PY'
+import json, os, sys
+path, plugin_id, name, order = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+doc = json.load(open(path))
+doc["id"] = plugin_id
+doc["name"] = name
+if "pane" in doc:
+    doc["pane"]["order"] = order
+json.dump(doc, open(path + ".tmp", "w"))
+os.replace(path + ".tmp", path)
+PY
+}
+
+host_list() { ipc smoke invokeInstance window acme.panehost listJson ''; }
+host_list_ids() { host_list | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin)], separators=(",", ":")))'; }
+host_list_placed() { host_list | py_reply 'import json,sys; print(json.dumps([r["placed"] for r in json.load(sys.stdin) if r["id"] == "acme.pane"][0]))'; }
+window_panes() { ipc shell built | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin).get("window", []) if r["kind"] == "pane"], separators=(",", ":")))'; }
+settings_pane_label() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; print(json.dumps([p["settings"]["label"] for p in json.load(sys.stdin) if p["id"] == "acme.pane"][0]))'; }
+
+install_plugin_copy acme.panehost acme.panehost "Pane Host" 0
+install_plugin_copy acme.pane acme.pane "Pane" 10
+expect "rescan after adding the pane fixtures answers ok" ok ipc shell rescanPlugins
+expect_poll "the pane host fixture is discovered" False plugin_enabled acme.panehost
+expect_poll "the pane fixture is discovered" False plugin_enabled acme.pane
+expect "enabling the pane host is allowed" ok ipc shell setPluginEnabled acme.panehost true
+expect "enabling the pane fixture is allowed" ok ipc shell setPluginEnabled acme.pane true
+expect_poll "the pane service is built" True record_exists acme.pane
+pane_bar_key="$(bar_key)" || fail "the bar key is unreadable for pane rows"
+pane_widget_placed() { bar_widget_ids | py_reply 'import json,sys; print(any("acme.pane" in ids for ids in json.load(sys.stdin)))'; }
+expect_poll "the pane widget is placed" True pane_widget_placed
+
+expect "summoning the pane host window is allowed" ok ipc shell summon window acme.panehost '{}'
+expect_poll "the pane host window is built" true ipc smoke activeFocusIn window acme.panehost
+expect_poll "the holder lists the pane with its manifest metadata and placement" '[{"id":"acme.pane","name":"Pane","icon":"panel-right-open","group":"Fixtures","order":10,"placed":true,"hasWidget":true}]' host_list
+expect "the pane host shell has panes and not the pane's capabilities" '"manifest,panes,settings"' ipc smoke readInstance window acme.panehost shellKeys
+
+expect "mounting the pane through the holder is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+expect_poll "the mounted pane reads its own manifest id" '"acme.pane"' ipc smoke readInstance window acme.pane manifestId
+expect "the mounted pane got its own scoped shell, not the host shell" '"configure,manifest,settings,surfaces"' ipc smoke readInstance window acme.pane shellKeys
+expect "the mounted pane received the payload" '"{}"' ipc smoke readInstance window acme.pane payload
+expect_poll "the pane's initial focus takes the keyboard" '["Button","Pane edit",true,true,true]' ipc smoke focused window acme.pane
+
+install_plugin_copy acme.pane acme.pane-alt "Pane Alt" 20
+expect "rescan after adding the second pane answers ok" ok ipc shell rescanPlugins
+expect_poll "the second pane is discovered" False plugin_enabled acme.pane-alt
+expect "enabling the second pane is allowed" ok ipc shell setPluginEnabled acme.pane-alt true
+expect_poll "the holder lists both panes in order" '["acme.pane","acme.pane-alt"]' host_list_ids
+expect "switching to the second pane is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane-alt'
+expect_poll "switching destroys the previous pane build record" '["acme.pane-alt"]' window_panes
+expect "switching back to the first pane is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+expect_poll "only the selected pane remains mounted" '["acme.pane"]' window_panes
+
+install_plugin_copy acme.panehost acme.panehost2 "Pane Host Two" 0
+expect "rescan after adding a second holder answers ok" ok ipc shell rescanPlugins
+expect_poll "the second holder is discovered" False plugin_enabled acme.panehost2
+expect "enabling a second panes holder is allowed" ok ipc shell setPluginEnabled acme.panehost2 true
+expect "a second holder is refused while the first holds panes" "refused: capability=panes held-by=acme.panehost" ipc shell summon window acme.panehost2 '{}'
+expect "the second holder is not built" False record_exists acme.panehost2
+
+expect "the pane can edit its setting" ok ipc smoke invokeInstance window acme.pane setLabel pane-edited
+expect_poll "the service reads the pane edit" '"pane-edited"' ipc smoke readInstance service acme.pane label
+expect_poll "the widget reads the pane edit" '"pane-edited"' ipc smoke readInstance "$pane_bar_key" acme.pane label
+expect_poll "the pane reads its own edit" '"pane-edited"' ipc smoke readInstance window acme.pane label
+
+expect "enabling Settings for the pane edit check is allowed" ok ipc shell setPluginEnabled vgs.settings true
+expect "opening Settings on the pane plugin is allowed" ok ipc shell summon window vgs.settings '{"plugin":"acme.pane"}'
+expect_poll "Settings opens the pane plugin page" '"acme.pane"' ipc smoke readInstance window vgs.settings page
+expect "the Settings page writes the same setting" ok ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.pane","key":"label","value":"pane-service"}'
+expect_poll "the service reads the Settings edit" '"pane-service"' ipc smoke readInstance service acme.pane label
+expect_poll "the widget reads the Settings edit" '"pane-service"' ipc smoke readInstance "$pane_bar_key" acme.pane label
+expect_poll "the pane reads the Settings edit" '"pane-service"' ipc smoke readInstance window acme.pane label
+expect_poll "the Settings page reads the shared setting" '"pane-service"' settings_pane_label
+
+expect "the holder panes.setPlaced can unplace a listed pane plugin" ok ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":false}'
+expect_poll "the holder list follows unplacement" false host_list_placed
+expect_poll "the pane widget leaves the bar after panes.setPlaced" False pane_widget_placed
+expect "the holder panes.setPlaced can place it again" ok ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":true}'
+expect_poll "the holder list follows placement" true host_list_placed
+expect_poll "the pane widget returns to the bar" True pane_widget_placed
+
+expect "hiding the host window is allowed" ok ipc shell hide window acme.panehost
+expect_poll "the host window is closed before own-pane summon" false ipc smoke activeFocusIn window acme.panehost
+expect "own-pane summon opens the holder window" ok ipc smoke invokeInstance service acme.pane summonPane ''
+expect_poll "own-pane summon mounted the caller pane" '["acme.pane"]' window_panes
+expect "the holder saw the own-pane payload" '"{\"from\":\"service\",\"pane\":\"acme.pane\"}"' ipc smoke readInstance window acme.panehost openedPayload
+
+cp -- "$pane_saved" "$pane_file.tmp" && mv -T -- "$pane_file.tmp" "$pane_file"
+rm -rf -- "${home:?}/.config/vgs/plugins/acme.panehost" "${home:?}/.config/vgs/plugins/acme.pane" "${home:?}/.config/vgs/plugins/acme.pane-alt" "${home:?}/.config/vgs/plugins/acme.panehost2"
+expect "rescan after removing the pane fixtures answers ok" ok ipc shell rescanPlugins
+expect_poll "the pane fixture is gone after restore" absent plugin_enabled acme.pane
