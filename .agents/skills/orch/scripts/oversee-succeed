@@ -47,7 +47,7 @@
 #   that line names the account that just walled.
 #
 #   Every mode but `--dead-pane` reads the caller's LAUNCH RECORD first: the
-#   fleet state's `overseer` object (schemas/workflow-state.md § Oversee
+#   fleet state's `overseer` object (../schemas/workflow-state.md § Oversee state
 #   state), where it names the caller pane on this tmux server. The harness,
 #   account, model and directory it names are taken ahead of the caller's
 #   SessionStart row (lib/session-rows.sh), then --harness, the pane command,
@@ -66,7 +66,7 @@
 #   re-reads the pane's account, which that judgement has already measured.
 #
 #   Run from the overseer's own tmux pane after the overseer handoff file is
-#   rewritten (oversee.md § 5). In order:
+#   rewritten (../workflows/oversee.md § 5). In order:
 #     1. Read ORCH_OVERSEER_SUCCESSION, `on` (default) or `off`. `off` prints
 #        `succession-off`, exits 0 and launches nothing; any other value
 #        refuses `invalid-succession`. Under --check-marks `off` is reported on
@@ -137,7 +137,10 @@
 #        `mark-unmeasured`, either of which ends the run there; a reached mark
 #        otherwise falls through to step 3.
 #     3. Walk ORCH_OVERSEER_PREFERENCE through lib/overseer-launch.sh's
-#        ol_walk, and build the chosen entry's flag words through its
+#        parser. The old `harness:positive-integer:effort` form is deprecated
+#        and read until the next minor release after this change. It uses the
+#        caller's model and warns once per run. The walk uses ol_walk
+#        and builds the chosen entry's flag words through its
 #        ol_launch_flags, the walk and the assembly `oversee launch` takes:
 #        comma-separated `harness:model:effort` entries, harness claude,
 #        codex, copilot or pi, model the model the harness's `--model` word
@@ -895,14 +898,15 @@ if [[ "$MODE" != dead ]]; then
   # model with or without one: lib/overseer-launch.sh § ol_pi_model is the one
   # precedence over the three, so a turn-end judgement, handed no flags, and
   # the succession it asks for read one account.
-  caller_model="${OL_KNOWN_MODEL:-$reading_model}" flag_model=""
+  if ! flag_model="$(launch_choice_launch_model "$CALLER_HARNESS" "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
+    die launch-choice-failed "harness=$CALLER_HARNESS" step=model-read
+  fi
+  caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"
   if [[ "$CALLER_HARNESS" == pi ]]; then
-    if ! flag_model="$(launch_choice_launch_model pi "${HARNESS_FLAGS[*]+${HARNESS_FLAGS[*]}}")"; then
-      die launch-choice-failed harness=pi step=model-read
-    fi
     caller_model="$(ol_pi_model "$OL_KNOWN_MODEL" "$flag_model" "$reading_model")"
   fi
   CALLER_MODEL="$(lane_context_mark_model "$CALLER_HARNESS" "$caller_model")"
+  OL_PREFERENCE_CALLER_MODEL="$caller_model"
   # The harness and model `lanes` measures this session's account as
   # (lib/overseer-launch.sh § ol_account): a pi session on the pi-claude
   # provider spends a claude account, on a github-copilot model the Copilot

@@ -249,6 +249,7 @@ enabled = true
 
 [hooks.pre-commit-check]
 source = "kendex"
+# Disabled: the owner forbids commit and push gates in vgs (AGENTS.md § Conventions; the Kendex plan github-standard, § Fit and common actions).
 enabled = false
 
 [hooks.block-argv-kill]
@@ -265,7 +266,6 @@ enabled = true
 
 [hooks.doc-drift-check]
 source = "kendex"
-enabled = false
 harnesses = [
     "claude",
     "codex",
@@ -282,7 +282,6 @@ harnesses = [
 
 [hooks.reviewer-stop-check]
 source = "kendex"
-enabled = false
 harnesses = [
     "claude",
     "codex",
@@ -336,12 +335,12 @@ harnesses = [
 
 [hooks.skill-load-check]
 source = "kendex"
-# Copilot cross-loads the Claude hook without the transcript path it requires.
-enabled = false
-harnesses = [
-    "claude",
-    "pi",
-]
+
+[hooks.skill-load-record]
+source = "kendex"
+
+[hooks.task-completed-check]
+source = "kendex"
 
 [hooks.command-safety]
 source = "kendex"
