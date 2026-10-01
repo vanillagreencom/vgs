@@ -222,6 +222,8 @@ f share/vgs/shell/plugins/vgs.jarvis/Keys.qml
 f share/vgs/shell/plugins/vgs.jarvis/LocalRuntime.qml
 f share/vgs/shell/plugins/vgs.jarvis/Service.qml
 f share/vgs/shell/plugins/vgs.jarvis/Session.js
+f share/vgs/shell/plugins/vgs.jarvis/Widget.qml
+f share/vgs/shell/plugins/vgs.jarvis/WidgetView.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
 f share/vgs/shell/plugins/vgs.jarvis/backend/Accounts.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/AnthropicMessages.js
