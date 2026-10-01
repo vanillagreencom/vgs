@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import qs.Commons
 import qs.Ui
@@ -18,7 +19,9 @@ import qs.Ui
 // menu's border, so an entry's highlight meets the border at the top and
 // both sides (Theme.menuListInset); each entry insets its own text, and
 // keeps `scrollArea.gutter` clear at its end for the bar while the entries
-// overflow.
+// overflow. Under a rounded corner the list is cut to the window's rounded
+// interior (ListMask), so an entry scrolled part way past an edge stays
+// inside the curve.
 Item {
     id: root
 
@@ -197,7 +200,8 @@ Item {
             }
 
             // The entries span the list inside the border; the bar draws
-            // over the strip each entry keeps clear at its end.
+            // over the strip each entry keeps clear at its end. Under a
+            // rounded corner the list is cut to the curve of the interior.
             ScrollArea {
                 id: scroll
                 x: Theme.border.thin
@@ -205,6 +209,14 @@ Item {
                 width: parent.width - 2 * Theme.border.thin
                 height: parent.height - 2 * root.listInset
                 barOverContent: true
+                layer.enabled: listMask.cuts
+                layer.smooth: true
+                layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskSource: listMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1
+                }
 
                 ListCursor {
                     id: plate
@@ -217,6 +229,13 @@ Item {
                     id: column
                     width: scroll.contentWidth
                 }
+            }
+
+            ListMask {
+                id: listMask
+                anchors.fill: scroll
+                frameWidth: window.width
+                frameHeight: window.height
             }
         }
     }

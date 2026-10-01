@@ -30,6 +30,8 @@ function controlPadding(pad, radius, height, contentHeight, step) {
 // fills meet the border and their corners stay inside its curve. Otherwise
 // the list starts lower by the difference, where the first row's corner
 // centre meets the container's, so its corner still stays inside the curve.
+// This places an unscrolled list; a row a scroll cuts at an edge is the
+// container's own mask to keep inside the curve.
 function listInset(radius, border, rowRadius) {
     return border + Math.max(0, radius - border - rowRadius);
 }

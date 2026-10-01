@@ -1130,6 +1130,17 @@ Scope {
                 };
             }));
         }
+        // The one open Menu under an instance scrolled to about `y`, held
+        // inside its entries, as its contentY, or `menus-open=<n>`.
+        function scrollMenu(hostKey: string, id: string, y: real): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const open = root.descendants(item).filter(child => typeof child.items === "function" && child.opened === true);
+            if (open.length !== 1) return "menus-open=" + open.length;
+            const area = open[0].scrollArea;
+            area.contentY = Math.max(0, Math.min(y, area.contentHeight - area.height));
+            return root.json(area.contentY);
+        }
         // Every shown ScrollArea under an instance, in tree order: its
         // scroll position, content height and height, and its bar's and
         // thumb's boxes in the window's coordinates.

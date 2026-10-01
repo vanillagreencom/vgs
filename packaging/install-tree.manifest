@@ -146,6 +146,7 @@ f share/vgs/shell/Ui/layout/SectionHeader.qml
 f share/vgs/shell/Ui/layout/SlimScrollBar.qml
 f share/vgs/shell/Ui/layout/Tabs.qml
 f share/vgs/shell/Ui/overlay/AnchorTracker.qml
+f share/vgs/shell/Ui/overlay/ListMask.qml
 f share/vgs/shell/Ui/overlay/Menu.qml
 f share/vgs/shell/Ui/overlay/MenuItem.qml
 f share/vgs/shell/Ui/overlay/OverlayState.qml

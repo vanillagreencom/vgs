@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Templates as T
 import Quickshell
 import qs.Commons
@@ -17,8 +18,10 @@ import qs.Ui
 // (Theme.menuListInset); an entry's side padding is the control's less
 // that border, so its text starts where the control's does. A list taller
 // than `menu.maxHeight` scrolls under the module's embedded bar, which
-// draws over the strip each entry keeps clear at its end while the list
-// overflows. The control draws like a text field; the template owns its
+// draws over the strip each entry keeps clear at its end while the bar
+// shows. Under a rounded corner the list is cut to the window's rounded
+// interior (ListMask), so a row scrolled part way past an edge stays inside
+// the curve. The control draws like a text field; the template owns its
 // click, hover and focus.
 T.AbstractButton {
     id: root
@@ -152,11 +155,23 @@ T.AbstractButton {
             anchors.rightMargin: Theme.border.thin
             model: root.model
             clip: true
+            // Under a rounded corner the list is cut to the curve of the
+            // interior.
+            layer.enabled: listMask.cuts
+            layer.smooth: true
+            layer.effect: MultiEffect {
+                maskEnabled: true
+                maskSource: listMask
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1
+            }
             focus: true
             keyNavigationEnabled: true
             keyNavigationWraps: false
             boundsBehavior: Flickable.StopAtBounds
-            readonly property bool overflowing: contentHeight > height
+            // The bar's own test, so an entry keeps the bar's strip exactly
+            // while the bar shows.
+            readonly property bool overflowing: listBar.needed
             // A key moves the highlight: the pointer resting over the list
             // takes it again only once it moves. The key goes on to the view.
             Keys.onPressed: event => { plate.disarm(); event.accepted = false; }
@@ -211,9 +226,17 @@ T.AbstractButton {
             HoverHandler { id: listHover }
 
             ScrollBar {
+                id: listBar
                 flickable: entries
                 hovered: listHover.hovered
             }
+        }
+
+        ListMask {
+            id: listMask
+            anchors.fill: entries
+            frameWidth: list.width
+            frameHeight: list.height
         }
     }
 

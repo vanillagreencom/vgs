@@ -16,7 +16,11 @@ import qs.Unit
 // pointer moved since the last key. The first entry's highlight and a
 // select's chosen fill meet the list's border at the top and both sides,
 // under a square and a rounded theme, and stay inside a rounder corner;
-// the bar of an overflowing list draws over a strip each entry keeps clear.
+// the bar of an overflowing list draws over a strip each entry keeps clear,
+// exactly while the bar shows. Under a rounded theme a list is cut to its
+// window's rounded interior, so a filled row half scrolled past the top and
+// the bar's thumb at the top stay inside the curve; a square list draws no
+// layer.
 // The nested sandbox proves placement, real keys and dismissal.
 Item {
     id: root
@@ -48,6 +52,7 @@ Item {
     Select { id: roled; y: 80; textRole: "name"; model: [{ name: "alpha" }, { name: "beta" }] }
     property int wanted: 0
     Select { id: bound; y: 120; model: ["one", "two", "three"]; currentIndex: root.wanted }
+    Select { id: longSelect; y: 160; model: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"] }
     Toast { id: toast; y: 120; title: "Saved"; message: "to disk"; tone: "success"; iconName: "check" }
     property int triggered: -1
     SignalSpy { id: dismissals; target: toast; signalName: "dismissed" }
@@ -471,6 +476,186 @@ Item {
             compare(highlight.width, fill.width);
             const text = entry.contentItem.mapToItem(popup.contentItem, 0, 0);
             compare(text.x, select.contentItem.x, "the entry's text starts where the field's does");
+            select.choose(select.currentIndex);
+        }
+
+        // The window of an overlay that declares it.
+        function windowOf(owner) {
+            for (let i = 0; i < owner.resources.length; i++)
+                if (owner.resources[i].anchor !== undefined) return owner.resources[i];
+            return null;
+        }
+
+        // Whether a point lies inside a rounded rectangle, half a pixel
+        // allowed.
+        function inRounded(x, y, box) {
+            if (x < box.x - 0.5 || x > box.x + box.width + 0.5 || y < box.y - 0.5 || y > box.y + box.height + 0.5) return false;
+            const cx = Math.min(Math.max(x, box.x + box.radius), box.x + box.width - box.radius);
+            const cy = Math.min(Math.max(y, box.y + box.radius), box.y + box.height - box.radius);
+            return Math.hypot(x - cx, y - cy) <= box.radius + 0.5;
+        }
+
+        // Points along the four corners of a rounded rectangle, each corner
+        // `radii` round in the order top left, top right, bottom right,
+        // bottom left.
+        function cornerPoints(left, top, right, bottom, radii) {
+            const out = [];
+            const corners = [[left, top, 1, 1], [right, top, -1, 1], [right, bottom, -1, -1], [left, bottom, 1, -1]];
+            for (let c = 0; c < 4; c++) {
+                const [x, y, sx, sy] = corners[c];
+                const r = radii[c];
+                for (let i = 0; i <= 16; i++) {
+                    const angle = Math.PI / 2 * i / 16;
+                    out.push([x + sx * (r - r * Math.cos(angle)), y + sy * (r - r * Math.sin(angle))]);
+                }
+            }
+            return out;
+        }
+
+        // Whether `item`, drawn `radius` round, shows only inside its
+        // window's rounded interior: inside the border, the window's drawn
+        // `menu.radius` less the border round. What shows is the item's box
+        // cut by each clipping ancestor, whose cut edges draw square, and,
+        // when an ancestor's layer masks it through a MultiEffect, cut to
+        // that mask too; a mask inside the interior keeps it there.
+        function drawsInside(item, radius, window) {
+            const border = Theme.border.thin;
+            const outer = Math.min(Theme.menu.radius, window.width / 2, window.height / 2);
+            const inner = { x: border, y: border, width: window.width - 2 * border, height: window.height - 2 * border, radius: Math.max(0, outer - border) };
+            const at = boxIn(item, window);
+            let left = at.x, top = at.y, right = at.x + at.width, bottom = at.y + at.height;
+            const cut = { left: false, top: false, right: false, bottom: false };
+            for (let a = item.parent; a !== null && a !== window.contentItem; a = a.parent) {
+                if (a.layer.enabled) {
+                    const effect = a.parent.children.find(child => String(child).startsWith("QQuickMultiEffect(") && child.maskEnabled);
+                    if (effect !== undefined) {
+                        const mask = boxIn(effect.maskSource, window);
+                        const r = Math.min(effect.maskSource.radius, mask.width / 2, mask.height / 2);
+                        return cornerPoints(mask.x, mask.y, mask.x + mask.width, mask.y + mask.height, [r, r, r, r]).every(([x, y]) => inRounded(x, y, inner));
+                    }
+                }
+                if (a.clip) {
+                    const c = boxIn(a, window);
+                    if (top < c.y) { top = c.y; cut.top = true; }
+                    if (left < c.x) { left = c.x; cut.left = true; }
+                    if (bottom > c.y + c.height) { bottom = c.y + c.height; cut.bottom = true; }
+                    if (right > c.x + c.width) { right = c.x + c.width; cut.right = true; }
+                }
+            }
+            if (right <= left || bottom <= top) return true;
+            const own = Math.min(radius, at.width / 2, at.height / 2);
+            const radii = [cut.top || cut.left ? 0 : own, cut.top || cut.right ? 0 : own, cut.bottom || cut.right ? 0 : own, cut.bottom || cut.left ? 0 : own];
+            return cornerPoints(left, top, right, bottom, radii).every(([x, y]) => inRounded(x, y, inner));
+        }
+
+        // A long menu open under a rounded theme, nothing checked, its
+        // list at its window's size.
+        function openRoundedLong() {
+            compare(UnitTheme.override({ radius: { sm: 6, md: 12, lg: 16 }, menu: { maxHeight: 90 } }), "ok");
+            root.chosen = -1;
+            long.open();
+            const window = longWindow();
+            // The window's content item takes the window's size a turn after
+            // it shows.
+            tryCompare(long.scrollArea, "width", window.width - 2 * Theme.border.thin);
+            tryCompare(long.scrollArea, "height", window.height - 2 * long.listInset);
+            return window;
+        }
+
+        // A highlighted entry scrolled half a row past the top stays inside
+        // a rounded menu's interior.
+        function test_a_rounded_menu_cuts_a_half_scrolled_highlight() {
+            const window = openRoundedLong();
+            const items = long.items();
+            long.currentIndex = 1;
+            const plate = items[1].cursor;
+            tryVerify(() => plate.target === items[1] && plate.y === items[1].y && plate.opacity === 1, 2000, "the cursor holds the second entry");
+            long.scrollArea.contentY = items[1].y + items[1].height / 2;
+            const inside = drawsInside(plate, plate.radius, window);
+            long.close();
+            root.chosen = 4;
+            verify(inside, "the highlight half past the top stays inside the corner");
+        }
+
+        // The bar's thumb at the top stays inside a rounded menu's interior.
+        function test_a_rounded_menu_cuts_its_thumb() {
+            const window = openRoundedLong();
+            long.scrollArea.bar.hovered = true;
+            const thumb = long.scrollArea.bar.thumb;
+            compare(thumb.y, 0, "the thumb is at the top");
+            const inside = drawsInside(thumb, thumb.radius, window);
+            long.scrollArea.bar.hovered = false;
+            long.close();
+            root.chosen = 4;
+            verify(inside, "the thumb at the top stays inside the corner");
+        }
+
+        // The long select open on its second entry under a rounded theme,
+        // its list at its window's size.
+        function openRoundedSelect() {
+            compare(UnitTheme.override({ radius: { sm: 6, md: 12, lg: 16 } }), "ok");
+            longSelect.choose(1);
+            longSelect.openList();
+            const window = windowOf(longSelect);
+            const list = selectList(longSelect);
+            tryVerify(() => list.itemAtIndex(1) !== null && list.height === window.height - 2 * longSelect.listInset, 1000, "the list builds its entries and takes its window's height");
+            compare(list.overflowing, true);
+            return [window, list];
+        }
+
+        // The chosen entry and the highlight on it, scrolled half a row
+        // past the top, stay inside a rounded select list's interior.
+        function test_a_rounded_select_cuts_a_half_scrolled_choice() {
+            const [window, list] = openRoundedSelect();
+            const entry = list.itemAtIndex(1);
+            const plate = list.contentItem.children.find(child => child.follow !== undefined);
+            tryVerify(() => plate.target === entry && plate.y === entry.y && plate.opacity === 1, 2000, "the cursor holds the chosen entry");
+            list.contentY = entry.y + entry.height / 2;
+            const fill = drawsInside(entry.background, entry.background.radius, window);
+            const highlight = drawsInside(plate, plate.radius, window);
+            longSelect.choose(0);
+            verify(fill, "the chosen fill half past the top stays inside the corner");
+            verify(highlight, "the highlight half past the top stays inside the corner");
+        }
+
+        // The bar's thumb at the top stays inside a rounded select list's
+        // interior.
+        function test_a_rounded_select_cuts_its_thumb() {
+            const [window, list] = openRoundedSelect();
+            const bar = list.children.find(child => child.thumb !== undefined);
+            list.contentY = 0;
+            bar.hovered = true;
+            compare(bar.thumb.y, 0, "the thumb is at the top");
+            const inside = drawsInside(bar.thumb, bar.thumb.radius, window);
+            bar.hovered = false;
+            longSelect.choose(0);
+            verify(inside, "the thumb at the top stays inside the corner");
+        }
+
+        // A square list keeps its rectangular clip and draws no layer.
+        function test_a_square_list_draws_no_layer() {
+            menu.open();
+            compare(menu.scrollArea.layer.enabled, false);
+            menu.close();
+            select.openList();
+            compare(selectList(select).layer.enabled, false);
+            select.choose(select.currentIndex);
+        }
+
+        // An entry keeps the bar's strip exactly while the bar shows: a
+        // list less than half a pixel past its view shows no bar and keeps
+        // no strip.
+        function test_a_select_entry_keeps_the_strip_while_the_bar_shows() {
+            select.openList();
+            const list = selectList(select);
+            tryVerify(() => list.itemAtIndex(0) !== null && list.height > 0, 1000, "the list builds its entries");
+            const bar = list.children.find(child => child.thumb !== undefined);
+            const margin = list.anchors.bottomMargin;
+            list.anchors.bottomMargin = margin + 0.3;
+            tryVerify(() => list.contentHeight - list.height > 0.2, 1000, "the content passes the view by a fraction: " + (list.contentHeight - list.height));
+            compare(bar.visible, false, "no bar for a fraction of a pixel");
+            compare(list.itemAtIndex(0).rightPadding, select.sidePadding - Theme.border.thin, "no strip without a bar");
+            list.anchors.bottomMargin = Qt.binding(() => select.listInset);
             select.choose(select.currentIndex);
         }
 

@@ -676,13 +676,14 @@ scene_setup_steps() { # MODE
 # its scroll bar, and with its Mode select open; a plugin with keys; the
 # automations' page at its Status section; the Jarvis page with its
 # daemon ready; the
-# title's menu open with the pointer on its first entry; the notifications' page scrolled to its
+# title's menu open with the pointer on its first entry, and scrolled half
+# an entry; the notifications' page scrolled to its
 # Slack token rows, over two shots when they are taller than the page; and
 # the list and a page on a monitor narrower than the window's width token.
 settings_empty() { [[ $(ipc smoke itemGeometry "$settings_kind" vgs.settings Label 'No plugin matches "zzqxv"') == \[* ]] && echo shown || echo hidden; }
 scene_settings() { # MODE
   # A section shot keeps its heading margin px below the area's top edge.
-  local area at tx ty title x y section start end height margin=12
+  local area at tx ty title x y section start end height half margin=12
   click_centre "$(bar_key)" vgs.settings || fail "the click on the gear failed"
   expect_poll "the gear opens the Settings window" 1 settings_count
   expect_poll "the Settings window holds the keyboard" true ipc smoke activeFocusIn "$settings_kind" vgs.settings
@@ -813,6 +814,14 @@ scene_settings() { # MODE
     expect_poll "the pointer takes the menu's highlight" True settings_menu_pointed
   fi
   take "settings-$1-menu"
+  # The same menu scrolled half an entry: the highlighted first entry cut
+  # at the list's top edge, inside a rounded corner's curve.
+  if half="$(ipc smoke themeValue menu.item.height)" && [[ $half =~ ^[0-9]+$ ]]; then
+    expect "the title's menu scrolls half an entry" "$((half / 2))" ipc smoke scrollMenu "$settings_kind" vgs.settings "$((half / 2))"
+    take "settings-$1-menu-scrolled"
+  else
+    fail "the title's menu entry height is unreadable: ${half:-}"
+  fi
   type_keys -k Escape || fail "sending Escape to the title's menu failed"
   expect_poll "the title's menu closes" False settings_menu_open
   expect "the window opens the Bar plugin page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.bar
