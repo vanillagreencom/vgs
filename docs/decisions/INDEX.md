@@ -80,6 +80,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D076 | VGS-683 | One-time migrations run once per user, in order, from `vgsh run` before the shell and from `vgsh self update` | A new version must change a user's file once; every install method reaches `vgsh run` | VGS ships a systemd unit or package hook, or a migration needs a privilege | Active | [Full](D076-one-time-migrations.md) |
 | 2026-09-30 | D078 | VGS-688 | Lists in a popover carry no inset; the row fill meets the border | A gutter beside the fill reads as indent; the row owns its text inset | A popover list needs an inset, a header or footer again | Active | [Full](D078-lists-in-a-popover-carry-no-inset.md) |
 | 2026-09-30 | D079 | VGS-638 | Jarvis brains are wire and harness adapters; subscriptions run only in vendor programs; no npm dependency | One compatible driver serves ten providers; vendor terms and no npm route | A needed provider fits neither kind, or VGS gains an npm route | Active | [Full](D079-brains-wire-and-harness-adapters.md) |
+| 2026-10-01 | D083 | VGS-705 | Brightness uses a one-shot plugin helper over hidraw, DDC and backlight, with a uaccess-only rule | QML cannot ioctl hidraw; measured p95 36.6 ms needs no resident process | Release-to-write p95 above 150 ms, hidraw fails on an Apple model, or no i2c uaccess rule | Active | [Full](D083-brightness-helper-and-uaccess-rule.md) |
 
 ---
 
