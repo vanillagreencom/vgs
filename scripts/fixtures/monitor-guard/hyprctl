@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""A stand-in hyprctl for scripts/test-vgsh-monitor-guard.sh.
+
+It answers `--instance SIG -j monitors all`, `--instance SIG eval LINE` and
+`--instance SIG reload [config-only]` from the state file STANDIN_STATE, a
+JSON object whose `outputs` list each output as `monitors -j all` prints it,
+and appends one JSON line per call to STANDIN_CALLS: { argv, signature },
+the signature HYPRLAND_INSTANCE_SIGNATURE held. An eval of an
+`hl.monitor({ ... })` line changes the named output's fields, found by
+connector or by `desc:` and the description, and answers `ok`; a line
+`evalFail` maps to a reply answers that reply instead and changes nothing;
+a mode in `fallback`, `{ "<WxH>": "<WxH>" }`, reads as the other size. A
+reload answers `ok` and changes no output: no file rule names one, and a
+reload leaves an output no file rule names as it is
+(docs/architecture/runtime-hyprland.md). Anything else exits 2.
+"""
+import json
+import os
+import re
+import sys
+
+state_path = os.environ["STANDIN_STATE"]
+with open(os.environ["STANDIN_CALLS"], "a", encoding="utf-8") as calls:
+    calls.write(json.dumps({"argv": sys.argv[1:], "signature": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")}) + "\n")
+
+args = sys.argv[1:]
+if len(args) < 3 or args[0] != "--instance":
+    sys.stderr.write("stand-in hyprctl: want --instance SIG ...\n")
+    sys.exit(2)
+args = args[2:]
+with open(state_path, encoding="utf-8") as f:
+    state = json.load(f)
+
+
+def save():
+    with open(state_path + ".next", "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(state_path + ".next", state_path)
+
+
+def find(selector):
+    for output in state["outputs"]:
+        if output["name"] == selector or (selector.startswith("desc:") and output["description"].startswith(selector[5:].strip())):
+            return output
+    return None
+
+
+if args == ["-j", "monitors", "all"]:
+    print(json.dumps(state["outputs"], indent=4))
+elif len(args) == 2 and args[0] == "eval":
+    line = args[1]
+    m = re.fullmatch(r'hl\.monitor\(\{ output = "([^"]*)"(.*) \}\)', line)
+    if m is None:
+        print("stand-in hyprctl: unknown eval " + line)
+        sys.exit(0)
+    output = find(m.group(1))
+    if output is None:
+        print("stand-in hyprctl: no output " + m.group(1))
+        sys.exit(0)
+    if line in state.get("evalFail", {}):
+        print(state["evalFail"][line])
+        sys.exit(0)
+    fields = dict(re.findall(r', (\w+) = ("[^"]*"|[^,]+)', m.group(2)))
+    unquote = lambda v: v[1:-1] if v.startswith('"') else v
+    if "disabled" in fields:
+        output["disabled"] = fields["disabled"] == "true"
+    if "mode" in fields:
+        size, refresh = unquote(fields["mode"]).split("@")
+        size = state.get("fallback", {}).get(size, size)
+        output["width"], output["height"] = (int(n) for n in size.split("x"))
+        output["refreshRate"] = float(refresh)
+    if "position" in fields:
+        output["x"], output["y"] = (int(n) for n in unquote(fields["position"]).split("x"))
+    if "scale" in fields:
+        output["scale"] = float(fields["scale"])
+    if "transform" in fields:
+        output["transform"] = int(fields["transform"])
+    if "vrr" in fields:
+        output["vrr"] = fields["vrr"] == "1"
+    if "mirror" in fields:
+        target = find(unquote(fields["mirror"])) if unquote(fields["mirror"]) else None
+        output["mirrorOf"] = "none" if target is None else str(target["id"])
+    save()
+    print("ok")
+elif args and args[0] == "reload":
+    print("ok")
+else:
+    sys.stderr.write("stand-in hyprctl: unknown call %s\n" % json.dumps(args))
+    sys.exit(2)

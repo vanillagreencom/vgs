@@ -281,8 +281,8 @@ async function verify(lib, work) {
 }
 
 const CONTROLS = [
-    ['if (taken.status === 0) return', 'if (taken.status === 0 || taken.status === 75) return'],
-    ['return { release() { fs.closeSync(fd); } };', 'return { release() {} };'],
+    ['if (lock.state === "busy") throw new AssetRefusal("fetch", "busy"', 'if (false) throw new AssetRefusal("fetch", "busy"'],
+    ['if (lock.state === "held") return lock;', 'if (false) return lock;'],
     ['if (protocol === "https:" || (protocol === "file:" && allowFile)) return url;', 'return url;'],
     ['(protocol === "file:" && allowFile)', '(protocol === "file:")'],
     ['if (!Number.isSafeInteger(pin.size) || pin.size <= 0 || typeof pin.sha256 !== "string" || !SHA256_HEX.test(pin.sha256))', 'if (false)'],

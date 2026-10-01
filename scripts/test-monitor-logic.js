@@ -259,6 +259,153 @@ function suite(lib, check) {
     ];
     for (const [name, changes, rules, want] of overrides) check("overridden: " + name, lib.overridden(rules, readBack(changes)), want);
     check("overridden: null while the outputs are unread", lib.overridden(applied, null), null);
+
+    // The preview (docs/architecture/hyprland-monitors-preview.md).
+    // rows: [name, seconds, the refusal or ""]
+    const lengths = [
+        ["two seconds", 2, ""],
+        ["a minute", 60, ""],
+        ["one second", 1, "refused: seconds=1 want=2..60"],
+        ["past a minute", 61, "refused: seconds=61 want=2..60"],
+        ["a fraction", 2.5, "refused: seconds=2.5 want=2..60"],
+        ["text", "5", "refused: seconds=\"5\" want=2..60"]
+    ];
+    for (const [name, seconds, want] of lengths) check("previewSecondsError: " + name, lib.previewSecondsError(seconds), want);
+
+    const listed = changes => {
+        const read = lib.parseOutputs(reply(DESK.map((m, i) => Object.assign({}, m, changes[i] || {}))));
+        return read.ok ? read.outputs : read.error;
+    };
+    const capturedDp1 = { output: id1, disabled: false, mode: "3840x2160@59.997", position: { x: 0, y: 0 }, scale: 1.5, transform: 0, mirror: null, vrr: null };
+    const capturedDp2 = { output: "DP-2", disabled: false, mode: "3840x2160@59.997", position: { x: 2560, y: 0 }, scale: 2, transform: 0, mirror: null, vrr: false };
+    const headless = lib.parseOutputs(reply([monitor(0, "HEADLESS-2", { width: 0, height: 0, availableModes: [] })]));
+    const dp1Scale2 = rule(id1, { scale: 2 });
+    const dp2Vrr = rule("DP-2", { position: { x: 2560, y: 0 }, scale: 1, vrr: 1 });
+    // rows: [name, rules, outputs, want: { rules count, applied, captured } or the refusal]
+    const plans = [
+        ["one rule per listed output", [dp1Scale2, dp2Vrr], listed([]), { rules: 2, applied: [dp1Scale2, dp2Vrr], captured: [capturedDp1, capturedDp2] }],
+        ["a rule for an output not plugged in is kept and not applied", [rule("HDMI-A-1", { mode: "1024x768@75.000", scale: 1 }), dp1Scale2], listed([]),
+            { rules: 2, applied: [dp1Scale2], captured: [capturedDp1] }],
+        ["an output Hyprland lists off is captured off", [eDP], listed([]), { rules: 1, applied: [eDP], captured: [{ output: "eDP-1", disabled: true }] }],
+        ["two rules for one output capture it once, under the first", [rule("DP-1", { scale: 2 }), dp1Scale2], listed([]),
+            { rules: 2, applied: [rule("DP-1", { scale: 2 }), dp1Scale2], captured: [Object.assign({}, capturedDp1, { output: "DP-1" })] }],
+        ["a mirror is captured by its target's name", [dp2Vrr], listed([{}, { mirrorOf: "0", transform: 3 }]),
+            { rules: 1, applied: [dp2Vrr], captured: [Object.assign({}, capturedDp2, { mirror: "DP-1", transform: 3 })] }],
+        ["adaptive sync is captured where the rule sets vrr", [dp2Vrr], listed([{}, { vrr: true }]), { rules: 1, applied: [dp2Vrr], captured: [Object.assign({}, capturedDp2, { vrr: true })] }],
+        ["a bit depth", [rule(id1, { bitdepth: 10 })], listed([]), "refused: rule=0 bitdepth=10 want=absent-in-preview"],
+        ["a colour mode", [rule(id1, { cm: "srgb" })], listed([]), "refused: rule=0 cm=\"srgb\" want=absent-in-preview"],
+        ["a rule the judge refuses", [rule(id1, { scale: 1.3 })], listed([]), "refused: rule=0 scale=1.3 want=whole-logical-pixels mode=3840x2160"],
+        ["an enabled output with no size", [rule("HEADLESS-2", { mode: "1920x1080@60.000", scale: 1 })], headless.ok ? headless.outputs : null,
+            "refused: capture=unsized output=\"HEADLESS-2\""]
+    ];
+    for (const [name, rules, outputs, want] of plans) {
+        const got = lib.previewPlan(rules, outputs, []);
+        check("previewPlan: " + name, got.ok ? { rules: got.rules.length, applied: got.applied, captured: got.captured } : got.error, want);
+    }
+
+    const record = { version: 1, token: "0123456789abcdef0123456789abcdef", deadline: 1790000000, signature: "efb5099_1790000000_4242",
+        captured: [capturedDp1, capturedDp2, { output: "eDP-1", disabled: true }] };
+    check("readRecord: the record recordText writes", lib.readRecord(lib.recordText(record)), { ok: true, record: record });
+    const withRecord = (change, entry) => {
+        const copy = JSON.parse(JSON.stringify(record));
+        if (entry === undefined) Object.assign(copy, change);
+        else Object.assign(copy.captured[entry], change);
+        return JSON.stringify(copy);
+    };
+    const withoutKey = (key, entry) => {
+        const copy = JSON.parse(JSON.stringify(record));
+        delete (entry === undefined ? copy : copy.captured[entry])[key];
+        return JSON.stringify(copy);
+    };
+    // rows: [name, text, the error's start]
+    const records = [
+        ["no JSON", "{", "refused: record=unparsed "],
+        ["no object", "[]", "refused: record=[] want=object"],
+        ["a key missing", withoutKey("deadline"), "refused: record.keys=[\"version\",\"token\",\"signature\",\"captured\"] want=version,token,deadline,signature,captured"],
+        ["an unknown key", withRecord({ extra: 1 }), "refused: record.keys="],
+        ["a key swapped for another", JSON.stringify(Object.assign(JSON.parse(withoutKey("deadline")), { dead: 1 })), "refused: record.keys="],
+        ["another version", withRecord({ version: 2 }), "refused: record.version=2 want=1"],
+        ["a short token", withRecord({ token: "0123" }), "refused: record.token=\"0123\" want=32-hex"],
+        ["an upper-case token", withRecord({ token: "0123456789ABCDEF0123456789ABCDEF" }), "refused: record.token="],
+        ["a deadline of zero", withRecord({ deadline: 0 }), "refused: record.deadline=0 want=epoch-seconds"],
+        ["a fractional deadline", withRecord({ deadline: 1.5 }), "refused: record.deadline=1.5 want=epoch-seconds"],
+        ["a signature of digits alone, which hyprctl reads as an index", withRecord({ signature: "0" }), "refused: record.signature=\"0\" want=signature"],
+        ["a signature holding a slash", withRecord({ signature: "a/b" }), "refused: record.signature=\"a/b\" want=signature"],
+        ["captured outputs that are no list", withRecord({ captured: {} }), "refused: record.captured={} want=list"],
+        ["an entry that is no object", withRecord({ captured: [7] }), "refused: record.captured=0 entry=7 want=object"],
+        ["an entry's unknown key", withRecord({ bitdepth: 10 }, 0), "refused: record.captured=0 key=\"bitdepth\" want=output,disabled,mode,position,scale,transform,mirror,vrr"],
+        ["an entry's output holding a quote", withRecord({ output: "DP-1\"" }, 0), "refused: record.captured=0 output=\"DP-1\\\"\" want=identifier"],
+        ["an entry's disabled that is no boolean", withRecord({ disabled: 0 }, 0), "refused: record.captured=0 disabled=0 want=boolean"],
+        ["an entry off that holds a mode", withRecord({ mode: "3840x2160@60.000" }, 2), "refused: record.captured=2 keys=[\"output\",\"disabled\",\"mode\"] want=output,disabled"],
+        ["an entry on with a key missing", withoutKey("vrr", 0), "refused: record.captured=0 keys="],
+        ["an entry's mode", withRecord({ mode: "3840x2160" }, 0), "refused: record.captured=0 mode=\"3840x2160\" want=WxH@R"],
+        ["an entry's fractional position", withRecord({ position: { x: 0.5, y: 0 } }, 0), "refused: record.captured=0 position="],
+        ["an entry's scale below Hyprland's floor", withRecord({ scale: 0.1 }, 0), "refused: record.captured=0 scale=0.1 want=number>=0.25"],
+        ["an entry's transform past 7", withRecord({ transform: 8 }, 0), "refused: record.captured=0 transform=8 want=0..7"],
+        ["an entry's mirror holding a quote", withRecord({ mirror: "DP\"" }, 0), "refused: record.captured=0 mirror=\"DP\\\"\" want=identifier|null"],
+        ["an entry's vrr that is a number", withRecord({ vrr: 1 }, 1), "refused: record.captured=1 vrr=1 want=boolean|null"]
+    ];
+    for (const [name, text, want] of records) {
+        const got = lib.readRecord(text);
+        check("readRecord refuses " + name, got.ok ? "accepted" : got.error.slice(0, want.length), want);
+    }
+
+    // The desk after a preview: every output moved, DP-2 mirroring DP-1.
+    const previewed = listed([{ scale: 2 }, { mirrorOf: "0", vrr: true }, { disabled: false }]);
+    const mirrorRecord = [capturedDp1, Object.assign({}, capturedDp2, { vrr: true, mirror: null }), { output: "eDP-1", disabled: true }];
+    const plan = lib.restorePlan(mirrorRecord, previewed);
+    check("restorePlan: every field written, no mirror as empty, vrr only where captured", plan.lines, [
+        "hl.monitor({ output = \"desc:Dell Inc. DELL U2720Q 8YT0R13\", disabled = false, mode = \"3840x2160@59.997\", position = \"0x0\", scale = 1.5, transform = 0, mirror = \"\" })",
+        "hl.monitor({ output = \"DP-2\", disabled = false, mode = \"3840x2160@59.997\", position = \"2560x0\", scale = 2, transform = 0, mirror = \"\", vrr = 1 })",
+        "hl.monitor({ output = \"eDP-1\", disabled = true })"
+    ]);
+    check("restorePlan: a mirror is written by name", lib.restorePlan([Object.assign({}, capturedDp2, { mirror: "DP-1" })], previewed).lines[0],
+        "hl.monitor({ output = \"DP-2\", disabled = false, mode = \"3840x2160@59.997\", position = \"2560x0\", scale = 2, transform = 0, mirror = \"DP-1\", vrr = 0 })");
+    check("restorePlan: nothing skipped while every output is listed", plan.skipped, []);
+    check("restorePlan: the previewed desk reads otherwise", lib.overridden(plan.rules, previewed), ["DP-2", id1, "eDP-1"]);
+    check("restorePlan: the desk as captured reads back", lib.overridden(plan.rules, listed([{}, { vrr: true }])), []);
+    check("restorePlan: a mirror as captured reads back", lib.overridden(lib.restorePlan([Object.assign({}, capturedDp2, { mirror: "DP-1" })], previewed).rules, previewed), []);
+    const unplugged = lib.restorePlan(mirrorRecord, listed([]).filter(o => o.name !== "DP-2"));
+    check("restorePlan: an output no longer listed is skipped", [unplugged.lines.length, unplugged.rules.length, unplugged.skipped], [2, 2, ["DP-2"]]);
+
+    // rows: [name, record, token, signature, now, want]
+    const token = record.token;
+    const guarded = [
+        ["no record", null, token, record.signature, 0, "gone"],
+        ["another preview's record", record, "f".repeat(32), record.signature, 0, "gone"],
+        ["another instance's record", record, token, "other_1", record.deadline + 9, "foreign"],
+        ["before the deadline", record, token, record.signature, record.deadline - 0.5, "wait"],
+        ["at the deadline", record, token, record.signature, record.deadline, "restore"]
+    ];
+    for (const [name, rec, tok, sig, at, want] of guarded) check("guardAction: " + name, lib.guardAction(rec, tok, sig, at), want);
+    // rows: [name, record, signature, guarded, want]
+    const adopted = [
+        ["no record", null, record.signature, false, "none"],
+        ["another instance's record", record, "other_1", false, "foreign"],
+        ["a record whose guard runs", record, record.signature, true, "guarded"],
+        ["a record whose guard is gone", record, record.signature, false, "arm"]
+    ];
+    for (const [name, rec, sig, held, want] of adopted) check("adoptAction: " + name, lib.adoptAction(rec, sig, held), want);
+    // rows: [name, record, token, signature, want]
+    const tokens = [
+        ["the preview's own", record, token, record.signature, ""],
+        ["no record", null, token, record.signature, "refused: preview=gone"],
+        ["another token", record, "f".repeat(32), record.signature, "refused: token=mismatch"],
+        ["another instance's record", record, token, "other_1", "refused: preview=foreign signature=" + record.signature]
+    ];
+    for (const [name, rec, tok, sig, want] of tokens) check("tokenError: " + name, lib.tokenError(rec, tok, sig), want);
+    // rows: [name, code, stdout, stderr, want]
+    const replies = [
+        ["a preview's line", 0, "ok token=" + token + " deadline=1790000000\n", "", { ok: true, token: token, deadline: 1790000000 }],
+        ["another verb's ok", 0, "ok\n", "", { ok: true }],
+        ["an ok with words", 0, "ok adopt=armed token=" + token + "\n", "", { ok: true }],
+        ["a refusal", 1, "", "vgsh: refused: preview=busy path=/run/x\nmore\n", { ok: false, error: "refused: preview=busy path=/run/x" }],
+        ["a run killed before its line", 137, "", "", { ok: false, error: "refused: monitor-guard=failed status=137" }],
+        ["a run that did not start", -1, "", "", { ok: false, error: "refused: monitor-guard=failed status=-1" }],
+        ["a non-zero exit with other text", 2, "", "node: not found\n", { ok: false, error: "refused: monitor-guard=failed status=2" }],
+        ["an ok with no ok line", 0, "garbage\n", "", { ok: false, error: "refused: monitor-guard=unread reply=\"garbage\"" }]
+    ];
+    for (const [name, code, out, err, want] of replies) check("guardReply: " + name, lib.guardReply(code, out, err), want);
 }
 
 suite(load(LOGIC), report);
@@ -297,7 +444,7 @@ const CONTROLS = [
     ["an enabled rule sets mode, position and scale", 'if (!hasOwn(raw, REQUIRED_KEYS[r])) return', "if (false) return"],
     ["a mode is WxH@R", 'if (typeof raw.mode !== "string" || !MODE.test(raw.mode) || modeParts(raw.mode).refresh <= 0)', 'if (typeof raw.mode !== "string" || modeParts(raw.mode).refresh <= 0)'],
     ["a refresh is above zero", " || modeParts(raw.mode).refresh <= 0)", ")"],
-    ["a position is whole x and y", "if (!isPlainObject(p) || Object.keys(p).length !== 2 || !Number.isInteger(p.x) || !Number.isInteger(p.y))", "if (!isPlainObject(p))"],
+    ["a position is whole x and y", "return isPlainObject(p) && Object.keys(p).length === 2 && Number.isInteger(p.x) && Number.isInteger(p.y);", "return isPlainObject(p);"],
     ["a scale is at least Hyprland's floor", ' || raw.scale < SCALE_MIN)\n        return { ok: false, error: at + "scale="', ')\n        return { ok: false, error: at + "scale="'],
     ["whole logical pixels", "return Math.abs(logical - Math.round(logical)) > PIXEL_TOLERANCE;", "return false;"],
     ["a quotient within the tolerance is whole", "var PIXEL_TOLERANCE = 0.001;", "var PIXEL_TOLERANCE = 0;"],
@@ -342,7 +489,59 @@ const CONTROLS = [
     ["a scale differs", "if (Math.abs(rule.scale - output.scale) > SCALE_TOLERANCE * Math.max(1, rule.scale)) return true;", ""],
     ["a transform the rule sets differs", "return rule.transform !== undefined && rule.transform !== output.transform;", "return false;"],
     ["a transform the rule leaves alone is not read", "return rule.transform !== undefined && rule.transform !== output.transform;", "return (rule.transform || 0) !== output.transform;"],
-    ["the overridden identifiers are sorted", "return out.sort();", "return out;"]
+    ["the overridden identifiers are sorted", "return out.sort();", "return out;"],
+    ["a preview lasts two seconds at least", "seconds >= PREVIEW_SECONDS_MIN && ", ""],
+    ["a preview lasts a minute at most", " && seconds <= PREVIEW_SECONDS_MAX) return", ") return"],
+    ["a preview lasts whole seconds", "if (Number.isInteger(seconds) && seconds >=", "if (typeof seconds === \"number\" && seconds >="],
+    ["an output off is captured off", "if (listed.disabled) return { output: output, disabled: true };", ""],
+    ["an output with no size is no capture", "if (!MODE.test(mode)) return null;", ""],
+    ["adaptive sync is captured only where the rule sets vrr", "vrr: vrrSet ? listed.vrr : null", "vrr: listed.vrr"],
+    ["a mirror is captured", "transform: listed.transform, mirror: listed.mirrorOf,", "transform: listed.transform, mirror: null,"],
+    ["a preview judges its rules", "var judged = judge({ version: VERSION, rules: rules }, outputs, saved);\n    if (!judged.ok) return judged;", "var judged = judge({ version: VERSION, rules: rules }, null);"],
+    ["a preview sets no field a capture cannot read back", "if (hasOwn(rule, PREVIEW_UNRESTORED[u]))", "if (false)"],
+    ["a preview applies only listed outputs", "        if (index === -1) continue;\n        applied.push(rule);", "        applied.push(rule);\n        if (index === -1) continue;"],
+    ["a preview captures an output once", "if (seen.indexOf(index) !== -1) continue;", ""],
+    ["a preview refuses an output it cannot capture", 'if (entry === null) return { ok: false, error: "refused: capture=unsized output=" + shown(rule.output) };', ""],
+    ["a record is an object", 'if (!isPlainObject(record)) return { ok: false, error: "refused: record="', 'if (false) return { ok: false, error: "refused: record="'],
+    ["a record holds every key", "RECORD_KEYS.some(function (key) { return !hasOwn(record, key); })", "false"],
+    ["a record holds no other key", "if (keys.length !== RECORD_KEYS.length || RECORD_KEYS", "if (RECORD_KEYS"],
+    ["a record's version is the preview's", "if (record.version !== PREVIEW_VERSION) return", "if (false) return"],
+    ["a record's token is 32 hex", 'if (typeof record.token !== "string" || !TOKEN.test(record.token)) return', "if (false) return"],
+    ["a record's deadline is whole epoch seconds", "if (!Number.isInteger(record.deadline) || record.deadline <= 0) return", "if (false) return"],
+    ["a record's signature is one", 'if (typeof record.signature !== "string" || !SIGNATURE.test(record.signature)) return', "if (false) return"],
+    ["a signature of digits alone is none", "var SIGNATURE = /^(?![0-9]+$)[A-Za-z0-9_]", "var SIGNATURE = /^[A-Za-z0-9_]"],
+    ["a record's captured outputs are a list", 'if (!Array.isArray(record.captured)) return { ok: false, error: "refused: record.captured="', 'if (false) return { ok: false, error: "refused: record.captured="'],
+    ["each captured entry is judged", 'if (fault !== "") return { ok: false, error: "refused: record.captured=" + i + " " + fault };', ""],
+    ["an entry is an object", 'if (!isPlainObject(entry)) return "entry="', 'if (false) return "entry="'],
+    ["an entry's keys are known", 'if (CAPTURE_KEYS.indexOf(keys[k]) === -1) return "key="', 'if (false) return "key="'],
+    ["an entry's output is an identifier", 'if (typeof entry.output !== "string" || !IDENTIFIER.test(entry.output)) return', "if (false) return"],
+    ["an entry's disabled is a boolean", 'if (typeof entry.disabled !== "boolean") return', "if (false) return"],
+    ["an entry off holds nothing else", 'if (entry.disabled) return keys.length === 2 ? "" : "keys="', 'if (entry.disabled) return true ? "" : "keys="'],
+    ["an entry on holds every key", 'if (keys.length !== CAPTURE_KEYS.length) return "keys="', 'if (false) return "keys="'],
+    ["an entry's mode is WxH@R", 'if (typeof entry.mode !== "string" || !MODE.test(entry.mode)) return', "if (false) return"],
+    ["an entry's position is judged", 'if (!isPosition(p)) return "position="', 'if (false) return "position="'],
+    ["an entry's scale is at least Hyprland's floor", 'if (typeof entry.scale !== "number" || !isFinite(entry.scale) || entry.scale < SCALE_MIN) return', "if (false) return"],
+    ["an entry's transform is 0 to 7", "if (!Number.isInteger(entry.transform) || entry.transform < 0 || entry.transform > 7) return", "if (false) return"],
+    ["an entry's mirror is an identifier", 'if (entry.mirror !== null && (typeof entry.mirror !== "string" || !IDENTIFIER.test(entry.mirror))) return', "if (false) return"],
+    ["an entry's vrr is a boolean", 'if (entry.vrr !== null && typeof entry.vrr !== "boolean") return', "if (false) return"],
+    ["a restore skips an output no longer listed", "if (resolve(outputs, entry.output) === -1) {", "if (false) {"],
+    ["a restore turns an output off", 'out.lines.push(head + "disabled = true })");', 'out.lines.push(head + "disabled = false })");'],
+    ["a restore turns an output on", 'var fields = ["disabled = false", ', "var fields = ["],
+    ["a restore clears a mirror it did not capture", '"mirror = \\"" + (entry.mirror === null ? "" : entry.mirror) + "\\""', '"mirror = \\"" + entry.mirror + "\\""'],
+    ["a restore writes vrr only where captured", 'if (entry.vrr !== null) fields.push("vrr = " + (entry.vrr ? 1 : 0));', 'fields.push("vrr = " + (entry.vrr ? 1 : 0));'],
+    ["a restore reads its mirror back", "if (entry.mirror !== null) rule.mirror = entry.mirror;", ""],
+    ["a guard's record is its own", "if (record === null || record.token !== token) return \"gone\";", "if (record === null) return \"gone\";"],
+    ["a guard leaves another instance's record", 'if (record.signature !== signature) return "foreign";\n    return now < record.deadline', "return now < record.deadline"],
+    ["a guard restores at the deadline", "return now < record.deadline ? \"wait\" : \"restore\";", "return now <= record.deadline ? \"wait\" : \"restore\";"],
+    ["adopt leaves another instance's record", 'if (record.signature !== signature) return "foreign";\n    return guarded', "return guarded"],
+    ["adopt leaves a guarded record", 'return guarded ? "guarded" : "arm";', 'return "arm";'],
+    ["confirm needs a record", 'if (record === null) return "refused: preview=gone";', ""],
+    ["confirm needs the token", 'if (record.token !== token) return "refused: token=mismatch";', ""],
+    ["confirm needs the instance", 'if (record.signature !== signature) return "refused: preview=foreign signature="', 'if (false) return "refused: preview=foreign signature="'],
+    ["a refusal reads as the helper's line", 'if (first.indexOf("vgsh: refused: ") === 0) return', "if (false) return"],
+    ["a failed run is no ok", "if (code !== 0) {", "if (false) {"],
+    ["a preview's line carries its token", "if (m !== null) return { ok: true, token: m[1], deadline: Number(m[2]) };", ""],
+    ["an unread reply is no ok", 'if (line === "ok" || line.indexOf("ok ") === 0) return { ok: true };', "return { ok: true };"]
 ];
 
 fs.mkdirSync(path.join(__dirname, "..", "tmp"), { recursive: true });

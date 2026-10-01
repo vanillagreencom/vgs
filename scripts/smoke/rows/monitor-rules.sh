@@ -74,29 +74,12 @@ else:
     print("placed" if lines.index(lock) < at < plugins[0] else "header=%d lock=%d first-plugin=%d" % (at, lines.index(lock), plugins[0]))
 PY
 }
-# layer_mode_reads NAME MODE SCALE: output NAME reads MODE at SCALE under
-# the layer's rule. A reading of another mode applies the rule again
-# through a configuration reload, which runs the layer file, up to
-# mode_attempts times. Prints `held` or the last reading.
-layer_mode_reads() {
-  local output="$1" want="$2 scale=$3" got="" attempt reply
-  for ((attempt = 1; attempt <= mode_attempts; attempt++)); do
-    for _ in $(seq 1 25); do
-      got="$(mode_scale_of "$output")" || got=unreadable
-      if [[ $got == "$want" ]]; then echo held; return 0; fi
-      sleep 0.2
-    done
-    reply="$(hypr reload config-only)" || reply="status=$?"
-    if [[ $reply != ok ]]; then echo "reload=[$reply]"; return 0; fi
-  done
-  echo "attempts=$mode_attempts got=[$got]"
-}
 
 expect "rescan discovers the monitors fixture" ok ipc shell rescanPlugins
 expect_poll "the monitors fixture is known" True plugin_known acme.monitors
 expect "enabling the monitors fixture is allowed" ok ipc shell setPluginEnabled acme.monitors true
 expect_poll "the monitors fixture builds" True record_exists acme.monitors
-expect_poll "the fixture reads back the exact monitors members it was given" '"outputs,overridden,saved,write,writeState"' read_monitors members
+expect_poll "the fixture reads back the exact monitors members it was given" '"confirm,outputs,overridden,preview,previewState,revert,saved,write,writeState"' read_monitors members
 expect_poll "the core reads the outputs while a plugin holds monitors" true reads_active
 expect "with no monitors.json the saved rules are none" '[]' read_monitors saved
 expect "with no monitors.json the layer writes no Monitors section" no layer_mentions "-- Monitors"

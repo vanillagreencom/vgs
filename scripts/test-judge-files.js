@@ -7,7 +7,7 @@
 // absolute directory of PATH, is pinned against a PATH built here.
 // `main` ends a process on a refusal with its line, its detail and its
 // status, thrown or rejected by a returned promise; each row runs in a child
-// node process.
+// node process. `lockFile` holds a flock one holder at a time.
 //
 // The controls at the end edit a copy of the helper, one rule at a time,
 // and require this suite to fail on each copy.
@@ -85,6 +85,25 @@ function verify(helper, root, file) {
     assert.throws(() => helper.replaceFile(occupied, "x", "probe", 0o600), e => e instanceof helper.Refusal && e.first.startsWith("probe=unwritable path=" + occupied + " error="));
     assert.deepEqual(fs.readdirSync(dir), ["settings.json"]);
 
+    // lockFile: one holder at a time, freed by release; a file with no
+    // directory to hold it fails with the error's code. A wait on a lock
+    // this process holds would never end, so `wait` is read on a lock no
+    // row took.
+    const lockDir = fs.mkdtempSync(path.join(root, "lock-"));
+    const lockPath = path.join(lockDir, "made", "probe.lock");
+    const first = helper.lockFile(lockPath, false);
+    assert.equal(first.state, "held", "lockFile: a free lock is held, its directory made");
+    assert.deepEqual(helper.lockFile(lockPath, false), { state: "busy" }, "lockFile: a held lock is busy");
+    first.release();
+    const again = helper.lockFile(lockPath, false);
+    assert.equal(again.state, "held", "lockFile: a released lock is held again");
+    again.release();
+    const waited = helper.lockFile(path.join(lockDir, "waited.lock"), true);
+    assert.equal(waited.state, "held", "lockFile: a wait on a free lock holds it");
+    waited.release();
+    fs.writeFileSync(path.join(lockDir, "plain"), "");
+    assert.deepEqual(helper.lockFile(path.join(lockDir, "plain", "probe.lock"), false), { state: "failed", error: "EEXIST" }, "lockFile: a lock that cannot be made fails");
+
     // PATH_ROWS run against this tree: abs/ holds `tool`, the unexecutable
     // `plain` and the directory `folder`; rel/, reached only relatively,
     // holds `local`.
@@ -122,7 +141,11 @@ try {
         ["a command is a file", "if (fs.statSync(file).isFile()) return true;", "return true;"],
         ["a PATH entry is absolute", "        if (!path.isAbsolute(dir)) continue;\n", ""],
         ["a refusal's detail is printed", "e.first + \"\\n\" + detail)", "e.first + \"\\n\")"],
-        ["a returned promise's refusal is caught", "result.catch(end);", "undefined;"]
+        ["a returned promise's refusal is caught", "result.catch(end);", "undefined;"],
+        ["a lock another holds is busy", 'if (!wait && taken.status === 75) return { state: "busy" };', ""],
+        ["a held lock is held", 'if (taken.status === 0) return { state: "held"', 'if (taken.status === 0 || taken.status === 75) return { state: "held"'],
+        ["a released lock is free", "release() { fs.closeSync(fd); } };", "release() {} };"],
+        ["a lock that cannot be made fails", 'return { state: "failed", error: e.code };', 'return { state: "busy" };']
     ];
     const source = fs.readFileSync(helperFile, "utf8");
     CONTROLS.forEach(([label, needle, replacement], index) => {
