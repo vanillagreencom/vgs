@@ -8,8 +8,9 @@ import "Lifetime.js" as Lifetime
 // the Registry's manifests, mounts bar widgets into the active bar's
 // sections, keeps every live instance's settings current, releases what
 // an instance registered when it goes, owns enable, disable and a
-// widget's placement, and answers the readbacks the validation rows use. Hosts call the slot API;
-// they never build a plugin or assign a plugin property themselves.
+// widget's placement, and answers the readbacks the validation rows use.
+// Hosts call the slot API; they never build a plugin or assign a plugin
+// property themselves.
 Singleton {
     id: root
 
@@ -434,9 +435,10 @@ Singleton {
         return hidden.length > 0 ? "ok hidden=" + hidden.join(",") : "ok";
     }
 
-    // Show or hide plugin `id`'s widget in the bar and leave its enablement
-    // alone: its service and other kinds stay built (PluginLogic.withPlaced).
-    // The reply is one keyed line the CLI prints as is: `ok` (the save is
+    // Show or hide plugin `id`'s widget in the bar (PluginLogic.withPlaced).
+    // disabledPlugins is never written: a plugin with another kind stays
+    // enabled and keeps its service and other kinds built, and a plugin
+    // whose only kind is bar-widget reads disabled once unplaced. The reply is one keyed line the CLI prints as is: `ok` (the save is
     // queued), `unknown: <id>`, `refused: placed=<id>
     // reason=no-bar-widget|disabled` from PluginLogic.placedRefusal, or a
     // refusal naming why the user file was not written.

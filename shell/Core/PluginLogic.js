@@ -2448,7 +2448,24 @@ function isPlaced(config, manifest) {
     return manifest.kinds.indexOf("bar-widget") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1;
 }
 
-// Whether a plugin is enabled under this configuration.
+// What enables plugin MANIFEST, apart from disabledPlugins[], which wins
+// over each answer. isEnabled matches on it, and each edit that gives a
+// plugin its presence or takes one away asks it.
+// - "bar": it declares kind bar and is enabled only as the active bar.
+// - "widget": its only kind is bar-widget, so only a placed widget
+//   enables it.
+// - "first-party": it declares another kind and its id is under the
+//   `vgs.` prefix, so it is enabled whether placed or not.
+// - "row": a third-party plugin of another kind, enabled by its plugins[]
+//   row or by a placed widget.
+function enablementRule(manifest) {
+    if (manifest.kinds.indexOf("bar") !== -1) return "bar";
+    if (manifest.kinds.every(function (k) { return k === "bar-widget"; })) return "widget";
+    return manifest.id.indexOf(FIRST_PARTY_PREFIX) === 0 ? "first-party" : "row";
+}
+
+// Whether a plugin is enabled under this configuration, by its
+// enablementRule.
 // - disabledPlugins[] wins over every other rule.
 // - A plugin declaring kind bar is enabled only as the active bar; every
 //   other kind it declares comes and goes with its bar.
@@ -2460,14 +2477,15 @@ function isEnabled(config, manifest, defaultBarId) {
     var disabled = Array.isArray(config.disabledPlugins) ? config.disabledPlugins : [];
     if (disabled.indexOf(manifest.id) !== -1)
         return false;
-    if (manifest.kinds.indexOf("bar") !== -1)
+    var rule = enablementRule(manifest);
+    if (rule === "bar")
         return activeBarId(config, defaultBarId) === manifest.id;
     if (isPlaced(config, manifest))
         return true;
-    var nonBarKinds = manifest.kinds.filter(function (k) { return k !== "bar" && k !== "bar-widget"; });
-    if (nonBarKinds.length === 0)
-        return false;
-    return pluginRow(config, manifest.id) !== undefined || manifest.id.indexOf(FIRST_PARTY_PREFIX) === 0;
+    if (rule === "widget") return false;
+    if (rule === "first-party") return true;
+    if (rule === "row") return pluginRow(config, manifest.id) !== undefined;
+    throw new Error("isEnabled: enablement rule " + JSON.stringify(rule) + " is not one of bar, widget, first-party, row");
 }
 
 // The ids the configuration lists in `disabledPlugins` and `plugins` that
@@ -2549,12 +2567,10 @@ function withEnabled(user, manifest, enabled, effective) {
     }
     if (isWidget && !isPlaced(effective, manifest))
         placeWidget(out, manifest, effective);
-    if (!isBar && !isWidget && manifest.id.indexOf(FIRST_PARTY_PREFIX) !== 0) {
-        if (pluginRow(effective, manifest.id) === undefined) {
-            var plugins = Array.isArray(out.plugins) ? out.plugins : [];
-            plugins.push({ id: manifest.id });
-            out.plugins = plugins;
-        }
+    if (!isWidget && enablementRule(manifest) === "row" && pluginRow(effective, manifest.id) === undefined) {
+        var plugins = Array.isArray(out.plugins) ? out.plugins : [];
+        plugins.push({ id: manifest.id });
+        out.plugins = plugins;
     }
     return out;
 }
@@ -2593,18 +2609,17 @@ function placedRefusal(config, manifest, defaultBarId) {
 }
 
 // The user-file change that shows or hides plugin MANIFEST's widget in the
-// bar and leaves its enablement alone: disabledPlugins is never read or
-// written. Returns the new user object; the caller checks placedRefusal
-// first and writes it.
+// bar. disabledPlugins is never read or written. Returns the new user
+// object; the caller checks placedRefusal first and writes it.
 //
 // Placing an unplaced widget is placeWidget. Unplacing seeds the user `bar`
 // and removes every layout entry with the plugin's id from every section.
-// A third-party plugin of a kind other than bar and bar-widget with no
-// plugins[] row is enabled only by its placement (isEnabled), so unplacing
-// lists it, the row seeded with the first removed entry's settings, and it
-// stays enabled. A plugin whose only kind is bar-widget has nothing left
-// once unplaced: it reads as disabled until enabling places it again. A
-// widget already as asked changes nothing but the version stamp.
+// A plugin of another kind stays enabled: a "row" plugin (enablementRule)
+// with no plugins[] row is enabled only by its placement, so unplacing
+// lists it, the row seeded with the first removed entry's settings. A
+// "widget" plugin has nothing left once unplaced: it reads as disabled
+// until enabling places it again. A widget already as asked changes
+// nothing but the version stamp.
 function withPlaced(user, manifest, placed, effective) {
     var out = isPlainObject(user) ? clone(user) : {};
     if (out.version === undefined) out.version = CONFIG_VERSION;
@@ -2615,10 +2630,7 @@ function withPlaced(user, manifest, placed, effective) {
         return out;
     }
     seedUserBar(out, effective);
-    var otherKinds = manifest.kinds.filter(function (k) { return k !== "bar" && k !== "bar-widget"; });
-    var enabledByPlacement = otherKinds.length > 0 && manifest.kinds.indexOf("bar") === -1
-        && manifest.id.indexOf(FIRST_PARTY_PREFIX) !== 0 && pluginRow(effective, manifest.id) === undefined;
-    if (enabledByPlacement) {
+    if (enablementRule(manifest) === "row" && pluginRow(effective, manifest.id) === undefined) {
         var row = copyEntrySettings({ id: manifest.id }, layoutEntryOf(out, manifest.id));
         out.plugins = (Array.isArray(out.plugins) ? out.plugins : []).concat([row]);
     }

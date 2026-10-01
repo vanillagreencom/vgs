@@ -8,7 +8,9 @@ import qs.Ui
 // whose menu lists every plugin, the current one checked, and opens the
 // chosen one's page. The body holds the description, the capabilities,
 // every error, the enabled switch, the Show in bar switch of a plugin with
-// a bar widget, which turns only while the plugin is enabled, the listing
+// a bar widget and another kind besides bar and bar-widget, which stays
+// enabled once unplaced, the switch turning only while the plugin is
+// enabled (for a widget-only plugin Enabled is the placement), the listing
 // metadata, the Update and Remove buttons of an installed plugin, one
 // status section per status group (entries without a group first, under
 // `Status`), whose values are read-only and whose setup steps run through
@@ -201,7 +203,7 @@ FocusScope {
                     width: parent.width
                     label: "Show in bar"
                     inline: true
-                    visible: page.row !== null && page.row.kinds.indexOf("bar-widget") !== -1
+                    visible: page.row !== null && page.row.kinds.indexOf("bar-widget") !== -1 && page.row.kinds.some(kind => kind !== "bar" && kind !== "bar-widget")
                     hint: page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to show it in the bar." : ""
                     Switch {
                         size: "sm"

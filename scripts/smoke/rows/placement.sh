@@ -1,12 +1,13 @@
 # Show in bar: setPluginPlaced takes a widget off the bar and puts it back
-# in its default section without touching enablement. Over the installed
+# in its default section and never writes disabledPlugins. Over the installed
 # fixture acme.probe, a service plus a bar widget that rows/plugins.sh
 # enabled and placed, each call is read back from the bar's build records,
 # the user shell.json, listPlugins and the service's build record:
 # unplacing keeps the plugin enabled and its service built, and neither
 # call changes disabledPlugins. The three refusals leave the file as it
 # was. The Settings page's Show in bar switch is clicked twice and read
-# back the same way. The row restores the user file byte for byte, so the
+# back the same way, and the page of acme.tick, a widget-only fixture,
+# draws no such switch. The row restores the user file byte for byte, so the
 # rows after it find the fixture placed as before, and leaves Settings
 # disabled.
 set -euo pipefail
@@ -51,28 +52,24 @@ placement_reads "the place" true '["right"]'
 expect "unplacing the fixture again is allowed" ok ipc shell setPluginPlaced acme.probe false
 placement_reads "the second unplace" false '[]'
 
-# The drawn switch: a real click on the page's Show in bar Switch.
-placement_click() {
-  local shown
-  shown="$(ipc smoke revealScopedText window vgs.settings Field "Show in bar" Switch "")" || return 1
-  [[ $shown =~ ^[0-9.]+$ ]] || { echo "placement_click: no Show in bar switch to reveal: $shown" >&2; return 1; }
-  # The reveal scrolls the page; the click reads the geometry once the
-  # scroll has landed, as settings_press waits.
-  sleep 0.2
-  click_scoped_in window:Settings window vgs.settings Field "Show in bar" Switch ""
-}
+# The drawn switch: real clicks on the page's Show in bar Switch.
 settings_page_open acme.probe
 expect_poll "the page reads the fixture unplaced" false placement_page
-placement_click || fail "the click on the Show in bar switch failed"
+settings_press --type Switch "" Field "Show in bar" || fail "the click on the Show in bar switch failed"
 expect_poll "the switch places the widget in the user file" '["right"]' placement_sections
 expect_poll "the switch puts the widget in every bar" '[true]' placement_in_bars
 expect_poll "listPlugins reads the fixture enabled and placed after the switch" '[true, true]' placement_listed acme.probe
 expect_poll "the page reads the fixture placed" true placement_page
-placement_click || fail "the second click on the Show in bar switch failed"
+settings_press --type Switch "" Field "Show in bar" || fail "the second click on the Show in bar switch failed"
 expect_poll "the switch takes the widget out of the user file" '[]' placement_sections
 expect_poll "the switch takes the widget off every bar" '[false]' placement_in_bars
 expect_poll "listPlugins reads the fixture enabled and unplaced after the switch" '[true, false]' placement_listed acme.probe
 expect "the fixture's service is still built after the switch" True placement_service
+# A widget-only plugin's Enabled switch is its placement: the same lookup
+# that found the probe's switch finds none on acme.tick's page.
+expect "Settings is summoned on acme.tick's page" ok ipc shell summon window vgs.settings '{"plugin":"acme.tick"}'
+expect_poll "the Settings window shows acme.tick's page" '"acme.tick"' ipc smoke readInstance window vgs.settings page
+expect_poll "a widget-only plugin's page draws no Show in bar" absent ipc smoke scopedWindowGeometry window vgs.settings Field "Show in bar" Switch ""
 settings_page_close acme.probe
 
 cp -- "$placement_saved" "$placement_file.tmp" && mv -T -- "$placement_file.tmp" "$placement_file"

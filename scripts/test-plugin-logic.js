@@ -449,7 +449,18 @@ function suite(ctx, check) {
     check("withPlaced: placing twice is placing once", twice(null, "acme.both", true), true);
     check("withPlaced: unplacing twice is unplacing once", twice(placedBoth, "acme.both", false), true);
     check("withPlaced does not alias the user file on place", (() => { const u = { bar: { layout: { left: [], center: [], right: [] } } }; ctx.withPlaced(u, manifests["acme.both"], true, ctx.effectiveConfig(shipped, u)); return u.bar.layout.right; })(), []);
-    check("withPlaced does not alias the user file on unplace", (() => { const u = { bar: { layout: { left: [], center: [], right: [{ id: "acme.both", tags: ["z"] }] } } }; const out = ctx.withPlaced(u, manifests["acme.both"], false, ctx.effectiveConfig(shipped, u)); out.plugins[0].tags.push("y"); return u.bar.layout.right; })(), [{ id: "acme.both", tags: ["z"] }]);
+    check("withPlaced does not alias the effective plugins row it seeds the entry from", (() => { const e = ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", tags: ["z"] }] }); const out = ctx.withPlaced(null, manifests["acme.both"], true, e); out.bar.layout.right[0].tags.push("y"); return ctx.pluginRow(e, "acme.both").tags; })(), ["z"]);
+    // A third-party plugin whose only kind is bar-widget: unplacing lists no
+    // row, so it reads disabled, and the disabled list stays the user's.
+    const placedWidget = { version: 1, disabledPlugins: ["vgs.svc"], bar: { id: "vgs.bar", layout: { left: [], center: [{ id: "vgs.clock" }], right: [{ id: "acme.widget", size: 5 }] } } };
+    const unplacedWidget = ctx.withPlaced(placedWidget, manifests["acme.widget"], false, ctx.effectiveConfig(shipped, placedWidget));
+    check("withPlaced: unplace a third-party widget-only plugin lists nothing", unplacedWidget.plugins, undefined);
+    check("withPlaced: unplace a third-party widget-only plugin keeps the user's disabled list", unplacedWidget.disabledPlugins, ["vgs.svc"]);
+    check("withPlaced: a third-party widget-only plugin reads disabled once unplaced", ctx.isEnabled(ctx.effectiveConfig(shipped, unplacedWidget), manifests["acme.widget"], "vgs.bar"), false);
+
+    // enablementRule rows: [id, want].
+    for (const [id, want] of [["vgs.bar", "bar"], ["vgs.barpanel", "bar"], ["vgs.clock", "widget"], ["acme.widget", "widget"], ["vgs.svc", "first-party"], ["vgs.widgetpanel", "first-party"], ["acme.svc", "row"], ["acme.both", "row"]])
+        check("enablementRule: " + id, ctx.enablementRule(manifests[id]), want);
 
     // A plugin with a settings schema, for the setting rows.
     const tunable = ctx.validateManifest({ schemaVersion: 1, id: "acme.tune", name: "T", version: "1", author: "a", description: "d", kinds: ["service", "bar-widget"], entryPoints: { service: "S.qml", "bar-widget": "W.qml" },
@@ -782,7 +793,10 @@ const CONTROLS = [
     ["placing never writes disabledPlugins", "function withPlaced(user, manifest, placed, effective) {\n    var out = isPlainObject(user) ? clone(user) : {};", "function withPlaced(user, manifest, placed, effective) {\n    var out = isPlainObject(user) ? clone(user) : {};\n    out.disabledPlugins = Array.isArray(effective.disabledPlugins) ? effective.disabledPlugins.slice() : [];"],
     ["a widget already as asked changes nothing", "if (placed === isPlaced(effective, manifest))\n        return out;", "if (false)\n        return out;"],
     ["unplacing removes the entries", "return entry.id !== manifest.id; });", "return true; });"],
-    ["unplacing lists a third-party plugin enabled by its placement", "if (enabledByPlacement) {", "if (false) {"],
+    ["unplacing lists a third-party plugin enabled by its placement", "if (enablementRule(manifest) === \"row\" && pluginRow(effective, manifest.id) === undefined) {", "if (false) {"],
+    ["a third-party plugin of another kind is enabled by its row", "return manifest.id.indexOf(FIRST_PARTY_PREFIX) === 0 ? \"first-party\" : \"row\";", "return \"first-party\";"],
+    ["a widget-only plugin is enabled only by its placement", "if (manifest.kinds.every(function (k) { return k === \"bar-widget\"; })) return \"widget\";", ""],
+    ["a copied entry setting shares nothing with its source", "target[k] = clone(entry[k]);", "target[k] = entry[k];"],
     ["an unplaced plugin's new row carries the entry's settings", "copyEntrySettings({ id: manifest.id }, layoutEntryOf(out, manifest.id))", "{ id: manifest.id }"],
     ["a placed entry carries the plugins row's settings", "copyEntrySettings({ id: manifest.id }, pluginRow(effective, manifest.id))", "{ id: manifest.id }"],
     ["a disabled plugin's placement is refused", "if (!isEnabled(config, manifest, defaultBarId))\n        return \"refused: placed=\"", "if (false)\n        return \"refused: placed=\""],

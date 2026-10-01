@@ -1691,17 +1691,19 @@ offered_actions() { status_rows "$1" | py_reply 'import json,sys; print(json.dum
 # settings_act ID KEY: the manager's answer to the step of ID's entry KEY,
 # as its button hands it on.
 settings_act() { ipc smoke invokeInstance window vgs.settings act "{\"id\":\"$1\",\"key\":\"$2\"}"; }
-# settings_press TEXT [SCOPE_TYPE SCOPE_TEXT]: a real click on the Settings
-# window's shown, enabled Button TEXT, inside the first shown SCOPE_TYPE
-# drawing SCOPE_TEXT when given, the page scrolled first so the button lies
-# in view, as a user scrolls to a step below the fold.
+# settings_press [--type TYPE] TEXT [SCOPE_TYPE SCOPE_TEXT]: a real click
+# on the Settings window's shown, enabled item of TYPE, Button unless given,
+# reading TEXT, inside the first shown SCOPE_TYPE drawing SCOPE_TEXT when
+# given, the page scrolled first so the first such item lies in view, as a
+# user scrolls to a step below the fold.
 settings_press() {
-  local shown
-  shown="$(ipc smoke revealText window vgs.settings Button "$1")" || return 1
-  [[ $shown =~ ^[0-9.]+$ ]] || { echo "settings_press: no Button $1 to reveal: $shown" >&2; return 1; }
+  local shown type=Button
+  if [[ $1 == --type ]]; then type="$2"; shift 2; fi
+  shown="$(ipc smoke revealText window vgs.settings "$type" "$1")" || return 1
+  [[ $shown =~ ^[0-9.]+$ ]] || { echo "settings_press: no $type $1 to reveal: $shown" >&2; return 1; }
   sleep 0.2
-  if [[ $# -eq 3 ]]; then click_scoped_in window:Settings window vgs.settings "$2" "$3" Button "$1"
-  else click_in window:Settings window vgs.settings Button "$1"
+  if [[ $# -eq 3 ]]; then click_scoped_in window:Settings window vgs.settings "$2" "$3" "$type" "$1"
+  else click_in window:Settings window vgs.settings "$type" "$1"
   fi
 }
 # click_scoped_in SURFACE HOST_KEY ID SCOPE_TYPE SCOPE_TEXT TYPE TEXT: the

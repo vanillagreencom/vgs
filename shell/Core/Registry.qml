@@ -313,14 +313,15 @@ Singleton {
 
     // Every discovered plugin as the plugin manager shows it: listing
     // metadata, its icon, capabilities and source, whether it is enabled,
-    // whether its widget is placed (PluginLogic.isPlaced), its settings schema, the settings it currently receives (a bar
-    // widget's from its first layout entry), its Keys rows, its Status rows
+    // whether its widget is placed (PluginLogic.isPlaced), its settings
+    // schema, the settings it currently receives (a bar widget's from its
+    // first layout entry), its Keys rows, its Status rows
     // (PluginLogic.statusRows of activeManifestOf over the values it
     // published), the label of its `secrets`, "" without, its setting
     // choices (PluginLogic.settingChoices over those same values), its
-    // requirements with their state and its errors:
-    // each failed build of one of its kinds, once per cause, then each
-    // problem the Hyprland layer reports for it.
+    // requirements with their state and its errors: each failed build of
+    // one of its kinds, once per cause, then each problem the Hyprland
+    // layer reports for it.
     readonly property var managerRows: {
         const config = Config.effective;
         const descriptions = Capabilities.shortcutDescriptions;

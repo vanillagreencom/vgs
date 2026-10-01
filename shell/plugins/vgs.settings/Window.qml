@@ -140,8 +140,8 @@ FocusScope {
     }
 
     // Show plugin `id`'s widget in the bar, or hide it, the opposite of its
-    // placement now, and leave the plugin enabled; answers the manager's
-    // reply.
+    // placement now; answers the manager's reply. The page offers it only
+    // for a plugin with a kind besides its widget, which stays enabled.
     function togglePlaced(id) {
         const row = rowOf(id);
         if (row === null) return "unknown: " + id;
