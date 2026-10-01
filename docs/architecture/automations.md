@@ -26,7 +26,7 @@ How `vgs.automations` turns a recurrence into systemd user timers, runs a comman
 | `$XDG_STATE_HOME/vgs/automations/locks/<id>.lock` | The lock one run holds | `flock` |
 | `$XDG_DATA_HOME/vgs/automations/engine/<hash>/` | The copy of the engine and the judge the units run | `sync` |
 
-Every file the engine writes is written whole under a hidden name in its directory and renamed into place. A record is never rewritten: a run's end is a new file, so a directory listing notices it ([runtime-qml.md](runtime-qml.md)).
+Every file the engine writes is written whole under a hidden name in its directory and renamed into place. A record is never rewritten: a run's end is a new file, so a directory listing notices it ([runtime-qml-folders.md](runtime-qml-folders.md)).
 
 ## The recurrence
 

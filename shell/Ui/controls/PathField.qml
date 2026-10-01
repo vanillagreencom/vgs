@@ -15,7 +15,7 @@ Item {
     property bool error: false
     property string errorMessage: ""
     readonly property bool absolute: isAbsolute(displayPath)
-    // runtime-qml.md defines the folder model's answer order: `status`
+    // runtime-qml-folders.md defines the folder model's answer order: `status`
     // becomes Null synchronously for a missing folder, while `folder` can
     // keep the last folder whose listing arrived.
     readonly property string actualFolder: clean(String(folders.folder || ""))
