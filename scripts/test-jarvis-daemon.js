@@ -388,6 +388,10 @@ async function inside() {
         const playback = count("playback-start");
         w.send("stop");
         const ended = await w.wait(m => m.state.conversation.kind === "ended" && m.phase === "idle");
+        // The daemon publishes a state before it consumes that state's
+        // effects, so the effect record can trail the frame read above.
+        for (let attempts = 0; attempts < 200 && count(effect) === before; attempts++)
+            await new Promise(resolve => setTimeout(resolve, 5));
         assert.equal(count(effect), before + 1, "active Stop delivers " + effect);
         assert.equal(ended.state.capture.kind, "closed");
         assert.equal(ended.state.playback.kind, "idle");
