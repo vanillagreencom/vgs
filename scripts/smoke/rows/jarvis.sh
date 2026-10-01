@@ -640,9 +640,9 @@ import sys
 p=Path(sys.argv[1])
 assert not p.is_symlink()
 s=p.read_text()
-needle="onAccountsEndedAtChanged: if (accountsEndedAt !== null) refresh()"
+needle="if (shell === null) return;"
 assert s.count(needle)==1
-changed=s.replace(needle, "onAccountsEndedAtChanged: {}")
+changed=s.replace(needle, needle + '\n        if (output !== "") return;')
 assert changed != s
 p.write_text(changed)
 PY
@@ -655,7 +655,7 @@ jarvis_account_keys_control() {
    expect_poll "Accounts end must refresh remembered-key presence" matched jarvis_key_value locked >"$sandbox/jarvis-account-keys-control.log"
    echo "$failures")
 }
-expect "removing the Keys Accounts-end refresh breaks its assertion" 1 jarvis_account_keys_control
+expect "keeping stale Keys presence after Accounts ends breaks its assertion" 1 jarvis_account_keys_control
 cp -- "$sandbox/jarvis-keys-original" "$jarvis_keys"
 cp -- "$sandbox/jarvis-accounts-tui-original" "$repo/shell/plugins/vgs.jarvis/tui/accounts.sh"
 printf 'present\n' >"$sandbox/jarvis-world/key-mode"

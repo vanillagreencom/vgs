@@ -40,6 +40,7 @@ pkgbase = vgs-git
 	optdepends = mise: Dev Tools installs, updates and removes developer tools
 	optdepends = cronie: crontab, which schedules automations where no systemd user manager answers
 	optdepends = systemd: before-suspend locking and Jarvis key presence without reading secrets
+	optdepends = iproute2: ss, for Jarvis local model-server discovery without inference
 	optdepends = dbus: dbus-monitor, so the lock screen hears logind announce a suspend
 	provides = vgs=0.1.0
 	conflicts = vgs

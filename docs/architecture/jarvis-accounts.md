@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/AccountProviders.js, shell/plugins/vgs.jarvis/Accounts.qml, shell/plugins/vgs.jarvis/backend/Accounts.js, shell/plugins/vgs.jarvis/backend/accounts.js, shell/plugins/vgs.jarvis/tui/accounts.sh, scripts/test-jarvis-accounts.js, scripts/test-jarvis-accounts-tui.js, scripts/fixtures/jarvis/accounts-world.js, scripts/fixtures/jarvis/accounts-tui.py
 
-The [Jarvis plan's account section](../plans/v2-jarvis-plan.md#39-secrets-and-accounts) owns discovery and explicit verification. `backend/Accounts.js::Accounts` is the one account judge. `AccountProviders.js::PROVIDERS` is the shared provider declaration. QML reads that declaration to pass key-variable presence as booleans, never key values, into the helper.
+The [Jarvis plan's account section](../plans/v2-jarvis-plan.md#39-secrets-and-accounts) owns discovery and explicit verification. `shell/plugins/vgs.jarvis/backend/Accounts.js::Accounts` is the one account judge. `AccountProviders.js::PROVIDERS` is the shared provider declaration. QML reads that declaration to pass key-variable presence as booleans, never key values, into the helper.
 
 ## Discovery
 
@@ -53,7 +53,7 @@ The manifest also lists Accounts as a [core-hosted floating TUI](tui-capability.
 - The same suite checks explicit Verify, unsupported handoffs, inference-only proof, busy and locked refusals, stale completion and refresh discarding Verified. It mutates production guards on disposable copies. Removing a stand-in breaks its positive assertion and never reaches a host account tool.
 - `scripts/test-jarvis-accounts-tui.js` runs the actual script on a private terminal. Its stand-in presentation tool selects directory and key-reference actions. The suite checks persisted metadata, model input, explicit consent, unavailable subscription handoffs and scrubbed child environments. Mutants change the directory passed to the judge and remove the user initiator.
 - `scripts/test-jarvis-account-verify.js` runs the real account logic and network door. Its external fetch stand-in covers provider request shapes, origin refusal, release grants, pre-transfer audit, bounded replies and safe failures. Actual HTTP listeners cover the local routes inside the private namespace. Production mutants start a request during discovery, bypass the door or audit, rebind a key, remove a grant or accept a non-inference reply. Removing the fetch stand-in breaks the positive assertion.
-- `scripts/smoke/rows/jarvis.sh` adds account metadata readback, a no-auth terminal-argv fixture, TUI-end refresh and failed-discovery clearing. Controls keep stale account rows or remove the Accounts and Keys end refresh. Those nested rows require the final smoke run for execution evidence.
+- `scripts/smoke/rows/jarvis.sh` adds account metadata readback, a no-auth terminal-argv fixture, TUI-end refresh and failed-discovery clearing. Controls keep stale account or key rows or remove the Accounts end refresh.
 
 ## Omarchy comparison
 

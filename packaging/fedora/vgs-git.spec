@@ -47,6 +47,7 @@ Recommends:     libsecret
 Recommends:     bubblewrap
 Recommends:     uv
 Recommends:     systemd
+Recommends:     iproute
 Recommends:     ImageMagick
 Conflicts:      vgs-shell
 # end runtime dependencies
