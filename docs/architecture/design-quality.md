@@ -22,11 +22,14 @@ The standard every surface is judged against, and the evidence that proves a sur
 | `text.body` | 15 / 24 / 400 | reading text of more than one line: a description, a dialog message |
 | `text.item` | 15 / line 1 / 400 | one line inside a control or row |
 | `text.hint`, `text.itemHint` | 13 / 20, 13 / line 1 | a secondary line, a field hint, a timestamp |
-| `text.label`, `text.eyebrow`, `text.button` | 11 / line 1, mono, uppercase | a field label, a section heading, a button |
+| `text.value` | 13 / line 1 | a read-only value beside its label |
+| `text.label`, `text.eyebrow`, `text.button`, `text.kbd` | 12 / line 1, mono; all but `kbd` uppercase | a field label, a section heading, a button, a badge, a key cap |
 | `text.tooltip` | 12 / 16 / 500 | a tooltip line |
 
 - A surface uses `h3` for its title. `h1` and `h2` are for documents. The full-screen theme and wallpaper browsers name their selected card in `text.display`, as Omarchy's picker does, and the lock screen draws its clock in it.
-- Reading text is at least 13 px and chrome at least 11 px. Reading text is a description, a message, a card's body and a list row's detail line; chrome is a label, a count, a button's text and a menu entry. A plugin that owns its look ([appearance.md](appearance.md)) meets the same floor.
+- The roles use seven sizes: 12, 13, 15, 16, 20, 24 and 34 px. `scripts/qml-tests/tst_label.qml` pins the set, so a role at a new size fails.
+- A key/value row pairs `text.label` with `text.value`. Their capitals differ by less than a pixel, and on the row their baselines are within a pixel, so the pair reads as one line. At the defaults, `FontMetrics` under `scripts/qml-unit.sh` reads capitals of 8.77 and 9.45 px. The 11 px label and the 15 px `item` value they replace read 8.03 and 10.91. The hierarchy has three levels: the value in the `text` colour, the hint under it in `hint` and a fainter colour, and the label, a badge and a button in 12 px chrome. The label column, `row.labelWidth`, is 140 px: the label "SINGLE-WORKSPACE" measures 129.3 px at 12 px against 118.6 px at 11 px in the same run, so the column grew from 128 px to keep such a word on one line.
+- Reading text is at least 13 px and chrome at least 12 px. Reading text is a description, a message, a card's body and a list row's detail line; chrome is a label, a count, a button's text and a menu entry. A plugin that owns its look ([appearance.md](appearance.md)) meets the same floor.
 - A control's label, a checkbox's, a radio's and a switch's, draws in `item`, so its line centres on the control. An indicator centres on the label's capital centre on a whole pixel.
 
 ## Controls
@@ -57,11 +60,12 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 | panel (a summoned flyout) | `inset.panel` 12, on a `Surface` | `h3` | `stack.group` 12 | content, to `size.panel.maxHeight` and the output's room; refits when content changes |
 | popover (`qs.Ui` `Popover`) | `inset.popover` 12 | `h3` | `stack.group` 12, `popover.gap` 4 from its anchor | content, to `popover.maxHeightShare` |
 | overlay (a full-screen browser over a `Scrim`) | `inset.overlay` 32, no corner to clear | its tabs | `stack.group` 12 | content, centred, to the output's height |
-| menu | `menu.padding` 8 | none | none | entries, to `menu.maxHeight`, 160 to `menu.maxWidth` wide |
-| select list | `menu.padding` 8 | none | none | entries, to `menu.maxHeight`, the field's width |
+| menu | the border; a row's fill meets it | none | none | entries, to `menu.maxHeight`, 160 to `menu.maxWidth` wide |
+| select list | the border; a row's fill meets it | none | none | entries, to `menu.maxHeight`, the field's width |
 | tooltip | `tooltip.paddingX` 8 | none | none | wraps at `tooltip.maxWidth` 280 |
 
 - Every window, panel, popover, dialog and overlay composes `Pane` ([D050](../decisions/D050-container-layout-contract.md), [design-layout.md](design-layout.md)). Left and right insets are equal, and the scroll bar sits inside the right inset.
+- A menu and a select list have no inset box: their rows fill the list inside the border, each row insets its own text, and the scroll bar draws over a strip each row keeps clear ([design-layout.md § Lists in a popover](design-layout.md#lists-in-a-popover)).
 - A header row's height is its control size. Every item in it centres on the row, and a title centres by its capital height.
 - A back or close `IconButton` at the start or end of a header puts its glyph's painted bounds, not its box, on the content edge ([design-layout.md § Headers](design-layout.md#headers)).
 - A title that opens a menu draws its caret at rest and its underline on hover, on focus and while the menu is open.
@@ -71,8 +75,9 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 ## Rows and groups
 
 - Rows of one group sit `stack.row` 4 apart. Blocks of one body, such as a description, a line of badges, a key/value grid and a code block, sit `stack.group` 12 apart. A section sits `stack.section` 24 after the block before it. Two controls in one line sit `stack.inline` 8 apart.
+- A row with lines of its own, such as a hint, an action or a command, is a group. Its lines sit `field.gap` 4 apart, and groups sit `groupList.gap` 12 apart with a `groupList.divider` hairline centred between them: `GroupList` ([design-layout.md § Groups](design-layout.md#groups)).
 - An editable key/value row is `row.height` 36. A read-only key/value row, such as a version or a source, is `row.compactHeight` 28 (`Field.compact`), with no hint slot.
-- A label is `text.label` in the `row.labelWidth` column and centres on its value's first line by capital height.
+- A label is `text.label` in the `row.labelWidth` column and centres on its value's first line by capital height. A read-only text value is `text.value`.
 - A row whose actions take more than half its text's room moves them under the text.
 - A disclosure's content starts at its row's text column.
 - A section heading sits on the content edge.

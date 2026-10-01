@@ -6,9 +6,10 @@ import qs.Ui
 // under it, then the line's one-click setup step (D061), and last the
 // `command` behind it, in a CommandDisclosure the reader opens to copy it
 // and the page never runs. The value is a Badge reading `text` in `tone`;
-// with `tone` "", `text` as one line of text, in the itemHint role while
-// `muted`; with neither, the hint itself on the label's row, so a line that
-// names a group never leaves its value column empty.
+// with `tone` "", `text` as one line in the value role, the label's pair,
+// or the itemHint role while `muted`; with neither, the hint itself on the
+// label's row, so a line that names a group never leaves its value column
+// empty. Its lines sit `field.gap` apart: one group of the row's GroupList.
 //
 // The step is one of: `actionLabel` while `actionOffered`, a button that
 // emits `act`; or, for a line that is the presence of a secret, by
@@ -73,7 +74,7 @@ Column {
 
     Row {
         x: field.valueX
-        spacing: Theme.space.sm
+        spacing: Theme.stack.inline
         visible: line.stepShown && !line.connecting
         Button {
             visible: line.actionLabel !== "" && line.actionOffered
@@ -116,7 +117,7 @@ Column {
         active: line.connecting
         visible: active
         sourceComponent: Row {
-            spacing: Theme.space.sm
+            spacing: Theme.stack.inline
             Component.onCompleted: secret.forceActiveFocus()
             TextField {
                 id: secret
@@ -176,7 +177,7 @@ Column {
     Component {
         id: plain
         Label {
-            role: line.muted ? "itemHint" : "item"
+            role: line.muted ? "itemHint" : "value"
             text: line.text
             elide: Text.ElideRight
         }

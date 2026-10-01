@@ -928,7 +928,8 @@ Scope {
                     parent: items.indexOf(child.parent),
                     role: child.role,
                     lineHeight: child.lineHeight,
-                    text: child.text
+                    text: child.text,
+                    visible: child.visible
                 };
             }));
         }

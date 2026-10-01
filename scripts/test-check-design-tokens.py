@@ -85,6 +85,8 @@ ROWS = [
     ("a duration from a token is not a finding", UI, "NumberAnimation { duration: Theme.motion.duration.normal }\n", None),
     ("a literal in a host is a finding", "shell/Hosts/Thing.qml", "Rectangle { radius: 4 }\n", "literal-radius"),
     ("a literal in a shipped plugin is a finding", "shell/plugins/acme.widget/Thing.qml", "Rectangle { radius: 4 }\n", "literal-radius"),
+    ("a group's spacing literal in a shipped plugin is a finding", "shell/plugins/acme.widget/Rows.qml", "Column { spacing: 12 }\n", "literal-metric"),
+    ("a hairline's colour literal in a shipped plugin is a finding", "shell/plugins/acme.widget/Line.qml", 'Rectangle { color: "#ffffff1a" }\n', "literal-color"),
     ("a literal in a skill template is a finding", ".agents/skills/vgs-plugin/templates/Thing.qml", "Rectangle { radius: 4 }\n", "literal-radius"),
     ("a literal in the core is not a finding", "shell/Core/Thing.qml", 'QtObject { property color c: "#fff"; property int radius: 4 }\n', None),
     ("a literal in a smoke fixture is not a finding", "scripts/smoke/fixtures/plugins/acme.probe/Wide.qml", "Item { implicitWidth: 10; radius: 4 }\n", None),

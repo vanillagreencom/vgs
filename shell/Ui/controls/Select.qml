@@ -11,12 +11,15 @@ import qs.Ui
 // press outside or Escape closes it. One ListCursor draws the highlight
 // and travels between entries, and a hover moves it once the pointer moves
 // (ListCursor). With the list closed, Up and Down on the focused control
-// move the choice. A list taller than `menu.maxHeight` scrolls under the
-// module's embedded bar, which sits in the list's right inset, so the
-// entries never move when they overflow. The list opens `menu.padding`
-// left of the control and that much wider on each side, so its entries'
-// text starts where the control's does. The control draws like a text
-// field; the template owns its click, hover and focus.
+// move the choice. The list opens on the control's edges, as wide as it,
+// and its entries fill it inside the menu's border, so a highlight or the
+// chosen entry's fill meets the border at the top and both sides
+// (Theme.menuListInset); an entry's side padding is the control's less
+// that border, so its text starts where the control's does. A list taller
+// than `menu.maxHeight` scrolls under the module's embedded bar, which
+// draws over the strip each entry keeps clear at its end while the list
+// overflows. The control draws like a text field; the template owns its
+// click, hover and focus.
 T.AbstractButton {
     id: root
 
@@ -38,6 +41,9 @@ T.AbstractButton {
     Component.onDestruction: share(false)
     readonly property color outline: activeFocus || list.visible ? Theme.textField.focus : hovered ? Theme.textField.hover : Theme.textField.borderColor
     readonly property real sidePadding: Theme.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, height), implicitContentHeight)
+    // The list's top and bottom inset inside its window; its side inset is
+    // the border.
+    readonly property real listInset: Theme.menuListInset(list.width)
 
     function textAt(index) {
         if (index < 0 || index >= count) return "";
@@ -70,8 +76,8 @@ T.AbstractButton {
     // control draws in, as JSON, or "closed".
     function listGeometry() {
         if (!list.visible) return "closed";
-        const p = entries.mapToGlobal(0, 0);
-        return JSON.stringify([p.x - Theme.menu.padding, p.y - Theme.menu.padding, list.width, list.height]);
+        const p = entries.mapToGlobal(-entries.x, -entries.y);
+        return JSON.stringify([p.x, p.y, list.width, list.height]);
     }
 
     implicitWidth: Theme.size.panel.sm / 2
@@ -121,14 +127,12 @@ T.AbstractButton {
         anchor.gravity: Edges.Bottom | Edges.Right
         anchor.adjustment: PopupAdjustment.Flip | PopupAdjustment.Slide
         anchor.margins.bottom: -Theme.select.gap
-        anchor.margins.left: -Theme.menu.padding
         grabFocus: true
         visible: false
         color: "transparent"
-        // The field's width and the menu padding either side, never wider
-        // than the output's room.
-        implicitWidth: Math.max(1, OverlayState.widthFor(root, root.width + 2 * Theme.menu.padding))
-        implicitHeight: Math.max(1, Math.min(Theme.menu.maxHeight, entries.contentHeight) + 2 * Theme.menu.padding)
+        // The field's width, never wider than the output's room.
+        implicitWidth: Math.max(1, OverlayState.widthFor(root, root.width))
+        implicitHeight: Math.max(1, Math.min(Theme.menu.maxHeight, entries.contentHeight) + 2 * root.listInset)
         onVisibleChanged: root.share(visible)
 
         Rectangle {
@@ -142,9 +146,10 @@ T.AbstractButton {
         ListView {
             id: entries
             anchors.fill: parent
-            anchors.topMargin: Theme.menu.padding
-            anchors.bottomMargin: Theme.menu.padding
-            anchors.leftMargin: Theme.menu.padding
+            anchors.topMargin: root.listInset
+            anchors.bottomMargin: root.listInset
+            anchors.leftMargin: Theme.border.thin
+            anchors.rightMargin: Theme.border.thin
             model: root.model
             clip: true
             focus: true
@@ -164,10 +169,10 @@ T.AbstractButton {
                 required property int index
                 readonly property bool chosen: index === root.currentIndex
 
-                width: ListView.view.width - Theme.menu.padding
+                width: ListView.view.width
                 implicitHeight: Theme.menu.item.height
-                leftPadding: root.sidePadding
-                rightPadding: root.sidePadding
+                leftPadding: root.sidePadding - Theme.border.thin
+                rightPadding: root.sidePadding - Theme.border.thin + (entries.overflowing ? Theme.scrollArea.gutter : 0)
                 text: root.textAt(index)
                 highlighted: ListView.isCurrentItem
                 hoverEnabled: true

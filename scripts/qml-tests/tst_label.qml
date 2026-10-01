@@ -10,7 +10,10 @@ import qs.Unit
 // leaves more ink. Reading text draws in the bundled sans family and chrome
 // in the bundled mono family at the reference's metrics, and a chrome role
 // with line height 1 has a line box exactly the font's height, so centring
-// the box centres the text. An absent family draws the bundled family its
+// the box centres the text. The roles use seven sizes and no more. A
+// key/value row's label and its value draw in the pair of roles whose
+// capitals are within a pixel of one height, and on the row they share a
+// baseline within a pixel. An absent family draws the bundled family its
 // token's default names.
 Item {
     id: root
@@ -30,6 +33,8 @@ Item {
     }
     Label { id: bar; role: "bar"; text: "10"; y: 170 }
     FontMetrics { id: barMetrics; font: bar.font }
+    Field { id: pair; label: "Agents running"; inline: true; width: 300; y: 190; Label { id: pairValue; role: "value"; text: "3" } }
+    Field { id: compactPair; label: "Version"; inline: true; compact: true; width: 300; y: 230; Label { id: compactValue; role: "value"; text: "0.1.0" } }
 
     TestCase {
         name: "label"
@@ -80,10 +85,11 @@ Item {
                 { tag: "itemHint", family: sans, size: 13, weight: 400, spacing: 0, uppercase: false, lineHeight: 1 },
                 { tag: "itemCode", family: mono, size: 13, weight: 500, spacing: 0, uppercase: false, lineHeight: 1 },
                 { tag: "hint", family: sans, size: 13, weight: 400, spacing: 0, uppercase: false, lineHeight: 1.55 },
-                { tag: "eyebrow", family: mono, size: 11, weight: 700, spacing: 0.18, uppercase: true, lineHeight: 1 },
-                { tag: "label", family: mono, size: 11, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 },
-                { tag: "button", family: mono, size: 11, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 },
-                { tag: "kbd", family: mono, size: 11, weight: 600, spacing: 0.02, uppercase: false, lineHeight: 1 },
+                { tag: "eyebrow", family: mono, size: 12, weight: 700, spacing: 0.18, uppercase: true, lineHeight: 1 },
+                { tag: "label", family: mono, size: 12, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 },
+                { tag: "value", family: sans, size: 13, weight: 400, spacing: 0, uppercase: false, lineHeight: 1 },
+                { tag: "button", family: mono, size: 12, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 },
+                { tag: "kbd", family: mono, size: 12, weight: 600, spacing: 0.02, uppercase: false, lineHeight: 1 },
                 { tag: "code", family: mono, size: 13, weight: 500, spacing: 0, uppercase: false, lineHeight: 1.5 },
                 { tag: "tooltip", family: sans, size: 12, weight: 500, spacing: 0, uppercase: false, lineHeight: 1.333 },
                 { tag: "bar", family: mono, size: 12, weight: 500, spacing: 0.08, uppercase: true, lineHeight: 1 }
@@ -109,6 +115,34 @@ Item {
         // its reference values reddens this test.
         function test_every_role_is_pinned() {
             compare(Object.keys(Theme.text).sort(), test_role_draws_the_reference_metrics_data().map(row => row.tag).sort());
+        }
+
+        // The scale's steps, restated: a role at a size between them adds a
+        // step the hierarchy does not need.
+        function test_the_scale_has_seven_steps() {
+            const sizes = Object.keys(Theme.text).map(name => Theme.text[name].size);
+            compare(Array.from(new Set(sizes)).sort((a, b) => a - b), [12, 13, 15, 16, 20, 24, 34]);
+        }
+
+        // A key/value row's label and its value: capitals within a pixel of
+        // one height, and baselines within a pixel on the row, whether the
+        // row holds a control's height or is compact.
+        function test_a_label_and_its_value_read_as_one_line() {
+            const label = pair.children.find(child => child.spacing === Theme.field.labelGap).children[0];
+            compare(label.role, "label");
+            const labelMetrics = Qt.createQmlObject("import QtQuick\nFontMetrics {}", root);
+            labelMetrics.font = label.font;
+            const valueMetrics = Qt.createQmlObject("import QtQuick\nFontMetrics {}", root);
+            valueMetrics.font = pairValue.font;
+            verify(Math.abs(labelMetrics.capitalHeight - valueMetrics.capitalHeight) <= 1, "capitals " + labelMetrics.capitalHeight + " and " + valueMetrics.capitalHeight);
+            for (const [field, value] of [[pair, pairValue], [compactPair, compactValue]]) {
+                const key = field.children.find(child => child.spacing === Theme.field.labelGap).children[0];
+                const keyBase = key.mapToItem(field, 0, key.baselineOffset).y;
+                const valueBase = value.mapToItem(field, 0, value.baselineOffset).y;
+                verify(Math.abs(keyBase - valueBase) <= 1, field.label + " baselines " + keyBase + " and " + valueBase);
+            }
+            labelMetrics.destroy();
+            valueMetrics.destroy();
         }
 
         function test_bar_line_box_is_the_font_height() {

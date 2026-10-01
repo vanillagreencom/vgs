@@ -131,6 +131,7 @@ f share/vgs/shell/Ui/icons/Lucide.js
 f share/vgs/shell/Ui/layout/AngledCard.qml
 f share/vgs/shell/Ui/layout/CardCarousel.qml
 f share/vgs/shell/Ui/layout/Disclosure.qml
+f share/vgs/shell/Ui/layout/GroupList.qml
 f share/vgs/shell/Ui/layout/ListAnimation.qml
 f share/vgs/shell/Ui/layout/ListCursor.qml
 f share/vgs/shell/Ui/layout/ListCursorLogic.js

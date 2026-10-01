@@ -46,6 +46,7 @@ Singleton {
     readonly property var stack: published.stack
     readonly property var surface: published.surface
     readonly property var divider: published.divider
+    readonly property var groupList: published.groupList
     readonly property var focusRing: published.focusRing
     readonly property var button: published.button
     readonly property var segmented: published.segmented
@@ -91,6 +92,14 @@ Singleton {
     // (Inset.controlPadding).
     function controlPadding(pad, radius, height, contentHeight) {
         return Inset.controlPadding(pad, radius, height, contentHeight, inset.cornerStep);
+    }
+
+    // The top and bottom inset of the list of a menu or a select `width`
+    // wide, inside the menu's border: the border alone while an entry's
+    // corner is as round as the menu's, more under a menu corner rounder
+    // than an entry's (Inset.listInset). The side inset is the border.
+    function menuListInset(width) {
+        return Inset.listInset(Math.min(menu.radius, width / 2), border.thin, Math.min(menu.item.radius, menu.item.height / 2));
     }
 
     function toColor(text) {

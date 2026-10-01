@@ -575,6 +575,58 @@ has_section() { ipc smoke itemTexts window vgs.settings SectionHeader | py_reply
 expect_poll "the page draws a Requirements section" True has_section Requirements
 requirement_texts() { ipc smoke itemTexts window vgs.settings RequirementRow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 expect_poll "each requirement reads back with its state and purpose" '[["sh", "Present", "A command every sandbox has"], ["vgs-smoke-absent", "Missing, optional", "A command no sandbox has"]]' requirement_texts
+# The Requirements section's rows are groups (GroupList): two shown groups
+# of a list sit `groupList.gap` apart with one Divider centred in the gap,
+# within a pixel. One control plants a copy of the same reading with the
+# second group 8 px lower, and one with the first hairline gone, which the
+# check refuses on each rule. `[]` is the pass.
+group_geometry() { # [gap|line]
+  local rows gap
+  rows="$(ipc smoke descendantGeometry window vgs.settings)" || return
+  gap="$(ipc smoke themeValue groupList.gap)" || return
+  python3 - "$rows" "$gap" "${1:-}" <<'PY'
+import json, re, sys
+words = [a for a in sys.argv[1:3] if not re.match(r"^(\[|-?[0-9])", a)]
+if words:
+    print(json.dumps(["unread=%s" % ",".join(words)])); sys.exit()
+rows, gap = (json.loads(a) for a in sys.argv[1:3])
+plant = sys.argv[3]
+out = []
+def shown(i):
+    while i != -1:
+        if not rows[i]["visible"]: return False
+        i = rows[i]["parent"]
+    return True
+def sized(i): return rows[i]["box"][2] > 0 and rows[i]["box"][3] > 0
+def kids(i): return [j for j, r in enumerate(rows) if r["parent"] == i]
+lists = [i for i, r in enumerate(rows) if r["type"] == "GroupList" and shown(i) and sized(i)]
+if not lists: print(json.dumps(["group-lists=0"])); sys.exit()
+checked = 0
+for n, i in enumerate(lists):
+    columns = [j for j in kids(i) if rows[j]["type"] == "Column"]
+    if len(columns) != 1: out.append("list%d.columns=%d" % (n, len(columns))); continue
+    groups = [dict(rows[j]) for j in kids(columns[0]) if shown(j) and sized(j)]
+    groups.sort(key=lambda g: g["box"][1])
+    lines = sorted((rows[j] for j in kids(i) if rows[j]["type"] == "Divider" and shown(j)), key=lambda d: d["box"][1])
+    if plant == "gap" and len(groups) > 1:
+        groups[1]["box"] = [groups[1]["box"][0], groups[1]["box"][1] + 8] + groups[1]["box"][2:]
+    if plant == "line": lines = lines[1:]
+    if len(lines) != len(groups) - 1: out.append("list%d.hairlines=%d groups=%d" % (n, len(lines), len(groups))); continue
+    for k in range(1, len(groups)):
+        top = groups[k - 1]["box"][1] + groups[k - 1]["box"][3]
+        start = groups[k]["box"][1]
+        if abs(start - top - gap) > 1: out.append("list%d.gap%d=%.2f want=%d" % (n, k, start - top, gap))
+        mid = lines[k - 1]["box"][1] + lines[k - 1]["box"][3] / 2
+        if abs(mid - (top + start) / 2) > 1: out.append("list%d.hairline%d=%.2f between %.2f and %.2f" % (n, k, mid, top, start))
+        checked += 1
+if checked == 0 and not out: out.append("gaps=0")
+print(json.dumps(out))
+PY
+}
+geometry expect_poll "the Requirements rows are groups a gap and a hairline apart" '[]' group_geometry
+group_planted() { group_geometry "$1" | py_reply 'import json,sys; o=json.load(sys.stdin); print(any(sys.argv[1] in e for e in o))' "$2"; }
+expect "control: a second group 8 px lower is refused" True group_planted gap .gap1=
+expect "control: a missing hairline is refused" True group_planted line .hairlines=
 click_install() {
   local area bx by
   for _ in $(seq 1 6); do

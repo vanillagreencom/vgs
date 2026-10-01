@@ -19,10 +19,11 @@ Each role is read from one rule of the stylesheet. A value the rule does not set
 | `text.itemHint` | `.check-list small` | sans, 13 px, 400, line height 1.55 | line height 1, for a list item's secondary line |
 | `text.itemCode` | `.code-block pre` | mono, 13 px, 500, line height 1.65 | line height 1, for one line of code beside an inline label |
 | `text.hint` | `.check-list small` | sans, 13 px, 400, line height 1.55 | |
-| `text.eyebrow` | `.page-eyebrow` | mono, 11 px, 700, .18em, uppercase, line height 1.55 | line height 1 |
-| `text.label` | `.code-head` | mono, 11 px, 500, .08em, uppercase, line height 1.55 | line height 1 |
-| `text.button` | `.button` | mono, 11 px, 400, .08em, uppercase, line height 1.55 | 500, line height 1; `Button` draws the variant's weight |
-| `text.kbd` | `.sidebar-search kbd` | mono, 11 px, 600, .02em, line height 1 | |
+| `text.eyebrow` | `.page-eyebrow` | mono, 11 px, 700, .18em, uppercase, line height 1.55 | 12 px, line height 1: chrome is one 12 px step |
+| `text.label` | `.code-head` | mono, 11 px, 500, .08em, uppercase, line height 1.55 | 12 px, line height 1: its capitals within a pixel of `text.value`'s |
+| `text.value` | `.check-list small` | sans, 13 px, 400, line height 1.55 | line height 1, in the text colour: the value beside a `text.label` |
+| `text.button` | `.button` | mono, 11 px, 400, .08em, uppercase, line height 1.55 | 12 px, 500, line height 1; `Button` draws the variant's weight |
+| `text.kbd` | `.sidebar-search kbd` | mono, 11 px, 600, .02em, line height 1 | 12 px |
 | `text.code` | `.code-block pre` | mono, 13 px, 500, line height 1.65 | line height 1.5, after owner review of wrapped commands |
 | `text.tooltip` | `.control-tooltip` | sans, 11 px, 600, 0em, line height 1.3 | 12 px, 500, line height 1.333, a 16 px line box: Radix Tooltip |
 | `text.bar` | `.sidebar-brand`, `.button` | mono, 12 px, 700, .04em, uppercase; `.button` .08em | 500, .08em, line height 1 |
@@ -42,11 +43,12 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `SegmentedControl` | 32 | 2 inset | 2 | 0 | `segmented.height`, `segmented.padding`, `segmented.gap` | `.catalog-view-mode` | gap 4 | inset 2, gap 2 |
 | a segment | 28 | 12 | | 0 | `segmented.paddingX` | `.catalog-view-mode button` | min-height 29, padding 0 9 | 32 less the inset |
 | `ListItem` | 36; 56 with a secondary line | 12 | 8; 4 between its lines | 0 | `listItem.height`, `listItem.twoLineHeight`, `listItem.paddingX`, `listItem.gap`, `row.lineGap` | `.field-row` | min-height 45, padding 0 12 | 36 and 56 on the grid |
-| `MenuItem` | 32 | 12 | 8 | 0 | `menu.item.height`, `menu.item.paddingX`, `menu.item.gap` | `.aside-link` | min-height 32, padding 5 0 5 12 | a trailing shortcut column; the title elides |
-| a `Select` list entry | 32 | the field's side padding | | 0 | `menu.item.height`, `textField.paddingX` | `.aside-link` | min-height 32, padding 5 0 5 12 | |
-| `Field`, inline | 36 unless the control is taller; 28 compact | 0 | 12 after a 128 label; 4 between row and hint | | `row.height`, `row.compactHeight`, `field.paddingX`, `field.labelWidth`, `field.labelGap`, `field.gap` | `.field-row` | min-height 45, padding 0 12, columns 130px 1fr 70px, gap 12 | no third column; padding 0, so the row sits on the content edge; a read-only row is compact |
+| `MenuItem` | 32 | 12; 8 more at the end while the menu overflows | 8 | `menu.radius` | `menu.item.height`, `menu.item.paddingX`, `menu.item.gap`, `menu.item.radius`, `scrollArea.gutter` | `.aside-link` | min-height 32, padding 5 0 5 12 | a trailing shortcut column; the title elides; the fill meets the menu's border |
+| a `Select` list entry | 32 | the field's side padding less the border | | `menu.radius` | `menu.item.height`, `textField.paddingX` | `.aside-link` | min-height 32, padding 5 0 5 12 | the fill meets the list's border |
+| `Field`, inline | 36 unless the control is taller; 28 compact | 0 | 12 after a 140 label; 4 between row and hint | | `row.height`, `row.compactHeight`, `field.paddingX`, `field.labelWidth`, `field.labelGap`, `field.gap` | `.field-row` | min-height 45, padding 0 12, columns 130px 1fr 70px, gap 12 | no third column; padding 0, so the row sits on the content edge; a read-only row is compact |
 | `SectionHeader` | its lines, 0 above, 4 below | 0 | 4 | | `sectionHeader.paddingBottom`, `sectionHeader.gap` | `.listing-checks h3` and `.detail-section` | heading after 28 px section gap, margin-bottom 12 | `Section` owns the 24 px section gap |
 | `Section` | content | 0 header inset by default | 4 between rows; 12 between groups; 24 above sections | | `stack.row`, `stack.group`, `stack.section` | `.detail-section` | 28 px above and below, heading margin-bottom 12 | 24 px section gap on the 4 px grid |
+| `GroupList` | its groups | | 12 between groups, a 1 px hairline centred in each gap | | `groupList.gap`, `groupList.divider`, `divider.thickness` | Omarchy `PanelSeparator` | 1 px, 12% of the foreground, between sections | between groups inside a section, 10% of the foreground |
 | `Badge` sm | 20 | 6 | 4 | 0 | `badge.size.sm.height`, `badge.size.sm.paddingX`, `badge.gap` | Omarchy `.listing-check-status`; Radix Badge size 1 | min-height 20, padding 2 7 0; padding 2 × 6 | optical centring instead of top padding |
 | `Badge` md | 24 | 8 | 4 | 0 | `badge.size.md.height`, `badge.size.md.paddingX`, `badge.gap` | Radix Badge size 2 | padding 4 × 8, 24 tall | the label role |
 | `Kbd` | 20, at least square | 6 | | 0 | `kbd.height`, `kbd.paddingX` | `.sidebar-search kbd` | padding 3 7 | the height of `Badge` sm |
@@ -59,7 +61,7 @@ Each value is read from one rule of the stylesheet. A measured value is the reso
 | `Slider` | 14 handle, 4 track; input at least 24 | | | round | `slider.handle`, `slider.track`, `size.control.sm` | none | | |
 | `Popover` | content + 24 | 12 | 4 from the anchor | 0 | `popover.padding`, `popover.gap` | none | | |
 | `Dialog` | content + 32 | 16 | 12 between the title, the message, the content and the actions; 8 between actions | 0 | `dialog.width`, `dialog.padding`, `dialog.gap`, `dialog.actionGap` | none | | 360 wide |
-| `Menu` | items + 16, 160 to 360 wide, scrolling past nine items | 8 | 4 from the anchor | 0 | `menu.padding`, `menu.gap`, `menu.minWidth`, `menu.maxWidth`, `menu.maxHeight` | none | | |
+| `Menu` | items + 2, 160 to 360 wide, scrolling past nine items | the 1 px border | 4 from the anchor | 0 | `border.thin`, `menu.gap`, `menu.minWidth`, `menu.maxWidth`, `menu.maxHeight` | Omarchy `Dropdown` | rows edge to edge, 1 px hairline plus the border | no hairline: a row's fill meets the border |
 | the embedded scroll bar | the area's height; a thumb of at least 24 | 4 thick, 2 from the edge, in an 8 gutter | | round | `scrollArea.barWidth`, `scrollArea.barInset`, `scrollArea.gutter`, `scrollArea.minThumb` | none | | |
 | `TitleButton` | the role's line + 3 | 0 | 4 to the caret; the underline 2 below the text | | `titleButton.gap`, `titleButton.underline`, `titleButton.underlineGap` | none | | |
 | a window | half the monitor | 16 inset; 12 from a narrower monitor's sides | | | `size.window.width`, `size.window.heightShare`, `size.window.gutter`, `inset.window` | none | | 600 wide |

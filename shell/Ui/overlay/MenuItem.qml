@@ -11,13 +11,18 @@ import qs.Ui
 // hint drawn after the text, not a binding; a click never toggles
 // `checked`, which the author binds. The menu hands every entry its
 // ListCursor as `cursor`: the cursor then draws the highlight, and a hover
-// it lets through emits `pointed` for the menu to highlight the entry.
+// it lets through emits `pointed` for the menu to highlight the entry. The
+// fill spans the entry, which spans the menu's list; the text inset is the
+// entry's own side padding. `barRoom` is the strip at the entry's end the
+// menu's scroll bar draws over while the entries overflow: the text, the
+// shortcut and the check mark keep clear of it, and the fill still spans it.
 T.MenuItem {
     id: root
 
     property string iconName: ""
     property string shortcut: ""
     property ListCursor cursor: null
+    property real barRoom: 0
 
     signal pointed()
 
@@ -28,7 +33,7 @@ T.MenuItem {
     // clears the drawn corner.
     readonly property real sidePadding: Theme.controlPadding(Theme.menu.item.paddingX, Theme.menu.item.radius, Math.max(Theme.menu.item.height, height), implicitContentHeight)
     leftPadding: sidePadding
-    rightPadding: sidePadding + (checked ? Theme.icon.size.sm + spacing : 0)
+    rightPadding: sidePadding + barRoom + (checked ? Theme.icon.size.sm + spacing : 0)
     spacing: Theme.menu.item.gap
     hoverEnabled: true
     PointerCursor {}
@@ -84,7 +89,7 @@ T.MenuItem {
         visible: root.checked
         size: Theme.icon.size.sm
         color: Theme.menu.item.check
-        x: root.width - root.sidePadding - width
+        x: root.width - root.sidePadding - root.barRoom - width
         y: Math.round((root.height - height) / 2)
     }
 

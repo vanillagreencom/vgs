@@ -156,7 +156,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 
 | Component | Base | Takes |
 |---|---|---|
-| `Label` | `Text` | `role`: a group of `Theme.text` (`display`, `h1`, `h2`, `h3`, `eyebrow`, `subheading`, `body`, `bodyStrong`, `label`, `hint`, `tooltip`, `button`, `code`) |
+| `Label` | `Text` | `role`: a group of `Theme.text` (`display`, `h1`, `h2`, `h3`, `eyebrow`, `subheading`, `body`, `bodyStrong`, `label`, `value`, `hint`, `tooltip`, `button`, `code`); `label` and `value` are a key/value row's pair |
 | `Icon` | `Item` | `name`: a Lucide icon; `size`, `color`, `stroke` |
 | `Surface`, `Divider`, `FocusRing` | `Rectangle` | `level`; `vertical`; `target` |
 | `Button`, `IconButton`, `ToggleButton` | `T.Button` | `text`, `iconName`, `variant` (`primary`, `secondary`, `tertiary`, `ghost`, `danger`), `size` (`sm`, `md`, `lg`); `label` for an icon button |
@@ -180,6 +180,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `ListEntrance` | `Translate` | a row's entrance, as its `transform`: `start(slot, direction)`, `progress` for the row's opacity, `shift`, `motion` |
 | `Disclosure` | `Column` | `text`, `secondary`, `iconName`, `trailing` as `ListItem` takes them, `expanded`, `expandable`; its content as children, shown under the row while expanded |
 | `SectionHeader` | `Column` | `text`, `description`; `leftPadding` and `rightPadding` inset both lines |
+| `GroupList` | `Item` | groups as children, each a row with its own lines: `groupList.gap` between groups with a hairline centred in each gap; a nested list divides its own groups alike |
 | `Select` | `T.AbstractButton` | `model`, `currentIndex`, `textRole`; `openList()`; `activated(index)` on a user choice only, including the current entry, never on a model or binding update; the list opens in its own surface and scrolls under the embedded bar |
 | `Popover` | `Item` | its content as children, `width`; `open()`, `close()`, `opened`; a surface under the item it is declared in |
 | `Tooltip` | `Item` | `text`; opens on hover of the item it is declared in |

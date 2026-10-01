@@ -78,8 +78,14 @@ const DEFAULTS = [
     ["text.code.lineHeight", 1.5],
     ["text.bar.size", 12],
     ["text.bar.lineHeight", 1],
-    ["text.label.size", 11],
-    ["text.kbd.size", 11],
+    // Chrome is 12 px, 15 * 0.8, and a key/value value 13 px, 15 * 0.87
+    // rounded: capitals within a pixel of each other's height.
+    ["text.label.size", 12],
+    ["text.kbd.size", 12],
+    ["text.button.size", 12],
+    ["text.eyebrow.size", 12],
+    ["text.value.size", 13],
+    ["text.value.family", "Inter Variable"],
     ["text.eyebrow.uppercase", true],
     ["text.eyebrow.color", "#ff5a36ff"],
     ["text.body.family", "Inter Variable"],
@@ -98,8 +104,8 @@ const DEFAULTS = [
     // unit: 24, 32 and 40 px controls with mul(4, 2) = 8, mul(4, 3) = 12
     // and mul(4, 4) = 16 a side and mul(4, 1) = 4, 8 and mul(4, 3) = 12
     // icon gaps; mul(4, 3) = 12 for a row's padding and its label gap,
-    // 128 px labels, mul(4, 1) = 4 between lines. Rows keep their own
-    // 36, 56 and 28 px heights.
+    // 140 px labels, 17 characters of the 12 px label role, mul(4, 1) = 4
+    // between lines. Rows keep their own 36, 56 and 28 px heights.
     ["size.control.sm", 24],
     ["size.control.md", 32],
     ["size.control.lg", 40],
@@ -114,7 +120,7 @@ const DEFAULTS = [
     ["row.height", 36],
     ["row.twoLineHeight", 56],
     ["row.compactHeight", 28],
-    ["row.labelWidth", 128],
+    ["row.labelWidth", 140],
     ["row.lineGap", 4],
     ["stack.row", 4],
     ["stack.group", 12],
@@ -129,7 +135,7 @@ const DEFAULTS = [
     ["listItem.paddingX", 12],
     ["menu.item.paddingX", 12],
     ["field.paddingX", 0],
-    ["field.labelWidth", 128],
+    ["field.labelWidth", 140],
     ["field.labelGap", 12],
     // An input boundary: the raised surface's colour, mix(#000000,
     // #d7d7d9, 0.075) = 16.125, moved halfway toward white,
@@ -161,7 +167,9 @@ const DEFAULTS = [
     // A full-screen overlay's chrome: space.xxxl, 4 * 8.
     ["inset.overlay", 32],
     ["popover.padding", 12],
-    ["menu.padding", 8],
+    // A menu entry's fill rounds with the menu, square by default.
+    ["menu.item.radius", 0],
+    ["groupList.gap", 12],
     ["button.size.sm.paddingX", 8],
     ["button.size.sm.icon", 14],
     ["button.size.lg.gap", 12],
@@ -296,6 +304,10 @@ const ACCEPTED = [
     { tokens: { row: { height: 40, twoLineHeight: 60 } }, want: [["listItem.height", 40], ["listItem.twoLineHeight", 60], ["textField.height", 32]] },
     { tokens: { row: { paddingX: 16 } }, want: [["listItem.paddingX", 16], ["menu.item.paddingX", 16], ["field.paddingX", 0], ["button.paddingX", 12]] },
     { tokens: { field: { paddingX: 6 } }, want: [["field.paddingX", 6], ["listItem.paddingX", 12]] },
+    // A menu entry's fill rounds with the menu, never with the small radius.
+    { tokens: { radius: { sm: 6, md: 12 } }, want: [["menu.radius", 12], ["menu.item.radius", 12], ["listItem.radius", 6]] },
+    // A group list's hairline is a tenth of the foreground: 0.1 * 255 = 25.5, 0x1a.
+    { tokens: { palette: { foreground: "#ffffff" } }, want: [["groupList.divider", "#ffffff1a"]] },
     { tokens: { font: { size: 16 } }, want: [["text.body.size", 16], ["text.hint.size", 14]] },
     { tokens: { motion: { scale: 0 } }, want: [["motion.duration.fast", 0], ["motion.duration.slow", 0], ["motion.list.travel.duration", 0], ["motion.list.enter.duration", 0], ["motion.list.stagger", 0], ["motion.list.rise", 6]] },
     // The list motion follows the scale steps it names: slow at 400 travels

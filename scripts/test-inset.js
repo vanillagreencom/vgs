@@ -3,7 +3,8 @@
 // the corners of rectangular content whose top stands `top` in from the
 // edge keep at least one step inside the drawn corner's curve, content
 // within one step of the edge clears the whole corner, and a square corner
-// keeps the pad. Every expected value is worked out by hand.
+// keeps the pad. A list of rows sits inside the border, and lower under a
+// corner rounder than a row's. Every expected value is worked out by hand.
 //
 // The controls at the end edit a copy of the helper, one rule at a time,
 // and require this suite to fail on each copy.
@@ -41,6 +42,14 @@ function verify(inset) {
     // A 32 px pill with 11 px content: 16 - sqrt(144 - 30.25) = 5.33, under the pad.
     assert.equal(inset.controlPadding(12, 4096, 32, 11, 4), 12, "a pad that already clears the round end stays");
     assert.equal(inset.controlPadding(9, 0, 32, 11, 4), 9, "a square control keeps its pad");
+    assert.equal(inset.listInset(0, 1, 0), 1, "a square list sits inside the border");
+    assert.equal(inset.listInset(12, 1, 12), 1, "a row as round as the container meets the border");
+    assert.equal(inset.listInset(12, 1, 16), 1, "a rounder row meets the border");
+    // Inner corner 12 - 1 = 11 against a square row: 11 lower, where the
+    // row's corner centre, its corner, meets the container's.
+    assert.equal(inset.listInset(12, 1, 0), 12, "a square row under a round corner starts lower");
+    // Inner corner 80 - 1 = 79 against a 16 px pill end: 63 lower.
+    assert.equal(inset.listInset(80, 1, 16), 64, "a corner rounder than a row's pill end starts it lower");
 }
 
 verify(load(file));
@@ -52,7 +61,9 @@ const CONTROLS = [
     ["content at the edge", "if (dy > reach) return Math.max(pad, corner + step);", "if (false) return pad;"],
     ["corner inside the curve", "return Math.max(pad, corner - Math.sqrt(reach * reach - dy * dy));", "return Math.max(pad, corner + step);"],
     ["control content centred", "step, (height - contentHeight) / 2));", "step, 0));"],
-    ["control inset whole", "return Math.ceil(clearing(pad, radius, 2 * height", "return (clearing(pad, radius, 2 * height"]
+    ["control inset whole", "return Math.ceil(clearing(pad, radius, 2 * height", "return (clearing(pad, radius, 2 * height"],
+    ["list inside the border", "return border + Math.max(0, radius - border - rowRadius);", "return Math.max(0, radius - border - rowRadius);"],
+    ["list clears the corner", "return border + Math.max(0, radius - border - rowRadius);", "return border;"]
 ];
 
 const source = fs.readFileSync(file, "utf8");

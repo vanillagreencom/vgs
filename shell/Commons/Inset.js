@@ -22,3 +22,14 @@ function clearing(pad, radius, width, height, step, top) {
 function controlPadding(pad, radius, height, contentHeight, step) {
     return Math.ceil(clearing(pad, radius, 2 * height, height, step, (height - contentHeight) / 2));
 }
+
+// The top and bottom inset of a list of rows whose fills reach the side of a
+// container `border` wide with drawn corner `radius`, when a row's drawn
+// corner is `rowRadius`: the border alone while the row's corner is at least
+// as round as the container's inner corner, so the first and last rows'
+// fills meet the border and their corners stay inside its curve. Otherwise
+// the list starts lower by the difference, where the first row's corner
+// centre meets the container's, so its corner still stays inside the curve.
+function listInset(radius, border, rowRadius) {
+    return border + Math.max(0, radius - border - rowRadius);
+}

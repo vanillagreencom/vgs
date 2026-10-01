@@ -92,7 +92,7 @@ function merge() {
 }
 
 // Reading text and tooltips draw in sans; chrome (labels, buttons, key
-// caps, code and the bar) draws in mono at 11 to 13 px. The reference rule
+// caps, code and the bar) draws in mono at 12 and 13 px. The reference rule
 // each role is read from is docs/reference/design-values.md § Text roles. A
 // `lineHeight` is a multiple of the role's font size, chosen so a
 // multi-line role's line box is a multiple of 4 px at the default size.
@@ -103,7 +103,7 @@ var TEXT = {
     h1: role("sans", 1.6, 700, -0.01, 1.333, false, "textHeading"),
     h2: role("sans", 1.33, 600, 0, 1.4, false, "textHeading"),
     h3: role("sans", 1.07, 600, 0, 1.5, false, "textHeading"),
-    eyebrow: role("mono", 0.73, 700, 0.18, 1, true, "accent"),
+    eyebrow: role("mono", 0.8, 700, 0.18, 1, true, "accent"),
     subheading: role("sans", 1.07, 400, 0, 1.75, false, "textMuted"),
     body: role("sans", 1, 400, 0, 1.6, false, "text"),
     bodyStrong: role("sans", 1, 600, 0, 1.6, false, "text"),
@@ -113,11 +113,15 @@ var TEXT = {
     item: role("sans", 1, 400, 0, 1, false, "text"),
     itemHint: role("sans", 0.87, 400, 0, 1, false, "textFaint"),
     itemCode: role("mono", 0.87, 500, 0, 1, false, "text"),
-    label: role("mono", 0.73, 500, 0.08, 1, true, "textMuted"),
+    // The key/value pair: `label` names a value and `value` is the text
+    // beside it. The capitals of the two are within a pixel of one height,
+    // so centred on one row they share a baseline and read as one line.
+    label: role("mono", 0.8, 500, 0.08, 1, true, "textMuted"),
+    value: role("sans", 0.87, 400, 0, 1, false, "text"),
     hint: role("sans", 0.87, 400, 0, 1.55, false, "textFaint"),
     tooltip: role("sans", 0.8, 500, 0, 1.333, false, "text"),
-    button: role("mono", 0.73, 500, 0.08, 1, true, "text"),
-    kbd: role("mono", 0.73, 600, 0.02, 1, false, "text"),
+    button: role("mono", 0.8, 500, 0.08, 1, true, "text"),
+    kbd: role("mono", 0.8, 600, 0.02, 1, false, "text"),
     code: role("mono", 0.87, 500, 0, 1.5, false, "text"),
     bar: role("mono", 0.8, 500, 0.08, 1, true, "text")
 };
@@ -315,14 +319,15 @@ var TOKENS = {
     // label from the line it names. `height` is a one-line row with a
     // control, `twoLineHeight` one with a secondary line, and
     // `compactHeight` a read-only key/value row that holds text alone.
-    // Row density is its own scale, apart from `size.control`.
+    // Row density is its own scale, apart from `size.control`. A label
+    // column holds 17 characters of the `label` role.
     row: {
         height: length(36),
         twoLineHeight: length(56),
         compactHeight: length(28),
         paddingX: length("{space.lg}"),
         gap: length("{space.lg}"),
-        labelWidth: length(128),
+        labelWidth: length(140),
         lineGap: length("{space.xs}")
     },
 
@@ -363,6 +368,15 @@ var TOKENS = {
     divider: {
         thickness: length("{border.thin}"),
         color: color("{color.border}")
+    },
+
+    // A list of groups, such as a Status section's entries: the lines of
+    // one group sit `row.lineGap` apart, groups sit `gap` apart, and a
+    // hairline in `divider`, a tenth of the foreground over whatever it
+    // sits on, is centred in each gap.
+    groupList: {
+        gap: length("{stack.group}"),
+        divider: color("alpha({palette.foreground}, 0.1)")
     },
 
     focusRing: {
@@ -684,20 +698,20 @@ var TOKENS = {
         maxHeight: length("mul({menu.item.height}, 9)"),
         typeahead: number(1000, 0, 5000),
         radius: length("{radius.md}"),
-        // The inset of the entries on every side; the scroll bar sits in
-        // the right one, so the entries never move when they overflow.
-        padding: length("{space.md}"),
         gap: length("{space.xs}"),
         // A menu never grows wider than `maxWidth`, nor wider than its
         // output less `size.window.gutter` a side; a longer entry elides.
         maxWidth: length("{size.panel.md}"),
         background: color("{color.surfaceRaised}"),
         border: color("{color.borderStrong}"),
+        // An entry's fill reaches the menu's border on every side, so its
+        // corner follows the menu's: a fill as round as the menu's inner
+        // corner fits in it.
         item: {
             height: length("{size.control.md}"),
             paddingX: length("{row.paddingX}"),
             gap: length("{control.gap}"),
-            radius: length("{radius.sm}"),
+            radius: length("{menu.radius}"),
             hover: color("{color.surfaceHover}"),
             pressed: color("{color.border}"),
             foreground: color("{color.text}"),

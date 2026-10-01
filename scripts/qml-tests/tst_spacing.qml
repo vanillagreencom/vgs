@@ -164,7 +164,7 @@ Item {
         // padding grows past its pad until its content clears the round
         // end, and never past the end's centre and a step.
         function test_rounded_components_clear_their_corners() {
-            compare(UnitTheme.override({ radius: { sm: 4096 }, badge: { size: { sm: { paddingX: 2 } } }, kbd: { paddingX: 2 }, listItem: { paddingX: 4 }, menu: { item: { paddingX: 4 } }, textField: { paddingX: 4 }, segmented: { paddingX: 4, radius: 4096 }, codeLine: { padding: 2 } }), "ok");
+            compare(UnitTheme.override({ radius: { sm: 4096 }, badge: { size: { sm: { paddingX: 2 } } }, kbd: { paddingX: 2 }, listItem: { paddingX: 4 }, menu: { item: { paddingX: 4, radius: 4096 } }, textField: { paddingX: 4 }, segmented: { paddingX: 4, radius: 4096 }, codeLine: { padding: 2 } }), "ok");
             const cases = [
                 ["badge", () => badge.children.find(child => child.role === "label").x - (badge.iconName !== "" ? Theme.icon.size.xs + Theme.badge.gap : 0), 2, badge.height],
                 ["kbd", () => key.sidePadding, 2, key.height],

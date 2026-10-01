@@ -14,7 +14,11 @@ import qs.Ui
 // inside the menu, and the highlighted entry is kept in view; opening
 // shows the top and highlights the first checked entry, in view. It follows its anchor when that
 // moves and closes when it hides. The declaring item is an invisible,
-// sizeless member of its parent.
+// sizeless member of its parent. The entries fill the list inside the
+// menu's border, so an entry's highlight meets the border at the top and
+// both sides (Theme.menuListInset); each entry insets its own text, and
+// keeps `scrollArea.gutter` clear at its end for the bar while the entries
+// overflow.
 Item {
     id: root
 
@@ -28,6 +32,9 @@ Item {
     // `menu.typeahead` milliseconds without one.
     property string typed: ""
     readonly property alias scrollArea: scroll
+    // The list's top and bottom inset inside the window; its side inset is
+    // the border.
+    readonly property real listInset: Theme.menuListInset(window.width)
 
     visible: false
 
@@ -128,7 +135,10 @@ Item {
         delegate: Connections {
             required property var modelData
             target: modelData
-            Component.onCompleted: modelData.cursor = plate
+            Component.onCompleted: {
+                modelData.cursor = plate;
+                modelData.barRoom = Qt.binding(() => scroll.overflowing ? Theme.scrollArea.gutter : 0);
+            }
             function onPointed() { if (root.reachable(modelData)) root.currentIndex = root.items().indexOf(modelData); }
         }
     }
@@ -154,10 +164,11 @@ Item {
         grabFocus: true
         visible: false
         color: "transparent"
-        // As wide as the widest entry, never wider than `menu.maxWidth` or
-        // the output allows; a longer entry elides.
-        implicitWidth: Math.min(OverlayState.widthFor(root.anchorItem, Theme.menu.maxWidth), Math.max(Theme.menu.minWidth, root.widest + 2 * Theme.menu.padding))
-        implicitHeight: Math.max(1, Math.min(column.implicitHeight, root.maxHeight) + 2 * Theme.menu.padding)
+        // As wide as the widest entry, rounded up to the whole pixel the
+        // window takes, never wider than `menu.maxWidth` or the output
+        // allows; a longer entry elides.
+        implicitWidth: Math.min(OverlayState.widthFor(root.anchorItem, Theme.menu.maxWidth), Math.max(Theme.menu.minWidth, Math.ceil(root.widest) + 2 * Theme.border.thin))
+        implicitHeight: Math.max(1, Math.min(column.implicitHeight, root.maxHeight) + 2 * root.listInset)
         onVisibleChanged: root.share(visible)
 
         FocusScope {
@@ -185,15 +196,15 @@ Item {
                 border.color: Theme.menu.border
             }
 
-            // The entries sit `menu.padding` in from every side; the scroll
-            // area reaches the right edge, and its bar sits in that strip.
+            // The entries span the list inside the border; the bar draws
+            // over the strip each entry keeps clear at its end.
             ScrollArea {
                 id: scroll
-                x: Theme.menu.padding
-                y: Theme.menu.padding
-                width: parent.width - Theme.menu.padding
-                height: parent.height - 2 * Theme.menu.padding
-                rightInset: Theme.menu.padding
+                x: Theme.border.thin
+                y: root.listInset
+                width: parent.width - 2 * Theme.border.thin
+                height: parent.height - 2 * root.listInset
+                barOverContent: true
 
                 ListCursor {
                     id: plate

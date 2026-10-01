@@ -13,8 +13,11 @@ import qs.Unit
 // to the entry whose text starts with the letters typed, opens on its
 // checked entry and draws its mark. A menu and a select's list draw their
 // highlight through one ListCursor, which a hover moves only once the
-// pointer moved since the last key. The nested sandbox proves placement,
-// real keys and dismissal.
+// pointer moved since the last key. The first entry's highlight and a
+// select's chosen fill meet the list's border at the top and both sides,
+// under a square and a rounded theme, and stay inside a rounder corner;
+// the bar of an overflowing list draws over a strip each entry keeps clear.
+// The nested sandbox proves placement, real keys and dismissal.
 Item {
     id: root
     width: 300
@@ -27,6 +30,9 @@ Item {
             MenuItem { text: "Second"; onTriggered: root.triggered = 1 }
             MenuItem { text: "Off"; enabled: false; onTriggered: root.triggered = 2 }
             MenuItem { id: wide; text: "An entry far wider than the menu's minimum width, with a shortcut"; shortcut: "Ctrl+Shift+W" }
+        }
+        Menu { id: mid
+            MenuItem { text: "Rescan every plugin"; iconName: "refresh-cw"; shortcut: "R" }
         }
         Tooltip { id: tip; text: "hint" }
         Tooltip { id: longTip; text: "method=unknown path=/home/user/.local/share/vgs/repo is where VGS runs from, and no package manager owns it" }
@@ -135,11 +141,22 @@ Item {
             verify(wide.implicitWidth > Theme.menu.minWidth, "the wide entry passes the minimum: " + wide.implicitWidth);
             menu.open();
             // Past `menu.maxWidth` the window stops growing; the entries fill
-            // it less the padding on each side, the scroll bar's strip being
-            // the right padding.
-            verify(wide.implicitWidth + 2 * Theme.menu.padding > Theme.menu.maxWidth, "the wide entry passes the cap: " + wide.implicitWidth);
+            // it inside the border.
+            verify(wide.implicitWidth + 2 * Theme.border.thin > Theme.menu.maxWidth, "the wide entry passes the cap: " + wide.implicitWidth);
             compare(window.width, Theme.menu.maxWidth);
-            compare(wide.width, window.width - 2 * Theme.menu.padding);
+            compare(wide.width, window.width - 2 * Theme.border.thin);
+            menu.close();
+            // Under the cap no entry elides, whatever fraction of a pixel
+            // its text measures: the window rounds its width up.
+            mid.open();
+            let midWindow = null;
+            for (let i = 0; i < mid.resources.length; i++)
+                if (mid.resources[i].anchor !== undefined) midWindow = mid.resources[i];
+            verify(mid.widest > Theme.menu.minWidth && mid.widest !== Math.floor(mid.widest), "the entry passes the minimum by a fraction: " + mid.widest);
+            tryVerify(() => mid.items()[0].width >= mid.widest, 1000, "the entry takes its whole width in a window " + midWindow.width + " wide, the entry " + mid.widest);
+            compare(mid.items()[0].contentItem.children[1].truncated, false);
+            mid.close();
+            menu.open();
             // The long text elides and the shortcut keeps its trailing column.
             const title = wide.contentItem.children[1];
             const hint = wide.contentItem.children[2];
@@ -159,12 +176,27 @@ Item {
             compare(UnitTheme.override({ menu: { maxHeight: 90 } }), "ok");
             long.open();
             const window = longWindow();
-            compare(window.height, 90 + 2 * Theme.menu.padding);
+            compare(window.height, 90 + 2 * Theme.border.thin);
             compare(long.scrollArea.overflowing, true);
             compare(long.scrollArea.bar.visible, true);
-            // The entries leave the bar its gutter.
-            compare(long.items()[0].width, long.scrollArea.width - Theme.scrollArea.gutter);
+            // The entries span the list, and each keeps the bar's strip
+            // clear at its end: the bar lies inside it.
+            const first = long.items()[0];
+            // The window's content item takes the window's size a turn
+            // after it shows.
+            tryCompare(long.scrollArea, "width", window.width - 2 * Theme.border.thin);
+            compare(first.width, long.scrollArea.width);
+            compare(first.barRoom, Theme.scrollArea.gutter);
+            const bar = long.scrollArea.bar;
+            verify(bar.x >= first.width - first.barRoom && bar.x + bar.width <= first.width, "the bar lies in the entry's end strip: " + bar.x);
+            verify(first.contentItem.x + first.contentItem.width <= first.width - first.barRoom, "the entry's text stops before the bar");
             long.close();
+            // A menu that fits keeps no strip.
+            UnitTheme.reset();
+            menu.open();
+            tryCompare(menu.items()[0], "barRoom", 0);
+            compare(menu.items()[0].rightPadding, menu.items()[0].sidePadding);
+            menu.close();
         }
 
         function test_the_highlight_is_kept_in_view() {
@@ -192,9 +224,10 @@ Item {
             verify(item.y + item.height <= long.scrollArea.contentY + long.scrollArea.height && item.y >= long.scrollArea.contentY, "the checked entry opens in view");
             compare(item.indicator.visible, true);
             compare(item.indicator.name, "check");
-            compare(item.rightPadding, Theme.menu.item.paddingX + Theme.icon.size.sm + item.spacing);
+            compare(item.rightPadding, Theme.menu.item.paddingX + Theme.scrollArea.gutter + Theme.icon.size.sm + item.spacing);
+            compare(item.indicator.x + item.indicator.width, item.width - item.sidePadding - item.barRoom, "the check mark ends a side padding before the bar");
             compare(long.items()[0].indicator.visible, false);
-            compare(long.items()[0].rightPadding, Theme.menu.item.paddingX);
+            compare(long.items()[0].rightPadding, Theme.menu.item.paddingX + Theme.scrollArea.gutter);
             long.close();
             root.chosen = -1;
             long.open();
@@ -346,11 +379,74 @@ Item {
             select.choose(0);
         }
 
-        // The list opens `menu.padding` left of the control and that much
-        // wider on each side, so an entry's text starts where the field's
-        // does; every entry leaves the right padding for the scroll bar,
-        // overflowing or not.
-        function test_select_list_text_lines_up_with_the_field() {
+        // A fill's box in its window's content item.
+        function boxIn(item, window) {
+            const p = item.mapToItem(window.contentItem, 0, 0);
+            return { x: p.x, y: p.y, width: item.width, height: item.height };
+        }
+        // Whether a fill `radius` round stays inside the top corners of a
+        // container `width` by `height` whose corner is `containerRadius`
+        // inside a `border`: every point of the fill's top corner arcs that
+        // lies in a corner's square is no farther from that corner's
+        // centre than its inner radius, half a pixel allowed.
+        function insideCorner(box, radius, width, height, containerRadius, border) {
+            const outer = Math.min(containerRadius, width / 2, height / 2);
+            const inner = Math.max(0, outer - border);
+            const own = Math.min(radius, box.width / 2, box.height / 2);
+            for (let i = 0; i <= 32; i++) {
+                const angle = Math.PI / 2 * i / 32;
+                const y = box.y + own - own * Math.sin(angle);
+                for (const [x, centre] of [[box.x + own - own * Math.cos(angle), outer], [box.x + box.width - own + own * Math.cos(angle), width - outer]]) {
+                    const inSquare = y < outer && (x < outer || x > width - outer);
+                    if (inSquare && Math.hypot(x - centre, y - outer) > inner + 0.5) return false;
+                }
+            }
+            return true;
+        }
+
+        function test_the_first_menu_entry_meets_the_border_data() {
+            return [
+                { tag: "square", theme: {}, flush: true },
+                { tag: "rounded", theme: { radius: { sm: 6, md: 12, lg: 16 } }, flush: true },
+                { tag: "square entries in a round menu", theme: { radius: { md: 12 }, menu: { item: { radius: 0 } } }, flush: false }
+            ];
+        }
+
+        // The first entry's highlight reaches the list's border at the top
+        // and both sides, with no gutter, and stays inside the menu's drawn
+        // corner; entries less round than the corner start lower, inside it.
+        function test_the_first_menu_entry_meets_the_border(data) {
+            compare(UnitTheme.override(data.theme), "ok");
+            menu.open();
+            let window = null;
+            for (let i = 0; i < menu.resources.length; i++)
+                if (menu.resources[i].anchor !== undefined) window = menu.resources[i];
+            menu.move(1);
+            const plate = menu.items()[0].cursor;
+            tryCompare(plate, "opacity", 1);
+            tryVerify(() => plate.target === menu.items()[0] && plate.height === menu.items()[0].height, 2000, "the cursor holds the first entry");
+            const fill = boxIn(plate, window);
+            const border = Theme.border.thin;
+            compare(fill.x, border, "the fill meets the left border");
+            compare(fill.x + fill.width, window.width - border, "the fill meets the right border");
+            if (data.flush) compare(fill.y, border, "the fill meets the top border");
+            else verify(fill.y > border, "a square entry starts below a round corner: " + fill.y);
+            compare(plate.radius, Theme.menu.item.radius);
+            verify(insideCorner(fill, plate.radius, window.width, window.height, Theme.menu.radius, border), "the fill's corners stay inside the menu's corner: " + JSON.stringify(fill));
+            menu.close();
+        }
+
+        function test_the_first_select_entry_meets_the_border_data() {
+            return test_the_first_menu_entry_meets_the_border_data();
+        }
+
+        // The list opens on the control's edges, as wide as it; the chosen
+        // entry's fill and the highlight on it reach the border at the top
+        // and both sides, and the entry's text starts where the field's
+        // does.
+        function test_the_first_select_entry_meets_the_border(data) {
+            compare(UnitTheme.override(data.theme), "ok");
+            select.choose(0);
             select.openList();
             const list = selectList(select);
             tryVerify(() => list.itemAtIndex(0) !== null, 1000, "the list builds its entries");
@@ -358,11 +454,23 @@ Item {
             let popup = null;
             for (let i = 0; i < select.resources.length; i++)
                 if (select.resources[i].anchor !== undefined) popup = select.resources[i];
-            compare(popup.anchor.margins.left, -Theme.menu.padding);
-            compare(popup.width, select.width + 2 * Theme.menu.padding);
-            compare(list.x, Theme.menu.padding);
-            compare(entry.leftPadding, select.leftPadding);
-            compare(entry.width, list.width - Theme.menu.padding);
+            const border = Theme.border.thin;
+            compare(popup.anchor.margins.left, 0);
+            compare(popup.width, select.width);
+            const fill = boxIn(entry.background, popup);
+            compare(fill.x, border, "the chosen fill meets the left border");
+            compare(fill.x + fill.width, popup.width - border, "the chosen fill meets the right border");
+            if (data.flush) compare(fill.y, border, "the chosen fill meets the top border");
+            else verify(fill.y > border, "a square entry starts below a round corner: " + fill.y);
+            verify(insideCorner(fill, entry.background.radius, popup.width, popup.height, Theme.menu.radius, border), "the fill's corners stay inside the list's corner: " + JSON.stringify(fill));
+            const plate = list.contentItem.children.find(child => child.follow !== undefined);
+            tryVerify(() => plate.target === entry && plate.height === entry.height, 2000, "the cursor holds the chosen entry");
+            const highlight = boxIn(plate, popup);
+            compare(highlight.x, fill.x);
+            compare(highlight.y, fill.y);
+            compare(highlight.width, fill.width);
+            const text = entry.contentItem.mapToItem(popup.contentItem, 0, 0);
+            compare(text.x, select.contentItem.x, "the entry's text starts where the field's does");
             select.choose(select.currentIndex);
         }
 

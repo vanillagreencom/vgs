@@ -459,6 +459,32 @@ gallery_error_focus() { # MODE
   park_pointer
 }
 
+# The gallery's menu opened from its button, the pointer on its first
+# entry, 20 px under the button, which highlights it.
+gallery_menu_current() { ipc smoke menus "$gallery_kind" vgs.gallery | py_reply 'import json,sys; m=[x for x in json.load(sys.stdin) if x["opened"]]; print(m[0]["current"] if len(m) == 1 else "open=%d" % len(m))'; }
+gallery_menu_first() { # MODE
+  local box y x
+  ipc smoke scrollTo "$gallery_kind" vgs.gallery 0 >/dev/null || { fail "the gallery did not scroll to its top"; return; }
+  box="$(ipc smoke windowGeometry "$gallery_kind" vgs.gallery Button "Open a menu")"
+  [[ $box == \[* ]] || { fail "the gallery's menu button has no box: $box"; return; }
+  y="$(python3 -c 'import json,sys; print(max(0, int(json.loads(sys.argv[1])[1]) - 200))' "$box")"
+  ipc smoke scrollTo "$gallery_kind" vgs.gallery "$y" >/dev/null || { fail "the gallery did not scroll to its menu button"; return; }
+  read -r x y < <(window_point "$gallery_surface" "$gallery_kind" vgs.gallery Button "Open a menu") || { fail "the gallery's menu button has no box on the output"; return; }
+  if hover "$((x - 1))" "$y" && click "$x" "$y"; then
+    box="$(ipc smoke windowGeometry "$gallery_kind" vgs.gallery Button "Open a menu")"
+    read -r x y < <(at_centre "$gallery_surface" "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(json.dumps([r[0], r[1] + r[3], 80, 40]))' "$box")")
+    # Opening disarms the pointer, which takes the highlight once it moves
+    # over the menu: two motions onto the entry.
+    hover "$((x - 6))" "$y" && hover "$x" "$y" || fail "the hover on the gallery menu's first entry failed"
+    expect_poll "the pointer highlights the gallery menu's first entry" '"Rescan plugins"' gallery_menu_current
+    take "gallery-$1-menu"
+    type_keys -k Escape || fail "sending Escape to the gallery's menu failed"
+  else
+    fail "the click on the gallery's menu button failed"
+  fi
+  park_pointer
+}
+
 # One shot per page of the gallery's scrolling list, a page's height less
 # 40 px apart so each page repeats the last lines of the one before, up to
 # gallery_pages pages.
@@ -477,6 +503,7 @@ scene_gallery() { # MODE
     y=$(( cy + h - 40 )); page=$(( page + 1 ))
   done
   gallery_error_focus "$1"
+  gallery_menu_first "$1"
   expect "the gallery hides" ok ipc shell hide "$gallery_kind" vgs.gallery
   expect_poll "the gallery's surface is gone" 0 surface_count "$gallery_surface"
 }
@@ -484,6 +511,7 @@ scene_gallery() { # MODE
 settings_page() { ipc smoke readInstance "$settings_kind" vgs.settings page; }
 settings_menu_hovered() { ipc smoke menus "$settings_kind" vgs.settings | py_reply 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0].get("barHovered") is True)'; }
 settings_menu_open() { ipc smoke menus "$settings_kind" vgs.settings | python3 -c 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0]["opened"])'; }
+settings_menu_first() { ipc smoke menus "$settings_kind" vgs.settings | py_reply 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and len(m[0]["entries"]) > 0 and m[0]["current"] == m[0]["entries"][0])'; }
 # The page's one scroll area as the probe reads it.
 settings_scroll() { ipc smoke scrollAreas "$settings_kind" vgs.settings | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps(a[0]) if len(a) == 1 else "areas=%d" % len(a))'; }
 settings_drag_page_down() { # LABEL
@@ -648,7 +676,7 @@ scene_setup_steps() { # MODE
 # its scroll bar, and with its Mode select open; a plugin with keys; the
 # automations' page at its Status section; the Jarvis page with its
 # daemon ready; the
-# title's menu open with its scroll bar under the pointer; the notifications' page scrolled to its
+# title's menu open with the pointer on its first entry; the notifications' page scrolled to its
 # Slack token rows, over two shots when they are taller than the page; and
 # the list and a page on a monitor narrower than the window's width token.
 settings_empty() { [[ $(ipc smoke itemGeometry "$settings_kind" vgs.settings Label 'No plugin matches "zzqxv"') == \[* ]] && echo shown || echo hidden; }
@@ -776,12 +804,13 @@ scene_settings() { # MODE
   expect_poll "the launcher's page is shown again" '"vgs.launcher"' settings_page
   click_in "$settings_surface" "$settings_kind" vgs.settings TitleButton Launcher || fail "the click on the title failed"
   expect_poll "the title's menu opens" True settings_menu_open
-  # The menu opens under the title; the pointer rests inside it, which
-  # shows its scroll bar.
+  # The menu opens under the title; the pointer rests on its first entry,
+  # 20 px under the title, which highlights it and shows the scroll bar.
   if title="$(ipc smoke windowGeometry "$settings_kind" vgs.settings TitleButton Launcher)" && [[ $title == \[* ]]; then
-    read -r x y < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(json.dumps([r[0], r[1] + r[3] + 40, 80, 40]))' "$title")")
-    hover "$x" "$y" || fail "the hover inside the title's menu failed"
+    read -r x y < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(json.dumps([r[0], r[1] + r[3], 80, 40]))' "$title")")
+    hover "$((x - 6))" "$y" && hover "$x" "$y" || fail "the hover inside the title's menu failed"
     expect_poll "the title's menu reports the pointer inside it" True settings_menu_hovered
+    expect_poll "the pointer highlights the menu's first entry" True settings_menu_first
   fi
   take "settings-$1-menu"
   type_keys -k Escape || fail "sending Escape to the title's menu failed"

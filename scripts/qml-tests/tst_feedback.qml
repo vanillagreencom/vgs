@@ -82,14 +82,18 @@ Item {
         }
 
         function test_badge_centres_text_and_uses_optical_width() {
+            // The capital centre sits on the box centre on a whole-pixel
+            // baseline: within half a pixel of it.
             const label = badgeLabel(badge);
-            fuzzyCompare(label.y + label.capCentre, badge.height / 2, 0.1);
+            compare(label.y + label.baselineOffset, Math.round(label.y + label.baselineOffset), "a whole-pixel baseline");
+            fuzzyCompare(label.y + label.capCentre, badge.height / 2, 0.5);
             fuzzyCompare(label.x, Theme.badge.size.sm.paddingX, 0.5);
             fuzzyCompare(badge.width - (label.x + label.opticalWidth), Theme.badge.size.sm.paddingX, 0.5);
             const icon = badgeIconItem(badgeIcon);
             const iconLabel = badgeLabel(badgeIcon);
             fuzzyCompare(icon.y + icon.height / 2, badgeIcon.height / 2, 1);
-            fuzzyCompare(iconLabel.y + iconLabel.capCentre, badgeIcon.height / 2, 0.1);
+            compare(iconLabel.y + iconLabel.baselineOffset, Math.round(iconLabel.y + iconLabel.baselineOffset), "a whole-pixel baseline");
+            fuzzyCompare(iconLabel.y + iconLabel.capCentre, badgeIcon.height / 2, 0.5);
             fuzzyCompare(badgeIcon.width, 2 * Theme.badge.size.sm.paddingX + icon.width + Theme.badge.gap + iconLabel.opticalWidth, 0.5);
         }
 

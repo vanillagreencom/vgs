@@ -225,7 +225,7 @@ FocusScope {
                         label: modelData[0]
                         inline: true
                         compact: true
-                        Label { role: "item"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
+                        Label { role: "value"; text: detail.modelData[1]; width: parent.width; elide: Text.ElideRight }
                     }
                 }
 
@@ -266,17 +266,23 @@ FocusScope {
                     width: body.width
                     title: statusSection.modelData.group === "" ? "Status" : statusSection.modelData.group
 
-                    Repeater {
-                        model: ScriptModel {
-                            values: statusSection.modelData.keys
-                        }
-                        StatusRow {
-                            required property string modelData
-                            width: statusSection.width
-                            entry: page.statusEntry(modelData)
-                            panel: page.panel
-                            pluginId: page.row === null ? "" : page.row.id
-                            secretLabel: page.row === null ? "" : page.row.secretLabel
+                    // Each entry is one group, divided from the next.
+                    GroupList {
+                        id: statusRows
+                        width: statusSection.width
+
+                        Repeater {
+                            model: ScriptModel {
+                                values: statusSection.modelData.keys
+                            }
+                            StatusRow {
+                                required property string modelData
+                                width: statusRows.width
+                                entry: page.statusEntry(modelData)
+                                panel: page.panel
+                                pluginId: page.row === null ? "" : page.row.id
+                                secretLabel: page.row === null ? "" : page.row.secretLabel
+                            }
                         }
                     }
                 }
@@ -288,10 +294,10 @@ FocusScope {
                 title: "Requirements"
                 description: "Commands the plugin runs, looked up on PATH at the last scan"
 
-                Column {
+                // Each command is one group, and the Install row after them.
+                GroupList {
                     id: requirementRows
                     width: parent.width
-                    spacing: Theme.stack.row
 
                     Repeater {
                         model: ScriptModel {
@@ -304,19 +310,19 @@ FocusScope {
                             requirement: modelData
                         }
                     }
-                }
 
-                Field {
-                    width: parent.width
-                    label: "Missing"
-                    inline: true
-                    visible: page.requirementMissing
-                    hint: "Opens a terminal that names each package and asks before it installs them."
-                    Button {
-                        text: "Install"
-                        iconName: "download"
-                        variant: "primary"
-                        onClicked: page.panel.installRequirements(page.row.id)
+                    Field {
+                        width: requirementRows.width
+                        label: "Missing"
+                        inline: true
+                        visible: page.requirementMissing
+                        hint: "Opens a terminal that names each package and asks before it installs them."
+                        Button {
+                            text: "Install"
+                            iconName: "download"
+                            variant: "primary"
+                            onClicked: page.panel.installRequirements(page.row.id)
+                        }
                     }
                 }
             }

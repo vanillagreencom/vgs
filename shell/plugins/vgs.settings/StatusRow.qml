@@ -12,9 +12,11 @@ import qs.Ui
 // as "Not reported". A presence list draws its label and hint alone, "None
 // detected" while the list is empty, then one line per item: the item's
 // label beside a Badge of its presence, its hint, Connect or Disconnect for
-// an item that is a secret's presence, and its command. No row takes an
-// edit of a value: a step goes to the manager through `panel` (D061).
-Column {
+// an item that is a secret's presence, and its command. Each line is one
+// group of the row's GroupList, divided from the next as the rows of a
+// section are. No row takes an edit of a value: a step goes to the manager
+// through `panel` (D061).
+GroupList {
     id: row
 
     // One entry of a manager row's `status`, or null for a row whose entry
@@ -76,9 +78,6 @@ Column {
     }
 
     visible: entry !== null
-    // The rhythm of the rows in a Status section, between the entry's line
-    // and each item's.
-    spacing: Theme.stack.row
 
     StatusLine {
         width: row.width

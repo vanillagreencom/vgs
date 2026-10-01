@@ -73,13 +73,20 @@ Item {
                 Section {
                     title: "Typography"
                     rowSpacing: Theme.stack.group
-                    description: "One role per kind of text"
+                    description: "One role per kind of text, each at its size in pixels; a key/value label beside its value"
                 Column {
                     spacing: Theme.space.xxs
                     Repeater {
                         model: Object.keys(Theme.text)
-                        Label { required property string modelData; role: modelData; text: modelData }
+                        Label { required property string modelData; role: modelData; text: modelData + " " + Theme.text[modelData].size }
                     }
+                }
+                Column {
+                    width: parent.width
+                    spacing: Theme.stack.row
+                    Field { label: "Agents running"; inline: true; compact: true; width: parent.width; Label { role: "value"; text: "3"; width: parent.width; elide: Text.ElideRight } }
+                    Field { label: "Last check"; inline: true; compact: true; width: parent.width; Label { role: "value"; text: "9/30/26 3:57 PM"; width: parent.width; elide: Text.ElideRight } }
+                    Field { label: "Warden"; inline: true; compact: true; width: parent.width; Badge { text: "Checking"; tone: "success" } }
                 }
                 ImageText {
                     width: parent.width
@@ -201,7 +208,7 @@ Item {
                     width: parent.width
                     spacing: Theme.stack.row
                     Field { label: "Switch"; inline: true; width: parent.width; Switch { size: "sm"; checked: true } }
-                    Field { label: "Text"; inline: true; width: parent.width; Label { role: "item"; text: "Inline value"; width: parent.width; elide: Text.ElideRight } }
+                    Field { label: "Text"; inline: true; width: parent.width; Label { role: "value"; text: "Inline value"; width: parent.width; elide: Text.ElideRight } }
                     Field { label: "Badge"; inline: true; width: parent.width; Badge { text: "synced"; tone: "success" } }
                     Field { label: "Button"; inline: true; width: parent.width; Button { text: "Open"; size: "sm"; variant: "secondary" } }
                     Field { label: "Select"; inline: true; hint: "Hints start under the value column."; width: parent.width; Select { width: parent.width; model: ["Default", "Ocean", "Forest"] } }
@@ -214,6 +221,29 @@ Item {
                 Field { label: "Times"; hint: "Sorted time chips"; width: parent.width; TimeChipList { width: parent.width; times: ["09:00", "17:30"] } }
                 Slider { from: 0; to: 100; value: 40; width: parent.width }
                 Slider { from: 0; to: 100; value: 70; width: parent.width; enabled: false }
+
+                }
+                Section {
+                    title: "Groups"
+                    description: "Key/value rows, each with its hint, action and command, one group apart with a hairline between"
+                GroupList {
+                    id: groups
+                    width: parent.width
+                    Column {
+                        width: groups.width
+                        spacing: Theme.field.gap
+                        Field { id: wardenRow; label: "Warden"; inline: true; hint: "Keeps AI agents within their memory and task limits"; width: parent.width; Badge { text: "Checking"; tone: "success" } }
+                        CommandDisclosure { x: wardenRow.valueX; width: parent.width - x; command: "systemctl --user start agent-warden.timer" }
+                    }
+                    Field { label: "Agents running"; inline: true; compact: true; width: groups.width; Label { role: "value"; text: "3"; width: parent.width; elide: Text.ElideRight } }
+                    Field { label: "Last check"; inline: true; compact: true; width: groups.width; Label { role: "value"; text: "9/30/26 3:57 PM"; width: parent.width; elide: Text.ElideRight } }
+                    Column {
+                        width: groups.width
+                        spacing: Theme.field.gap
+                        Field { id: vsysRow; label: "Vsys"; inline: true; hint: "The agent dashboard that ships the warden"; width: parent.width; Badge { text: "Absent"; tone: "warning" } }
+                        Button { x: vsysRow.valueX; text: "Install vsys"; iconName: "wrench"; variant: "primary"; size: "sm" }
+                    }
+                }
 
                 }
                 Section {
