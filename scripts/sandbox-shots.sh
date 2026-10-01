@@ -814,10 +814,12 @@ scene_settings() { # MODE
     expect_poll "the pointer takes the menu's highlight" True settings_menu_pointed
   fi
   take "settings-$1-menu"
-  # The same menu scrolled half an entry: the highlighted first entry cut
-  # at the list's top edge, inside a rounded corner's curve.
+  # The same menu, the pointer off it, scrolled so the highlighted entry is
+  # half past the list's top edge: its fill cut there, inside a rounded
+  # corner's curve.
+  park_pointer
   if half="$(ipc smoke themeValue menu.item.height)" && [[ $half =~ ^[0-9]+$ ]]; then
-    expect "the title's menu scrolls half an entry" "$((half / 2))" ipc smoke scrollMenu "$settings_kind" vgs.settings "$((half / 2))"
+    expect "the title's menu scrolls its highlight half past the top" "$((half / 2))" ipc smoke scrollMenu "$settings_kind" vgs.settings "$((half / 2))"
     take "settings-$1-menu-scrolled"
   else
     fail "the title's menu entry height is unreadable: ${half:-}"

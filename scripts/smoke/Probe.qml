@@ -1130,16 +1130,21 @@ Scope {
                 };
             }));
         }
-        // The one open Menu under an instance scrolled to about `y`, held
-        // inside its entries, as its contentY, or `menus-open=<n>`.
-        function scrollMenu(hostKey: string, id: string, y: real): string {
+        // The one open Menu under an instance scrolled so its highlighted
+        // entry's top is `offset` above the list's top edge, held inside
+        // its entries, as the distance the entry's top then lies above that
+        // edge; `menus-open=<n>` or `no-highlight` when there is none.
+        function scrollMenu(hostKey: string, id: string, offset: real): string {
             const item = root.instance(hostKey, id);
             if (item === null) return "absent";
             const open = root.descendants(item).filter(child => typeof child.items === "function" && child.opened === true);
             if (open.length !== 1) return "menus-open=" + open.length;
+            const entries = open[0].items();
+            const current = open[0].currentIndex;
+            if (current < 0 || current >= entries.length) return "no-highlight";
             const area = open[0].scrollArea;
-            area.contentY = Math.max(0, Math.min(y, area.contentHeight - area.height));
-            return root.json(area.contentY);
+            area.contentY = Math.max(0, Math.min(entries[current].y + offset, area.contentHeight - area.height));
+            return root.json(area.contentY - entries[current].y);
         }
         // Every shown ScrollArea under an instance, in tree order: its
         // scroll position, content height and height, and its bar's and
