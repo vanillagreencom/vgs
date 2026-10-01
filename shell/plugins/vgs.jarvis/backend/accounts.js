@@ -2,7 +2,7 @@
 "use strict";
 const path = require("node:path");
 const { Accounts } = require("./Accounts.js");
-const { PROVIDERS, keyProvider } = require("../AccountProviders.js");
+const { PROVIDERS, keyProvider, helperFailure } = require("../AccountProviders.js");
 
 async function main() {
     const args = process.argv.slice(2);
@@ -51,8 +51,7 @@ async function main() {
 }
 
 main().catch(error => {
-    const reason = /^(jarvis-accounts|jarvis-keys):/.test(error.message)
-        ? error.message : "jarvis-accounts: operation=failed";
+    const reason = helperFailure(error.message) || "jarvis-accounts: operation=failed";
     process.stderr.write(reason + "\n");
     process.exitCode = 1;
 });

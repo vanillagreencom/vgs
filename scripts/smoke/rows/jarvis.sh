@@ -5,6 +5,7 @@ set -euo pipefail
 expected_errors+=('WARN qml: jarvis: stderr=.*Killed.*')
 expected_errors+=('WARN qml: jarvis: stderr=jarvis: node=21[.]0[.]0 need=22')
 expected_errors+=('WARN qml: jarvis: hello=timeout')
+expected_errors+=('.*jarvis-account-missing-helper.*')
 
 jarvis_ready() { # EXPECTED_RETRIES, zero for every fresh startup
   ipc smoke jarvisProcess | py_reply '
@@ -550,9 +551,9 @@ jarvis_account_failed() {
   ipc smoke jarvisProcess | py_reply '
 import json,sys
 status=json.load(sys.stdin)["status"]
-want=[{"label":"Account discovery", "value":"unavailable", "hint":"jarvis-accounts: discovery=failed"}]
+want=[{"label":"Account discovery", "value":"unavailable", "hint":sys.argv[1]}]
 print("matched" if status.get("accounts") == want and status.get("brains") == [] else "pending")
-'
+' "${1:-jarvis-accounts: added=json}"
 }
 jarvis_open_accounts() {
   local revision snapshot
@@ -576,6 +577,78 @@ expect_poll "failed discovery clears both stale accounts and choices" matched ja
 printf 'signed-in\n' >"$sandbox/jarvis-world/account-mode"
 jarvis_open_accounts
 expect_poll "restored discovery reports login hints" matched jarvis_account_hint signed-in
+for diagnostic_case in \
+  'entry-limit|jarvis-accounts: discovery=entry-limit' \
+  'raw-error|jarvis-accounts: process=failed' \
+  'oversize-error|jarvis-accounts: diagnostic=oversize' \
+  'invalid-output|jarvis-accounts: output=invalid' \
+  'failed|jarvis-accounts: added=json'; do
+  IFS='|' read -r diagnostic_mode diagnostic_hint <<<"$diagnostic_case"
+  printf '%s\n' "$diagnostic_mode" >"$sandbox/jarvis-world/account-mode"
+  jarvis_open_accounts
+  expect_poll "account discovery keeps only its safe cause: $diagnostic_mode" matched jarvis_account_failed "$diagnostic_hint"
+done
+python3 - "$jarvis_accounts" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+assert not p.is_symlink()
+s=p.read_text()
+needle="hint: Providers.probeFailure(completion, diagnostic)"
+assert s.count(needle)==1
+changed=s.replace(needle, 'hint: "jarvis-accounts: process=failed"')
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+jarvis_account_cause_control() {
+  (failures=0 behaviour_failures=0
+   expect_poll "the named helper cause must survive" matched jarvis_account_failed >"$sandbox/jarvis-account-cause-control.log"
+   echo "$failures")
+}
+expect "discarding the named helper cause breaks its consumer assertion" 1 jarvis_account_cause_control
+cp -- "$sandbox/jarvis-accounts-original" "$jarvis_accounts"
+python3 - "$jarvis_accounts" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+assert not p.is_symlink()
+s=p.read_text()
+needle="hint: Providers.probeFailure(completion, diagnostic)"
+assert s.count(needle)==1
+changed=s.replace(needle, "hint: diagnostic.text")
+assert changed != s
+p.write_text(changed)
+PY
+printf 'raw-error\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_rescan
+jarvis_account_raw_control() {
+  (failures=0 behaviour_failures=0
+   expect_poll "raw stderr must not reach account status" matched jarvis_account_failed "jarvis-accounts: process=failed" >"$sandbox/jarvis-account-raw-control.log"
+   echo "$failures")
+}
+expect "forwarding raw stderr breaks its safe-cause assertion" 1 jarvis_account_raw_control
+cp -- "$sandbox/jarvis-accounts-original" "$jarvis_accounts"
+python3 - "$jarvis_accounts" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+assert not p.is_symlink()
+s=p.read_text()
+lines=s.splitlines()
+matches=[i for i,line in enumerate(lines) if "probe.command = [" in line]
+assert len(matches)==1
+lines[matches[0]]='        probe.command = ["jarvis-account-missing-helper"];'
+changed="\n".join(lines)+"\n"
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+expect_poll "a process that cannot start has its own safe cause" matched jarvis_account_failed "jarvis-accounts: process=start-failed"
+cp -- "$sandbox/jarvis-accounts-original" "$jarvis_accounts"
+printf 'signed-in\n' >"$sandbox/jarvis-world/account-mode"
+jarvis_rescan
+expect_poll "restored reader clears the prior failure cause" matched jarvis_account_hint signed-in
 python3 - "$jarvis_accounts" <<'PY'
 from pathlib import Path
 import sys

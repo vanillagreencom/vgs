@@ -8,7 +8,8 @@ Item {
     id: root
     property var shell: null
     property bool pending: false
-    property int code: -1
+    property var completion: ({ kind: "starting" })
+    property var diagnostic: ({ kind: "collected", text: "" })
     property string output: ""
     readonly property var tuiState: shell === null ? null : shell.tui.state["accounts"]
     readonly property var keyState: shell === null ? null : shell.tui.state["add-key"]
@@ -23,13 +24,15 @@ Item {
         if (shell === null) return;
         if (probe.running) { pending = true; return; }
         pending = false;
-        code = -1;
+        completion = { kind: "starting" };
+        diagnostic = { kind: "collected", text: "" };
         output = "";
         probe.command = ["node", program, "presence", JSON.stringify(Providers.keyPresence(name => Quickshell.env(name)))];
         probe.running = true;
     }
     function publish() {
         let value;
+        const code = completion.kind === "exited" ? completion.code : -1;
         try {
             if (code !== 0) throw new Error("probe");
             value = JSON.parse(output);
@@ -37,7 +40,7 @@ Item {
                 || shell.status.set("brains", value.brains) !== "ok") throw new Error("status");
         } catch (error) {
             const reply = shell.status.set("accounts", [{ label: "Account discovery", value: "unavailable",
-                hint: "jarvis-accounts: discovery=failed" }]);
+                hint: Providers.probeFailure(completion, diagnostic) }]);
             const choices = shell.status.set("brains", []);
             if (reply !== "ok" || choices !== "ok") throw new Error("jarvis-accounts: status=refused");
         }
@@ -54,8 +57,11 @@ Item {
             LANG: "C.UTF-8"
         })
         stdout: StdioCollector { onStreamFinished: root.output = text }
-        stderr: StdioCollector {}
-        onExited: (code, status) => root.code = status === 0 ? code : -1
+        stderr: SplitParser {
+            splitMarker: ""
+            onRead: data => root.diagnostic = Providers.feedDiagnostic(root.diagnostic, data)
+        }
+        onExited: (code, status) => root.completion = status === 0 ? { kind: "exited", code: code } : { kind: "crashed" }
         onRunningChanged: {
             if (running) return;
             root.publish();

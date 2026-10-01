@@ -157,12 +157,26 @@ module.exports = { assert, fs, path, cp, tree, environment, world, standins, mut
 if (require.main === module) {
     const env = environment();
     const mode = fs.readFileSync(process.argv[3], "utf8").trim();
+    if (mode === "invalid-output") {
+        process.stdout.write("fixture-secret-private");
+        process.exit(0);
+    }
+    if (mode === "raw-error" || mode === "oversize-error") {
+        process.stderr.write(mode === "raw-error" ? "node: fixture-secret-private"
+            : "jarvis-accounts: added=json\n" + "x".repeat(1024) + "fixture-secret-private");
+        process.exit(1);
+    }
     const candidate = path.join(env.HOME, ".claude-team");
     fs.mkdirSync(candidate);
     fs.writeFileSync(path.join(env.XDG_STATE_HOME, "claude-mode"), mode === "found" ? "found" : "signed-in");
     const directory = path.join(env.XDG_STATE_HOME, "vgs/jarvis");
     fs.mkdirSync(directory, { recursive: true });
     if (mode === "failed") fs.writeFileSync(path.join(directory, "accounts.json"), "broken");
+    if (mode === "entry-limit") {
+        const many = path.join(env.HOME, "many");
+        fs.mkdirSync(many);
+        for (let index = 0; index < 201; index++) fs.writeFileSync(path.join(many, String(index)), "");
+    }
     const result = cp.spawnSync("node", [process.argv[2], "presence", process.argv[4]], {
         env, stdio: "inherit" });
     process.exit(result.status ?? 1);

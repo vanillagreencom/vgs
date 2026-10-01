@@ -43,4 +43,60 @@ function keyPresence(read) {
     return result;
 }
 
-if (typeof module !== "undefined") module.exports = { PROVIDERS: PROVIDERS, keyPresence: keyPresence, keyProvider: keyProvider };
+// The account CLI and its QML reader share this exact safe error protocol.
+// Only producer-owned keys can leave stderr; values and native errors cannot.
+var FAILURE_KEYS = {
+    "jarvis-accounts": {
+        directory: ["absolute-normal-path-required", "unreadable", "link", "not-directory", "unreadable-or-changed"],
+        added: ["shape", "size", "json", "limit", "duplicate", "read-failed", "directory-absent", "write-failed", "cleanup-failed"],
+        discovery: ["entry-limit", "directory-unreadable", "account-limit"],
+        "key-presence": ["shape"],
+        ports: ["reply"],
+        reference: ["provider", "item-unavailable", "vendor-login-or-provider"],
+        arguments: ["presence", "list", "providers", "items", "add", "remember", "verb"],
+        verify: ["explicit-user-required", "account-unavailable", "provider-unsupported", "busy", "keyring-locked"],
+        state: ["unknown"],
+        operation: ["failed"]
+    },
+    "jarvis-keys": {
+        reference: ["shape", "identity", "origin", "attributes"],
+        references: ["directory", "size", "read-failed", "json", "limit", "duplicate", "write-failed", "cleanup-failed"],
+        busctl: ["missing", "timeout", "failed", "reply"],
+        "secret-tool": ["missing", "timeout", "failed", "empty-or-oversize"],
+        items: ["limit-or-duplicate", "reply", "label"],
+        store: ["terminal-required"]
+    }
+};
+var MAX_DIAGNOSTIC_CHARS = 256;
+
+function feedDiagnostic(state, chunk) {
+    if (state.kind === "oversize") return state;
+    var text = state.text + chunk;
+    if (text.length > MAX_DIAGNOSTIC_CHARS) return { kind: "oversize" };
+    return { kind: "collected", text: text };
+}
+
+function helperFailure(text) {
+    if (typeof text !== "string" || text.length > MAX_DIAGNOSTIC_CHARS) return "";
+    var match = /^([a-z-]+): ([a-z-]+)=([a-z0-9-]+)\n?$/.exec(text);
+    if (match === null) return "";
+    var fields = FAILURE_KEYS[match[1]];
+    var codes = fields === undefined ? undefined : fields[match[2]];
+    if (!Array.isArray(codes) || codes.indexOf(match[3]) === -1) return "";
+    return match[1] + ": " + match[2] + "=" + match[3];
+}
+
+function probeFailure(completion, diagnostic) {
+    switch (completion.kind) {
+    case "starting": return "jarvis-accounts: process=start-failed";
+    case "crashed": return "jarvis-accounts: process=crashed";
+    case "exited":
+        if (completion.code === 0) return "jarvis-accounts: output=invalid";
+        if (diagnostic.kind === "oversize") return "jarvis-accounts: diagnostic=oversize";
+        return helperFailure(diagnostic.text) || "jarvis-accounts: process=failed";
+    default: throw new Error("jarvis-accounts: process=invalid-outcome");
+    }
+}
+
+if (typeof module !== "undefined") module.exports = { PROVIDERS: PROVIDERS, keyPresence: keyPresence,
+    keyProvider: keyProvider, feedDiagnostic: feedDiagnostic, helperFailure: helperFailure, probeFailure: probeFailure };

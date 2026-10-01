@@ -9,7 +9,7 @@ world(async () => {
     const directory = path.join(env.XDG_STATE_HOME, "vgs/jarvis");
     const { Accounts } = require(path.join(plugin, "backend/Accounts.js"));
     const { Secrets, ownReference } = require(path.join(plugin, "backend/Secrets.js"));
-    const { keyPresence } = require(path.join(plugin, "AccountProviders.js"));
+    const { keyPresence, helperFailure, feedDiagnostic, probeFailure } = require(path.join(plugin, "AccountProviders.js"));
     const mode = (name, value) => fs.writeFileSync(path.join(env.XDG_STATE_HOME, name + "-mode"), value);
     const calls = name => fs.existsSync(path.join(env.XDG_STATE_HOME, name))
         ? fs.readFileSync(path.join(env.XDG_STATE_HOME, name), "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [];
@@ -58,6 +58,60 @@ world(async () => {
     store.add({ provider: "claude", directory: hand, label: "hand" });
     assert.equal(fs.statSync(store.file).mode & 0o777, 0o600);
     let cases = 0, controls = 0;
+    const diagnosticCases = [
+        ["jarvis-accounts: discovery=entry-limit\n", "jarvis-accounts: discovery=entry-limit"],
+        ["jarvis-accounts: added=json\n", "jarvis-accounts: added=json"],
+        ["jarvis-keys: busctl=missing\n", "jarvis-keys: busctl=missing"],
+        ["jarvis-accounts: discovery=" + privateValue, ""],
+        ["jarvis-accounts: added=json\n" + privateValue, ""],
+        ["node: " + privateValue, ""],
+        ["constructor: name=object", ""],
+        ["jarvis-accounts: constructor=object", ""]
+    ];
+    for (const [input, expected] of diagnosticCases) {
+        assert.equal(helperFailure(input), expected);
+        cases++;
+    }
+    const collected = text => feedDiagnostic({ kind: "collected", text: "" }, text);
+    const completionCases = [
+        [{ kind: "starting" }, "", "jarvis-accounts: process=start-failed"],
+        [{ kind: "crashed" }, privateValue, "jarvis-accounts: process=crashed"],
+        [{ kind: "exited", code: 0 }, privateValue, "jarvis-accounts: output=invalid"],
+        [{ kind: "exited", code: 1 }, "jarvis-accounts: added=json\n", "jarvis-accounts: added=json"],
+        [{ kind: "exited", code: 1 }, privateValue, "jarvis-accounts: process=failed"]
+    ];
+    for (const [completion, text, expected] of completionCases) {
+        const value = probeFailure(completion, collected(text));
+        assert.equal(value, expected);
+        safe(value);
+        cases++;
+    }
+    let bounded = collected("x".repeat(256));
+    assert.equal(bounded.kind, "collected");
+    bounded = feedDiagnostic(bounded, "x");
+    assert.deepEqual(bounded, { kind: "oversize" });
+    assert.equal(probeFailure({ kind: "exited", code: 1 }, bounded), "jarvis-accounts: diagnostic=oversize");
+    await mutant("AccountProviders.js", "safe-diagnostic-key",
+        'if (!Array.isArray(codes) || codes.indexOf(match[3]) === -1) return "";',
+        'if (false) return "";', folder => {
+            const api = require(path.join(folder, "AccountProviders.js"));
+            assert.equal(api.helperFailure("jarvis-accounts: discovery=" + privateValue), "");
+        });
+    controls++;
+    await mutant("AccountProviders.js", "bounded-diagnostic", "if (text.length > MAX_DIAGNOSTIC_CHARS)",
+        "if (false)", folder => {
+            const api = require(path.join(folder, "AccountProviders.js"));
+            assert.deepEqual(api.feedDiagnostic({ kind: "collected", text: "" }, "x".repeat(257)), { kind: "oversize" });
+        });
+    controls++;
+    await mutant("AccountProviders.js", "preserved-diagnostic-cause",
+        'return helperFailure(diagnostic.text) || "jarvis-accounts: process=failed";',
+        'return "jarvis-accounts: process=failed";', folder => {
+            const api = require(path.join(folder, "AccountProviders.js"));
+            assert.equal(api.probeFailure({ kind: "exited", code: 1 }, collected("jarvis-accounts: added=json\n")),
+                "jarvis-accounts: added=json");
+        });
+    controls++;
 
     function discovery(judge) {
         const before = markerReads.length;
@@ -395,6 +449,17 @@ world(async () => {
         safe(result.stdout + result.stderr);
     };
     goodCli(plugin);
+    const normalizedError = folder => {
+        const result = cli(folder, ["presence", privateValue]);
+        assert.equal(result.status, 1);
+        assert.equal(result.stderr, "jarvis-accounts: operation=failed\n");
+        safe(result.stdout + result.stderr);
+    };
+    normalizedError(plugin);
+    await mutant("backend/accounts.js", "safe-cli-error",
+        'const reason = helperFailure(error.message) || "jarvis-accounts: operation=failed";',
+        "const reason = error.message;", normalizedError);
+    controls++;
     const refused = cli(plugin, ["verify", chosen, "user"]);
     assert.equal(refused.status, 69);
     assert.deepEqual(JSON.parse(refused.stdout), { kind: "unavailable", reason: "subscription-handoff-unavailable" });

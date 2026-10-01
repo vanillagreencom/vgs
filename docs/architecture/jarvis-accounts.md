@@ -46,6 +46,8 @@ The manifest also lists Accounts as a [core-hosted floating TUI](tui-capability.
 
 `Accounts.qml` owns one metadata reader. It refreshes at service creation and after Accounts or Add key ends through `shell.tui.state`. Overlapping refreshes collapse into a pending refresh. `Keys.qml` also refreshes after Accounts stores a reference. Helpers receive explicit environments. No credential value enters helper argv, logs or status.
 
+The CLI and QML reader share the safe failure-key contract in `shell/plugins/vgs.jarvis/AccountProviders.js::helperFailure`. The reader retains stderr only through its bounded chunk collector. An exact recognized producer key reaches the Unavailable hint. Unknown, multi-line or oversized diagnostics never reach status. Process-start failure, process crash and malformed successful output have separate safe causes. The reader resets its completion and diagnostic records before every probe.
+
 ## Evidence
 
 - `scripts/test-jarvis-accounts.js` runs the actual judge and CLI in the [isolated Jarvis world](validation-jarvis.md). It covers nested and hand-added roots, explicit roots, depth and count bounds, links, mode-000 markers, login hints, mismatch, key variables, local-port metadata, keyring references and safe failures.
@@ -53,7 +55,7 @@ The manifest also lists Accounts as a [core-hosted floating TUI](tui-capability.
 - The same suite checks explicit Verify, unsupported handoffs, inference-only proof, busy and locked refusals, stale completion and refresh discarding Verified. It mutates production guards on disposable copies. Removing a stand-in breaks its positive assertion and never reaches a host account tool.
 - `scripts/test-jarvis-accounts-tui.js` runs the actual script on a private terminal. Its stand-in presentation tool selects directory and key-reference actions. The suite checks persisted metadata, model input, explicit consent, unavailable subscription handoffs and scrubbed child environments. Mutants change the directory passed to the judge and remove the user initiator.
 - `scripts/test-jarvis-account-verify.js` runs the real account logic and network door. Its external fetch stand-in covers provider request shapes, origin refusal, release grants, pre-transfer audit, bounded replies and safe failures. Actual HTTP listeners cover the local routes inside the private namespace. Production mutants start a request during discovery, bypass the door or audit, rebind a key, remove a grant or accept a non-inference reply. Removing the fetch stand-in breaks the positive assertion.
-- `scripts/smoke/rows/jarvis.sh` adds account metadata readback, a no-auth terminal-argv fixture, TUI-end refresh and failed-discovery clearing. Controls keep stale account or key rows and block discovery after its initial observation. They remove freshness itself, not one redundant signal path.
+- `scripts/smoke/rows/jarvis.sh` adds account metadata readback, a no-auth terminal-argv fixture, TUI-end refresh and failed-discovery clearing. It reads real helper causes and distinguishes a missing executable from invalid output. Controls replace the safe cause with a generic one or forward raw stderr. The freshness controls keep stale account or key rows and block discovery after its initial observation.
 
 ## Omarchy comparison
 
