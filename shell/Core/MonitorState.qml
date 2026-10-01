@@ -86,18 +86,18 @@ Scope {
         }
     }
 
-    // Judge RULES against the outputs read last, save them as monitors.json
-    // and apply them through the layer. Answers `ok` once the save is
-    // queued, or the judge's refusal; writeState follows the rest. Refused
-    // before the outputs are read, while another write runs, and while the
-    // document on disk is refused or unreadable, so a hand edit is never
-    // overwritten unread.
+    // Judge RULES against the outputs read last and the saved rules, save
+    // them as monitors.json and apply them through the layer. Answers `ok`
+    // once the save is queued, or the judge's refusal; writeState follows
+    // the rest. Refused before the outputs are read, while another write
+    // runs, and while the document on disk is refused or unreadable, so a
+    // hand edit is never overwritten unread.
     function write(rules) {
         if (outputs === null) return "refused: outputs=unread";
         if (writeState.phase === "saving" || writeState.phase === "applying") return "refused: write=busy phase=" + writeState.phase;
         if (document === null || (document.state !== "loaded" && document.state !== "absent"))
             return "refused: monitors=" + (document === null ? "unread" : document.state) + " path=" + path;
-        const judged = Monitors.judge({ version: Monitors.VERSION, rules: rules }, outputs);
+        const judged = Monitors.judge({ version: Monitors.VERSION, rules: rules }, outputs, saved);
         if (!judged.ok) return judged.error;
         pending = { rules: judged.rules, text: Monitors.documentText(judged.rules) };
         settle("saving", "");

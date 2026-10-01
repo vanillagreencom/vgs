@@ -13,7 +13,9 @@
 # moves the output off the written mode (runtime-hyprland-nested.md), so
 # the reading applies the layer's rule again through a configuration
 # reload, which runs the layer file, up to mode_attempts times, and reads
-# again; a reset is never read as the write failing. Once the write reads
+# again; a reset is never read as the write failing. The fixture's
+# `outputs` is read after that reading holds, and polled, since each
+# reload posts `configreloaded` and the core reads the outputs again. Once the write reads
 # back, hold_mode holds the same mode and scale, so a later reading after a
 # reset counts as a mode reset (validation-smoke-faults.md). The user's
 # later line moves the output's position alone, which leaves the held mode
@@ -114,8 +116,8 @@ else
 
   expect "a scale-2 write at double the mode is accepted" ok write_rules "$(rule_json 0 2)"
   expect_poll "the write is saved, applied and read back" idle write_phase
-  expect "the fixture's outputs read the written mode and scale back" "$rules_double scale=2" output_read "$rules_output"
   expect "hyprctl -j monitors reads the written mode and scale under the layer's rule" held layer_mode_reads "$rules_output" "$rules_double" 2
+  expect_poll "the fixture's outputs read the written mode and scale back" "$rules_double scale=2" output_read "$rules_output"
   expect "the saved rules are the written rule" "[{\"output\":\"$rules_output\",\"mode\":\"$rules_mode\",\"position\":{\"x\":0,\"y\":0},\"scale\":2}]" read_monitors saved
   expect "the layer writes the rule as hl.monitor" yes layer_has "hl.monitor({ output = \"$rules_output\", mode = \"$rules_mode\", position = \"0x0\", scale = 2 })"
   expect "the Monitors section follows the session lock and comes before every plugin section" placed section_place

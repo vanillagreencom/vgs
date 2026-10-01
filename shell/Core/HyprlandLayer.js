@@ -920,3 +920,31 @@ function step(state, event, text) {
     }
     throw new Error("HyprlandLayer.step: unknown event " + JSON.stringify(event.type));
 }
+
+// How EVENT, one step takes, ends a write cycle, the one that carries a
+// monitors write: its failure, "" once the layer is written and reloaded,
+// or null when the cycle goes on or none runs. OWNER is state.reloadOwner
+// before the event; a reload a Connect started ends no write cycle.
+function cycleEnd(event, owner) {
+    switch (event.type) {
+    case "reloadDone":
+        return owner === "layer" ? event.failure : null;
+    case "mkdirDone":
+        return event.failure !== "" ? event.failure : null;
+    case "saveFailed":
+        return event.failure;
+    case "loaded":
+    case "loadFailed":
+    case "render":
+    case "force":
+    case "saved":
+    case "probeDone":
+    case "declineChecked":
+    case "connect":
+    case "decline":
+    case "declineDone":
+    case "wireDone":
+        return null;
+    }
+    throw new Error("HyprlandLayer.cycleEnd: unknown event " + JSON.stringify(event.type));
+}

@@ -150,7 +150,7 @@ Scope {
 
     function feed(event) {
         const before = machine.failure;
-        const ended = cycleEnd(event, machine.reloadOwner);
+        const ended = Layer.cycleEnd(event, machine.reloadOwner);
         const next = Layer.step(machine, event, rendered === null ? null : rendered.text);
         machine = next.state;
         if (machine.failure !== "" && machine.failure !== before) console.error("hyprland: " + machine.failure);
@@ -159,18 +159,6 @@ Scope {
         if (ended !== null) Capabilities.monitors.layerDone(cycleMonitors, ended);
         if (next.action === "mkdir") cycleMonitors = monitorDocument.text;
         perform(next.action);
-    }
-
-    // How EVENT ends a write cycle: its failure, "" once the layer is
-    // written and reloaded, or null when the cycle goes on or none ran.
-    // OWNER is the reload's owner before the event.
-    function cycleEnd(event, owner) {
-        switch (event.type) {
-        case "reloadDone": return owner === "layer" ? event.failure : null;
-        case "mkdirDone": return event.failure !== "" ? event.failure : null;
-        case "saveFailed": return event.failure;
-        }
-        return null;
     }
 
     // A read or write asked from the view's own result handler would be

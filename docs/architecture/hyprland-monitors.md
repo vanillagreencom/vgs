@@ -10,7 +10,7 @@ How the user's monitor rules reach Hyprland through the Hyprland layer, and what
 
 | Field | Value |
 |---|---|
-| `output` | The identifier, required. `MonitorLogic.identifier` makes it: `desc:<make> <model> <serial>` with every comma removed when Hyprland reads a serial, else the connector name, `DP-1`. Printable ASCII with no quote, backslash or comma. |
+| `output` | The identifier, required. `MonitorLogic.identifier` makes it: `desc:<make> <model> <serial>` with every comma removed when Hyprland reads a serial, else the connector name, `DP-1`. Printable ASCII with no quote, backslash or comma, and no space at either end. |
 | `disabled` | `true` turns the output off. A disabled rule holds `output` and `disabled` alone. `false` is dropped. |
 | `mode` | `"WxH@R"`, R in Hz with up to three decimals. Required in an enabled rule. |
 | `position` | `{ "x", "y" }`, whole numbers. Required in an enabled rule. |
@@ -21,8 +21,11 @@ How the user's monitor rules reach Hyprland through the Hyprland layer, and what
 | `bitdepth` | 8 or 10. |
 | `cm` | `auto`, `srgb`, `dcip3`, `dp3`, `adobe`, `wide`, `edid`, `hdr` or `hdredid`. `hdr` and `hdredid` need `bitdepth` 10. |
 
-- **Judge.** `MonitorLogic.judge` refuses an unknown key, a version other than 1, a field of the wrong type or range, two rules for one identifier, a scale that leaves fractional logical pixels (a mode side over the scale more than 0.001 from a whole number), and a mirror that names its own output. Each refusal is one line, `refused: rule=<i> <field>=<value> want=<what>`.
-- **Against the outputs.** `write` also judges the rules against the outputs Hyprland lists. A mirror must name another output that stays on. A listed output's mode must be one of its `availableModes`, refresh within 15 mHz, when it lists any; an output that lists none, as the nested Wayland output, takes any mode. At least one listed output must stay on: an output stays on when its rule is enabled, or when it has no rule and Hyprland lists it enabled. A rule for an output Hyprland does not list is kept for when it is plugged in.
+- **Judge.** `MonitorLogic.judge` refuses an unknown key, a version other than 1, a field of the wrong type or range, two rules for one identifier, a scale that leaves fractional logical pixels (a mode side over the scale more than 0.001 from a whole number), and a mirror that names its own output. Each refusal is one line naming the first fault:
+  - the document: `refused: monitors=<value> want=object`, `refused: monitors.key=<key> want=version,rules`, `refused: monitors.version=<value> want=1` or `refused: monitors.rules=<value> want=list`, and `refused: monitors=unparsed <error>` from `MonitorLogic.readDocument` for text that is no JSON;
+  - one rule: `refused: rule=<i> <field>=<value> want=<what>`, as `refused: rule=0 scale=1.3 want=whole-logical-pixels mode=3840x2160`;
+  - the rules together, against the outputs: `refused: rules=no-output-on want=one-output-on`.
+- **Against the outputs.** `write` also judges the rules against the outputs Hyprland lists. A mirror must name another output that stays on. A listed output's mode must be one of its `availableModes`, refresh within 15 mHz, when it lists any; an output that lists none, as the nested Wayland output, takes any mode. At least one listed output must stay on: an output stays on when its rule is enabled, or when it has no rule and Hyprland lists it enabled. An output a user line holds off never stays on: Hyprland lists it disabled while the saved rules enable it, the case `overridden` reports, and a user line after the loading line wins over any rule the write adds. The same holds for a mirror's target. An output listed disabled that the saved rules disable, or do not name, is one the write may turn on. A rule for an output Hyprland does not list is kept for when it is plugged in.
 - **Read from disk.** A document read from disk is judged on its own fields alone, so the layer never depends on whether a plugin reads the outputs. A document the judge refuses, or one the shell cannot read, is not applied: the layer writes one comment in the section's place and `listPlugins` and the Settings page report `hyprland: monitors: <reason>`.
 
 ## The layer section
@@ -46,6 +49,6 @@ The lending record's `monitors` holds `active`, whether the outputs are read, an
 ## Invariants
 
 1. Every decision about the document, the outputs reply, the rendered lines and `overridden` is made in `MonitorLogic.js`. Enforced by `scripts/test-monitor-logic.js`, on the reply the nested Hyprland printed and on outputs in the shape `getMonitorData` prints, each rule with a control on a copy of the file.
-2. The section's text, its place after the session lock's restore and before every plugin section, its absence without a rule, the comment for a refused document and the wait for the first read are decided in `HyprlandLayer.js`. Enforced by `scripts/test-hyprland-layer.js`, each with a control.
+2. The section's text, its place after the session lock's restore and before every plugin section, its absence without a rule, the comment for a refused document, the wait for the first read and which layer step ends a write's cycle, and with what failure (`cycleEnd`), are decided in `HyprlandLayer.js`. Enforced by `scripts/test-hyprland-layer.js`, each with a control.
 3. `monitors` is exclusive. Enforced by `scripts/test-plugin-logic.js`, whose control drops it from `EXCLUSIVE_CAPABILITIES`.
 4. On the nested instance a scale-2 write at double the output's mode reads back from `hyprctl -j monitors` and from `outputs`, a fractional scale and turning off the only output are refused and leave the output on, the section sits after the session lock and before every plugin section, a later user line is reported in `overridden` and its removal clears it, a refused hand edit is reported and not applied, `configerrors` stays empty, and the fixture reads back exactly the five members. Enforced by `scripts/smoke/rows/monitor-rules.sh`, which failed on a tree whose judge accepts fractional logical pixels.

@@ -211,10 +211,22 @@ function ruleFor(rules, output) {
     return null;
 }
 
-// Whether output SELECTOR shows anything once RULES apply: its rule is
-// enabled, or it has none and Hyprland lists it enabled.
-function staysOn(rules, outputs, selector) {
+// Whether listed OUTPUT is held off by a user line after the loading
+// line: Hyprland lists it disabled while SAVED, the rules the layer holds
+// now, enable it. No rule the layer writes turns it on, since the later
+// line wins.
+function heldOff(saved, output) {
+    if (!output.disabled) return false;
+    var rule = ruleFor(saved, output);
+    return rule !== null && rule.disabled !== true;
+}
+
+// Whether output SELECTOR shows anything once RULES apply: it is not held
+// off, and its rule is enabled, or it has none and Hyprland lists it
+// enabled.
+function staysOn(rules, outputs, saved, selector) {
     var index = resolve(outputs, selector);
+    if (index !== -1 && heldOff(saved, outputs[index])) return false;
     for (var i = rules.length - 1; i >= 0; i--)
         if (rules[i].output === selector || (index !== -1 && resolve(outputs, rules[i].output) === index)) return rules[i].disabled !== true;
     return index !== -1 && !outputs[index].disabled;
@@ -224,11 +236,13 @@ function staysOn(rules, outputs, selector) {
 // error } with a keyed line naming the first fault. OUTPUTS, parseOutputs's
 // list, judges the rules against the outputs Hyprland lists: a mirror must
 // name another output that stays on, a listed output's mode must be one it
-// lists when it lists any, and one listed output must stay on. A rule for
-// an output Hyprland does not list is kept for when it is plugged in. With
-// OUTPUTS null, as for a document read from disk, the rules are judged on
-// their own fields alone.
-function judge(doc, outputs) {
+// lists when it lists any, and one listed output must stay on. SAVED, the
+// judged rules the layer holds now, tells an output a user line holds off
+// from one the write turns on (heldOff). A rule for an output Hyprland
+// does not list is kept for when it is plugged in. With OUTPUTS null, as
+// for a document read from disk, the rules are judged on their own fields
+// alone and SAVED is not read.
+function judge(doc, outputs, saved) {
     if (!isPlainObject(doc)) return { ok: false, error: "refused: monitors=" + shown(doc) + " want=object" };
     var keys = Object.keys(doc);
     for (var k = 0; k < keys.length; k++)
@@ -245,6 +259,7 @@ function judge(doc, outputs) {
         rules.push(judged.rule);
     }
     if (outputs === null) return { ok: true, rules: rules };
+    if (!Array.isArray(saved)) throw new Error("MonitorLogic.judge: saved " + shown(saved) + " is no list of judged rules while the outputs are read");
     for (var r = 0; r < rules.length; r++) {
         var rule = rules[r];
         var at = "refused: rule=" + r + " ";
@@ -253,7 +268,7 @@ function judge(doc, outputs) {
         if (rule.mirror !== undefined) {
             if (index !== -1 && resolve(outputs, rule.mirror) === index)
                 return { ok: false, error: at + "mirror=" + shown(rule.mirror) + " want=another-output" };
-            if (!staysOn(rules, outputs, rule.mirror))
+            if (!staysOn(rules, outputs, saved, rule.mirror))
                 return { ok: false, error: at + "mirror=" + shown(rule.mirror) + " want=output-on" };
         }
         if (index === -1 || outputs[index].availableModes.length === 0) continue;
@@ -264,6 +279,7 @@ function judge(doc, outputs) {
         if (!listed) return { ok: false, error: at + "mode=" + shown(rule.mode) + " want=available-mode" };
     }
     var on = outputs.some(function (output) {
+        if (heldOff(saved, output)) return false;
         var rule = ruleFor(rules, output);
         return rule === null ? !output.disabled : rule.disabled !== true;
     });

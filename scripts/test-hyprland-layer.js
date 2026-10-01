@@ -581,6 +581,8 @@ function verify(logic, layer, shellText) {
     }
     assert.throws(() => layer.step(layer.initialState(), { type: "saved" }, "T1"), /event saved arrived in phase reading, want writing/, "a step result out of its phase is refused");
     assert.throws(() => layer.step(layer.initialState(), { type: "later" }, "T1"), /unknown event "later"/, "an unknown event is refused");
+    for (const [name, event, owner, want] of CYCLE_ENDS) same(layer.cycleEnd(event, owner), want, "cycleEnd: " + name);
+    assert.throws(() => layer.cycleEnd({ type: "later" }, ""), /cycleEnd: unknown event "later"/, "cycleEnd refuses an unknown event");
     same(layer.consentView({ phase: "asking", queued: "connect", failure: "reload=failed" }).busy, true, "a queued consent answer makes the dialog busy");
     same(layer.consentView({ phase: "asking", queued: "", failure: "" }).busy, false, "an unanswered consent dialog is not busy");
 }
@@ -601,6 +603,26 @@ const probeAbsent = { type: "probeDone", answer: "absent", failure: "" };
 const probeFailed = { type: "probeDone", answer: "", failure: "probe=failed status=1" };
 const notDeclined = { type: "declineChecked", declined: false, failure: "" };
 const declined = { type: "declineChecked", declined: true, failure: "" };
+// HyprlandLayer.cycleEnd rows: [name, event, reload owner, want].
+const CYCLE_ENDS = [
+    ["the layer's reload ends the cycle", reloaded, "layer", ""],
+    ["the layer's failed reload ends it with the failure", { type: "reloadDone", failure: "reload=failed status=1" }, "layer", "reload=failed status=1"],
+    ["a Connect's reload ends no write cycle", reloaded, "wire", null],
+    ["a failed mkdir ends it with the failure", { type: "mkdirDone", failure: "mkdir=failed status=1" }, "", "mkdir=failed status=1"],
+    ["a made directory goes on to the write", mkdirOk, "", null],
+    ["a failed save ends it with the failure", saveFailed, "", "write=failed error=4"],
+    ["a save goes on to the reload", saved, "", null],
+    ["a read goes on", loaded("T0"), "", null],
+    ["a failed read goes on", { type: "loadFailed", notFound: false, detail: "error=3" }, "", null],
+    ["a render goes on", render, "", null],
+    ["a force goes on", force, "", null],
+    ["a probe ends none", probeUnwired, "", null],
+    ["a marker check ends none", notDeclined, "", null],
+    ["Connect ends none", { type: "connect" }, "", null],
+    ["Not now ends none", { type: "decline" }, "", null],
+    ["a marker write ends none", { type: "declineDone", failure: "decline-marker-write=failed path=p" }, "", null],
+    ["a failed wire ends none", { type: "wireDone", failure: "wire=failed status=1" }, "", null]
+];
 const SEQUENCES = [
     ["a first completed write and reload probes and asks when unwired",
         [[absent, "T1"], [mkdirOk, "T1"], [saved, "T1"], [reloaded, "T1"], [probeUnwired, "T1"], [notDeclined, "T1"]],
@@ -850,6 +872,9 @@ const CONTROLS = [
     [layerFile, "the written options are listed", "out.written.push({ id: section.id, setting: option.setting, path: option.path, value: option.value });", ""],
     [layerFile, "the written binds are listed", "            out.push(entry.global);\n", ""],
     [layerFile, "a set touchpad option asks for the touchpads", "return OPTIONS[option.path].device === \"touchpad\"; });", "return false; });"],
+    [layerFile, "a Connect's reload ends no write cycle", "return owner === \"layer\" ? event.failure : null;", "return event.failure;"],
+    [layerFile, "a failed mkdir ends the write cycle", "return event.failure !== \"\" ? event.failure : null;", "return null;"],
+    [layerFile, "a failed save ends the write cycle", "    case \"saveFailed\":\n        return event.failure;", "    case \"saveFailed\":\n        return null;"],
     [layerFile, "an unreadable file is reported", "event.notFound ? state.failure : \"read=failed \" + event.detail, text", "state.failure, text"]
 ];
 
@@ -885,4 +910,4 @@ try {
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-hyprland-layer: ok keys=${KEYS.length} manifests=${MANIFESTS.length} config=${CONFIG_KEYS.length} steps=${SEQUENCES.length} controls=${CONTROLS.length}`);
+console.log(`test-hyprland-layer: ok keys=${KEYS.length} manifests=${MANIFESTS.length} config=${CONFIG_KEYS.length} steps=${SEQUENCES.length} cycleEnds=${CYCLE_ENDS.length} controls=${CONTROLS.length}`);

@@ -134,7 +134,9 @@ function suite(lib, check) {
 
     const outputs = desk.ok ? desk.outputs : null;
     const id1 = "desc:Dell Inc. DELL U2720Q 8YT0R13";
-    // rows: [name, document, outputs, the error's start or "" for a pass]
+    // rows: [name, document, outputs, the error's start or "" for a pass,
+    // the saved rules, [] when omitted]
+    const eDP = rule("eDP-1", { mode: "2880x1800@120.000", scale: 2 });
     const judged = [
         ["an enabled rule", doc([rule(id1)]), outputs, ""],
         ["every optional field", doc([rule(id1, { transform: 1, vrr: 2, bitdepth: 10, cm: "hdr" })]), outputs, ""],
@@ -143,6 +145,8 @@ function suite(lib, check) {
         ["a rule for an output not plugged in", doc([rule("HDMI-A-1", { mode: "1024x768@75.000", scale: 1 })]), outputs, ""],
         ["a mode on an output that lists none", doc([rule("WAYLAND-1", { mode: "3512x1866@60.000", scale: 2 })]), nested.ok ? nested.outputs : null, ""],
         ["a refresh within 15 mHz of a listed one", doc([rule(id1, { mode: "2560x1440@59.951", scale: 1 })]), outputs, ""],
+        ["a scale whose quotient is not exact", doc([rule("eDP-1", { mode: "2880x1800@120.000", scale: 1.666667 })]), null, ""],
+        ["rules against no listed output", doc([{ output: "DP-1", disabled: true }]), [], ""],
         ["no object", [], null, "refused: monitors=[] want=object"],
         ["an unknown document key", Object.assign(doc([]), { extra: 1 }), null, "refused: monitors.key=\"extra\" want=version,rules"],
         ["another version", { version: 2, rules: [] }, null, "refused: monitors.version=2 want=1"],
@@ -154,6 +158,8 @@ function suite(lib, check) {
         ["an output holding a line break", doc([rule("DP-1\n")]), null, "refused: rule=0 output=\"DP-1\\n\" want=identifier"],
         ["an output holding a comma", doc([rule("desc:Dell, Inc.")]), null, "refused: rule=0 output=\"desc:Dell, Inc.\" want=identifier"],
         ["an empty output", doc([rule("")]), null, "refused: rule=0 output=\"\" want=identifier"],
+        ["an output with a leading space", doc([rule(" DP-1")]), null, "refused: rule=0 output=\" DP-1\" want=identifier"],
+        ["an output with a trailing space", doc([rule("DP-1 ")]), null, "refused: rule=0 output=\"DP-1 \" want=identifier"],
         ["two rules for one output", doc([rule("DP-2"), rule("DP-2", { position: { x: 3840, y: 0 } })]), null, "refused: rule=1 output=\"DP-2\" want=unique"],
         ["a disabled that is no boolean", doc([{ output: "DP-2", disabled: "yes" }]), null, "refused: rule=0 disabled=\"yes\" want=boolean"],
         ["a disabled rule that sets a mode", doc([rule("DP-2", { disabled: true })]), null, "refused: rule=0 mode=\"3840x2160@60.000\" want=absent-when-disabled"],
@@ -166,6 +172,7 @@ function suite(lib, check) {
         ["a scale below Hyprland's floor", doc([rule("DP-2", { mode: "1024x768@60.000", scale: 0.125 })]), null, "refused: rule=0 scale=0.125 want=number>=0.25"],
         ["a scale that is no number", doc([rule("DP-2", { scale: "2" })]), null, "refused: rule=0 scale=\"2\" want=number>=0.25"],
         ["fractional logical pixels", doc([rule("DP-2", { scale: 1.3 })]), null, "refused: rule=0 scale=1.3 want=whole-logical-pixels mode=3840x2160"],
+        ["a scale just past the whole-pixel tolerance", doc([rule("eDP-1", { mode: "2880x1800@120.000", scale: 1.666668 })]), null, "refused: rule=0 scale=1.666668 want=whole-logical-pixels mode=2880x1800"],
         ["a height alone fractional", doc([rule("DP-2", { mode: "3840x2161@60.000", scale: 2 })]), null, "refused: rule=0 scale=2 want=whole-logical-pixels mode=3840x2161"],
         ["a transform past 7", doc([rule("DP-2", { transform: 8 })]), null, "refused: rule=0 transform=8 want=0..7"],
         ["a vrr outside 0, 1 and 2", doc([rule("DP-2", { vrr: 3 })]), null, "refused: rule=0 vrr=3 want=0|1|2"],
@@ -177,6 +184,8 @@ function suite(lib, check) {
         ["a mirror of itself by its connector", doc([rule(id1, { mirror: "DP-1" })]), outputs, "refused: rule=0 mirror=\"DP-1\" want=another-output"],
         ["a mirror of an output not plugged in", doc([rule(id1, { mirror: "HDMI-A-1" })]), outputs, "refused: rule=0 mirror=\"HDMI-A-1\" want=output-on"],
         ["a mirror of an output Hyprland lists off", doc([rule(id1, { mirror: "eDP-1" })]), outputs, "refused: rule=0 mirror=\"eDP-1\" want=output-on"],
+        ["a mirror of an output the write turns on", doc([rule(id1, { mirror: "eDP-1" }), eDP]), outputs, ""],
+        ["a mirror of an output a user line holds off", doc([rule(id1, { mirror: "eDP-1" }), eDP]), outputs, "refused: rule=0 mirror=\"eDP-1\" want=output-on", [eDP]],
         ["a mirror of an output its rule turns off", doc([rule(id1, { mirror: "DP-2" }), { output: "DP-2", disabled: true }]), outputs, "refused: rule=0 mirror=\"DP-2\" want=output-on"],
         ["a mode the output does not list", doc([rule(id1, { mode: "3440x1440@60.000", scale: 1 })]), outputs, "refused: rule=0 mode=\"3440x1440@60.000\" want=available-mode"],
         ["a refresh 20 mHz from a listed one", doc([rule(id1, { mode: "2560x1440@59.970", scale: 1 })]), outputs, "refused: rule=0 mode=\"2560x1440@59.970\" want=available-mode"],
@@ -184,14 +193,20 @@ function suite(lib, check) {
         ["turning off the only output", doc([{ output: "WAYLAND-1", disabled: true }]), nested.ok ? nested.outputs : null, "refused: rules=no-output-on want=one-output-on"],
         ["turning off one output by its connector", doc([{ output: "DP-1", disabled: true }]), outputs, ""],
         ["turning off every output, one by its connector", doc([{ output: "DP-1", disabled: true }, { output: "DP-2", disabled: true }]), outputs, "refused: rules=no-output-on want=one-output-on"],
+        ["turning on an output Hyprland lists off and off the others", doc([{ output: id1, disabled: true }, { output: "DP-2", disabled: true }, eDP]), outputs, ""],
+        ["turning on an output the saved rules turned off", doc([{ output: id1, disabled: true }, { output: "DP-2", disabled: true }, eDP]), outputs, "", [{ output: "eDP-1", disabled: true }]],
+        ["turning off the others while a user line holds the one left off", doc([{ output: id1, disabled: true }, { output: "DP-2", disabled: true }, eDP]), outputs, "refused: rules=no-output-on want=one-output-on", [eDP]],
+        ["turning off one output while the saved rules hold the other on", doc([rule(id1), { output: "DP-2", disabled: true }]), outputs, "", [rule(id1)]],
         ["turning off every output, unread", doc([{ output: id1, disabled: true }, { output: "DP-2", disabled: true }]), null, ""],
         ["a mirror of an output not plugged in, unread", doc([rule(id1, { mirror: "HDMI-A-1" })]), null, ""],
         ["a mode no output lists, unread", doc([rule(id1, { mode: "3440x1440@60.000", scale: 1 })]), null, ""]
     ];
-    for (const [name, value, listed, want] of judged) {
-        const got = lib.judge(value, listed);
+    for (const [name, value, listed, want, saved] of judged) {
+        const got = lib.judge(value, listed, saved || []);
         check("judge: " + name, got.ok ? "" : got.error.slice(0, Math.max(want.length, 1)), want);
     }
+    check("judge: saved rules that are no list while the outputs are read", (() => { try { return lib.judge(doc([]), outputs, null); } catch (e) { return e.message; } })(),
+        "MonitorLogic.judge: saved null is no list of judged rules while the outputs are read");
     check("judge: a rule keeps its fields in render order, disabled only when true",
         lib.judge(doc([{ cm: "srgb", scale: 1.5, output: "DP-2", disabled: false, position: { y: 0, x: 2560 }, mode: "3840x2160@60.000", vrr: 1 }]), null),
         { ok: true, rules: [{ output: "DP-2", mode: "3840x2160@60.000", position: { x: 2560, y: 0 }, scale: 1.5, vrr: 1, cm: "srgb" }] });
@@ -274,6 +289,8 @@ const CONTROLS = [
     ["a rule's keys are known", 'if (RULE_KEYS.indexOf(keys[k]) === -1) return { ok: false, error: at + "key="', 'if (false) return { ok: false, error: at + "key="'],
     ["an output is an identifier", 'if (typeof raw.output !== "string" || !IDENTIFIER.test(raw.output))', 'if (typeof raw.output !== "string")'],
     ["an identifier holds no comma", "var IDENTIFIER = /^[\\x21\\x23-\\x2b\\x2d-\\x5b\\x5d-\\x7e](?:[\\x20\\x21\\x23-\\x2b\\x2d-\\x5b\\x5d-\\x7e]*", "var IDENTIFIER = /^[\\x21\\x23-\\x2b\\x2d-\\x5b\\x5d-\\x7e](?:[\\x20-\\x21\\x23-\\x5b\\x5d-\\x7e]*"],
+    ["an identifier starts with no space", "var IDENTIFIER = /^[\\x21", "var IDENTIFIER = /^[\\x20\\x21"],
+    ["an identifier ends with no space", "*[\\x21\\x23-\\x2b\\x2d-\\x5b\\x5d-\\x7e])?$/;", "*[\\x20\\x21\\x23-\\x2b\\x2d-\\x5b\\x5d-\\x7e])?$/;"],
     ["one rule per output", 'return { ok: false, error: "refused: rule=" + i + " output=" + shown(judged.rule.output) + " want=unique" };', ""],
     ["disabled is a boolean", 'if (hasOwn(raw, "disabled") && typeof raw.disabled !== "boolean")', "if (false)"],
     ["a disabled rule sets nothing else", 'if (keys[d] !== "output" && keys[d] !== "disabled")', "if (false)"],
@@ -283,6 +300,8 @@ const CONTROLS = [
     ["a position is whole x and y", "if (!isPlainObject(p) || Object.keys(p).length !== 2 || !Number.isInteger(p.x) || !Number.isInteger(p.y))", "if (!isPlainObject(p))"],
     ["a scale is at least Hyprland's floor", ' || raw.scale < SCALE_MIN)\n        return { ok: false, error: at + "scale="', ')\n        return { ok: false, error: at + "scale="'],
     ["whole logical pixels", "return Math.abs(logical - Math.round(logical)) > PIXEL_TOLERANCE;", "return false;"],
+    ["a quotient within the tolerance is whole", "var PIXEL_TOLERANCE = 0.001;", "var PIXEL_TOLERANCE = 0;"],
+    ["a quotient past the tolerance is fractional", "var PIXEL_TOLERANCE = 0.001;", "var PIXEL_TOLERANCE = 0.002;"],
     ["a transform is 0 to 7", "if (!Number.isInteger(raw.transform) || raw.transform < 0 || raw.transform > 7)", "if (false)"],
     ["vrr is 0, 1 or 2", 'if (VRR_MODES.indexOf(raw.vrr) === -1) return', "if (false) return"],
     ["a mirror is an identifier", 'if (typeof raw.mirror !== "string" || !IDENTIFIER.test(raw.mirror))', "if (false)"],
@@ -292,13 +311,19 @@ const CONTROLS = [
     ["HDR needs 10 bits", "if (HDR_TYPES.indexOf(raw.cm) !== -1 && raw.bitdepth !== 10) return", "if (false) return"],
     ["a document read from disk skips the outputs", "if (outputs === null) return { ok: true, rules: rules };", "if (outputs === null) outputs = [];"],
     ["a mirror's connector names itself", "if (index !== -1 && resolve(outputs, rule.mirror) === index)", "if (false)"],
-    ["a mirror names an output that stays on", "if (!staysOn(rules, outputs, rule.mirror))", "if (false)"],
+    ["a mirror names an output that stays on", "if (!staysOn(rules, outputs, saved, rule.mirror))", "if (false)"],
     ["a rule turns its mirror off", "return rules[i].disabled !== true;\n    return index", "return true;\n    return index"],
     ["a listed output off is no mirror", "return index !== -1 && !outputs[index].disabled;", "return index !== -1;"],
     ["an output with no mode list takes any mode", "if (index === -1 || outputs[index].availableModes.length === 0) continue;", "if (index === -1) continue;"],
     ["a mode is one the output lists", 'if (!listed) return { ok: false, error: at + "mode="', 'if (false) return { ok: false, error: at + "mode="'],
     ["a refresh within 15 mHz", "var REFRESH_TOLERANCE = 0.015;", "var REFRESH_TOLERANCE = 0.05;"],
     ["one listed output stays on", 'if (outputs.length > 0 && !on) return', "if (false) return"],
+    ["no listed output asks none to stay on", 'if (outputs.length > 0 && !on) return', "if (!on) return"],
+    ["the saved rules are a list while the outputs are read", "if (!Array.isArray(saved)) throw", "if (false) throw"],
+    ["an output a user line holds off stays off", "if (heldOff(saved, output)) return false;\n        var rule", "var rule"],
+    ["a mirror of an output a user line holds off is off", "if (index !== -1 && heldOff(saved, outputs[index])) return false;", ""],
+    ["only an output listed off is held off", "if (!output.disabled) return false;\n    var rule = ruleFor(saved, output);", "var rule = ruleFor(saved, output);"],
+    ["a saved rule that disables the output holds nothing off", "return rule !== null && rule.disabled !== true;\n}", "return rule !== null;\n}"],
     ["a rule applies by connector too", "if (rules[i].output === output.identifier || rules[i].output === output.name) return rules[i];", "if (rules[i].output === output.identifier) return rules[i];"],
     ["unparsed text is refused", 'return { ok: false, error: "refused: monitors=unparsed " + String(e.message || e) };', "doc = null;"],
     ["render writes a disabled rule alone", 'if (rule.disabled === true) return "hl.monitor({ " + fields.concat(["disabled = true"]).join(", ") + " })";', ""],
