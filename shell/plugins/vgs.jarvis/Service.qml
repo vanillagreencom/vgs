@@ -15,6 +15,8 @@ Item {
     property string cause: ""
     property var audioHealth: ({ kind: "reading" })
     property var sessionState: null
+    // The request handlers, built on the first request; see requestHandlers().
+    property var requests: null
     readonly property bool locked: lockObservation()
     readonly property var effectiveKeys: shell === null ? null : shell.shortcut.keys
     readonly property string daemon: String(Qt.resolvedUrl("backend/jarvisd.js")).replace(/^file:\/\//, "")
@@ -149,40 +151,54 @@ Item {
 
     // One reply per daemon request, from the capability that owns the act.
     // The reply carries the shell's own answer; the daemon reads every
-    // effect back from Hyprland itself.
-    function serve(message) {
-        const args = message.args;
-        let answer = "ok";
-        let data = null;
-        const compositor = message.kind.startsWith("compositor.") && message.kind !== "compositor.reveal";
-        if (!compositor && ["compositor.reveal", "run.detached", "toast", "desktop.list", "desktop.entry"].indexOf(message.kind) === -1)
-            throw new Error("jarvis: request=unserved kind=" + message.kind);
-        try {
-            if (compositor) answer = shell.compositor[message.kind.slice("compositor.".length)].apply(null, args);
-            else if (message.kind === "compositor.reveal") answer = shell.compositor.reveal([args[0]], false);
-            else if (message.kind === "run.detached") answer = shell.run.detached(args);
-            else if (message.kind === "toast") shell.toasts.show({ title: args[0], message: args[1], tone: "info", icon: "mic" });
-            else if (message.kind === "desktop.list") data = Protocol.desktopEntries(DesktopEntries.applications.values.map(entryRecord));
-            else {
+    // effect back from Hyprland itself. Each handler answers {answer, data}.
+    function requestHandlers() {
+        const handlers = {
+            "compositor.reveal": args => ({ answer: shell.compositor.reveal([args[0]], false), data: null }),
+            "run.detached": args => ({ answer: shell.run.detached(args), data: null }),
+            "toast": args => {
+                shell.toasts.show({ title: args[0], message: args[1], tone: "info", icon: "mic" });
+                return { answer: "ok", data: null };
+            },
+            "desktop.list": () => ({ answer: "ok", data: Protocol.desktopEntries(DesktopEntries.applications.values.map(entryRecord)) }),
+            "desktop.launch": args => {
                 const entry = DesktopEntries.byId(args[0]);
-                data = entry === null ? null : Protocol.desktopEntry(entryRecord(entry), true);
-                if (data === null) answer = "refused: desktop=unknown";
+                const data = entry === null ? null : Protocol.desktopEntry(entryRecord(entry), true);
+                if (data === null) return { answer: "refused: desktop=unknown", data: null };
+                return { answer: shell.run.detached(DesktopLaunch.entry(entry)), data: data };
             }
-        } catch (error) {
-            // A capability refuses by throwing, as toasts do past their ceiling.
-            answer = String(error.message);
-            data = null;
+        };
+        for (const kind of Object.keys(Protocol.REQUESTS)) {
+            if (!kind.startsWith("compositor.") || handlers[kind] !== undefined) continue;
+            const name = kind.slice("compositor.".length);
+            handlers[kind] = args => ({ answer: shell.compositor[name].apply(null, args), data: null });
         }
+        return handlers;
+    }
+
+    function serve(message) {
+        if (requests === null) requests = requestHandlers();
+        const handler = requests[message.kind];
+        if (handler === undefined) throw new Error("jarvis: request=unserved kind=" + message.kind);
+        let result = { answer: Protocol.lockedRefusal(message.kind, lockObservation()), data: null };
+        if (result.answer === "") {
+            try { result = handler(message.args); }
+            catch (error) {
+                // A capability refuses by throwing, as toasts do past their ceiling.
+                result = { answer: String(error.message), data: null };
+            }
+        }
+        const answer = Protocol.answer(result.answer);
         const wire = JSON.stringify({ v: 1, type: "reply", gen: message.gen, revision: message.revision,
-            id: message.id, kind: message.kind, answer: Protocol.answer(answer), data: answer === "ok" ? data : null });
+            id: message.id, kind: message.kind, answer: answer, data: answer === "ok" ? result.data : null });
         Protocol.accept(wire, "shell");
         child.write(wire + "\n");
     }
 
-    // The launcher's inputs: Quickshell's parsed Exec and terminal flag.
+    // What a reply says of an entry. The launch itself is DesktopLaunch's.
     function entryRecord(entry) {
         return { id: entry.id, name: entry.name, startupClass: entry.startupClass, noDisplay: entry.noDisplay,
-            command: Array.from(entry.command), terminal: entry.runInTerminal };
+            terminal: entry.runInTerminal };
     }
 
     function broken(reason) {

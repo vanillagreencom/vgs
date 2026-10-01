@@ -38,7 +38,7 @@ const request = { v: 1, type: "request", gen: 0, revision: hello.revision, id: 1
 const reply = { v: 1, type: "reply", gen: 0, revision: hello.revision, id: 1, kind: "compositor.moveWindow", answer: "ok", data: null };
 const entry = { id: "org.example.App", name: "Example", startupClass: "example" };
 const listReply = { ...reply, kind: "desktop.list", data: { entries: [entry], complete: true } };
-const entryReply = { ...reply, kind: "desktop.entry", data: { ...entry, command: ["example", "--new"], terminal: false } };
+const entryReply = { ...reply, kind: "desktop.launch", data: { ...entry, terminal: false } };
 assert.equal(manifest.capabilities.includes("compositor") && manifest.capabilities.includes("run"), true);
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const cases = [
@@ -127,11 +127,12 @@ const cases = [
     ["reply-entries-shape", changed(listReply, { data: { entries: [] } }), "shell", "shape-entries"],
     ["reply-entries-list", changed(listReply, { data: { entries: {}, complete: true } }), "shell", "reply-data"],
     ["reply-entries-size", changed(listReply, { data: { entries: Array(513).fill(entry), complete: false } }), "shell", "reply-data"],
-    ["reply-entry-shape", changed(listReply, { data: { entries: [{ ...entry, command: ["x"] }], complete: true } }), "shell", "shape-entry"],
+    ["reply-entry-shape", changed(listReply, { data: { entries: [{ ...entry, terminal: false }], complete: true } }), "shell", "shape-entry"],
+    ["reply-launch-command", changed(entryReply, { data: { ...entryReply.data, command: ["example"] } }), "shell", "shape-entry"],
+    ["request-kind-entry", changed(request, { kind: "desktop.entry", args: ["org.example.App"] }), "daemon", "request-kind"],
     ["reply-entry-id", changed(listReply, { data: { entries: [{ ...entry, id: "" }], complete: true } }), "shell", "entry"],
     ["reply-entry-name", changed(listReply, { data: { entries: [{ ...entry, name: "a\nb" }], complete: true } }), "shell", "entry"],
     ["reply-entry-duplicate", changed(listReply, { data: { entries: [entry, entry], complete: true } }), "shell", "entry-duplicate"],
-    ["reply-entry-command", changed(entryReply, { data: { ...entryReply.data, command: [] } }), "shell", "entry"],
     ["reply-entry-terminal", changed(entryReply, { data: { ...entryReply.data, terminal: "no" } }), "shell", "entry"]
 ];
 function rejected(logic, row) {
@@ -173,7 +174,7 @@ for (const message of [reply, listReply, entryReply, { ...reply, answer: "refuse
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
 // The service's builders produce what the judge accepts, from Quickshell's
 // DesktopEntry fields as Service.qml copies them.
-const shellEntry = (id, values = {}) => ({ id, name: "Name " + id, startupClass: "", noDisplay: false, command: [id], terminal: false, ...values });
+const shellEntry = (id, values = {}) => ({ id, name: "Name " + id, startupClass: "", noDisplay: false, terminal: false, ...values });
 const built = Protocol.desktopEntries([shellEntry("zeta"), shellEntry("alpha", { name: "Tab\tname", startupClass: "Alpha" }),
     shellEntry("hidden", { noDisplay: true }), shellEntry("bad\nid"), shellEntry("x".repeat(129))]);
 assert.equal(JSON.stringify(built), JSON.stringify({ entries: [{ id: "alpha", name: "Tab name", startupClass: "Alpha" },
@@ -186,9 +187,22 @@ const wide = Protocol.desktopEntries(Array.from({ length: 512 }, (_, n) => shell
 assert.equal(wide.complete, false, "the byte bound cuts before the line limit");
 assert.ok(Protocol.bytes(changed(listReply, { data: wide })) < Protocol.MAX_LINE_BYTES);
 Protocol.accept(changed(listReply, { data: wide }), "shell");
-assert.equal(JSON.stringify(Protocol.desktopEntry(shellEntry("tool", { terminal: true, command: ["tool", "-x"] }), true)),
-    JSON.stringify({ id: "tool", name: "Name tool", startupClass: "", command: ["tool", "-x"], terminal: true }));
-assert.equal(Protocol.desktopEntry(shellEntry("empty", { command: [] }), true), null);
+assert.equal(JSON.stringify(Protocol.desktopEntry(shellEntry("tool", { terminal: true }), true)),
+    JSON.stringify({ id: "tool", name: "Name tool", startupClass: "", terminal: true }));
+assert.equal(Protocol.desktopEntry(shellEntry("tool"), true).terminal, false);
+// The service refuses a desktop change while the session is locked, and
+// nothing else. Expected kinds are written by hand.
+const acting = ["compositor.focusWorkspace", "compositor.focusWindow", "compositor.moveWindowToWorkspace",
+    "compositor.toggleSpecialWorkspace", "compositor.closeWindow", "compositor.fullscreenWindow", "compositor.floatWindow",
+    "compositor.moveWindow", "compositor.resizeWindow", "compositor.focusMonitor", "compositor.reveal", "run.detached", "desktop.launch"];
+function lockedRows(logic) {
+    assert.deepEqual(Object.keys(logic.REQUESTS).sort(), [...acting, "toast", "desktop.list"].sort(), "the request kinds");
+    for (const kind of Object.keys(logic.REQUESTS)) {
+        assert.equal(logic.lockedRefusal(kind, true), acting.includes(kind) ? "refused: locked" : "", kind + " while locked");
+        assert.equal(logic.lockedRefusal(kind, false), "", kind + " while unlocked");
+    }
+}
+lockedRows(Protocol);
 assert.equal(Protocol.desktopEntry(shellEntry("hidden", { noDisplay: true }), true), null);
 assert.equal(Protocol.answer("refused: a\nb"), "refused: a b");
 assert.equal(Protocol.answer(""), "refused: answer=empty");
@@ -282,7 +296,7 @@ try {
         ["reply-data", 'if (message.data !== null) fail("reply-data");', ';', "reply-data-refused"],
         ["entries-bound", 'message.data.entries.length > ENTRIES_MAX', 'false', "reply-entries-size"],
         ["entry-fields", 'if (!printable(value.id, 1, FIELD_MAX) || !printable(value.name, 0, FIELD_MAX)', 'if (false', "reply-entry-name"],
-        ["entry-command", 'if (withCommand && (!argv(value.command) || typeof value.terminal !== "boolean")) fail("entry");', ';', "reply-entry-terminal"],
+        ["entry-terminal", 'if (withTerminal && typeof value.terminal !== "boolean") fail("entry");', ';', "reply-entry-terminal"],
         ["entry-duplicate", 'if (Object.prototype.hasOwnProperty.call(seen, entry.id)) fail("entry-duplicate");', ';', "reply-entry-duplicate"]
     ];
     for (const [name, needle, replacement, example, matches] of guards)
@@ -292,6 +306,14 @@ try {
         logic => {
             for (const row of cases.filter(row => row[0].startsWith("echo-setting-"))) rejected(logic, row);
         });
+    for (const kind of ["compositor.reveal", "run.detached", "desktop.launch"]) {
+        const line = source.split("\n").find(row => row.includes('"' + kind + '": {'));
+        control("locked-" + kind, line, line.replace("acts: true", "acts: false"), lockedRows);
+    }
+    control("locked-observed", 'return locked !== false && REQUESTS[kind].acts ? "refused: locked" : "";',
+        'return REQUESTS[kind].acts && false ? "refused: locked" : "";', lockedRows);
+    control("unlocked-allowed", 'return locked !== false && REQUESTS[kind].acts ? "refused: locked" : "";',
+        'return REQUESTS[kind].acts ? "refused: locked" : "";', lockedRows);
     control("entries-hidden", 'entry.noDisplay === true) return null;', 'false) return null;',
         logic => assert.equal(logic.desktopEntries([shellEntry("hidden", { noDisplay: true })]).entries.length, 0));
     control("entries-bytes", 'if (size > ENTRIES_BYTES) break;', ';',

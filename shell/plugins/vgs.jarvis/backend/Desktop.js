@@ -11,10 +11,10 @@ const cp = require("node:child_process");
  */
 const BOUNDS = Object.freeze({
     hyprctlMs: 2000, hyprctlBytes: 1024 * 1024, requestMs: 2000,
-    settleMs: 2000, launchMs: 10000, pollMs: 100
+    settleMs: 2000, launchMs: 10000, pollMs: 100,
+    // Scheduling slack between the executor's own bounds and Session's limit.
+    slackMs: 1000
 });
-// Scheduling slack between the executor's own bounds and Session's limit.
-const SLACK_MS = 1000;
 
 // An executor's answer, thrown to end a call's chain early.
 class Ended {
@@ -141,14 +141,15 @@ function targetWindow(value, before, steps, unmet = "failed") {
 }
 
 /**
- * create({Dispatch, request, environment, clock, bounds, commands}) builds
- * the four executor records the router registers, sharing one Hyprland
- * reader and one lifetime. Dispatch is the core's state reader, loaded
+ * create({Dispatch, Launch, request, environment, clock, bounds, commands})
+ * builds the four executor records the router registers, sharing one
+ * Hyprland reader and one lifetime. Dispatch is the core's batch reader and
+ * Launch the shared launch rule, shell/Commons/DesktopLaunch.js, both loaded
  * from the VGS tree. request(kind, args, timeoutMs, done) is
  * ShellRequests.send. environment is hyprctl's whole environment.
  * commands lists the optional commands present beside hyprctl.
  */
-function create({ Dispatch, request, environment, clock, bounds = BOUNDS, commands = [] }) {
+function create({ Dispatch, Launch, request, environment, clock, bounds = BOUNDS, commands = [] }) {
     const children = new Set();
     let closed = false;
 
@@ -171,14 +172,17 @@ function create({ Dispatch, request, environment, clock, bounds = BOUNDS, comman
         });
     }
 
-    async function state() {
+    // One batch read through its Dispatch parser; any failure ends the call.
+    async function read(batch, parse, label) {
         let text;
-        try { text = await hyprctl(["--batch", Dispatch.REVEAL_STATE_REQUEST]); }
-        catch (error) { throw failed("Hyprland state could not be read: hyprctl " + error.message + "."); }
-        const read = Dispatch.revealState(text);
-        if (!read.ok) throw failed("Hyprland state could not be read: " + read.error + ".");
-        return read;
+        try { text = await hyprctl(["--batch", batch]); }
+        catch (error) { throw failed("Hyprland " + label + " could not be read: hyprctl " + error.message + "."); }
+        const value = parse(text);
+        if (!value.ok) throw failed("Hyprland " + label + " could not be read: " + value.error + ".");
+        return value;
     }
+
+    const state = () => read(Dispatch.REVEAL_STATE_REQUEST, Dispatch.revealState, "state");
 
     async function ask(kind, args) {
         const reply = await new Promise(resolve => request(kind, args, bounds.requestMs, resolve));
@@ -235,15 +239,7 @@ function create({ Dispatch, request, environment, clock, bounds = BOUNDS, comman
             const mapped = s.clients.filter(c => c.mapped);
             return { outcome: "completed", content: [mapped.length + " windows"].concat(mapped.map(c => describe(c, s))).join("\n") };
         }
-        let text;
-        try { text = await hyprctl(["--batch", "j/workspaces;j/monitors"]); }
-        catch (error) { throw failed("Hyprland workspaces could not be read: hyprctl " + error.message + "."); }
-        const replies = Dispatch.batchReplies(text, 2, "workspaces");
-        if (!replies.ok) throw failed("Hyprland workspaces could not be read: " + replies.error + ".");
-        let workspaces, monitors;
-        try { [workspaces, monitors] = replies.parts.map(part => JSON.parse(part)); }
-        catch { throw failed("Hyprland workspaces could not be read: unparsed reply."); }
-        if (!Array.isArray(workspaces) || !Array.isArray(monitors)) throw failed("Hyprland workspaces could not be read: shape.");
+        const { workspaces, monitors } = await read(Dispatch.WORKSPACE_STATE_REQUEST, Dispatch.workspaceState, "workspaces");
         const lines = workspaces.slice().sort((a, b) => a.id - b.id).map(w => {
             const shown = monitors.filter(m => m.activeWorkspace.id === w.id || m.specialWorkspace.id === w.id);
             return "workspace id=" + w.id + " name=" + JSON.stringify(w.name) + " monitor=" + w.monitor + " windows=" + w.windows
@@ -263,24 +259,22 @@ function create({ Dispatch, request, environment, clock, bounds = BOUNDS, comman
             return { outcome: "completed", content: [lines.length + " applications" + (data.complete ? "" : " (list cut)")].concat(lines).join("\n") };
         }
         const before = await state();
-        let argv, match, label;
+        let match, label;
         if (call.id === "apps.launch") {
-            const id = call.args.desktop.replace(/\.desktop$/, "");
-            const entry = await ask("desktop.entry", [id]);
-            // The launcher's rule: a terminal entry runs through xdg-terminal-exec,
-            // whose window carries the terminal's class, not the application's.
-            argv = entry.terminal ? ["xdg-terminal-exec"].concat(entry.command) : entry.command;
+            // The service launches the entry by the shared launch rule and
+            // answers what the read-back needs. A terminal entry's window
+            // carries the terminal's class, not the application's.
+            const entry = await ask("desktop.launch", [call.args.desktop.replace(/\.desktop$/, "")]);
             const classes = [entry.startupClass, entry.id].filter(Boolean).map(value => value.toLowerCase());
             match = entry.terminal ? () => true
                 : c => classes.includes(lower(c.class)) || classes.includes(lower(c.initialClass));
             label = JSON.stringify(entry.name || entry.id);
         } else {
             const target = call.id === "apps.open" ? call.args.path : call.args.url;
-            argv = ["gio", "open", target];
+            await ask("run.detached", Launch.open(target));
             match = () => true;
             label = JSON.stringify(target);
         }
-        await ask("run.detached", argv);
         const result = await settle(expect.appears(before, match), bounds.launchMs);
         if (result.kind === "met") return { outcome: "completed", content: "Started " + label + ". Read back: " + result.seen + "." };
         return { outcome: "unknown", content: "The shell started " + label + ", but no window of it appeared within "
@@ -290,7 +284,9 @@ function create({ Dispatch, request, environment, clock, bounds = BOUNDS, comman
 
     async function wire(call) {
         await ask("toast", [call.args.title, call.args.body]);
-        return { outcome: "completed", content: "The notice was shown." };
+        // The reply proves the core took the toast; it may wait in the
+        // core's queue behind others before it is drawn.
+        return { outcome: "completed", content: "The notice was posted." };
     }
 
     function executor(run, commandsPresent, timeoutMs) {
@@ -305,15 +301,18 @@ function create({ Dispatch, request, environment, clock, bounds = BOUNDS, comman
         };
     }
 
+    // Each timeoutMs is the longest path's bounds: the state read before a
+    // change, each request with its settle, whose last read can start just
+    // before the settle deadline and take a whole hyprctl bound.
     const hyprctlWorst = bounds.hyprctlMs;
     const settleWorst = bounds.requestMs + bounds.settleMs + bounds.pollMs + hyprctlWorst;
     const records = {
-        windows: executor(windows, ["hyprctl"], hyprctlWorst + SLACK_MS),
+        windows: executor(windows, ["hyprctl"], hyprctlWorst + bounds.slackMs),
         // Fullscreen's two steps are the longest plan.
-        compositor: executor(change, ["hyprctl"], hyprctlWorst + 2 * settleWorst + SLACK_MS),
+        compositor: executor(change, ["hyprctl"], hyprctlWorst + 2 * settleWorst + bounds.slackMs),
         apps: executor(apps, ["hyprctl"].concat(commands.filter(c => c === "gio")),
-            hyprctlWorst + 2 * bounds.requestMs + bounds.launchMs + bounds.pollMs + hyprctlWorst + SLACK_MS),
-        wire: executor(wire, [], bounds.requestMs + SLACK_MS)
+            hyprctlWorst + bounds.requestMs + bounds.launchMs + bounds.pollMs + hyprctlWorst + bounds.slackMs),
+        wire: executor(wire, [], bounds.requestMs + bounds.slackMs)
     };
 
     // Lease loss: no read starts after close, and a read in flight ends.

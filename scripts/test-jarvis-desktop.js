@@ -12,6 +12,7 @@ const file = path.join(backend, "Desktop.js");
 world(async () => {
     const Protocol = load(path.join(tree, "shell/plugins/vgs.jarvis/JarvisProtocol.js"));
     const Dispatch = load(path.join(tree, "shell/Core/Dispatch.js"));
+    const Launch = load(path.join(tree, "shell/Commons/DesktopLaunch.js"));
     const Tools = require(path.join(backend, "Tools.js"));
     const ShellRequests = require(path.join(backend, "ShellRequests.js"));
     const runtime = process.env.XDG_RUNTIME_DIR;
@@ -20,21 +21,30 @@ world(async () => {
         { id: "fixture.tool", name: "Tool", startupClass: "", noDisplay: false, command: ["fixture-tool"], terminal: true },
         { id: "fixture.hidden", name: "Hidden", startupClass: "", noDisplay: true, command: ["fixture-hidden"], terminal: false }
     ];
-    const desk = desktopWorld(runtime, entries);
+    const desk = desktopWorld(runtime, entries, Launch);
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     // Small real bounds keep the suite short; production's are in Desktop.js.
-    const bounds = { hyprctlMs: 3000, hyprctlBytes: 1024 * 1024, requestMs: 250, settleMs: 300, launchMs: 400, pollMs: 20 };
+    const bounds = { hyprctlMs: 3000, hyprctlBytes: 1024 * 1024, requestMs: 250, settleMs: 300, launchMs: 400, pollMs: 20, slackMs: 1000 };
+    // The longest paths, near their bounds: each stand-in read sleeps 1 s
+    // under a 1.3 s hyprctl bound, and each reply waits 1.05 s under a 1.2 s
+    // request bound. A settle bound shorter than one read takes one read.
+    // The margins leave room for a loaded host's process start and timers.
+    const slow = d => {
+        d.delay(1.0);
+        d.replyMs = 1050;
+        return { ...bounds, hyprctlMs: 1300, requestMs: 1200, settleMs: 100, launchMs: 100, slackMs: 50 };
+    };
     const environment = { PATH: process.env.PATH, XDG_RUNTIME_DIR: runtime, LANG: "C.UTF-8" };
 
     function make(Desktop = require(file), commands = ["gio"], timing = bounds) {
         const requests = ShellRequests.create({ Protocol, clock, write: fields => {
             const message = Protocol.accept(JSON.stringify({ v: 1, type: "request", gen: 0, revision: "a".repeat(64), ...fields }), "daemon");
-            setImmediate(() => {
+            setTimeout(() => {
                 const reply = desk.serve(Protocol, message);
                 if (reply !== null) requests.reply(Protocol.accept(JSON.stringify(reply), "shell"));
-            });
+            }, desk.replyMs);
         } });
-        const desktop = Desktop.create({ Dispatch, request: requests.send, clock, bounds: timing, commands, environment });
+        const desktop = Desktop.create({ Dispatch, Launch, request: requests.send, clock, bounds: timing, commands, environment });
         // The router hands an executor Tools' frozen snapshot, never the model's object.
         const run = (id, args = {}) => new Promise(resolve => {
             const refined = Tools.refine({ id, args });
@@ -54,6 +64,7 @@ world(async () => {
         ["focus-refused", "windows.focus", { window: "0xa1" }, d => { d.modes["compositor.focusWindow"] = "refuse"; }, "failed", /refused compositor\.focusWindow: refused: fixture/],
         ["focus-silent", "windows.focus", { window: "0xa1" }, d => { d.modes["compositor.focusWindow"] = "silent"; }, "unknown", /did not answer compositor\.focusWindow/],
         ["focus-unread", "windows.focus", { window: "0xa1" }, d => { d.modes["compositor.focusWindow"] = "unread"; }, "unknown", /requested\. Hyprland state could not be read/],
+        ["focus-locked", "windows.focus", { window: "0xa1" }, d => { d.locked = true; }, "failed", /refused compositor\.focusWindow: refused: locked/],
         ["focus-absent", "windows.focus", { window: "0xdead" }, null, "failed", /Window 0xdead is not open/, d => assert.deepEqual(d.requests, [])],
         ["reveal", "windows.reveal", { window: "0xa1" }, null, "completed", /0xa1 has the focus/],
         ["reveal-noop", "windows.reveal", { window: "0xa1" }, d => { d.modes["compositor.reveal"] = "noop"; }, "failed", /did not show/],
@@ -69,6 +80,10 @@ world(async () => {
         }],
         ["maximize-toggle", "windows.fullscreen", { window: "0xa1", mode: "maximized", action: "toggle" }, null, "completed", /fullscreen=1/],
         ["fullscreen-noop", "windows.fullscreen", { window: "0xa1", mode: "fullscreen", action: "toggle" }, d => { d.modes["compositor.fullscreenWindow"] = "noop"; }, "failed", /fullscreen=0/],
+        ["fullscreen-slowest", "windows.fullscreen", { window: "0xa1", mode: "fullscreen", action: "set" }, d => {
+            d.modes["compositor.fullscreenWindow"] = "noop";
+            return slow(d);
+        }, "failed", /accepted compositor\.fullscreenWindow/],
         ["fullscreen-unfocused", "windows.fullscreen", { window: "0xa1", mode: "fullscreen", action: "set" }, d => { d.modes["compositor.focusWindow"] = "noop"; }, "failed", /accepted compositor\.focusWindow/,
             d => assert.deepEqual(d.requests.map(r => r.kind), ["compositor.focusWindow"], "no fullscreen for an unfocused target")],
         ["float-toggle", "windows.float", { window: "0xa1", action: "toggle" }, null, "completed", /floating=false/],
@@ -94,15 +109,21 @@ world(async () => {
         ["apps-query", "apps.list", { query: "TOOL" }, null, "completed", /^1 applications\nfixture\.tool name="Tool"$/],
         ["launch", "apps.launch", { desktop: "fixture.editor.desktop" }, d => { d.launches["fixture-editor"] = { mode: "window", class: "fixture.editor" }; },
             "completed", /Started "Editor".*class="fixture\.editor"/,
-            d => assert.deepEqual(d.requests.at(-1), { kind: "run.detached", args: ["fixture-editor", "--new"] })],
+            d => {
+                assert.deepEqual(d.requests.at(-1), { kind: "desktop.launch", args: ["fixture.editor"] });
+                assert.deepEqual(d.runs, [["fixture-editor", "--new"]]);
+            }],
         ["launch-windowless", "apps.launch", { desktop: "fixture.editor" }, null, "unknown", /no window of it appeared.*no new window/],
+        ["launch-slowest", "apps.launch", { desktop: "fixture.editor" }, slow, "unknown", /no window of it appeared/],
         ["launch-other-class", "apps.launch", { desktop: "fixture.editor" }, d => { d.launches["fixture-editor"] = { mode: "window", class: "other.app" }; },
             "unknown", /other classes: "other\.app"/],
         ["launch-terminal", "apps.launch", { desktop: "fixture.tool" }, d => { d.launches["fixture-tool"] = { mode: "window", class: "fixture.terminal" }; },
             "completed", /class="fixture\.terminal"/,
-            d => assert.deepEqual(d.requests.at(-1), { kind: "run.detached", args: ["xdg-terminal-exec", "fixture-tool"] })],
-        ["launch-unknown", "apps.launch", { desktop: "fixture.absent" }, null, "failed", /refused desktop\.entry: refused: desktop=unknown/,
-            d => assert.equal(d.requests.some(r => r.kind === "run.detached"), false)],
+            d => assert.deepEqual(d.runs, [["xdg-terminal-exec", "fixture-tool"]])],
+        ["launch-unknown", "apps.launch", { desktop: "fixture.absent" }, null, "failed", /refused desktop\.launch: refused: desktop=unknown/,
+            d => assert.deepEqual(d.runs, [])],
+        ["launch-locked", "apps.launch", { desktop: "fixture.editor" }, d => { d.locked = true; }, "failed", /refused desktop\.launch: refused: locked/,
+            d => assert.deepEqual(d.runs, [])],
         ["launch-hidden", "apps.launch", { desktop: "fixture.hidden" }, null, "failed", /desktop=unknown/],
         ["open", "apps.open", { path: "/fixture/report.txt" }, d => { d.launches.gio = { mode: "window", class: "fixture.viewer" }; }, "completed", /class="fixture\.viewer"/,
             d => assert.deepEqual(d.requests.at(-1), { kind: "run.detached", args: ["gio", "open", "/fixture/report.txt"] })],
@@ -110,8 +131,9 @@ world(async () => {
         ["url", "apps.url", { url: "https://example.test/page" }, null, "unknown", /"https:\/\/example\.test\/page"/,
             d => assert.deepEqual(d.requests.at(-1), { kind: "run.detached", args: ["gio", "open", "https://example.test/page"] })],
         ["run-refused", "apps.url", { url: "https://example.test/" }, d => { d.modes["run.detached"] = "refuse"; }, "failed", /refused run\.detached/],
-        ["toast", "notify.toast", { title: "Fixture", body: "Line one\nLine two" }, null, "completed", /notice was shown/,
+        ["toast", "notify.toast", { title: "Fixture", body: "Line one\nLine two" }, null, "completed", /notice was posted/,
             d => assert.deepEqual(d.requests, [{ kind: "toast", args: ["Fixture", "Line one\nLine two"] }])],
+        ["toast-locked", "notify.toast", { title: "Fixture", body: "body" }, d => { d.locked = true; }, "completed", /posted/],
         ["toast-refused", "notify.toast", { title: "Fixture", body: "body" }, d => { d.modes.toast = "refuse"; }, "failed", /refused toast/],
         ["toast-silent", "notify.toast", { title: "Fixture", body: "body" }, d => { d.modes.toast = "silent"; }, "unknown", /did not answer toast/],
         ["toast-oversize", "notify.toast", { title: "Fixture", body: "x".repeat(5000) }, null, "failed", /could not be sent: jarvis: protocol=request-args/,
@@ -121,16 +143,19 @@ world(async () => {
     async function check(Desktop, row) {
         const [name, tool, args, setup, outcome, content, after] = row;
         desk.reset();
-        if (setup !== null) setup(desk);
-        const { desktop, run } = make(Desktop);
+        const timing = setup === null ? undefined : setup(desk);
+        const { desktop, run } = make(Desktop, ["gio"], timing || bounds);
         const started = performance.now();
         try {
             const answer = await run(tool, args);
             assert.equal(answer.outcome, outcome, name + ": " + answer.content);
             assert.match(answer.content, content, name);
             if (after !== undefined) after(desk);
-            // Session's limit must outlast the executor's own bounds.
-            assert.ok(performance.now() - started < desktop.records[Tools.TABLE[tool].executor].timeoutMs, name + " within timeoutMs");
+            // Session's limit must outlast the executor's own bounds; the
+            // slowest rows run each executor's longest path near them.
+            const elapsed = performance.now() - started;
+            const limit = desktop.records[Tools.TABLE[tool].executor].timeoutMs;
+            assert.ok(elapsed < limit, name + " took " + Math.round(elapsed) + " ms, timeoutMs " + limit);
         } finally { desktop.close(); }
         for (const call of desk.hyprctlCalls()) {
             assert.ok(["j/clients;j/activewindow;j/monitors", "j/workspaces;j/monitors"].includes(call.argv[1]), name + " reads only");
@@ -161,9 +186,19 @@ world(async () => {
         if (fail) fs.writeFileSync(path.join(runtime, "hyprctl.fail"), "");
         const ids = [];
         const owner = Desktop.install({ router: { register: (id, record) => ids.push([id, record.commands]) },
-            Dispatch, request: () => assert.fail("no request at install"), clock, bounds, environment, commands: [] });
-        if (closeEarly) owner.close();
-        await new Promise(resolve => setTimeout(resolve, 500)); // Long enough for one stand-in read.
+            Dispatch, Launch, request: () => assert.fail("no request at install"), clock, bounds, environment, commands: [] });
+        if (closeEarly) {
+            owner.close();
+            // Close kills the probe's read; its rejection follows the kill.
+            await new Promise(resolve => setTimeout(resolve, 200));
+            return ids;
+        }
+        for (let wait = 0; desk.hyprctlCalls().length === 0; wait++) {
+            assert.ok(wait < 500, "the probe read finishes");
+            await new Promise(resolve => setTimeout(resolve, 10)); // Polls the stand-in's log, not a latency.
+        }
+        // The probe's callback follows the stand-in's exit.
+        await new Promise(resolve => setTimeout(resolve, 50));
         owner.close();
         return ids;
     }
@@ -217,8 +252,9 @@ world(async () => {
     await control("unread-undecided", "if (result.kind === \"unread\") return { outcome: \"unknown\",",
         "if (result.kind === \"unread\") return { outcome: \"failed\",", red(["focus-unread"]));
     await control("launch-class", ": c => classes.includes(lower(c.class)) || classes.includes(lower(c.initialClass));", ": () => true;", red(["launch-other-class"]));
-    await control("terminal-argv", "argv = entry.terminal ? [\"xdg-terminal-exec\"].concat(entry.command) : entry.command;",
-        "argv = entry.command;", red(["launch-terminal"]));
+    await control("terminal-window", "match = entry.terminal ? () => true", "match = false ? () => true", red(["launch-terminal"]));
+    await control("timeout-two-steps", "hyprctlWorst + 2 * settleWorst + bounds.slackMs", "hyprctlWorst + settleWorst + bounds.slackMs", red(["fullscreen-slowest"]));
+    await control("timeout-last-read", "bounds.launchMs + bounds.pollMs + hyprctlWorst + bounds.slackMs", "bounds.launchMs + bounds.pollMs + bounds.slackMs", red(["launch-slowest"]));
     await control("new-window", "state.clients.filter(c => c.mapped && !old.has(lower(c.address)))", "state.clients.filter(c => c.mapped)", red(["open-windowless"]));
     await control("apps-query", ".toLowerCase().includes(query))", ".length > 0)", red(["apps-query"]));
     await control("probe-first", "router.register(\"wire\", desktop.records.wire);",

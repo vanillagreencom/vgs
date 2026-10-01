@@ -34,6 +34,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const { onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
     const Dispatch = load(path.join(process.argv[3], "shell/Core/Dispatch.js"));
+    const Launch = load(path.join(process.argv[3], "shell/Commons/DesktopLaunch.js"));
     const Session = Protocol.Session;
     const { SessionRunner, unavailable } = require("./session-runner.js");
     const { Audio } = require("./Audio.js");
@@ -223,7 +224,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     Object.assign(runner.ports, router.ports);
                     requests = ShellRequests.create({ Protocol, clock, write: fields =>
                         write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
-                    desktop = Desktop.install({ router, Dispatch, request: requests.send, clock,
+                    desktop = Desktop.install({ router, Dispatch, Launch, request: requests.send, clock,
                         environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) });
                 }
                 if (first && readMute()) runner.dispatch({ type: "mute" });

@@ -10,7 +10,7 @@ const path = require("node:path");
 
 // Each call appends its log line as it ends, so a line means a finished read.
 const HYPRCTL = `#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 run = os.environ["XDG_RUNTIME_DIR"]
 def end(status, text=""):
     sys.stdout.write(text)
@@ -18,6 +18,9 @@ def end(status, text=""):
     with open(os.path.join(run, "hyprctl.log"), "a") as log:
         log.write(json.dumps({"argv": sys.argv[1:], "env": sorted(os.environ), "status": status}) + "\\n")
     sys.exit(status)
+if os.path.exists(os.path.join(run, "hyprctl.delay")):
+    with open(os.path.join(run, "hyprctl.delay")) as f:
+        time.sleep(float(f.read()))
 if os.path.exists(os.path.join(run, "hyprctl.fail")):
     end(1)
 with open(os.path.join(run, "fixture-hyprland.json")) as f:
@@ -60,16 +63,21 @@ function initial() {
 }
 
 /**
- * world(runtime, entries) owns one synthetic desktop: its state file, the
- * fake shell's modes per request kind ("effect", "noop", "refuse",
- * "silent", "unread") and its record of requests. A launch maps a window
- * of `launches[argv0]` when that program's mode is "window".
+ * desktopWorld(runtime, entries, Launch) owns one synthetic desktop: its
+ * state file, the fake shell's modes per request kind ("effect", "noop",
+ * "refuse", "silent", "unread"), its lock observation, its record of
+ * requests and of the argv it ran. A run maps a window of
+ * `launches[program]` when that program's mode is "window". `delay(s)`
+ * makes each stand-in read sleep S seconds; a caller delays replies by
+ * `replyMs`. Launch is shell/Commons/DesktopLaunch.js, as Service.qml runs it.
  */
-function desktopWorld(runtime, entries) {
+function desktopWorld(runtime, entries, Launch) {
     const file = path.join(runtime, "fixture-hyprland.json");
     const modes = {};
     const launches = {};
     const requests = [];
+    const runs = [];
+    const world = { locked: false, replyMs: 0 };
     let serial = 0x100;
     const read = () => JSON.parse(fs.readFileSync(file, "utf8"));
     const write = value => fs.writeFileSync(file, JSON.stringify(value));
@@ -78,7 +86,11 @@ function desktopWorld(runtime, entries) {
         for (const key of Object.keys(modes)) delete modes[key];
         for (const key of Object.keys(launches)) delete launches[key];
         requests.length = 0;
+        runs.length = 0;
+        world.locked = false;
+        world.replyMs = 0;
         fs.rmSync(path.join(runtime, "hyprctl.fail"), { force: true });
+        fs.rmSync(path.join(runtime, "hyprctl.delay"), { force: true });
         fs.rmSync(path.join(runtime, "hyprctl.log"), { force: true });
     }
     const focused = s => s.monitors.find(m => m.focused);
@@ -105,6 +117,7 @@ function desktopWorld(runtime, entries) {
         },
         "compositor.focusMonitor": (s, [name]) => { for (const m of s.monitors) m.focused = m.name === name; },
         "run.detached": (s, argv) => {
+            runs.push(Array.from(argv));
             const launch = launches[argv[0] === "xdg-terminal-exec" ? argv[1] : argv[0]];
             if (launch !== undefined && launch.mode === "window")
                 s.clients.push(client("0x" + (serial++).toString(16), { class: launch.class, initialClass: launch.class, title: "Launched" }));
@@ -117,13 +130,19 @@ function desktopWorld(runtime, entries) {
         requests.push({ kind: message.kind, args: Array.from(message.args) });
         const mode = modes[message.kind] || "effect";
         if (mode === "silent") return null;
-        let answer = "ok", data = null;
-        if (mode === "refuse") answer = "refused: fixture=" + message.kind;
+        let answer = Protocol.lockedRefusal(message.kind, world.locked) || "ok", data = null;
+        if (answer !== "ok") data = null;
+        else if (mode === "refuse") answer = "refused: fixture=" + message.kind;
         else if (message.kind === "desktop.list") data = Protocol.desktopEntries(entries);
-        else if (message.kind === "desktop.entry") {
+        else if (message.kind === "desktop.launch") {
             const entry = entries.find(e => e.id === message.args[0]);
             data = entry === undefined ? null : Protocol.desktopEntry(entry, true);
             if (data === null) answer = "refused: desktop=unknown";
+            else {
+                const s = read();
+                EFFECTS["run.detached"](s, Launch.entry({ command: entry.command, runInTerminal: entry.terminal }));
+                write(s);
+            }
         } else if (mode !== "noop") {
             const s = read();
             EFFECTS[message.kind](s, message.args);
@@ -137,8 +156,9 @@ function desktopWorld(runtime, entries) {
         const log = path.join(runtime, "hyprctl.log");
         return fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [];
     };
+    const delay = seconds => fs.writeFileSync(path.join(runtime, "hyprctl.delay"), String(seconds));
     reset();
-    return { modes, launches, requests, read, write, reset, serve, hyprctlCalls };
+    return Object.assign(world, { modes, launches, requests, runs, read, write, reset, serve, hyprctlCalls, delay });
 }
 
 module.exports = { standins, desktopWorld, client };

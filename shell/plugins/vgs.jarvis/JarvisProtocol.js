@@ -7,23 +7,25 @@ var MAX_LINE_BYTES = 256 * 1024;
 
 // Requests the daemon sends and the service answers, one reply each. `args`
 // lists each argument's type, or "argv" for a command; `data` names the
-// reply's data shape. Shell.compositor owns each dispatcher's argument rules.
+// reply's data shape. `acts` marks a request that changes the desktop,
+// which the service refuses while the session is locked.
+// Shell.compositor owns each dispatcher's argument rules.
 var REQUESTS = {
-    "compositor.focusWorkspace": { args: ["text"], data: "none" },
-    "compositor.focusWindow": { args: ["text"], data: "none" },
-    "compositor.moveWindowToWorkspace": { args: ["text", "text"], data: "none" },
-    "compositor.toggleSpecialWorkspace": { args: ["text"], data: "none" },
-    "compositor.closeWindow": { args: ["text"], data: "none" },
-    "compositor.fullscreenWindow": { args: ["text", "text"], data: "none" },
-    "compositor.floatWindow": { args: ["text", "text"], data: "none" },
-    "compositor.moveWindow": { args: ["text", "integer", "integer"], data: "none" },
-    "compositor.resizeWindow": { args: ["text", "integer", "integer"], data: "none" },
-    "compositor.focusMonitor": { args: ["text"], data: "none" },
-    "compositor.reveal": { args: ["text"], data: "none" },
-    "run.detached": { args: "argv", data: "none" },
-    "toast": { args: ["text", "text"], data: "none" },
-    "desktop.list": { args: [], data: "entries" },
-    "desktop.entry": { args: ["text"], data: "entry" }
+    "compositor.focusWorkspace": { args: ["text"], data: "none", acts: true },
+    "compositor.focusWindow": { args: ["text"], data: "none", acts: true },
+    "compositor.moveWindowToWorkspace": { args: ["text", "text"], data: "none", acts: true },
+    "compositor.toggleSpecialWorkspace": { args: ["text"], data: "none", acts: true },
+    "compositor.closeWindow": { args: ["text"], data: "none", acts: true },
+    "compositor.fullscreenWindow": { args: ["text", "text"], data: "none", acts: true },
+    "compositor.floatWindow": { args: ["text", "text"], data: "none", acts: true },
+    "compositor.moveWindow": { args: ["text", "integer", "integer"], data: "none", acts: true },
+    "compositor.resizeWindow": { args: ["text", "integer", "integer"], data: "none", acts: true },
+    "compositor.focusMonitor": { args: ["text"], data: "none", acts: true },
+    "compositor.reveal": { args: ["text"], data: "none", acts: true },
+    "run.detached": { args: "argv", data: "none", acts: true },
+    "desktop.launch": { args: ["text"], data: "entry", acts: true },
+    "toast": { args: ["text", "text"], data: "none", acts: false },
+    "desktop.list": { args: [], data: "entries", acts: false }
 };
 // Requests awaiting a reply, the plan's bound. The daemon refuses the next.
 var MAX_PENDING_REQUESTS = 16;
@@ -101,17 +103,15 @@ function requestArgs(kind, args) {
 }
 
 // The wire form of one desktop entry the service read, or null when an
-// entry cannot cross: hidden, unnamed by a printable id, or with no command.
-// `command` and `terminal` are the launcher's inputs; list replies omit them.
-function desktopEntry(entry, withCommand) {
+// entry cannot cross: hidden or unnamed by a printable id. A launch reply
+// adds `terminal`, since a terminal entry's window carries the terminal's
+// class; a list reply omits it.
+function desktopEntry(entry, withTerminal) {
     if (entry === null || typeof entry !== "object" || entry.noDisplay === true) return null;
     if (!printable(entry.id, 1, FIELD_MAX)) return null;
     var value = { id: entry.id, name: String(entry.name || "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, FIELD_MAX),
         startupClass: String(entry.startupClass || "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, FIELD_MAX) };
-    if (!withCommand) return value;
-    if (!argv(entry.command) || typeof entry.terminal !== "boolean") return null;
-    value.command = entry.command.slice();
-    value.terminal = entry.terminal;
+    if (withTerminal) value.terminal = entry.terminal === true;
     return value;
 }
 
@@ -131,17 +131,25 @@ function desktopEntries(entries) {
     return { entries: kept, complete: kept.length === values.length };
 }
 
+// The service's answer to KIND before any capability runs: a keyed refusal
+// for a request that changes the desktop while the session is locked, else
+// "". Policy judged the lock when the action started; a lock observed since
+// stops the requests that remain.
+function lockedRefusal(kind, locked) {
+    return locked !== false && REQUESTS[kind].acts ? "refused: locked" : "";
+}
+
 // A shell call's answer as the reply carries it: one printable line.
 function answer(value) {
     var line = String(value).replace(/[\x00-\x1f\x7f]/g, " ").slice(0, ANSWER_MAX);
     return line === "" ? "refused: answer=empty" : line;
 }
 
-function entryShape(value, withCommand) {
-    keys(value, withCommand ? ["id", "name", "startupClass", "command", "terminal"] : ["id", "name", "startupClass"], "entry");
+function entryShape(value, withTerminal) {
+    keys(value, withTerminal ? ["id", "name", "startupClass", "terminal"] : ["id", "name", "startupClass"], "entry");
     if (!printable(value.id, 1, FIELD_MAX) || !printable(value.name, 0, FIELD_MAX)
             || !printable(value.startupClass, 0, FIELD_MAX)) fail("entry");
-    if (withCommand && (!argv(value.command) || typeof value.terminal !== "boolean")) fail("entry");
+    if (withTerminal && typeof value.terminal !== "boolean") fail("entry");
 }
 
 function replyData(message) {

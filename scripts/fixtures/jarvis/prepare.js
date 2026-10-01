@@ -18,7 +18,7 @@ function seedTaskEvents(folder, count) {
 function freshSuite(tree, suite, root) {
     const clone = path.join(root, "f");
     const relative = "scripts/test-jarvis-" + suite + ".js";
-    for (const folder of ["scripts/fixtures/jarvis", "scripts/lib", "bin/lib", "shell/Core", "shell/plugins/vgs.jarvis/backend"])
+    for (const folder of ["scripts/fixtures/jarvis", "scripts/lib", "bin/lib", "shell/Core", "shell/Commons", "shell/plugins/vgs.jarvis/backend"])
         fs.mkdirSync(path.join(clone, folder), { recursive: true });
     for (const file of [relative, "scripts/fixtures/jarvis/prepare.js", "scripts/lib/jarvis-env.sh",
         "bin/lib/qml-library.js", "shell/plugins/vgs.jarvis/JarvisProtocol.js",
@@ -28,7 +28,7 @@ function freshSuite(tree, suite, root) {
         "scripts/fixtures/jarvis/scripted.js", "shell/plugins/vgs.jarvis/backend/Audio.js",
         "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
         "scripts/fixtures/jarvis/audio-tool.py", "scripts/fixtures/jarvis/desktop.js",
-        "bin/lib/judge-files.js", "shell/Core/Dispatch.js"])
+        "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Commons/DesktopLaunch.js"])
         fs.copyFileSync(path.join(tree, file), path.join(clone, file));
     for (const name of ["ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "ShellRequests.js", "Desktop.js"])
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend", name),
