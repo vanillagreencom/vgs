@@ -603,7 +603,8 @@ lists = [i for i, r in enumerate(rows) if r["type"] == "GroupList" and shown(i) 
 if not lists: print(json.dumps(["group-lists=0"])); sys.exit()
 checked = 0
 for n, i in enumerate(lists):
-    columns = [j for j in kids(i) if rows[j]["type"] == "Column"]
+    # The list's one child that is no hairline is the column of groups.
+    columns = [j for j in kids(i) if rows[j]["type"] != "Divider"]
     if len(columns) != 1: out.append("list%d.columns=%d" % (n, len(columns))); continue
     groups = [dict(rows[j]) for j in kids(columns[0]) if shown(j) and sized(j)]
     groups.sort(key=lambda g: g["box"][1])
