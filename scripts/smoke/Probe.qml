@@ -1308,6 +1308,16 @@ Scope {
             const item = root.instance(hostKey, id);
             return item !== null && root.descendants(item).some(child => child.activeFocus);
         }
+        // Whether Qt has activated the window that holds an instance: its
+        // root item, the instance's topmost ancestor, holds the active
+        // focus. A plugin that takes no focus leaves it on the host's slot,
+        // so this reads a window whatever its plugin focuses.
+        function windowFocused(hostKey: string, id: string): bool {
+            let at = root.instance(hostKey, id);
+            if (at === null) return false;
+            while (at.parent !== null) at = at.parent;
+            return at.activeFocus;
+        }
         // The launcher's rows as it draws them, in list order: each
         // LauncherRow delegate's kind, label and detail.
         function launcherRows(hostKey: string, id: string): string {

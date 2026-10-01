@@ -48,6 +48,14 @@ other_address() { toplevel_address "$other_pid"; }
 # How many lines of the helper's log match PATTERN, a grep -E pattern.
 other_events() { local status=0; grep -cE -- "$1" "$other_log" || status=$?; [[ $status -le 1 ]]; }
 
+# window_keyboard ID: true while Qt holds plugin ID's `window` activated,
+# its root item holding the active focus, false once the shell has read
+# the keyboard leaving it. Qt's Wayland client can drop a keyboard that
+# returns in one batch with the reply to the leave's sync
+# (docs/architecture/runtime-qml-focus.md), so a row waits for false
+# before a dispatch returns the keyboard, and for true before it types.
+window_keyboard() { ipc smoke windowFocused window "$1"; }
+
 # The address of the one shell window titled TITLE, or windows=<n>.
 window_address() { window_of "$1" address | python3 -c 'import json,sys; t=sys.stdin.read().strip(); print(json.loads(t)[0] if t.startswith("[") else t)'; }
 # `centred` when the one shell window titled TITLE has its centre within
@@ -119,19 +127,23 @@ past_border() { local c; c="$(edge_pixels "$1" 5)" || return; no_border_colour "
 # inactive colour while the toplevel helper is; a move dispatch moves it
 # and a focus dispatch focuses it; an Escape typed while the helper has the
 # keyboard reaches the helper and leaves the window open, and one typed
-# while the window has it closes the window through the host. It leaves no
-# window open, no helper running and hyprland.lua as it found it.
+# while the window has it closes the window through the host. The shell
+# reads the window losing the keyboard before the dispatch returns it and
+# holding it again before the Escape. It leaves no window open, no helper
+# running and hyprland.lua as it found it.
 app_window_rows() {
   local title="$1" id="$2" address at_before keys_before
   expect_poll "$title is one client of the shell's class titled $title" 1 window_count "$title"
   expect_poll "the $title window floats" '[true]' window_of "$title" floating
   geometry expect_poll "the $title window is centred on its monitor's work area" centred window_centred "$title"
   expect_poll "the $title window is focused" "[\"$shell_class\", \"$title\"]" active_window
+  expect_poll "the shell reads the $title window holding the keyboard" true window_keyboard "$id"
   window_border_on
   render expect_poll "the focused $title window's border is 4 px of the active colour" "ff0000 ff0000 ff0000 ff0000" edge_pixels "$title" 1 2 3 4
   render expect "the $title window's border ends at its size" none past_border "$title"
   if open_other "$sandbox/toplevel-$id.log"; then
     expect_poll "the helper beside $title takes the focus" '["smoke.other", "Other window"]' active_window
+    expect_poll "the shell reads the $title window without the keyboard" false window_keyboard "$id"
     render expect_poll "the unfocused $title window's border is 4 px of the inactive colour" "0000ff 0000ff 0000ff 0000ff" edge_pixels "$title" 1 2 3 4
     if address="$(window_address "$title")" && [[ $address == 0x* ]]; then
       at_before="$(window_of "$title" at)"
@@ -150,6 +162,7 @@ app_window_rows() {
       expect "that Escape leaves the $title window open" 1 window_count "$title"
       expect "a focus dispatch aimed at the $title window answers ok" ok hypr dispatch "hl.dsp.focus({ window = \"address:$address\" })"
       expect_poll "the focus dispatch focused the $title window" "[\"$shell_class\", \"$title\"]" active_window
+      expect_poll "the shell reads the $title window holding the keyboard again" true window_keyboard "$id"
       render expect_poll "the refocused $title window's border is the active colour again" "ff0000 ff0000 ff0000 ff0000" edge_pixels "$title" 1 2 3 4
       type_keys -k Escape || fail "typing Escape into the $title window failed"
       expect_poll "an Escape typed while the $title window is focused closes it" 0 window_count "$title"
