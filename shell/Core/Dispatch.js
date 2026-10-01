@@ -155,21 +155,46 @@ function batchReplies(text, want, label) {
     return { ok: true, parts: parts };
 }
 
-function revealState(text) {
-    var replies = batchReplies(text, 3, "reveal state");
+// A batch of JSON replies, one per SHAPES row [name, "array"|"object"] in
+// request order: { ok: true, values } or { ok: false, error } keyed by
+// LABEL. Every batch-of-JSON read the shell and Jarvis make goes here.
+function jsonReplies(text, shapes, label) {
+    var replies = batchReplies(text, shapes.length, label);
     if (!replies.ok) return { ok: false, error: replies.error };
-    var parts = replies.parts;
-    var read = [];
-    for (var i = 0; i < 3; i++) {
+    var values = [];
+    for (var i = 0; i < shapes.length; i++) {
         try {
-            read.push(JSON.parse(parts[i]));
+            values.push(JSON.parse(replies.parts[i]));
         } catch (e) {
-            return { ok: false, error: "refused: reveal state=unparsed part=" + i };
+            return { ok: false, error: "refused: " + label + "=unparsed part=" + i };
         }
     }
-    if (!Array.isArray(read[0]) || read[1] === null || typeof read[1] !== "object" || Array.isArray(read[1]) || !Array.isArray(read[2]))
-        return { ok: false, error: "refused: reveal state=shape want=clients,activewindow,monitors" };
-    return { ok: true, clients: read[0], active: read[1], monitors: read[2] };
+    for (var j = 0; j < shapes.length; j++) {
+        var value = values[j];
+        var list = Array.isArray(value);
+        if (shapes[j][1] === "array" ? !list : (value === null || typeof value !== "object" || list))
+            return { ok: false, error: "refused: " + label + "=shape want=" + shapes.map(function (s) { return s[0]; }).join(",") };
+    }
+    return { ok: true, values: values };
+}
+
+var REVEAL_STATE = [["clients", "array"], ["activewindow", "object"], ["monitors", "array"]];
+
+function revealState(text) {
+    var read = jsonReplies(text, REVEAL_STATE, "reveal state");
+    if (!read.ok) return read;
+    return { ok: true, clients: read.values[0], active: read.values[1], monitors: read.values[2] };
+}
+
+// The workspaces and the monitors that show them, from one `hyprctl
+// --batch` of WORKSPACE_STATE_REQUEST: { ok: true, workspaces, monitors }
+// or { ok: false, error }.
+var WORKSPACE_STATE_REQUEST = "j/workspaces;j/monitors";
+
+function workspaceState(text) {
+    var read = jsonReplies(text, [["workspaces", "array"], ["monitors", "array"]], "workspace state");
+    if (!read.ok) return read;
+    return { ok: true, workspaces: read.values[0], monitors: read.values[1] };
 }
 
 // Whether a client is on the screen: drawn (a background group tab is

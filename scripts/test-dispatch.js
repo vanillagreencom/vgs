@@ -170,6 +170,16 @@ function verifyReveal(lib, report) {
     for (const [name, text, want] of replies) row("reveal state: " + name, lib.revealState(text), want);
     row("reveal state request asks for the three in that order", lib.REVEAL_STATE_REQUEST, "j/clients;j/activewindow;j/monitors");
     row("batch replies split a hyprctl batch", lib.batchReplies("one\n\n\ntwo\n", 2, "batch"), { ok: true, parts: ["one", "two"] });
+    const workspaces = [
+        ["the two replies", '[{"id":1}]\n\n\n[{"name":"DP-1"}]\n', { ok: true, workspaces: [{ id: 1 }], monitors: [{ name: "DP-1" }] }],
+        ["a reply missing", '[]', { ok: false, error: "refused: workspace state=parts count=1 want=2" }],
+        ["a reply that is no JSON", '[]\n\n\nok', { ok: false, error: "refused: workspace state=unparsed part=1" }],
+        ["an object in place of a list", '{}\n\n\n[]', { ok: false, error: "refused: workspace state=shape want=workspaces,monitors" }],
+        ["a null reply", 'null\n\n\n[]', { ok: false, error: "refused: workspace state=shape want=workspaces,monitors" }]
+    ];
+    for (const [name, text, want] of workspaces) row("workspace state: " + name, lib.workspaceState(text), want);
+    row("workspace state request asks for the two in that order", lib.WORKSPACE_STATE_REQUEST, "j/workspaces;j/monitors");
+    row("reveal state: a null active window is refused", lib.revealState('[]\n\n\nnull\n\n\n[]'), { ok: false, error: "refused: reveal state=shape want=clients,activewindow,monitors" });
     return bad;
 }
 failures += verifyReveal(ctx, true);
@@ -226,7 +236,9 @@ const revealControls = [
     ["a regular workspace shows on its own monitor", "return m.id === client.monitor && m.activeWorkspace", "return m.activeWorkspace"],
     ["no special workspace over it", "&& (!m.specialWorkspace || m.specialWorkspace.id === 0);", ";"],
     ["the state has three replies", "if (parts.length !== want) return", "if (false) return"],
-    ["the state replies are in order", "if (!Array.isArray(read[0]) || read[1] === null || typeof read[1] !== \"object\" || Array.isArray(read[1]) || !Array.isArray(read[2]))", "if (false)"],
+    ["the state replies are in order", "if (shapes[j][1] === \"array\" ? !list : (value === null || typeof value !== \"object\" || list))", "if (false)"],
+    ["an object reply is not null", "(value === null || typeof value !== \"object\" || list)", "(typeof value !== \"object\" || list)"],
+    ["each reply is parsed", "values.push(JSON.parse(replies.parts[i]));", "values.push(replies.parts[i]);"],
     ["only mapped windows", "return c.mapped && addresses", "return addresses"]
 ];
 const dispatchFile = path.join(__dirname, "..", "shell", "Core", "Dispatch.js");
