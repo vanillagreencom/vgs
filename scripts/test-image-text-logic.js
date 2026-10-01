@@ -69,9 +69,7 @@ assert.ok(asked <= 12, "the cut bisects: " + asked + " measures for 1000 words")
 
 function controls() {
     const text = fs.readFileSync(source, "utf8");
-    const scratchRoot = process.env.TMPDIR || path.join(__dirname, "..", "tmp");
-    fs.mkdirSync(scratchRoot, { recursive: true });
-    const dir = fs.mkdtempSync(path.join(scratchRoot, "test-image-text-logic-"));
+    const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "test-image-text-logic-"));
     const table = [
         ["only local files draw", "/^file:\\/\\/\\/[^\"<>&]+$/.test(url)", "true", /drawable: a remote image/],
         ["alt text is escaped", "out = out.concat(markupTokens(escape(segment.alt)));", "out = out.concat(markupTokens(segment.alt));", /plain object writes its alt text|alt text is escaped/],

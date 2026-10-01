@@ -72,6 +72,8 @@ if [[ $image_text_pixels == \{* ]]; then
 row=json.load(sys.stdin)
 print("  image-text-magenta scale=1 count=%d threshold=%d deviceSize=%d geometry=%s" % (row["count"], row["threshold"], row["deviceSize"], row["geometry"]))' <<<"$image_text_pixels"
 fi
+# Both controls are written before the first popup load because Qt caches
+# the plugin directory's file names once it loads a control from it.
 python3 - "$repo/shell/Ui/feedback/VoiceOrb.qml" "$repo/shell/plugins/vgs.gallery/VoiceOrbControl.qml" "$repo/shell/Ui/feedback/shaders/voiceorb.frag.qsb" <<'PY'
 from pathlib import Path
 import json, sys

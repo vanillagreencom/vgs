@@ -13,6 +13,7 @@ Item {
     height: 420
     property string boundDateValue: "2026-01-05"
     property string boundPathValue: ""
+    property string echoPathValue: ""
     property var boundTimesValue: ["17:30"]
     property var boundWeekdaysValue: ["wed"]
 
@@ -25,6 +26,9 @@ Item {
     SignalSpy { id: pathEdited; target: pathField; signalName: "edited" }
     DateField { id: boundDate; y: 320; date: root.boundDateValue }
     PathField { id: boundPath; y: 320; x: 160; path: root.boundPathValue }
+    SignalSpy { id: boundPathEdited; target: boundPath; signalName: "edited" }
+    PathField { id: echoPath; y: 320; x: 320; path: root.echoPathValue; onEdited: (path, valid) => root.echoPathValue = path }
+    SignalSpy { id: echoPathEdited; target: echoPath; signalName: "edited" }
     TimeChipList { id: boundTimes; y: 360; width: 220; times: root.boundTimesValue }
     WeekdayChipGroup { id: boundWeekdays; y: 390; selected: root.boundWeekdaysValue }
 
@@ -42,18 +46,29 @@ Item {
             times.errorMessage = "";
             root.boundDateValue = "2026-01-05";
             root.boundPathValue = "";
+            root.echoPathValue = "";
             root.boundTimesValue = ["17:30"];
             root.boundWeekdaysValue = ["wed"];
             pathField.path = "";
             pathField.displayFound = true;
             pathField.openFolder(pathField.homePath());
             pathEdited.clear();
+            boundPathEdited.clear();
+            echoPathEdited.clear();
         }
 
-        function pathEditor() {
-            for (const child of pathField.children)
+        function pathEditorOf(field) {
+            for (const child of field.children)
                 if (child.placeholderText === "Working directory, blank for home") return child;
             fail("no path field editor");
+        }
+
+        function pathEditor() { return pathEditorOf(pathField); }
+
+        function editedRows(spy) {
+            const out = [];
+            for (let i = 0; i < spy.count; i++) out.push([spy.signalArguments[i][0], spy.signalArguments[i][1]]);
+            return JSON.stringify(out);
         }
 
         function test_text_area_keeps_lines_and_error_outline() {
@@ -181,15 +196,50 @@ Item {
             compare(pathField.valid, true);
         }
 
-        function test_path_field_re_sends_edited_when_missing_path_settles() {
+        function test_path_field_sends_one_false_edit_for_a_missing_path() {
             const missing = "/nonexistent-vgs-680-folder";
+            pathField.choose("/usr");
+            tryCompare(pathField, "folderFound", true);
+            pathEdited.clear();
             const editor = pathEditor();
             editor.text = missing;
             editor.textEdited();
-            verify(pathEdited.count >= 1);
-            compare(pathEdited.signalArguments[0][0], missing);
-            tryVerify(() => pathEdited.signalArguments[pathEdited.count - 1][0] === missing && pathEdited.signalArguments[pathEdited.count - 1][1] === false, 3000, "the settled edit reports the missing folder");
+            compare(editedRows(pathEdited), JSON.stringify([[missing, false]]));
             compare(pathField.valid, false);
+        }
+
+        function test_path_field_re_sends_true_when_an_existing_path_settles() {
+            const missing = "/nonexistent-vgs-680-folder";
+            pathField.path = missing;
+            tryCompare(pathField, "valid", false);
+            pathEdited.clear();
+            const editor = pathEditor();
+            editor.text = "/usr";
+            editor.textEdited();
+            compare(editedRows(pathEdited), JSON.stringify([["/usr", false]]));
+            tryCompare(pathEdited, "count", 2);
+            compare(editedRows(pathEdited), JSON.stringify([["/usr", false], ["/usr", true]]));
+            compare(pathField.valid, true);
+        }
+
+        function test_path_field_keeps_pending_edit_when_the_consumer_writes_it_back() {
+            const missing = "/nonexistent-vgs-680-folder";
+            root.echoPathValue = missing;
+            tryCompare(echoPath, "valid", false);
+            echoPathEdited.clear();
+            const editor = pathEditorOf(echoPath);
+            editor.text = "/usr";
+            editor.textEdited();
+            compare(editedRows(echoPathEdited), JSON.stringify([["/usr", false]]));
+            tryCompare(echoPathEdited, "count", 2);
+            compare(editedRows(echoPathEdited), JSON.stringify([["/usr", false], ["/usr", true]]));
+            compare(echoPath.valid, true);
+        }
+
+        function test_path_field_external_missing_path_emits_no_edit() {
+            root.boundPathValue = "/nonexistent-vgs-680-folder";
+            tryCompare(boundPath, "valid", false);
+            compare(boundPathEdited.count, 0);
         }
 
         function test_path_field_keeps_external_binding_after_choose() {
