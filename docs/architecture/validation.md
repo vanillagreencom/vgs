@@ -24,6 +24,8 @@ The [Jarvis account suites](jarvis-accounts.md#evidence) select from the account
 
 The [action router](jarvis-approval.md#evidence-and-comparison) has a `cli` row. Its inputs include Session, the effect runner, Policy, Tools, Denied, Audit, Redact, the shared fixture, library loader and private environment.
 
+The [audio daemon lifetime row](jarvis-audio.md#evidence) also selects on the installed router and its policy and audit dependencies. `scripts/test-validate.sh` removes each dependency edge in a disposable selector and detects the missing consumer.
+
 The standalone GPU instrument and passive-layer presentation checks are in [validation-shaders.md](validation-shaders.md).
 
 The [local setup contract](jarvis-setup.md#evidence) adds installer controls in `tools` and a nested Settings/TUI row. The installer doubles run inside J09 and never download or install a real runtime.
