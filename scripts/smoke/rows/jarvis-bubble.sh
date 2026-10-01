@@ -14,8 +14,10 @@ print("presented" if len(shown)==1 else "not-presented")
 jarvis_bubble_widgets() {
   ipc shell built | py_reply '
 import json,sys
-print(sum(r["id"]=="vgs.jarvis" for host,rows in json.load(sys.stdin).items()
-    if host.startswith("bar-") for r in rows))
+bars=[r for host,rows in json.load(sys.stdin).items() if host.startswith("bar:") for r in rows]
+if not any(r["id"]=="acme.tick" for r in bars):
+    sys.exit("jarvis-bubble: bar-reader=missing-tick")
+print(sum(r["id"]=="vgs.jarvis" for r in bars))
 '
 }
 jarvis_bubble_hide_bar() {
