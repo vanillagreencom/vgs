@@ -75,11 +75,11 @@ var TOKENS = {
         label: { size: length(16), weight: weight(500), rest: share(0.86) },
         // A row's detail line and the empty list's message are reading
         // text, at the shell's 13 px floor; the flyout's entries and their
-        // detail are chrome, at 12 and the 11 px floor
+        // detail are chrome, at the 12 px floor
         // (docs/architecture/design-quality.md § Type).
         detail: { size: length(13), opacity: share(0.5) },
         empty: { size: length(13), opacity: share(0.38) },
-        flyout: { size: length(12), detail: length(11) }
+        flyout: { size: length(12), detail: length(12) }
     },
 
     glass: {

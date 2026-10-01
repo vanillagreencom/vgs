@@ -25,6 +25,7 @@ Most plugins draw from the shell's tokens, so a theme restyles them. A plugin wh
 - `appearance-refused`: the declared file throws as it loads, or the judge refuses it in dark or in light mode against the shell's defaults.
 - `look-unknown`: a `look.<path>` names no path of the table.
 - `theme-read`: a file reads a `Theme` member other than `appearance`. A bar entry takes the bar's colour from the `bar` API.
+- `type-floor`: a font size, a `length` under the table's `text` group, resolves in dark or in light mode below the smallest size of the shell's own text roles, the 12 px chrome floor ([design-quality.md § Type](design-quality.md#type)). It is a finding in the shell's trees and a notice under `vgs-plugin check`.
 - The declared file is exempt from the literal rules, since the judge types each of its values. Every other file of the plugin stays under every literal rule, and a radius naming `look.` reads a token.
 
 No plugin id is exempt, and no rule is bypassed by moving a value into settings.

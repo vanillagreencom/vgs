@@ -41,6 +41,11 @@ with its own table, `look`, instead of Theme, so
   look-unknown       a `look.<path>` names no path of that table
   theme-read         a `Theme.<path>` other than `Theme.appearance`, since
                      every other member carries the global look
+  type-floor         a `length` under the table's `text` group, a font size,
+                     resolves in either mode below the smallest size of the
+                     shell's own text roles, the chrome floor a plugin that
+                     owns its look meets too (docs/architecture/design-quality.md
+                     § Type); read from Tokens.js, never a second number
 The declared file is exempt from the literal rules, since the judge types
 each of its values; every other file of the plugin stays under them, with a
 radius that names `look.` reading a token.
@@ -88,7 +93,8 @@ APPEARANCE = (
     "const plugins = load(process.argv[2]); const judge = load(process.argv[3]);"
     "const shell = judge.defaults(load(process.argv[4]).TOKENS).values;"
     "const dir = process.argv[5];"
-    "const out = { error: null, appearance: null, refusals: [], paths: [] };"
+    "const out = { error: null, appearance: null, refusals: [], paths: [], small: [] };"
+    "const floor = Math.min.apply(null, Object.keys(shell.text).map(role => shell.text[role].size));"
     "let raw; try { raw = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch (e) { out.error = e.message; }"
     "const judged = out.error === null ? plugins.validateManifest(raw, dir) : null;"
     "if (judged !== null && !judged.ok) out.error = 'manifest: ' + judged.error;"
@@ -99,7 +105,11 @@ APPEARANCE = (
     "    for (const mode of ['dark', 'light']) {"
     "      const theme = Object.assign({}, shell, { scheme: { mode: mode } });"
     "      const result = judge.acceptAppearance(look.TOKENS, look.LIGHT, theme);"
-    "      if (!result.ok) out.refusals.push('mode=' + mode + ' ' + judge.refusalLine(result).replace(/^theme: refused: /, ''));"
+    "      if (!result.ok) { out.refusals.push('mode=' + mode + ' ' + judge.refusalLine(result).replace(/^theme: refused: /, '')); continue; }"
+    "      for (const l of judge.leaves(look.TOKENS).filter(l => l.path.startsWith('text.') && l.leaf.type === 'length')) {"
+    "        const size = l.path.split('.').reduce((node, key) => node[key], result.values);"
+    "        if (size < floor) out.small.push(l.path + '=' + size + ' mode=' + mode + ' floor=' + floor);"
+    "      }"
     "    }"
     "    if (out.refusals.length === 0) out.paths = judge.paths(look.TOKENS);"
     "  }"
@@ -213,6 +223,7 @@ class Look:
         self.plugin = True
         self.file = None if answer["appearance"] is None else os.path.join(plugin, answer["appearance"])
         self.refusals = answer["refusals"]
+        self.small = answer["small"]
         self.paths = set(answer["paths"])
         self.leaves = {p for p in self.paths if not any(other.startswith(p + ".") for other in self.paths)}
 
@@ -299,6 +310,8 @@ def check_tree(root, table, literal, looks, findings, notices):
         if look.file is not None:
             for refusal in look.refusals:
                 findings.append(f"appearance-refused {look.file}:1 {refusal}")
+            for small in look.small:
+                (findings if literal != "notice" else notices).append(f"type-floor {look.file}:1 {small}")
     for path, number, line in source_lines(root):
         if manifestless_plugin_dir(looks, path) is not None:
             continue

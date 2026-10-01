@@ -121,6 +121,9 @@ LOOK_ROWS = [
     ("a literal in another file of the plugin is a finding", {"View.qml": LOOK_VIEW.replace("radius: look.card.radius", "width: 10")}, "literal-metric"),
     ("a radius from a look path inside arithmetic is not a finding", {"View.qml": LOOK_VIEW.replace("radius: look.card.radius", "radius: Math.min(look.card.radius, height / 2)")}, None),
     ("a radius that names no look path is a finding", {"View.qml": LOOK_VIEW.replace("radius: look.card.radius", "radius: height / 2")}, "literal-radius"),
+    ("a look font size at the shell's smallest text role is not a finding", {"Look.js": LOOK_TABLE.replace(" card: { fill: { type", " text: { label: { size: { type: \"length\", value: 12 } } }, card: { fill: { type")}, None),
+    ("a look font size below the shell's smallest text role is a finding", {"Look.js": LOOK_TABLE.replace(" card: { fill: { type", " text: { label: { size: { type: \"length\", value: 11 } } }, card: { fill: { type")}, "type-floor"),
+    ("a light font size below the floor is a finding", {"Look.js": LOOK_TABLE.replace(" card: { fill: { type", " text: { label: { size: { type: \"length\", value: 12 } } }, card: { fill: { type").replace("card: { fill: \"#efefef\" }", "text: { label: { size: 11 } }")}, "type-floor"),
 ]
 
 
