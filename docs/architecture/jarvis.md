@@ -12,7 +12,7 @@ The [voice text contract](jarvis-voice.md) defines the shipped guidance and spee
 
 The installed [release policy and transport](jarvis-release.md) define the outbound interface for adapters. The daemon does not create that transport yet.
 
-The [wire brain](jarvis-brain.md) defines the OpenAI-compatible driver, its provider table and the event stream reader. The daemon creates no brain yet.
+The [wire brain](jarvis-brain.md) defines the shared owner, OpenAI-compatible driver and provider table. [Anthropic Messages](jarvis-anthropic.md) uses the same release, request lifetime and event stream reader. The daemon creates no brain yet.
 
 ## Local speech inputs
 

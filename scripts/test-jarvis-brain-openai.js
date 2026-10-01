@@ -623,6 +623,7 @@ world(async () => {
 
         let controls = 0;
         async function control(name, needle, replacement, check, target = file) {
+            if (!fs.readFileSync(target, "utf8").includes(needle)) target = path.join(backend, "WireBrain.js");
             await mutant(target, name, needle, replacement, async (_module, folder) => check(kitFrom(folder)), "OpenAIChat.js");
             controls++;
         }
@@ -648,7 +649,8 @@ world(async () => {
             ["chunk-order", 'if (finish !== null) fail("chunk-order");', "", refusal("chunk-after-finish")],
             ["refusal", 'if (typeof refusal === "string" && refusal !== "") fail("refusal");', "", refusal("refusal")],
             ["stream-error", 'if (Object.hasOwn(value, "error")) fail("stream-error");', "", refusal("stream-error")],
-            ["stream-truncated", 'if (read.done) fail("stream-truncated");', 'if (read.done) { settle({ kind: "done" }); return; }', refusal("truncated")],
+            ["stream-truncated", 'if (read.done) fail("stream-truncated");',
+                'if (read.done) { state = { kind: "ended" }; wake(); return; }', refusal("truncated")],
             ["chunk-json", 'try { value = JSON.parse(data); } catch { fail("chunk-json"); }', "value = JSON.parse(data);", refusal("malformed-not-json")],
             ["chunk-object", 'if (!plain(value)) fail("chunk-shape");', "", refusal("malformed-not-object")],
             ["choices", "value.choices.length > 1", "false", refusal("malformed-two-choices")],
@@ -667,7 +669,7 @@ world(async () => {
             ["commit-on-done", "commit = () => history.push(", "commit = () => {}; history.push(", cancelRace],
             ["cancel-wins", "                state = { kind: \"cancelled\" };\n                wake();", "                wake();", cancelBuffered],
             ["stream-failed", 'fail(controller.signal.aborted ? "cancelled" : "stream-failed")', 'fail("cancelled")', refusal("reset")],
-            ["status-fallback", '(STATUS[response.status] ?? "http")', "(STATUS[response.status])", refusal("http-502")],
+            ["status-fallback", '(protocol.status[response.status] ?? "http")', "(protocol.status[response.status])", refusal("http-502")],
             ["calls-bound-low", "calls.length === TOOL_CALLS", "calls.length === TOOL_CALLS - 1", bounds],
             ["tools-bound-low", "value.tools.length > TOOLS", "value.tools.length >= TOOLS", starts],
             ["name-bound-low", "{1,64}", "{1,63}", starts],

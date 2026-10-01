@@ -1,0 +1,46 @@
+{
+  "source": {
+    "repository": "https://github.com/anthropics/anthropic-sdk-typescript",
+    "commit": "d49bdab458000bcdffe77bd84b03293f31824fb3",
+    "path": "src/resources/messages/messages.ts",
+    "sha256": "cf94b157d64eba6a1fd1d70a66fbf16b595814e364933eed0392dece487cf9bd",
+    "fetched": "2026-10-01",
+    "version": "anthropic-version: 2023-06-01",
+    "operation": "POST /v1/messages",
+    "documentation": "https://platform.claude.com/docs/en/build-with-claude/streaming"
+  },
+  "rule": [
+    "The official vendor wire interfaces are transcribed to JSON Schema for the existing excerpt checker. No SDK runs.",
+    "String literals become enums; interface members retain their required or optional status, except the omitted fields named below. Number indices and token counts become integers.",
+    "MessageCreateParamsBase keeps model as its string branch, messages, system as its string branch, max_tokens, stream and tools as Tool[].",
+    "MessageParam content keeps text, base64 image, tool_use and tool_result with string content only.",
+    "Message and stream blocks keep consumed fields and usage token counts. Raw events keep text_delta and input_json_delta only.",
+    "Ping and ErrorResponse follow the documented SSE examples. ErrorResponse permits request_id. The checker closes every object."
+  ],
+  "omitted": [
+    "Optional request settings, cache controls, citations, thinking, server tools, URL/file images, toolsets and tool callers.",
+    "Message optional fields, usage fields other than input_tokens/output_tokens, and RawMessageDeltaEvent delta.container.",
+    "TextBlock.citations and ToolUseBlock.caller are omitted from the older-version documented stream examples. Production ignores both when present."
+  ],
+  "schemas": {
+    "Text": {"type":"object","required":["type","text"],"properties":{"type":{"enum":["text"]},"text":{"type":"string"}}},
+    "Image": {"type":"object","required":["type","source"],"properties":{"type":{"enum":["image"]},"source":{"type":"object","required":["type","media_type","data"],"properties":{"type":{"enum":["base64"]},"media_type":{"enum":["image/png","image/jpeg","image/gif","image/webp"]},"data":{"type":"string"}}}}},
+    "ToolUse": {"type":"object","required":["type","id","name","input"],"properties":{"type":{"enum":["tool_use"]},"id":{"type":"string"},"name":{"type":"string"},"input":{"type":"object","additionalProperties":true}}},
+    "ToolResult": {"type":"object","required":["type","tool_use_id"],"properties":{"type":{"enum":["tool_result"]},"tool_use_id":{"type":"string"},"content":{"type":"string"},"is_error":{"type":"boolean"}}},
+    "MessageParam": {"type":"object","required":["role","content"],"properties":{"role":{"enum":["user","assistant"]},"content":{"anyOf":[{"type":"string"},{"type":"array","items":{"oneOf":[{"$ref":"#/schemas/Text"},{"$ref":"#/schemas/Image"},{"$ref":"#/schemas/ToolUse"},{"$ref":"#/schemas/ToolResult"}]}}]}}},
+    "Tool": {"type":"object","required":["name","input_schema"],"properties":{"name":{"type":"string"},"description":{"type":"string"},"input_schema":{"type":"object","additionalProperties":true}}},
+    "Request": {"type":"object","required":["model","messages","max_tokens"],"properties":{"model":{"type":"string"},"system":{"type":"string"},"messages":{"type":"array","items":{"$ref":"#/schemas/MessageParam"}},"stream":{"type":"boolean"},"max_tokens":{"type":"integer"},"tools":{"type":"array","items":{"$ref":"#/schemas/Tool"}}}},
+    "StopReason": {"enum":["end_turn","max_tokens","stop_sequence","tool_use","pause_turn","refusal","model_context_window_exceeded",null]},
+    "Usage": {"type":"object","required":["input_tokens","output_tokens"],"properties":{"input_tokens":{"type":"integer"},"output_tokens":{"type":"integer"}}},
+    "Message": {"type":"object","required":["id","type","role","model","content","stop_reason","stop_sequence","usage"],"properties":{"id":{"type":"string"},"type":{"enum":["message"]},"role":{"enum":["assistant"]},"model":{"type":"string"},"content":{"type":"array","items":{"oneOf":[{"$ref":"#/schemas/Text"},{"$ref":"#/schemas/ToolUse"}]}},"stop_reason":{"$ref":"#/schemas/StopReason"},"stop_sequence":{"type":["string","null"]},"usage":{"$ref":"#/schemas/Usage"}}},
+    "MessageStart": {"type":"object","required":["type","message"],"properties":{"type":{"enum":["message_start"]},"message":{"$ref":"#/schemas/Message"}}},
+    "BlockStart": {"type":"object","required":["type","index","content_block"],"properties":{"type":{"enum":["content_block_start"]},"index":{"type":"integer"},"content_block":{"oneOf":[{"$ref":"#/schemas/Text"},{"$ref":"#/schemas/ToolUse"}]}}},
+    "BlockDelta": {"type":"object","required":["type","index","delta"],"properties":{"type":{"enum":["content_block_delta"]},"index":{"type":"integer"},"delta":{"oneOf":[{"type":"object","required":["type","text"],"properties":{"type":{"enum":["text_delta"]},"text":{"type":"string"}}},{"type":"object","required":["type","partial_json"],"properties":{"type":{"enum":["input_json_delta"]},"partial_json":{"type":"string"}}}]}}},
+    "BlockStop": {"type":"object","required":["type","index"],"properties":{"type":{"enum":["content_block_stop"]},"index":{"type":"integer"}}},
+    "MessageDelta": {"type":"object","required":["type","delta","usage"],"properties":{"type":{"enum":["message_delta"]},"delta":{"type":"object","required":["stop_reason","stop_sequence"],"properties":{"stop_reason":{"$ref":"#/schemas/StopReason"},"stop_sequence":{"type":["string","null"]}}},"usage":{"type":"object","required":["output_tokens"],"properties":{"output_tokens":{"type":"integer"}}}}},
+    "MessageStop": {"type":"object","required":["type"],"properties":{"type":{"enum":["message_stop"]}}},
+    "Ping": {"type":"object","required":["type"],"properties":{"type":{"enum":["ping"]}}},
+    "ErrorResponse": {"type":"object","required":["type","error"],"properties":{"type":{"enum":["error"]},"error":{"type":"object","required":["type","message"],"properties":{"type":{"type":"string"},"message":{"type":"string"}}},"request_id":{"type":"string"}}},
+    "Event": {"oneOf":[{"$ref":"#/schemas/MessageStart"},{"$ref":"#/schemas/BlockStart"},{"$ref":"#/schemas/BlockDelta"},{"$ref":"#/schemas/BlockStop"},{"$ref":"#/schemas/MessageDelta"},{"$ref":"#/schemas/MessageStop"},{"$ref":"#/schemas/Ping"},{"$ref":"#/schemas/ErrorResponse"}]}
+  }
+}

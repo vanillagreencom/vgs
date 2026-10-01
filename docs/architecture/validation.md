@@ -16,6 +16,8 @@ The task record and event-producer rows exercise the [coding-task contract](jarv
 
 The [Jarvis audit](jarvis-audit.md#evidence) has a redaction row in `logic` and a real-file writer row in `cli`. Both select on the tool schemas, shared fixture and private environment.
 
+The [wire brain rows](jarvis-brain.md#evidence) select both drivers on shared history, release, transport, secret and stream inputs. Each driver's vendor scripts select its own row. The [Messages row](jarvis-anthropic.md#evidence) includes schema-pinned loopback and cancellation controls.
+
 The standalone GPU instrument and passive-layer presentation checks are in [validation-shaders.md](validation-shaders.md).
 
 The [local setup contract](jarvis-setup.md#evidence) adds installer controls in `tools` and a nested Settings/TUI row. The installer doubles run inside J09 and never download or install a real runtime.

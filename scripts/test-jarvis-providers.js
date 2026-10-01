@@ -30,6 +30,11 @@ function pinned(logic) {
         if (row.noStore !== null) assert.ok(Object.isFrozen(row.noStore), id + " no-store fields are frozen");
         logic.assertRow(row);
     }
+    const row = logic.select("anthropic", "http://127.0.0.1:9000/v1");
+    assert.deepEqual([row.id, row.driver, row.base, row.key, row.images, row.noStore],
+        ["anthropic", "anthropic-messages", "https://api.anthropic.com/v1", "required", true, null]);
+    assert.equal(row.retention.source, "https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data");
+    assert.ok(Object.isFrozen(row) && Object.isFrozen(row.retention));
 }
 pinned(Providers);
 
@@ -65,6 +70,8 @@ assert.throws(() => Providers.select("openai").noStore.store = true, TypeError);
 let controls = 0;
 world("providers", root => {
     const mutants = [
+        ["anthropic-driver", 'driver: "anthropic-messages"', 'driver: "openai-chat"', pinned],
+        ["anthropic-base", '"https://api.anthropic.com/v1"', '"https://api.anthropic.com"', pinned],
         ["base", '"https://api.groq.com/openai/v1"', '"https://api.groq.com/v1"', pinned],
         ["no-store", "noStore: { store: false }", "noStore: null", pinned],
         ["freeze", "Object.freeze(value);", "", logic => {

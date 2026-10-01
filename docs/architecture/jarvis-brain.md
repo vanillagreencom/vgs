@@ -1,14 +1,15 @@
 # Jarvis wire brain
 
-Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis/backend/Providers.js, shell/plugins/vgs.jarvis/backend/Sse.js, scripts/test-jarvis-brain-openai.js, scripts/test-jarvis-providers.js, scripts/test-jarvis-sse.js, scripts/test-schema-check.js, scripts/fixtures/schema-check.js, scripts/fixtures/jarvis-brain/
+Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis/backend/WireBrain.js, shell/plugins/vgs.jarvis/backend/Providers.js, shell/plugins/vgs.jarvis/backend/Sse.js, scripts/test-jarvis-brain-openai.js, scripts/test-jarvis-providers.js, scripts/test-jarvis-sse.js, scripts/test-schema-check.js, scripts/fixtures/schema-check.js, scripts/fixtures/jarvis-brain/
 
-[D079](../decisions/D079-brains-wire-and-harness-adapters.md) records the brain adapter kinds. [The plan § Brain adapters](../plans/v2-jarvis-plan.md#36-brain-adapters) fixes the interface. This page defines the OpenAI-compatible wire driver, its provider table and the event stream reader later wire adapters reuse. The daemon still supplies unavailable session ports: no shipped path creates a driver yet.
+[D079](../decisions/D079-brains-wire-and-harness-adapters.md) records the brain adapter kinds. [The plan § Brain adapters](../plans/v2-jarvis-plan.md#36-brain-adapters) fixes the interface. This page defines the shared wire owner and the OpenAI-compatible driver. [Anthropic Messages](jarvis-anthropic.md) defines the other driver. No shipped daemon path creates a brain yet.
 
 ## Owners
 
 - `Providers.js` is the one provider table. A row names its driver, base URL, key need, image input, no-store request fields and retention note. `select(id, customBaseUrl)` returns a frozen row; `assertRow` accepts only those rows. The custom row reads the brain settings' `customBaseUrl`; every other row ignores it.
 - `Sse.js::reader` parses the [WHATWG event stream format](https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation) from bytes. It owns no transport or timer. Its caller chooses the line, event and total byte ceilings.
-- `OpenAIChat.js::create` owns one conversation's provider-format history, its looked-up key and its live request. The session owns the [net owner, recipient set and grants](jarvis-release.md#owners). The driver sends only through that net owner.
+- `WireBrain.js::create` owns one conversation's history, release reports, looked-up key and live request. The session owns the [net owner, recipient set and grants](jarvis-release.md#owners). Both drivers use this owner; a provider row for a different driver refuses `brain=driver`.
+- `OpenAIChat.js` and `AnthropicMessages.js` own their wire encoding and event judges. They send only through the shared owner.
 - The session's turn loop (J33) connects the driver to the [session ports](jarvis-session.md) and owns context bounds and summaries. Account choice and the `brains` and `models` choices status belong to J27. The driver publishes no model list. J19 owns grants and the approval prompt. J50 owns OCR text for a brain without image input.
 
 ## Driver contract
@@ -16,7 +17,7 @@ Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis
 | API | Meaning |
 |---|---|
 | `create({provider, model, net, recipients, key})` | `provider` is a `Providers.select` row. `net` is the session's `net.create` owner for `recipients`. `key` is `null` or `{secrets, reference}`, a `Secrets` store and the account's key reference. A cloud row refuses `null` with `brain=no-key`. A key that requests to the row's base could never carry, by `net.assertKeyTarget`, refuses here before any keyring lookup. |
-| `start({instructions, tools})` | Begins a new history. `instructions` is the shipped guidance text, sent as the system message. A tool is `{id, description, parameters}`. A tool id's dots become underscores on the wire, because `FunctionObject.name` allows letters, digits, underscores and dashes only. A name outside that set, or two ids with one wire name, refuse. |
+| `start({instructions, tools})` | Begins a new history. `instructions` is the shipped guidance text, encoded by the driver. A tool is `{id, description, parameters}`. A tool id's dots become underscores on the wire. A name outside letters, digits, underscores and dashes, or two ids with one wire name, refuse. |
 | `send(turn, grants?)` | Renders the whole request at once and returns `{release: {withheld, needed}, events}`. Nothing leaves until the caller iterates `events`. A caller can ask for a grant and call `events.return()` instead. |
 | turn | `{kind: "user", items, images?}`, with Policy items and images `{type, item}` of type PNG or JPEG; or `{kind: "tool-results", results: [{id, item}]}`, answering every pending call once. |
 | `events` | Yields `{kind: "text", text}` as the stream arrives, then each assembled `{kind: "tool-call", id, tool, arguments}`, then one `{kind: "done", reason}` with reason `stop` or `tool-calls`. Every other ending throws a keyed error. |
@@ -25,7 +26,7 @@ Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis
 
 A turn and its reply enter history together when the caller reads `done`. A failed or cancelled turn changes no history. A turn stays live until its caller reads `done` or the error, or cancels it. One turn is live at a time; a second `send` or `start` refuses `brain=busy`.
 
-The key is looked up through `Secrets.lookup` at the first request and kept for the conversation. Net receives it as the [origin-bound key](jarvis-release.md#transport-contract) with the bearer scheme the pinned schema names. The header copies JavaScript makes cannot be zeroed; they are unreachable after each request. The key never enters argv, a log, status or an error.
+The key is looked up through `Secrets.lookup` at the first request and kept for the conversation. Net receives it as the [origin-bound key](jarvis-release.md#transport-contract) with the driver's credential scheme. The header copies JavaScript makes cannot be zeroed; they are unreachable after each request. The key never enters argv, a log, status or an error.
 
 ## Release
 
@@ -55,7 +56,7 @@ The driver posts `{model, messages, stream: true, tools?}` plus the row's no-sto
 
 ## Providers
 
-Each row's base URL, image input and retention come from its vendor's page, fetched 2026-09-30. The bearer scheme is the pinned schema's `ApiKeyAuth`; every row uses it.
+The OpenAI-compatible rows below use the pinned schema's bearer `ApiKeyAuth`. Their sources were fetched 2026-09-30. The [Anthropic row and its sources](jarvis-anthropic.md#vendor-sources) use Messages and `x-api-key`.
 
 | Row | Base URL | Key | Images | No-store fields | Retention source |
 |---|---|---|---|---|---|
@@ -82,7 +83,7 @@ Each row's base URL, image input and retention come from its vendor's page, fetc
 - Cancellation is read at the loopback server: the server sees the connection close. A harness defect that keeps the real request open while the driver acknowledges must turn that observation red. Stand-in bodies fix orders a socket cannot: a read that resolves in the same turn as cancel, a stream that ends a timer after its abort, and text one read buffered before cancel or close.
 - Each bound has an accepted row at the bound and a refused row past it, so raising or lowering a ceiling fails.
 - Cloud origins cannot be served on loopback, so their requests reach a recording net stand-in. It pins each documented URL, the bearer key and the no-store fields.
-- Its disposable mutants remove each rule, including the plan's control: a dropped tool-call chunk must not yield a call.
+- Its disposable mutants remove each rule, including the plan's control: a dropped tool-call chunk must not yield a call. History, release, key and lifecycle mutations target their shared owner, `WireBrain.js`.
 - `scripts/test-jarvis-sse.js` runs every row whole and byte by byte, with controls for terminators, the first-line byte order mark, decoding and each bound. `scripts/test-jarvis-providers.js` pins the rows and the custom base URL judge. `scripts/test-schema-check.js` pins the checker's keyword table and refuses a keyword it does not implement.
 
 ## Omarchy comparison

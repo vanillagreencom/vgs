@@ -9,8 +9,12 @@ const LOCAL = Object.freeze({ text: "A loopback server: nothing leaves the machi
 // key: "required" for a cloud account, "optional" where the server's operator
 // may switch authentication on. noStore: request fields that keep the
 // provider from storing the exchange, merged into every request body.
-// images: the endpoint documents image content parts with base64 data URLs.
+// images: the endpoint documents image content parts with base64 data.
 const ROWS = Object.freeze({
+    anthropic: { driver: "anthropic-messages", base: "https://api.anthropic.com/v1", key: "required", images: true,
+        noStore: null,
+        retention: { text: "API inputs and outputs are deleted within 30 days, with policy, legal, agreed-retention and covered-model exceptions. Zero data retention requires an agreement.",
+            source: "https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data" } },
     openai: { driver: "openai-chat", base: "https://api.openai.com/v1", key: "required", images: true,
         noStore: { store: false },
         retention: { text: "Abuse monitoring logs are kept up to 30 days; API data is not used for training unless the account opts in.",

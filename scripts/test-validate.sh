@@ -315,7 +315,7 @@ jarvis_local_rows=$'python3 scripts/test-jarvis-local.py\nscripts/check-jarvis-l
 jarvis_local_tools_plan=$'python3 scripts/check-readme-images.py\npython3 scripts/test-jarvis-local.py\npython3 scripts/test-jarvis-setup.py\nscripts/check-jarvis-local.sh'
 jarvis_env_plan=$'node scripts/test-jarvis-env.js\n'"$repo_plan"
 jarvis_helper_plan=$'node scripts/test-jarvis-env.js\npython3 scripts/test-jarvis-local.py\npython3 scripts/test-jarvis-setup.py\nscripts/check-jarvis-local.sh\n'"$repo_plan"
-jarvis_policy_rows=$'node scripts/test-jarvis-tools.js\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js\nnode scripts/test-jarvis-release.js\nnode scripts/test-jarvis-net.js\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-denied.js\nnode scripts/test-jarvis-audit.js\nnode scripts/test-jarvis-sandbox.js\n'
+jarvis_policy_rows=$'node scripts/test-jarvis-tools.js\nnode scripts/test-jarvis-policy.js\nnode scripts/test-jarvis-redact.js\nnode scripts/test-jarvis-release.js\nnode scripts/test-jarvis-net.js\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-denied.js\nnode scripts/test-jarvis-audit.js\nnode scripts/test-jarvis-sandbox.js\n'
 jarvis_secrets_plan=$'node scripts/test-jarvis-net.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
 jarvis_audio_rows=$'node scripts/test-jarvis-audio.js\nnode scripts/test-jarvis-audio-daemon.js\n'
 jarvis_owner_plan="$jarvis_policy_rows"$'node scripts/test-jarvis-tasks.js\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'node scripts/test-task-event.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-install-tree.sh\n'"$jarvis_helper_plan"
@@ -379,7 +379,7 @@ cases=(
   "jarvis-daemon-suite|scripts/test-jarvis-daemon.js|offline|$jarvis_daemon_plan"
   "jarvis-secrets-suite|scripts/test-jarvis-secrets.js|offline|node scripts/test-jarvis-secrets.js"$'\n'"$repo_plan"
   "jarvis-key-tui-fixture|scripts/fixtures/jarvis/key-tui.py|offline|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
-  "jarvis-key-fixture|scripts/fixtures/jarvis/keys-world.js|offline|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
+  "jarvis-key-fixture|scripts/fixtures/jarvis/keys-world.js|offline|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\n'"$repo_plan"
   "jarvis-task-suite|scripts/test-jarvis-tasks.js|offline|node scripts/test-jarvis-tasks.js"$'\n'"$repo_plan"
   "jarvis-audio-task-input|shell/plugins/vgs.jarvis/backend/Tasks.js|cli|node scripts/test-jarvis-daemon.js"$'\nnode scripts/test-jarvis-audio-daemon.js\nnode scripts/test-task-event.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "task-event-suite|scripts/test-task-event.js|offline|node scripts/test-task-event.js"$'\n'"$repo_plan"
@@ -413,12 +413,17 @@ cases=(
   "jarvis-brain-suite|scripts/test-jarvis-brain-openai.js|offline|node scripts/test-jarvis-brain-openai.js"$'\n'"$repo_plan"
   "jarvis-brain-scripts|scripts/fixtures/jarvis-brain/openai-chat-scripts.json|offline|node scripts/test-jarvis-brain-openai.js"$'\n'"$repo_plan"
   "jarvis-brain-schema|scripts/fixtures/jarvis-brain/openai-chat.schema.json|offline|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-schema-check.js\n'"$repo_plan"
+  "jarvis-anthropic-suite|scripts/test-jarvis-brain-anthropic.js|offline|node scripts/test-jarvis-brain-anthropic.js"$'\n'"$repo_plan"
+  "jarvis-anthropic-scripts|scripts/fixtures/jarvis-brain/anthropic-messages-scripts.json|offline|node scripts/test-jarvis-brain-anthropic.js"$'\n'"$repo_plan"
+  "jarvis-anthropic-schema|scripts/fixtures/jarvis-brain/anthropic-messages.schema.json|offline|node scripts/test-jarvis-brain-anthropic.js"$'\n'"$repo_plan"
   "schema-check-suite|scripts/test-schema-check.js|offline|node scripts/test-schema-check.js"$'\n'"$repo_plan"
-  "schema-check|scripts/fixtures/schema-check.js|offline|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-schema-check.js\n'"$repo_plan"
+  "schema-check|scripts/fixtures/schema-check.js|offline|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-schema-check.js\n'"$repo_plan"
   "jarvis-sse-input|shell/plugins/vgs.jarvis/backend/Sse.js|logic|node scripts/test-jarvis-sse.js"
-  "jarvis-sse-cli-input|shell/plugins/vgs.jarvis/backend/Sse.js|cli|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-sse-cli-input|shell/plugins/vgs.jarvis/backend/Sse.js|cli|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-providers-input|shell/plugins/vgs.jarvis/backend/Providers.js|logic|node scripts/test-jarvis-providers.js"
-  "jarvis-brain-input|shell/plugins/vgs.jarvis/backend/OpenAIChat.js|cli|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-brain-input|shell/plugins/vgs.jarvis/backend/OpenAIChat.js|cli|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-wire-input|shell/plugins/vgs.jarvis/backend/WireBrain.js|cli|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-anthropic-input|shell/plugins/vgs.jarvis/backend/AnthropicMessages.js|cli|node scripts/test-jarvis-brain-anthropic.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-denied-suite|scripts/test-jarvis-denied.js|offline|node scripts/test-jarvis-denied.js"$'\n'"$repo_plan"
   "jarvis-redact-suite|scripts/test-jarvis-redact.js|offline|node scripts/test-jarvis-redact.js"$'\n'"$repo_plan"
   "jarvis-audit-suite|scripts/test-jarvis-audit.js|offline|node scripts/test-jarvis-audit.js"$'\n'"$repo_plan"
@@ -427,9 +432,9 @@ cases=(
   "jarvis-audit-input|shell/plugins/vgs.jarvis/backend/Audit.js|cli|node scripts/test-jarvis-audit.js"$'\n'"${jarvis_daemon_plan%$repo_plan}"$'scripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-redact-input|shell/plugins/vgs.jarvis/backend/Redact.js|logic|node scripts/test-jarvis-redact.js"
   "jarvis-policy-input|shell/plugins/vgs.jarvis/backend/Policy.js|logic|node scripts/test-jarvis-policy.js"$'\nnode scripts/test-jarvis-release.js'
-  "jarvis-policy-net-input|shell/plugins/vgs.jarvis/backend/Policy.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-policy-net-input|shell/plugins/vgs.jarvis/backend/Policy.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-net-input|shell/plugins/vgs.jarvis/backend/net.js|logic|node scripts/test-jarvis-release.js"$'\nnode scripts/test-jarvis-providers.js'
-  "jarvis-net-cli-input|shell/plugins/vgs.jarvis/backend/net.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-net-cli-input|shell/plugins/vgs.jarvis/backend/net.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-brain-openai.js\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-add-key-input|shell/plugins/vgs.jarvis/backend/keys.js|cli|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-secrets.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-denied-input|shell/plugins/vgs.jarvis/backend/Denied.js|logic|node scripts/test-jarvis-policy.js"
   "jarvis-denied-cli-input|shell/plugins/vgs.jarvis/backend/Denied.js|cli|node scripts/test-jarvis-denied.js"$'\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
