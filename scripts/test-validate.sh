@@ -110,15 +110,15 @@ plan_case() {
 }
 
 if out="$(env -u VGS_VALIDATE_CHANGED "$repo/scripts/test-qml-unit.sh" --plan 2>&1)" &&
-   grep -qxF "test-qml-unit: scope=all mutations=492/492" <<<"$out" &&
-   [[ "$(grep -c '^run ' <<<"$out")" == 492 ]]; then
+   grep -qxF "test-qml-unit: scope=all mutations=496/496" <<<"$out" &&
+   [[ "$(grep -c '^run ' <<<"$out")" == 496 ]]; then
   ok "qml mutation planning runs every row when the changed list is unset"
 else
   fail "qml mutation planning with no changed list"
   printf '%s\n' "$out" | sed 's/^/        /'
 fi
-plan_case "qml mutation planning narrows to a changed Radio target" "shell/Ui/controls/Radio.qml" "2/492" 2 492
-plan_case "qml mutation planning runs every row for a harness change" "scripts/qml-unit.sh" "492/492" 492 492
+plan_case "qml mutation planning narrows to a changed Radio target" "shell/Ui/controls/Radio.qml" "2/496" 2 496
+plan_case "qml mutation planning runs every row for a harness change" "scripts/qml-unit.sh" "496/496" 496 496
 status=0
 out="$(VGS_VALIDATE_CHANGED="$tmp/missing-qml-plan.paths" "$repo/scripts/test-qml-unit.sh" --plan 2>&1)" || status=$?
 if [[ $status == 1 && $out == "test-qml-unit: refused: changed-list=unreadable path=$tmp/missing-qml-plan.paths" ]]; then
