@@ -122,7 +122,8 @@ function replaceFile(file, data, key, mode) {
 
 // Take flock on FILE, made with its directory when absent: { state: "held",
 // release() } once this process holds it, which its exit frees too;
-// { state: "busy" } when WAIT is false and another process holds it;
+// { state: "busy" } when another process holds it and WAIT is false, or a
+// number of seconds that passed while it waited; WAIT true waits unbounded;
 // { state: "failed", error } with the error code, or `status=<n>` for a
 // flock(1) that exited otherwise. flock(1) locks the descriptor it inherits
 // as its fd 3, and a flock lock belongs to the open file description, which
@@ -137,10 +138,11 @@ function lockFile(file, wait) {
     } catch (e) {
         return { state: "failed", error: e.code };
     }
-    const taken = spawnSync("flock", wait ? ["3"] : ["-n", "-E", "75", "3"], { stdio: ["ignore", "ignore", "ignore", fd] });
+    const args = wait === true ? ["3"] : wait === false ? ["-n", "-E", "75", "3"] : ["-w", String(wait), "-E", "75", "3"];
+    const taken = spawnSync("flock", args, { stdio: ["ignore", "ignore", "ignore", fd] });
     if (taken.status === 0) return { state: "held", release() { fs.closeSync(fd); } };
     fs.closeSync(fd);
-    if (!wait && taken.status === 75) return { state: "busy" };
+    if (wait !== true && taken.status === 75) return { state: "busy" };
     return { state: "failed", error: taken.error !== undefined ? taken.error.code : "status=" + taken.status };
 }
 

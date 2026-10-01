@@ -54,17 +54,25 @@ Scope {
     property bool readWanted: false
     // A preview's progress: `idle`; `starting` while the helper applies it;
     // `previewing`, with its `token` and its `deadline` in epoch seconds,
-    // until Keep, a revert or the deadline; `confirming` and `reverting`
-    // while the helper runs; `failed` with the keyed failure.
+    // until Keep, a revert or the deadline, its `failure` the refusal of a
+    // Keep or a revert that left it standing; `confirming` and `reverting`
+    // while the helper runs; `failed` with the keyed failure, among them
+    // `refused: preview=kept-unsaved ...` when Keep removed the record and
+    // the write after it was refused.
     property var previewState: ({ phase: "idle", token: "", deadline: 0, failure: "" })
     // The judged rules of the preview in flight, the ones Keep saves.
     property var previewRules: null
     // The helper's run in flight, { verb }, or null: one at a time.
     property var guardRun: null
     readonly property string guardHelper: Quickshell.shellDir + "/../bin/vgsh-monitor-guard"
-    // The guard reads its record each second, so the outputs are read again
-    // this long after the deadline, once it restored them.
-    readonly property int deadlineGraceMs: 2000
+    // The guard reads its record each second and restores within a few
+    // more, so the preview ends and the outputs are read again this long
+    // after the deadline. A Keep in between finds the record gone.
+    readonly property int deadlineGraceMs: 5000
+    // How long one helper run may take before it is stopped: past its own
+    // bounds, the transaction lock's 30 s wait and a preview's steps
+    // (docs/architecture/hyprland-monitors-preview.md).
+    readonly property int helperTimeoutMs: 120000
 
     // A write saved its document: the layer writes and reloads now,
     // whatever the bytes.
@@ -121,8 +129,16 @@ Scope {
     // Judge RULES against the outputs read last and the saved rules, save
     // them as monitors.json and apply them through the layer. Answers `ok`
     // once the save is queued, writeRefusal's refusal or the judge's;
-    // writeState follows the rest.
+    // writeState follows the rest. Refused while a preview starts, stands
+    // or is kept, so Keep is the only writer then.
     function write(rules) {
+        const phase = previewState.phase;
+        if (phase === "starting" || phase === "previewing" || phase === "confirming" || phase === "reverting")
+            return "refused: write=busy phase=preview-" + phase;
+        return writeRules(rules);
+    }
+
+    function writeRules(rules) {
         const refusal = writeRefusal();
         if (refusal !== "") return refusal;
         const judged = Monitors.judge({ version: Monitors.VERSION, rules: rules }, outputs, saved);
@@ -173,7 +189,7 @@ Scope {
     function setPreview(phase, token, deadline, failure) {
         if (failure !== "") console.error("monitors: preview " + failure);
         previewState = { phase: phase, token: token, deadline: deadline, failure: failure };
-        if (phase !== "previewing" && phase !== "confirming") previewRules = null;
+        if (phase === "idle" || phase === "failed") previewRules = null;
         if (phase !== "previewing") previewDeadline.stop();
     }
 
@@ -197,14 +213,18 @@ Scope {
         return "ok";
     }
 
-    // Keep the preview TOKEN names: the helper removes its record, so the
-    // guard restores nothing, then the rules are written. A confirm the
-    // guard's restore beat is refused, and nothing is written.
+    // Keep the preview TOKEN names: the rules are judged as a write judges
+    // them, then the helper removes its record, so the guard restores
+    // nothing, then the rules are written. A refusal before the helper runs
+    // leaves the record and its guard; a confirm the guard's restore beat is
+    // refused, and nothing is written.
     function confirm(token) {
         if (previewState.phase !== "previewing") return "refused: preview=none phase=" + previewState.phase;
         if (token !== previewState.token) return "refused: token=mismatch";
         const refusal = writeRefusal();
         if (refusal !== "") return refusal;
+        const judged = Monitors.judge({ version: Monitors.VERSION, rules: previewRules }, outputs, saved);
+        if (!judged.ok) return judged.error;
         setPreview("confirming", token, previewState.deadline, "");
         runGuard("confirm", ["confirm", token]);
         return "ok";
@@ -230,12 +250,22 @@ Scope {
         guardRun = { verb: verb };
         guardProcess.command = [guardHelper].concat(args);
         guardProcess.running = true;
+        helperTimeout.restart();
+    }
+
+    // A preview standing again after a Keep or a revert the helper refused
+    // with FAILURE, its deadline timer running again.
+    function standAgain(token, deadline, failure) {
+        setPreview("previewing", token, deadline, failure);
+        previewDeadline.interval = Math.max(0, deadline * 1000 - Date.now()) + deadlineGraceMs;
+        previewDeadline.restart();
     }
 
     // The helper's run ended with CODE, -1 when it did not start.
     function guardDone(code, stdout, stderr) {
         const verb = guardRun.verb;
         guardRun = null;
+        helperTimeout.stop();
         const reply = Monitors.guardReply(code, stdout, stderr);
         switch (verb) {
         case "adopt":
@@ -248,24 +278,26 @@ Scope {
             } else if (reply.token === undefined) {
                 setPreview("failed", "", 0, "refused: monitor-guard=unread reply=" + JSON.stringify(stdout.trim()));
             } else {
-                setPreview("previewing", reply.token, reply.deadline, "");
-                previewDeadline.interval = Math.max(0, reply.deadline * 1000 - Date.now()) + deadlineGraceMs;
-                previewDeadline.restart();
+                standAgain(reply.token, reply.deadline, "");
             }
             readOutputs();
             return;
         case "confirm": {
             if (!reply.ok) {
-                setPreview("failed", "", 0, reply.error);
+                if (Monitors.previewStands(reply.error)) standAgain(previewState.token, previewState.deadline, reply.error);
+                else setPreview("failed", "", 0, reply.error);
                 readOutputs();
                 return;
             }
-            const written = write(previewRules);
-            setPreview(written === "ok" ? "idle" : "failed", "", 0, written === "ok" ? "" : written);
+            const written = writeRules(previewRules);
+            if (written === "ok") setPreview("idle", "", 0, "");
+            else setPreview("failed", "", 0, "refused: preview=kept-unsaved " + written.slice("refused: ".length));
             return;
         }
         case "revert":
-            setPreview(reply.ok ? "idle" : "failed", "", 0, reply.ok ? "" : reply.error);
+            if (reply.ok) setPreview("idle", "", 0, "");
+            else if (Monitors.previewStands(reply.error)) standAgain(previewState.token, previewState.deadline, reply.error);
+            else setPreview("failed", "", 0, reply.error);
             readOutputs();
             return;
         default:
@@ -355,6 +387,13 @@ Scope {
             root.setPreview("idle", "", 0, "");
             root.readOutputs();
         }
+    }
+
+    // A helper run past its bound is stopped; its run ends as a failure.
+    Timer {
+        id: helperTimeout
+        interval: root.helperTimeoutMs
+        onTriggered: guardProcess.signal(15)
     }
 
     Process {

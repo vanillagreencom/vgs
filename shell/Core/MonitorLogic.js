@@ -371,7 +371,9 @@ var PREVIEW_SECONDS_MIN = 2;
 var PREVIEW_SECONDS_MAX = 60;
 // The fields a capture cannot read back, so no restore could put them back.
 var PREVIEW_UNRESTORED = ["bitdepth", "cm"];
-var RECORD_KEYS = ["version", "token", "deadline", "signature", "captured"];
+var RECORD_KEYS = ["version", "token", "deadline", "signature", "captured", "failure"];
+// A record's `failure`: "" or the keyed words of the last failed restore.
+var FAILURE = /^[\x20-\x7e]{0,400}$/;
 var CAPTURE_KEYS = ["output", "disabled", "mode", "position", "scale", "transform", "mirror", "vrr"];
 var TOKEN = /^[0-9a-f]{32}$/;
 // HYPRLAND_INSTANCE_SIGNATURE as Hyprland makes it: the commit, the start
@@ -407,8 +409,9 @@ function captureOf(output, listed, vrrSet) {
 // Keep saves; `applied` the ones naming a listed output, which the preview
 // applies; `captured` each listed output's state before them, one entry per
 // output, under the first rule naming it. A rule for an output Hyprland does
-// not list is kept and not applied. A rule that sets a field no capture
-// reads back is refused.
+// not list is kept and not applied. An applied rule that sets a field no
+// capture reads back to another value than the saved rule for its output
+// is refused: the preview would change what no restore puts back.
 function previewPlan(rules, outputs, saved) {
     var judged = judge({ version: VERSION, rules: rules }, outputs, saved);
     if (!judged.ok) return judged;
@@ -417,11 +420,14 @@ function previewPlan(rules, outputs, saved) {
     var seen = [];
     for (var i = 0; i < judged.rules.length; i++) {
         var rule = judged.rules[i];
-        for (var u = 0; u < PREVIEW_UNRESTORED.length; u++)
-            if (hasOwn(rule, PREVIEW_UNRESTORED[u]))
-                return { ok: false, error: "refused: rule=" + i + " " + PREVIEW_UNRESTORED[u] + "=" + shown(rule[PREVIEW_UNRESTORED[u]]) + " want=absent-in-preview" };
         var index = resolve(outputs, rule.output);
         if (index === -1) continue;
+        var savedRule = ruleFor(saved, outputs[index]);
+        for (var u = 0; u < PREVIEW_UNRESTORED.length; u++) {
+            var field = PREVIEW_UNRESTORED[u];
+            if (hasOwn(rule, field) && rule[field] !== (savedRule === null ? undefined : savedRule[field]))
+                return { ok: false, error: "refused: rule=" + i + " " + field + "=" + shown(rule[field]) + " want=saved-value-in-preview" };
+        }
         applied.push(rule);
         if (seen.indexOf(index) !== -1) continue;
         seen.push(index);
@@ -471,6 +477,7 @@ function readRecord(text) {
     if (!Number.isInteger(record.deadline) || record.deadline <= 0) return { ok: false, error: "refused: record.deadline=" + shown(record.deadline) + " want=epoch-seconds" };
     if (typeof record.signature !== "string" || !SIGNATURE.test(record.signature)) return { ok: false, error: "refused: record.signature=" + shown(record.signature) + " want=signature" };
     if (!Array.isArray(record.captured)) return { ok: false, error: "refused: record.captured=" + shown(record.captured) + " want=list" };
+    if (typeof record.failure !== "string" || !FAILURE.test(record.failure)) return { ok: false, error: "refused: record.failure=" + shown(record.failure) + " want=printable-text" };
     for (var i = 0; i < record.captured.length; i++) {
         var fault = captureError(record.captured[i]);
         if (fault !== "") return { ok: false, error: "refused: record.captured=" + i + " " + fault };
@@ -525,14 +532,22 @@ function guardAction(record, token, signature, now) {
     return now < record.deadline ? "wait" : "restore";
 }
 
-// What a shell start does with RECORD, null when none, as Hyprland instance
-// SIGNATURE, while a guard holds the guard lock (GUARDED) or none does:
-// `none`, `foreign` for another instance's record, which it leaves,
-// `guarded` when a guard runs, `arm` to start one.
-function adoptAction(record, signature, guarded) {
+// What a shell start, or a preview before it captures, does with RECORD,
+// null when none, as Hyprland instance SIGNATURE, while a guard holds the
+// guard lock (GUARDED) or none does and the record's instance runs (ALIVE)
+// or not: `none`; `stale` for another instance's record whose instance is
+// gone, which it removes; `foreign` for one whose instance runs, which it
+// leaves; `guarded` when a guard runs; `arm` to start one.
+function adoptAction(record, signature, guarded, alive) {
     if (record === null) return "none";
-    if (record.signature !== signature) return "foreign";
+    if (record.signature !== signature) return alive ? "foreign" : "stale";
     return guarded ? "guarded" : "arm";
+}
+
+// Whether the preview a confirm or a revert refused with ERROR still stands:
+// its record is gone or another's only when the helper says so.
+function previewStands(error) {
+    return error.indexOf("refused: preview=gone") !== 0 && error.indexOf("refused: token=mismatch") !== 0;
 }
 
 // Why confirm or revert of TOKEN by Hyprland instance SIGNATURE may not act
