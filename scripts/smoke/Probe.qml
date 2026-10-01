@@ -320,6 +320,12 @@ Scope {
         return descendants(panel).find(item => item.pluginId === id && item.key === key && typeof item.apply === "function") || null;
     }
 
+    function visibleInTree(child) {
+        for (let at = child; at !== null; at = at.parent)
+            if (at.visible === false) return false;
+        return true;
+    }
+
     function geometry(item) {
         if (item === null) return "absent";
         const at = item.mapToGlobal(0, 0);
@@ -400,9 +406,49 @@ Scope {
             const a = JSON.parse(arg);
             const field = fieldOf(item, a.id, a.key);
             if (field === null) return "absent";
-            if (name === "editFieldCustom")
-                return field.smokeEditCustom === undefined ? "absent" : field.smokeEditCustom(a.text);
-            return field.smokeCustomState === undefined ? "absent" : root.json(field.smokeCustomState());
+            const shown = descendants(field).filter(child => visibleInTree(child));
+            const editor = shown.find(child => child instanceof TextInput);
+            const formatted = editor === undefined || SettingValues.datetimeFormatProblem(editor.text) !== "" ? "" : Qt.formatDateTime(Time.now, editor.text);
+            const problem = editor === undefined ? "" : SettingValues.datetimeFormatProblem(editor.text);
+            const problemText = problem === "" ? "" : SettingValues.PROBLEM_TEXT[problem];
+            const labels = shown.filter(child => root.typeName(child) === "Label" && child.role === "hint");
+            const preview = labels.find(child => formatted !== "" && child.text === formatted) || null;
+            const error = labels.find(child => problemText !== "" && child.text === problemText) || null;
+            if (name === "editFieldCustom") {
+                if (editor === undefined) return "absent";
+                editor.forceActiveFocus();
+                editor.text = a.text;
+                editor.editingFinished();
+                return "edited";
+            }
+            return root.json({
+                visible: editor !== undefined,
+                text: editor === undefined ? "" : editor.text,
+                preview: preview === null ? "" : preview.text,
+                formatted: formatted,
+                previewBox: preview === null ? [0, 0, 0, 0] : root.windowBox(preview),
+                error: problemText !== "" ? problemText : error === null ? "" : error.text
+            });
+        }
+        if (name === "fieldPresetPreviews") {
+            const a = JSON.parse(arg);
+            const field = fieldOf(item, a.id, a.key);
+            if (field === null) return "absent";
+            const editor = descendants(field).find(child => typeName(child) === "Select");
+            if (editor === undefined) return "no-select";
+            const row = item.plugins.find(plugin => plugin.id === a.id);
+            if (row === undefined) return "no-plugin";
+            const spec = row.schema[a.key];
+            const out = [];
+            for (let i = 0; i < spec.presets.length; i++) {
+                const want = Qt.formatDateTime(Time.now, spec.presets[i].value);
+                if (editor.model[i].label !== want) out.push(spec.presets[i].value + "=" + editor.model[i].label + " want=" + want);
+            }
+            return root.json(out);
+        }
+        if (name === "fieldGeometry") {
+            const a = JSON.parse(arg);
+            return root.geometry(fieldOf(item, a.id, a.key));
         }
         if (name === "applyKey") {
             // A drawn Keys row's edit, as the row emits it: `key` absent

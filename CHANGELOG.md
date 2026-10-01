@@ -11,3 +11,4 @@
 
 - Jarvis adds bounded account discovery, user-added directories, existing keyring references and a floating Accounts terminal. Settings offers discovered brain accounts. Explicit API and local Verify use the outbound door for one small inference request. Login hints never mean Verified. Subscription and speech-only handoffs remain unavailable.
 - Jarvis adds a masked Add key floating terminal, libsecret storage and metadata-only key presence in Settings. Provider keys stay out of files, command arguments, logs and status. The reference API supports future provider adapters and the accounts picker.
+- Settings schema strings must declare `presets` or `optionsFrom`. Plugin authors replace free text with presets, and use `allowCustom` when users can still type a fitting value. `Field.compact` and the `row.compactHeight` theme token are removed; plugins and themes use the single inline row height.

@@ -19,6 +19,7 @@ Column {
     property var choices: []
     property bool editable: true
     property bool customChosen: false
+    property var presetModel: []
     readonly property int segmentedLimit: 3 // More choices read better in a vertical Select list.
     readonly property bool bounded: spec.type === "number" && spec.min !== undefined && spec.max !== undefined
     readonly property bool hasPresets: spec.presets !== undefined && Array.isArray(spec.presets)
@@ -27,22 +28,39 @@ Column {
     readonly property bool customVisible: allowCustom && (customChosen || selectedPresetIndex < 0)
     readonly property string labelText: spec.label !== undefined ? String(spec.label) : key
     readonly property string hintText: spec.description !== undefined ? String(spec.description) : ""
-    readonly property var presetModel: {
-        const now = Time.now;
-        if (!root.hasPresets) return [];
-        const out = [];
-        for (const preset of root.spec.presets) {
-            out.push({ label: SettingValues.presetText(root.spec, preset, v => Qt.formatDateTime(now, v)), value: preset.value, custom: false });
-        }
-        if (root.allowCustom) out.push({ label: "Custom…", value: root.value, custom: true });
-        return out;
-    }
     signal apply(var value)
 
     width: parent === null ? implicitWidth : parent.width
     spacing: Theme.field.gap
 
-    onValueChanged: if (presetIndex(value) >= 0) customChosen = false
+    Component.onCompleted: rebuildPresetModel()
+    onSpecChanged: rebuildPresetModel()
+    onChoicesChanged: rebuildPresetModel()
+    onValueChanged: {
+        if (presetIndex(value) >= 0) customChosen = false;
+        if (loader.item === null || loader.item.listOpen !== true) rebuildPresetModel();
+    }
+
+    Connections {
+        target: Time
+        function onNowChanged() {
+            if (root.spec.format === "datetime" && (loader.item === null || loader.item.listOpen !== true))
+                root.rebuildPresetModel();
+        }
+    }
+
+    function rebuildPresetModel() {
+        if (!root.hasPresets) {
+            presetModel = [];
+            return;
+        }
+        const out = [];
+        for (const preset of root.spec.presets) {
+            out.push({ label: SettingValues.presetText(root.spec, preset, v => Qt.formatDateTime(Time.now, v)), value: preset.value, custom: false });
+        }
+        if (root.allowCustom) out.push({ label: "Custom…", value: root.value, custom: true });
+        presetModel = out;
+    }
 
     function sameValue(a, b) { return a === b; }
     function presetIndex(v) {
@@ -52,8 +70,6 @@ Column {
         return -1;
     }
     function displayNumber(v) { return spec.unit === undefined ? String(v) : SettingValues.quantityText(v, spec.unit); }
-    function smokeCustomState() { return customLoader.item === null ? { visible: false } : customLoader.item.smokeState(); }
-    function smokeEditCustom(text) { return customLoader.item === null || customLoader.item.smokeEdit === undefined ? "absent" : customLoader.item.smokeEdit(text); }
 
     Field {
         id: primary
@@ -86,6 +102,7 @@ Column {
         Loader {
             id: customLoader
             width: parent.width
+            active: root.allowCustom
             sourceComponent: root.spec.type === "number" && root.bounded ? slider : customText
         }
     }
@@ -114,14 +131,6 @@ Column {
             readonly property string problemCode: root.spec.format === "datetime" ? SettingValues.datetimeFormatProblem(input.text) : ""
             readonly property string problemText: problemCode === "" ? "" : SettingValues.PROBLEM_TEXT[problemCode]
 
-            function smokeState() { return { visible: customField.visible, text: input.text, preview: preview.text, error: problemText }; }
-            function smokeEdit(text) {
-                input.forceActiveFocus();
-                input.text = text;
-                input.editingFinished();
-                return "edited";
-            }
-
             TextField {
                 id: input
                 text: root.value === undefined ? "" : String(root.value)
@@ -147,7 +156,6 @@ Column {
                 elide: Text.ElideRight
                 anchors.left: input.right
                 anchors.leftMargin: Theme.stack.inline
-                anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -188,13 +196,20 @@ Column {
 
     Component {
         id: segmented
-        SegmentedControl {
-            model: root.spec.options
-            currentIndex: root.spec.options.indexOf(root.value)
-            enabled: root.editable
-            onActivated: index => {
-                currentIndex = Qt.binding(() => root.spec.options.indexOf(root.value));
-                root.apply(root.spec.options[index]);
+        Item {
+            width: parent.width
+            implicitHeight: seg.implicitHeight
+
+            SegmentedControl {
+                id: seg
+                width: implicitWidth
+                model: root.spec.options
+                currentIndex: root.spec.options.indexOf(root.value)
+                enabled: root.editable
+                onActivated: index => {
+                    currentIndex = Qt.binding(() => root.spec.options.indexOf(root.value));
+                    root.apply(root.spec.options[index]);
+                }
             }
         }
     }
@@ -227,7 +242,6 @@ Column {
             width: parent.width
             implicitHeight: Math.max(bar.implicitHeight, shown.implicitHeight)
 
-            function smokeState() { return { visible: customField.visible, value: bar.value, preview: shown.text, error: "" }; }
             function commit() {
                 const wanted = bar.value;
                 bar.value = Qt.binding(() => root.value);
@@ -253,7 +267,7 @@ Column {
                 id: shown
                 role: "label"
                 text: root.displayNumber(bar.value)
-                width: Math.max(minProbe.implicitWidth, maxProbe.implicitWidth, Theme.size.control.lg)
+                width: Math.max(implicitWidth, minProbe.implicitWidth, maxProbe.implicitWidth, Theme.size.control.lg)
                 horizontalAlignment: Text.AlignRight
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter

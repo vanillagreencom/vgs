@@ -5,6 +5,7 @@
 // row or control fails.
 "use strict";
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { load } = require("../bin/lib/qml-library.js");
 
@@ -840,7 +841,7 @@ const CONTROLS = [
     ["a status group is a printable line", "if (entry.group !== undefined && !isPrintableLine(entry.group, STATUS_LABEL_MAX))", "if (false)"],
     ["a status hint is a printable line", "if (entry.hint !== undefined && !isPrintableLine(entry.hint, STATUS_HINT_MAX))", "if (false)"],
     ["a status command is a printable line", "if (entry.command !== undefined && !isPrintableLine(entry.command, STATUS_COMMAND_MAX))", "if (false)"],
-    ["a printable line holds no control character", "!/[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]/.test(text)", "true"],
+    ["a printable line holds no control character", "!SettingValues.CONTROL_OR_SEPARATOR.test(text)", "true"],
     ["a printable line has a ceiling", "text.length <= max &&", ""],
     ["status hidden is a boolean", "if (entry.hidden !== undefined && typeof entry.hidden !== \"boolean\")", "if (false)"],
     ["a data entry is never drawn", "if (entry[drawn[d]] !== undefined)", "if (false)"],
@@ -893,8 +894,7 @@ const CONTROLS = [
     ["placement needs the widget kind", "return manifest.kinds.indexOf(\"bar-widget\") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1;", "return layoutIds(config).indexOf(manifest.id) !== -1;"],
 ];
 
-const temp = path.join(__dirname, "..", "tmp", "plugin-logic-control-" + process.pid);
-fs.rmSync(temp, { recursive: true, force: true });
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-logic-control-"));
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Commons"), { recursive: true });

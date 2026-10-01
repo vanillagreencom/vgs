@@ -453,7 +453,7 @@ function schemaError(schema, settings, status) {
 // with no control character (C0, DEL, C1) and no line or paragraph
 // separator, so a page draws it on one line and a log line holds it whole.
 function isPrintableLine(text, max) {
-    return typeof text === "string" && text.length > 0 && text.length <= max && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(text);
+    return typeof text === "string" && text.length > 0 && text.length <= max && !SettingValues.CONTROL_OR_SEPARATOR.test(text);
 }
 
 // The first defect of a manifest's `status` key, or "". An object keyed by

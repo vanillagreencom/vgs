@@ -13,7 +13,7 @@ import qs.Ui
 // side. The default is zero, so a field's unboxed label sits on the
 // container's content edge and its control ends on that edge. An inline
 // label too long for its column wraps to a second line before it elides.
-// `valueX` is where the value column starts, for content that belongs
+// `valueX` is where the value column starts, for content that belongs under it.
 Column {
     id: root
 

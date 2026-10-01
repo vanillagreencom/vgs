@@ -37,7 +37,6 @@
         { "value": "dddd h:mm AP" },
         { "value": "HH:mm" },
         { "value": "h:mm AP" },
-        { "value": "HH:mm:ss" },
         { "value": "yyyy-MM-dd HH:mm" },
         { "value": "ddd d MMM" }
       ]

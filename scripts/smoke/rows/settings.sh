@@ -189,24 +189,28 @@ clock_field() { ipc smoke invokeInstance window vgs.settings fieldChoice '{"id":
 clock_state() { clock_field | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([len(d["model"]), d["model"][-1]["label"], d["enabled"]]))'; }
 clock_model() { clock_field | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["model"]))'; }
 clock_model_edges() { clock_model | py_reply 'import json,sys; m=json.load(sys.stdin); print(json.dumps([m[0]["value"], m[-1]["label"]]))'; }
+clock_previews() { ipc smoke invokeInstance window vgs.settings fieldPresetPreviews '{"id":"vgs.bar","key":"clockFormat"}'; }
 clock_custom() { ipc smoke invokeInstance window vgs.settings fieldCustom '{"id":"vgs.bar","key":"clockFormat"}'; }
-clock_custom_state() { clock_custom | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["visible"], d["text"], d["error"], bool(d["preview"])]))'; }
+clock_custom_state() { clock_custom | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([d["visible"], d["text"], d["error"], d["preview"] == d["formatted"], d["previewBox"][2] > 0]))'; }
 choose_clock() { ipc smoke invokeInstance window vgs.settings chooseField "{\"id\":\"vgs.bar\",\"key\":\"clockFormat\",\"index\":$1}"; }
 edit_clock_custom() { ipc smoke invokeInstance window vgs.settings editFieldCustom "$(python3 -c 'import json,sys; print(json.dumps({"id":"vgs.bar","key":"clockFormat","text":sys.argv[1]}))' "$1")"; }
 user_clock() { python3 -c 'import json,sys; print(json.dumps(next(r["clockFormat"] for r in json.load(open(sys.argv[1])).get("plugins", []) if r["id"]=="vgs.bar")))' "$home/.config/vgs/shell.json"; }
+bar_reply() { ipc smoke readInstance window vgs.settings replies | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin).get("vgs.bar", "")))'; }
 expect "the window opens the Bar page for preset field checks" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.bar
-expect_poll "the clock format Select has every preset and Custom last" '[10, "Custom\u2026", true]' clock_state
+expect_poll "the clock format Select has every preset and Custom last" '[9, "Custom\u2026", true]' clock_state
 expect "the clock preset model carries the current default first and Custom last" '["ddd d MMM  HH:mm", "Custom\u2026"]' clock_model_edges
+expect_poll "every clock preset previews with Qt.formatDateTime" '[]' clock_previews
 expect "choosing a clock preset is accepted" chosen choose_clock 4
 expect_poll "the chosen clock preset writes its format" '"HH:mm"' user_clock
 expect_poll "the clock preset save settles" true config_settled
 clock_changes="$(config_changes)" || fail "configuration counter unreadable before clock Custom"
-expect "choosing Custom opens the row" chosen choose_clock 9
+expect "choosing Custom opens the row" chosen choose_clock 8
 expect "choosing Custom writes no configuration" "$clock_changes" config_changes
-expect_poll "the Custom row opens with the configured format and a preview" '[true, "HH:mm", "", true]' clock_custom_state
+expect_poll "the Custom row opens with the configured format and a drawn preview" '[true, "HH:mm", "", true, true]' clock_custom_state
 expect "an invalid custom clock edit is accepted by the editor" edited edit_clock_custom "'abc"
-expect_poll "the invalid custom clock format shows the shared problem" '[true, "'\''abc", "Close the quoted text.", false]' clock_custom_state
+expect_poll "the invalid custom clock format shows the shared problem" '[true, "'\''abc", "Close the quoted text.", true, false]' clock_custom_state
 expect "the invalid custom clock format writes nothing" "$clock_changes" config_changes
+expect "the invalid custom clock format raises no manager refusal" '""' bar_reply
 expect "a valid custom clock edit is accepted by the editor" edited edit_clock_custom "yyyy-MM-dd HH:mm:ss"
 expect_poll "the valid custom clock format writes" '"yyyy-MM-dd HH:mm:ss"' user_clock
 expect_poll "the custom clock save settles" true config_settled

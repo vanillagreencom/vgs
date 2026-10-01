@@ -22,9 +22,9 @@ scripts/test-vgs-plugin.py pins each.
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
@@ -105,9 +105,7 @@ def cmd_new(args):
     # The repository's one manifest judge decides the id and the shape before
     # anything is written, on the manifest text that will be written, so a
     # refused id leaves no directory behind.
-    probe = os.path.join(REPO, "tmp", f"vgs-plugin-probe-{os.getpid()}")
-    shutil.rmtree(probe, ignore_errors=True)
-    try:
+    with tempfile.TemporaryDirectory() as probe:
         probe_dir = os.path.join(probe, "probe")
         os.makedirs(probe_dir)
         with open(os.path.join(probe_dir, "manifest.json"), "w", encoding="utf-8") as fh:
@@ -127,8 +125,6 @@ def cmd_new(args):
             print(judged.stdout.rstrip())
             print(judged.stderr.rstrip())
             return 2
-    finally:
-        shutil.rmtree(probe, ignore_errors=True)
     os.makedirs(target)
     with open(os.path.join(target, "manifest.json"), "w", encoding="utf-8") as fh:
         fh.write(manifest)

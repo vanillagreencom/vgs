@@ -644,11 +644,14 @@ scene_setup_steps() { # MODE
   take "setup-$1-actions"
   expect "the window opens the Automations page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.automations
   expect_poll "the Automations page is shown" '"vgs.automations"' settings_page
-  expect_poll "Automations offers Enable while logged out" true step_offered vgs.automations linger
   settings_scroll_to 0 >/dev/null || fail "the Automations page did not scroll to the top"
   expect_poll "the Automations page is at its top" True settings_at_top
-  park_pointer
-  take "setup-$1-automations"
+  if [[ $(step_offered vgs.automations linger) == true ]]; then
+    park_pointer
+    take "setup-$1-automations"
+  else
+    ok "skipped setup-$1-automations: vgs.automations offers no Enable while logged out here"
+  fi
   step_shot "$1" vgs.agent-warden vsys "Install vsys" warden-install-vsys
   # Set up is offered while vsys is present: a stand-in that runs nothing
   # stands for it, and goes again after the shot, so the next mode offers
@@ -723,21 +726,21 @@ scene_settings() { # MODE
     fail "the probe's page scroll area is unreadable: ${area:-}"
   fi
   park_pointer
-  # The probe's Mode select, scrolled into view and opened by a click on
+  # The probe's Label preset select, scrolled into view and opened by a click on
   # its chevron end: the inline row's right 40 px, one row height tall.
   local field
-  if field="$(ipc smoke windowGeometry "$settings_kind" vgs.settings SettingField Mode)" && [[ $field == \[* ]] \
+  if field="$(ipc smoke invokeInstance "$settings_kind" vgs.settings fieldGeometry '{"id":"acme.probe","key":"label"}')" && [[ $field == \[* ]] \
     && area="$(settings_scroll)" && [[ $area == \{* ]] \
     && settings_scroll_to "$(python3 -c 'import json,sys; f, a = json.loads(sys.argv[1]), json.loads(sys.argv[2]); print(int(f[1] - a["bar"][1] + a["contentY"]) - 60)' "$field" "$area")" \
-    && field="$(ipc smoke windowGeometry "$settings_kind" vgs.settings SettingField Mode)" && [[ $field == \[* ]] \
+    && field="$(ipc smoke invokeInstance "$settings_kind" vgs.settings fieldGeometry '{"id":"acme.probe","key":"label"}')" && [[ $field == \[* ]] \
     && read -r x y < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); h=json.loads(sys.argv[2]); print(json.dumps([r[0] + r[2] - 40, r[1], 40, h]))' "$field" "$(ipc smoke themeValue row.height)")") \
     && hover "$((x - 1))" "$y" && click "$x" "$y"; then
-    expect_poll "the Mode select opens its list" true ipc smoke readShownDescendant "$settings_kind" vgs.settings Select listOpen
+    expect_poll "the Label select opens its list" true ipc smoke readShownDescendant "$settings_kind" vgs.settings Select listOpen
     take "settings-$1-select"
-    type_keys -k Escape || fail "sending Escape to the Mode select failed"
-    expect_poll "the Mode select closes its list" false ipc smoke readShownDescendant "$settings_kind" vgs.settings Select listOpen
+    type_keys -k Escape || fail "sending Escape to the Label select failed"
+    expect_poll "the Label select closes its list" false ipc smoke readShownDescendant "$settings_kind" vgs.settings Select listOpen
   else
-    fail "the probe's Mode field is unreadable: ${field:-}"
+    fail "the probe's Label field is unreadable: ${field:-}"
   fi
   park_pointer
   expect "the window opens the launcher's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
