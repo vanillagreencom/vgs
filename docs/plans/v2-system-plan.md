@@ -183,8 +183,8 @@ Every number declares `unit` and every string declares `presets` or `optionsFrom
   - S15 records a startup-plus-write figure, naming its tool and run. A resident mode comes only if the p95 from release to write exceeds 150 ms.
 - **Physical identity.** A display is identified by its **USB parent device** (sysfs devpath) plus serial. Its hidraw interfaces are grouped under that parent, which tells apart same-product units even when serials are absent or equal.
 - **Mapping to outputs.**
-  1. The USB serial equals the Hyprland/EDID `serial` (v1 `vshell_helper.py:10391-10419,10479-10500`).
-  2. Otherwise, exactly one physical device of a product matches exactly one output whose model is `ProDisplayXDR` or `StudioDisplay` (`check-display-config-fixtures.js:69-81`).
+  1. The USB serial equals the Hyprland/EDID `serial` (v1 `vshell_helper.py:10391-10419,10479-10500`). VGS-705 found this never fires on the owner's displays: Hyprland reports the EDID binary serial in hex and the EDID holds no serial string ([displays.md](../architecture/displays.md#output-mapping)).
+  2. Otherwise, exactly one physical device of a product matches exactly one monitor whose model is `ProDisplayXDR` or `StudioDisplay` (`check-display-config-fixtures.js:69-81`). Outputs sharing make, model and serial are one monitor: the XDR is tiled over two outputs.
   3. Otherwise the display is **unassigned** until the user picks with Identify.
 - **Assignments.** The schema cannot hold a map, so assignments go in the plugin's own judged state file, `${XDG_STATE_HOME}/vgs/plugins/vgs.displays/assignments.json`. It maps physical identity to an output identifier.
   - A stale entry (device or output gone) is kept, marked stale and never applied.
@@ -254,7 +254,7 @@ All paths are under `/home/method/dev/.worktrees/vgs/v1`. These lines were read 
 | Studio Display | product `1114`, raw `400`–`60000` | same |
 | Raw unit | centi-nits from the descriptor's logical range; interface number varies, so probe | `bin/vshell_helper.py:345-348` |
 | Probe ceiling | `60000` | `bin/vshell_helper.py:354-356` |
-| HID usage | Monitor page `0x82`, usage `0x0001` | `asdcontrol.cpp:53-56` |
+| HID usage | VESA Virtual Controls page `0x82`, usage `0x10` (Brightness), inside a Monitor page `0x80` collection. Corrected in VGS-705: `0x820001` is `asdcontrol`'s `hiddev` usage code and matches no hidraw descriptor. | `/sys/class/hidraw/*/device/report_descriptor` of the owner's Studio Display and Pro Display XDR, read 2026-10-01; [displays.md](../architecture/displays.md#apple-hid) |
 | Report | id `1`, length `7`; bytes 1..4 raw, unsigned **little-endian** | `bin/vshell_helper.py:9866-9894` |
 | Read / write ioctl | `HIDIOCGFEATURE(7)` = `_IOC(R\|W,'H',0x07,7)`; `HIDIOCSFEATURE(7)` = `_IOC(R\|W,'H',0x06,7)` | `bin/vshell_helper.py:9871-9879` |
 | Enumeration | `/dev/hidraw*` from sysfs; zeroed report-1 probe; in-range only; prefers Monitor/VESA descriptor | `bin/vshell_helper.py:9897-9974` |
