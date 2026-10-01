@@ -62,7 +62,9 @@ stream.properties = { adapter.auto-port-config = { mode = dsp position = preserv
 
 async function interrupt(Implementation = Audio) {
     await privateAudio(async (environment, dump) => {
-        const recorder = cp.spawn("/usr/bin/pw-cat", ["--record", "--raw", "--rate", "24000",
+        // pw-cat records with buffered stdio. Disable that buffer so delivery
+        // timestamps describe graph periods, not a later stdout block flush.
+        const recorder = cp.spawn("/usr/bin/stdbuf", ["-o0", "/usr/bin/pw-cat", "--record", "--raw", "--rate", "24000",
             "--channels", "1", "--format", "s16", "--latency", "10ms", "--target", "0",
             "--properties", '{"node.name":"jarvis-monitor"}', "-"], {
             env: environment, stdio: ["ignore", "pipe", "pipe"]
@@ -143,7 +145,7 @@ async function interrupt(Implementation = Audio) {
 }
 
 async function inside() {
-    for (const executable of ["pipewire", "pw-cat", "pw-dump", "pw-link"])
+    for (const executable of ["pipewire", "pw-cat", "pw-dump", "pw-link", "stdbuf"])
         if (!fs.existsSync("/usr/bin/" + executable)) {
             console.error("test-jarvis-playback-pipewire: not-verified missing=" + executable);
             process.exitCode = 77;
