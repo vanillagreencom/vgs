@@ -109,16 +109,27 @@ plan_case() {
   fi
 }
 
+# The mutation total, read from the table itself rather than from --plan:
+# every line of the `mutations=(...)` array is one quoted row, and a line of
+# another shape there means the read no longer matches the table. The floor
+# names a broken read, not a short table.
+qml_total="$(awk '/^mutations=\($/ { inside = 1; next } inside && /^\)$/ { inside = 0 } inside' "$repo/scripts/test-qml-unit.sh")" || qml_total=""
+qml_odd="$(grep -cv '^  "[^"].*"$' <<<"$qml_total" || true)"
+qml_total="$(grep -c '^  "' <<<"$qml_total" || true)"
+if [[ $qml_odd != 0 || $qml_total -lt 100 ]]; then
+  fail "qml mutation table read: rows=$qml_total other-lines=$qml_odd; the array read in test-validate.sh no longer matches scripts/test-qml-unit.sh"
+  qml_total=unread
+fi
 if out="$(env -u VGS_VALIDATE_CHANGED "$repo/scripts/test-qml-unit.sh" --plan 2>&1)" &&
-   grep -qxF "test-qml-unit: scope=all mutations=496/496" <<<"$out" &&
-   [[ "$(grep -c '^run ' <<<"$out")" == 496 ]]; then
+   grep -qxF "test-qml-unit: scope=all mutations=$qml_total/$qml_total" <<<"$out" &&
+   [[ "$(grep -c '^run ' <<<"$out")" == "$qml_total" ]]; then
   ok "qml mutation planning runs every row when the changed list is unset"
 else
-  fail "qml mutation planning with no changed list"
+  fail "qml mutation planning with no changed list: table rows=$qml_total"
   printf '%s\n' "$out" | sed 's/^/        /'
 fi
-plan_case "qml mutation planning narrows to a changed Radio target" "shell/Ui/controls/Radio.qml" "2/496" 2 496
-plan_case "qml mutation planning runs every row for a harness change" "scripts/qml-unit.sh" "496/496" 496 496
+plan_case "qml mutation planning narrows to a changed Radio target" "shell/Ui/controls/Radio.qml" "2/$qml_total" 2 "$qml_total"
+plan_case "qml mutation planning runs every row for a harness change" "scripts/qml-unit.sh" "$qml_total/$qml_total" "$qml_total" "$qml_total"
 status=0
 out="$(VGS_VALIDATE_CHANGED="$tmp/missing-qml-plan.paths" "$repo/scripts/test-qml-unit.sh" --plan 2>&1)" || status=$?
 if [[ $status == 1 && $out == "test-qml-unit: refused: changed-list=unreadable path=$tmp/missing-qml-plan.paths" ]]; then
