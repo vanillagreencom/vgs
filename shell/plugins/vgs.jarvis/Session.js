@@ -3,7 +3,8 @@
 // The daemon owns this value. Time enters only through event.at (monotonic
 // milliseconds). Adapter callbacks carry the gen/op returned in their effect.
 // Cleanup acknowledgments and a running tool's outcome retain their original
-// identity across stop; content callbacks do not.
+// identity across stop; content callbacks do not. A duplex engine owns one
+// speech session per conversation; its callbacks carry the session's gen/op.
 var SESSION_SETTINGS = ["mode", "voiceProvider", "voice", "language", "brain", "model", "customBaseUrl", "policy", "account"];
 var RESPONSE_TIMEOUT_MS = 60000;
 var APPROVAL_TIMEOUT_MS = 60000;
@@ -12,7 +13,8 @@ var EVENTS = [
     "snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle",
     "stop", "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial",
     "final", "brain-done", "brain-failed", "cancelled", "play", "played",
-    "flushed", "tool", "tool-done", "approval", "shown", "confirm", "approval-cancel", "deadline", "lease-ended"
+    "flushed", "tool", "tool-done", "approval", "shown", "confirm", "approval-cancel", "deadline", "lease-ended",
+    "speak", "transcript", "speech-idle", "speech-failed"
 ];
 
 function initial() {
@@ -23,7 +25,8 @@ function initial() {
         turn: { kind: "none" }, brain: { kind: "closed" }, playback: { kind: "idle" },
         action: { kind: "none" }, approval: { kind: "none" }, fault: { kind: "none" },
         conversation: { kind: "ended" }, input: { kind: "released" },
-        indicator: { kind: "gone" }, duplex: { kind: "half" }, toggleAt: null
+        indicator: { kind: "gone" }, duplex: { kind: "half" }, toggleAt: null,
+        engine: { kind: "chained" }, speech: { kind: "closed" }
     };
 }
 
@@ -64,6 +67,14 @@ function cancelTurn(s, effects, at) {
     } else if (s.turn.kind === "collecting") s.turn = { kind: "none" };
 }
 
+// The engine finalizes a closed session on its own; a later callback from it
+// is stale. Lease loss aborts instead of waiting for the provider.
+function closeSpeech(s, effects, mode) {
+    if (s.speech.kind !== "open") return;
+    effect(s, effects, "speech-close", { gen: s.speech.gen, target: s.speech.op, mode: mode });
+    s.speech = { kind: "closed" };
+}
+
 function closeBrain(s, effects) {
     if (s.brain.kind === "closed") return;
     effect(s, effects, "brain-close", { gen: s.brain.gen, target: s.brain.op });
@@ -100,6 +111,7 @@ function end(s, effects, at, reason, stopTool) {
     cancelTurn(s, effects, at);
     if (s.turn.kind === "none") closeBrain(s, effects);
     flushPlayback(s, effects);
+    closeSpeech(s, effects, reason === "lease" ? "abort" : "graceful");
     dropApproval(s, effects, reason);
     if (stopTool) requestToolCancel(s, effects);
 }
@@ -119,14 +131,33 @@ function canPlayback(s) {
         && s.capture.kind === "closed";
 }
 
+// A duplex reply plays when the conversation is live. Half duplex never runs
+// capture and playback together, so a held talk key keeps the microphone.
+function canSpeak(s) {
+    return canEngage(s) && s.conversation.kind === "active" && s.playback.kind === "idle"
+        && s.input.kind !== "held";
+}
+
 function reconcile(s, effects) {
+    if (s.speech.kind === "open" && s.speech.reply.kind === "waiting" && canSpeak(s)) {
+        s.playback = { kind: "playing", gen: s.gen, op: operation(s), source: s.speech.op,
+            interruptible: true, admission: { kind: "waiting" } };
+        s.speech.reply = { kind: "none" };
+    }
+    // The session opens with the conversation's first capture, before it.
+    if (s.engine.kind === "duplex" && s.speech.kind === "closed" && canCapture(s)) {
+        var speech = effect(s, effects, "speech-open", {});
+        s.speech = { kind: "open", gen: speech.gen, op: speech.op, reply: { kind: "none" } };
+    }
     if (!canCapture(s)) closeCapture(s, effects);
     else if (s.capture.kind === "closed") {
         var mode = s.input.kind === "held" ? "hold" : s.input.kind;
         var e = effect(s, effects, "capture-open", { mode: mode });
         s.capture = { kind: "opening", gen: e.gen, op: e.op, mode: mode };
     }
-    if (canCapture(s) && (s.capture.kind === "opening" || s.capture.kind === "open") && s.turn.kind === "none") {
+    // The duplex voice model owns turn-taking; no utterance is collected.
+    if (s.engine.kind === "chained" && canCapture(s)
+            && (s.capture.kind === "opening" || s.capture.kind === "open") && s.turn.kind === "none") {
         var collect = effect(s, effects, "collect", {});
         s.turn = { kind: "collecting", gen: collect.gen, op: collect.op, partial: "" };
     }
@@ -175,6 +206,12 @@ function interrupt(s, effects, at) {
     s.conversation = { kind: "interrupted" };
     cancelTurn(s, effects, at);
     flushPlayback(s, effects);
+    // The provider has no truncate event: the engine drops its queue and the
+    // rest of the interrupted reply. The server's interruption handling stands.
+    if (s.speech.kind === "open") {
+        effect(s, effects, "speech-flush", { gen: s.speech.gen, target: s.speech.op });
+        s.speech.reply = { kind: "none" };
+    }
     dropApproval(s, effects, "interrupt");
 }
 
@@ -220,7 +257,8 @@ function reduce(state, e) {
     if (e.type !== "deadline") expire(s, effects, e.at);
     switch (e.type) {
     case "snapshot": {
-        var settingsChanged = changedSettings(s.settings, e.settings);
+        if (e.engine !== "chained" && e.engine !== "duplex") throw new Error("jarvis: session=engine");
+        var settingsChanged = changedSettings(s.settings, e.settings) || s.engine.kind !== e.engine;
         var devicesChanged = s.settings.microphone !== e.settings.microphone || s.settings.speaker !== e.settings.speaker;
         if (devicesChanged && s.fault.kind === "error" && s.fault.reason === "device-lost")
             s.fault = { kind: "none" };
@@ -231,6 +269,7 @@ function reduce(state, e) {
             s.fault = { kind: "none" };
         }
         s.settings = JSON.parse(JSON.stringify(e.settings));
+        s.engine = { kind: e.engine };
         if (e.locked !== false || !e.configured) {
             end(s, effects, e.at, "gate", false);
             s.gate = { kind: "down", reason: e.locked === null ? "lock-unknown"
@@ -416,6 +455,27 @@ function reduce(state, e) {
         if (e.id !== s.approval.id || e.gen !== s.approval.gen) { stale(s); break; }
         dropApproval(s, effects, "cancel");
         break;
+    case "speak":
+        if (!live(s, e, "speech", ["open"])) { stale(s); break; }
+        // New output after an interruption answers new input.
+        if (s.conversation.kind === "interrupted") s.conversation = { kind: "active" };
+        s.speech.reply = { kind: "waiting" };
+        break;
+    case "transcript":
+        if (!live(s, e, "speech", ["open"])) { stale(s); break; }
+        effect(s, effects, "transcript", { role: e.role, text: e.text, stage: e.stage, rev: e.rev });
+        break;
+    case "speech-idle":
+        if (!live(s, e, "speech", ["open"])) { stale(s); break; }
+        end(s, effects, e.at, "idle", false);
+        break;
+    case "speech-failed":
+        if (!live(s, e, "speech", ["open"])) { stale(s); break; }
+        // A failed engine has already released its session.
+        s.speech = { kind: "closed" };
+        s.fault = { kind: "error", reason: e.reason, retry: 0 };
+        end(s, effects, e.at, "speech-failed", false);
+        break;
     case "deadline":
         if (live(s, e, "turn", ["thinking", "cancelling"])
                 || live(s, e, "approval", ["held"]) || live(s, e, "action", ["running"]))
@@ -439,7 +499,8 @@ var REGIONS = {
     approval: { none: "", held: "gen op id digest deadline shownAt physical text tool timeoutMs cancellable brain" },
     fault: { none: "", error: "reason retry", retrying: "reason retry" }, conversation: { ended: "", active: "", interrupted: "" },
     input: { released: "", held: "", conversation: "", "follow-up": "", armed: "" },
-    indicator: { gone: "", shown: "" }, duplex: { half: "" }
+    indicator: { gone: "", shown: "" }, duplex: { half: "" },
+    engine: { chained: "", duplex: "" }, speech: { closed: "", open: "gen op reply" }
 };
 
 function exact(value, names) {
@@ -471,6 +532,8 @@ function validate(s) {
                 if (!exact(r[f], ["kind"]) || ["available", "unavailable", "requested"].indexOf(r[f].kind) === -1) return false;
             } else if (f === "admission") {
                 if (!exact(r[f], ["kind"]) || ["waiting", "started"].indexOf(r[f].kind) === -1) return false;
+            } else if (f === "reply") {
+                if (!exact(r[f], ["kind"]) || ["none", "waiting"].indexOf(r[f].kind) === -1) return false;
             } else if (f === "limit") {
                 if (r[f] === null || typeof r[f] !== "object") return false;
                 if (!exact(r[f], r[f].kind === "pending" ? ["kind", "deadline"] : ["kind"])) return false;

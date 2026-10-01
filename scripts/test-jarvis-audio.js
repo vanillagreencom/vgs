@@ -36,7 +36,7 @@ function setup(Implementation = Audio, sink = null, source = null, clock = null)
         if (s.gate.kind === "down") void audio.teardown("gate", ["capture", "playback"]);
     });
     const dispatch = (type, values = {}) => runner.dispatch({ type, ...values });
-    dispatch("snapshot", { locked: false, configured: true,
+    dispatch("snapshot", { locked: false, engine: "chained", configured: true,
         settings: { microphone: "", speaker: "" } });
     dispatch("indicator", { shown: true });
     return { audio, runner, dispatch, levels, offers, faults, frames: () => frames, tick: ms => { at += ms; } };
@@ -57,7 +57,7 @@ async function trigger(Implementation, type) {
         else if (type === "indicator") w.dispatch("indicator", { shown: false });
         else if (type === "provider") w.audio.failCapture("provider-disconnected", "");
         else if (type === "lease") w.runner.close();
-        else w.dispatch("snapshot", { locked: type === "unknown" ? null : true, configured: true,
+        else w.dispatch("snapshot", { locked: type === "unknown" ? null : true, engine: "chained", configured: true,
             settings: w.runner.state.settings });
         if (type === "mute") assert.equal(w.runner.state.mute.kind, "muting");
         await until(() => w.runner.state.capture.kind === "closed", type + " acknowledgment");
@@ -105,7 +105,7 @@ async function inside() {
     for (const [name, setting] of [["no-devices", ""], ["unavailable-id", "missing.mic"]]) {
         const w = setup();
         if (name === "no-devices") fs.writeFileSync(path.join(process.env.HOME, name), "");
-        w.dispatch("snapshot", { locked: false, configured: true,
+        w.dispatch("snapshot", { locked: false, engine: "chained", configured: true,
             settings: { microphone: setting, speaker: "" } });
         w.dispatch("talk-down");
         await until(() => w.runner.state.fault.kind === "error" && w.runner.state.capture.kind === "closed",
@@ -248,7 +248,7 @@ async function inside() {
             else if (operation === "lease") w.runner.close();
             else if (operation === "mute" || operation === "stop") w.dispatch(operation);
             else if (operation === "locked" || operation === "unknown") {
-                w.dispatch("snapshot", { locked: operation === "unknown" ? null : true, configured: true,
+                w.dispatch("snapshot", { locked: operation === "unknown" ? null : true, engine: "chained", configured: true,
                     settings: w.runner.state.settings });
             } else {
                 throw new Error("half-duplex fixture operation: " + operation);

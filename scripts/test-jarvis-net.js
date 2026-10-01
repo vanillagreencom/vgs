@@ -7,7 +7,7 @@ const { standins } = require("./fixtures/jarvis/keys-world.js");
 const http = require("node:http");
 const sockets = require("node:net");
 const cp = require("node:child_process");
-const { createHash } = require("node:crypto");
+const Ws = require("./fixtures/jarvis/websocket.js");
 const { once } = require("node:events");
 const file = path.join(tree, "shell/plugins/vgs.jarvis/backend/net.js");
 const Net = require(file);
@@ -51,43 +51,33 @@ world(async () => {
                 socket.end("HTTP/1.1 307 Temporary Redirect\r\nLocation: " + second + "/echo\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
-            const accept = createHash("sha1").update(request.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
-            socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
+            Ws.accept(request, socket);
             // A fixed server message proves the channel does not expose the
             // native socket through event.target. Only fixture frames are read.
-            socket.write(Buffer.concat([Buffer.from([0x81, 7]), Buffer.from("fixture")]));
-            let pending = Buffer.alloc(0);
+            socket.write(Ws.frame(1, "fixture"));
             let sentClose = false;
-            socket.on("data", chunk => {
-                pending = Buffer.concat([pending, chunk]);
-                while (pending.length >= 6) {
-                    const opcode = pending[0] & 15;
-                    const length = pending[1] & 127;
-                    assert.ok(length < 126 && (pending[1] & 128) !== 0, "bounded, masked fixture frame");
-                    if (pending.length < 6 + length) return;
-                    const mask = pending.subarray(2, 6);
-                    const payload = Buffer.from(pending.subarray(6, 6 + length));
-                    payload.forEach((byte, index) => { payload[index] = byte ^ mask[index % 4]; });
-                    pending = pending.subarray(6 + length);
-                    if (opcode === 8) {
-                        socket.end(sentClose ? undefined : Buffer.concat([Buffer.from([0x88, payload.length]), payload]));
-                        return;
-                    }
-                    assert.ok(opcode === 1 || opcode === 2, "fixture expects text or binary frames");
-                    if (request.url === "/close-abrupt") { socket.destroy(); return; }
-                    if (request.url === "/close-normal" || request.url === "/close-policy") {
-                        const reason = Buffer.from("fixture-private-provider-reason");
-                        const closed = Buffer.alloc(2 + reason.length);
-                        closed.writeUInt16BE(request.url === "/close-normal" ? 1000 : 1008);
-                        reason.copy(closed, 2);
-                        sentClose = true;
-                        socket.write(Buffer.concat([Buffer.from([0x88, closed.length]), closed]));
-                        continue;
-                    }
-                    frames.push(payload.toString());
-                    socket.write(Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]));
+            let ended = false;
+            socket.on("data", Ws.decoder(({ opcode, payload }) => {
+                if (ended) return;
+                if (opcode === 8) {
+                    ended = true;
+                    socket.end(sentClose ? undefined : Ws.frame(8, payload));
+                    return;
                 }
-            });
+                assert.ok(opcode === 1 || opcode === 2, "fixture expects text or binary frames");
+                if (request.url === "/close-abrupt") { ended = true; socket.destroy(); return; }
+                if (request.url === "/close-normal" || request.url === "/close-policy") {
+                    const reason = Buffer.from("fixture-private-provider-reason");
+                    const closed = Buffer.alloc(2 + reason.length);
+                    closed.writeUInt16BE(request.url === "/close-normal" ? 1000 : 1008);
+                    reason.copy(closed, 2);
+                    sentClose = true;
+                    socket.write(Ws.frame(8, closed));
+                    return;
+                }
+                frames.push(payload.toString());
+                socket.write(Ws.frame(opcode, payload));
+            }));
         });
         return instance;
     }
@@ -326,6 +316,13 @@ world(async () => {
         const binaryResult = channel.send(Policy.item(Buffer.from("snapshot"), ["speech"]));
         binaryResult.content.fill(0);
         assert.equal(await (await binaryEcho)[0].data.text(), "snapshot", "returned bytes cannot change a queued frame");
+        assert.equal(channel.bufferedAmount, 0, "every sent frame has reached the socket");
+        const large = Policy.item("x".repeat(70000), ["speech"]);
+        const largeEcho = once(channel.events, "message");
+        channel.send(large);
+        assert.ok(channel.bufferedAmount >= 70000, "a frame not yet written is counted");
+        assert.equal((await largeEcho)[0].data.length, 70000, "a 64-bit length frame round-trips");
+        assert.equal(channel.bufferedAmount, 0);
         const closing = once(channel.events, "close");
         channel.close();
         await closing;
@@ -475,6 +472,12 @@ world(async () => {
             async (net, policy) => { const { door } = owner(net, policy);
                 await assert.rejects(() => consume(door, speech, { url: first.replace("http:", "ws:") }),
                     { message: "jarvis: net=transport" }); });
+        await control("buffered-amount", "get bufferedAmount() { return socket.bufferedAmount; }", "get bufferedAmount() { return 0; }",
+            async (net, policy) => { const { door } = owner(net, policy);
+                const socket = door.websocket(speech, { url: first.replace("http:", "ws:") + "/echo" });
+                await once(socket.events, "open");
+                socket.send(Policy.item("x".repeat(70000), ["speech"]));
+                assert.ok(socket.bufferedAmount >= 70000, "unwritten bytes are counted"); });
         await control("stream-cancel", "const abort = () => controller.abort();", "const abort = () => {};",
             async (net, policy) => { const { door } = owner(net, policy);
                 const signal = new AbortController(); signal.abort();

@@ -15,6 +15,16 @@ const TRANSCRIPT_BYTES = 64 * 1024;
 const DISCOVERY_BYTES = 1024 * 1024;
 const STREAM_PROPERTIES = JSON.stringify({ "node.dont-fallback": true, "node.dont-reconnect": true });
 
+/**
+ * The largest high-water mark a playback source may declare, in its own units:
+ * bytes, or chunks in object mode. A Duplex shares the allowance across its two
+ * queues. Producers that cannot pause their provider size their queue by it.
+ */
+function sourceLimit(objectMode, duplex) {
+    const unit = objectMode ? BUFFER_BYTES : 1;
+    return Math.floor((PLAYBACK_QUEUE_BYTES - (duplex ? 3 : 2) * BUFFER_BYTES) / unit / (duplex ? 2 : 1));
+}
+
 class Audio {
     constructor({ session, environment, clock, offers, level, fault, captureSink, playbackSource }) {
         this.session = session;
@@ -514,8 +524,7 @@ class Audio {
             }
             const unit = source.readableObjectMode ? BUFFER_BYTES : 1;
             const duplex = source.writableHighWaterMark !== undefined;
-            const queueLimit = Math.floor((PLAYBACK_QUEUE_BYTES - (duplex ? 3 : 2) * BUFFER_BYTES)
-                / unit / (duplex ? 2 : 1));
+            const queueLimit = sourceLimit(source.readableObjectMode, duplex);
             // A compliant stream can cross its high-water mark by one chunk.
             const queueAllowance = queueLimit + BUFFER_BYTES / unit;
             if (!Number.isSafeInteger(source.readableHighWaterMark) || source.readableHighWaterMark > queueLimit
@@ -620,4 +629,4 @@ class Audio {
     }
 }
 
-module.exports = { Audio };
+module.exports = { Audio, sourceLimit, PCM_RATE };

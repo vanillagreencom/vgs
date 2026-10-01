@@ -68,7 +68,7 @@ function world(implementation = Owner, synchronous = false, session = Session) {
         }
         assert.fail("deadline owner rescheduled an expired deadline");
     };
-    dispatch("snapshot", { locked: false, configured: true, settings: {} });
+    dispatch("snapshot", { locked: false, engine: "chained", configured: true, settings: {} });
     dispatch("indicator", { shown: true });
     return { runner, dispatch, tick, timers, pending, calls, published, trace, connections };
 }
@@ -182,7 +182,7 @@ const tests = [
             assert.equal(w.connections.get(sent.owner).kind, "open", "done leaves the connection acquired");
             if (boundary === "lease") w.runner.close();
             else if (boundary === "stop") w.dispatch("stop");
-            else w.dispatch("snapshot", { locked: false, configured: true, settings: { model: "new" } });
+            else w.dispatch("snapshot", { locked: false, engine: "chained", configured: true, settings: { model: "new" } });
             assert.equal(w.connections.get(sent.owner).kind, "closed", boundary + " releases the completed owner");
             const closes = w.calls.filter(c => c.name === "brain-close");
             assert.equal(closes.length, 1);
@@ -312,7 +312,7 @@ const tests = [
             ports.playback.start, ports.tools.start, ports.tools.cancel, ports.brain.outcome])
             assert.throws(() => operation({}), { message: "jarvis: session=adapter-unavailable" });
         const runner = new impl.SessionRunner(Session, ports, { now: () => 0, set: () => assert.fail("no timer"), clear: () => {} }, () => {});
-        runner.dispatch({ type: "snapshot", locked: false, configured: false, settings: {} });
+        runner.dispatch({ type: "snapshot", locked: false, engine: "chained", configured: false, settings: {} });
         runner.dispatch({ type: "talk-down" });
         assert.equal(runner.state.capture.kind, "closed");
         assert.equal(runner.state.action.kind, "none");

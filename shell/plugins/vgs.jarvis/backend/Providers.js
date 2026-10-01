@@ -1,6 +1,7 @@
-// The brain provider table. One row per provider names its wire driver,
-// endpoint, key need, documented retention and no-store request fields.
-// Sources and fetch dates for each row: docs/architecture/jarvis-brain.md.
+// The provider table: wire brain drivers and the duplex voice engine. One row
+// per provider names its driver, endpoint, key need, documented retention and
+// no-store request fields. Sources and fetch dates: docs/architecture/jarvis-brain.md,
+// and jarvis-live.md for the voice row.
 "use strict";
 const Net = require("./net.js");
 
@@ -18,6 +19,12 @@ const ROWS = Object.freeze({
     openai: { driver: "openai-chat", base: "https://api.openai.com/v1", key: "required", images: true,
         noStore: { store: false },
         retention: { text: "Abuse monitoring logs are kept up to 30 days; API data is not used for training unless the account opts in.",
+            source: "https://developers.openai.com/api/docs/guides/your-data" } },
+    // The duplex voice engine. base is its WebSocket endpoint; a key stored for
+    // the openai row's origin serves it, since both handshake at that origin.
+    "openai-live": { driver: "openai-live", base: "wss://api.openai.com/v1/live/sessions", key: "required", images: false,
+        noStore: { store: false },
+        retention: { text: "Abuse monitoring logs are kept up to 30 days; voice sessions are not used for training, and nothing is stored for forking while store is false.",
             source: "https://developers.openai.com/api/docs/guides/your-data" } },
     openrouter: { driver: "openai-chat", base: "https://openrouter.ai/api/v1", key: "required", images: true,
         noStore: { provider: { data_collection: "deny" } },

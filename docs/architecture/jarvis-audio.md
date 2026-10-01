@@ -25,7 +25,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Audio.js, shell/plugins/vgs.jarvis/back
 | Daemon | `capturePort`, `playbackPort`, `observe`, `discover`, `close` | Installed production ports consume Session effects. EOF and protocol or pipe failure close the owner. |
 | Session runner | Capture and playback completion or failure callbacks | The runner stamps the originating generation and operation. Late failures cannot alter a newer capture or playback. |
 | Service | `devices`, `level` and `audio-fault` wire messages | Declared choices reach Settings through `optionsFrom`. The hidden level reaches the plugin's status record. The service retains an audio fault until daemon restart. Offers alone prove neither capture nor probe recovery. |
-| Chained or duplex speech engine | Constructor `captureSink` and `playbackSource` | Supplies a Writable PCM sink and a Readable PCM source. Audio owns their release. The engine owns transcripts and provider disconnects. |
+| Chained or duplex speech engine | Constructor `captureSink` and `playbackSource` | Supplies a Writable PCM sink and a Readable PCM source. Audio owns their release. The engine owns transcripts and provider disconnects. [GPT-Live](jarvis-live.md) implements both. |
 
 The shipping daemon supplies no speech sink or playback source. Its gate remains unconfigured until the speech engine and mapped indicator exist. Capture collection still belongs to speech. It never returns a successful transcript from an unavailable port.
 

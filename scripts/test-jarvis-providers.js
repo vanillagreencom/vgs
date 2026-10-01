@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// The brain provider table against its vendors' documentation, fetched
-// 2026-09-30 and cited in docs/architecture/jarvis-brain.md. No request is made.
+// The provider table against its vendors' documentation, fetched 2026-09-30
+// and cited in docs/architecture/jarvis-brain.md; the GPT-Live row 2026-10-01,
+// cited in docs/architecture/jarvis-live.md. No request is made.
 "use strict";
 const { assert, path, backend, world, control } = require("./fixtures/jarvis-voice/assertions.js");
 const Providers = require(path.join(backend, "Providers.js"));
@@ -35,6 +36,11 @@ function pinned(logic) {
         ["anthropic", "anthropic-messages", "https://api.anthropic.com/v1", "required", true, null]);
     assert.equal(row.retention.source, "https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data");
     assert.ok(Object.isFrozen(row) && Object.isFrozen(row.retention));
+    const live = logic.select("openai-live", "http://127.0.0.1:9000/v1");
+    assert.deepEqual([live.id, live.driver, live.base, live.key, live.images, live.noStore],
+        ["openai-live", "openai-live", "wss://api.openai.com/v1/live/sessions", "required", false, { store: false }]);
+    assert.equal(live.retention.source, "https://developers.openai.com/api/docs/guides/your-data");
+    assert.ok(Object.isFrozen(live) && Object.isFrozen(live.noStore));
 }
 pinned(Providers);
 
@@ -73,7 +79,9 @@ world("providers", root => {
         ["anthropic-driver", 'driver: "anthropic-messages"', 'driver: "openai-chat"', pinned],
         ["anthropic-base", '"https://api.anthropic.com/v1"', '"https://api.anthropic.com"', pinned],
         ["base", '"https://api.groq.com/openai/v1"', '"https://api.groq.com/v1"', pinned],
-        ["no-store", "noStore: { store: false }", "noStore: null", pinned],
+        ["no-store", "images: true,\n        noStore: { store: false }", "images: true,\n        noStore: null", pinned],
+        ["live-no-store", "images: false,\n        noStore: { store: false }", "images: false,\n        noStore: null", pinned],
+        ["live-base", '"wss://api.openai.com/v1/live/sessions"', '"wss://api.openai.com/v1/realtime"', pinned],
         ["freeze", "Object.freeze(value);", "", logic => {
             const row = logic.select("openai");
             assert.throws(() => { row.noStore.store = true; }, TypeError);

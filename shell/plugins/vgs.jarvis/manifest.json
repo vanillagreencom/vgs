@@ -61,6 +61,7 @@
     "microphones": { "type": "choices", "label": "Microphones" },
     "speakers": { "type": "choices", "label": "Speakers" },
     "level": { "type": "data", "label": "Audio levels" },
+    "transcript": { "type": "data", "label": "Transcript" },
     "audio": { "type": "state", "label": "Audio", "hint": "Half duplex closes capture during speech. Echo cancellation is not supported." },
     "localRuntime": { "type": "state", "label": "Local voice", "hint": "Setup downloads models and verifies the selected runtime without opening audio devices.",
       "action": { "label": "Set up local voice", "tui": "setup-local" } },

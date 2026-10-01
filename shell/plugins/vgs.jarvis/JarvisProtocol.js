@@ -3,9 +3,12 @@
 
 // Shell produces hello, intent, shown, tui-state and reply. Voice confirmation
 // is daemon-internal. Daemon produces status/state/devices/level/audio-fault,
-// request, tasks and task-answer. A line excludes its LF.
+// request, tasks, task-answer and transcript. A line excludes its LF.
+// A transcript is one speaker's caption segment: partial text grows under
+// a rising rev; final closes the segment.
 var MAX_LINE_BYTES = 256 * 1024;
 var TASK_TERMINALS = ["auto", "tmux", "floating"];
+var TRANSCRIPT_CHARS = 4096;
 
 // Requests the daemon sends and the service answers, one reply each. `args`
 // lists each argument's type, or "argv" for a command; `data` names the
@@ -321,6 +324,15 @@ function accept(line, direction) {
         keys(message, ["v", "type", "gen", "revision", "reason"], "audio-fault");
         if (typeof message.reason !== "string" || !/^[^\x00-\x1f\x7f]{1,180}$/.test(message.reason))
             fail("audio-fault");
+        break;
+    case "transcript":
+        if (direction !== "daemon") fail("direction-transcript");
+        keys(message, ["v", "type", "gen", "revision", "role", "text", "stage", "rev"], "transcript");
+        if (message.role !== "user" && message.role !== "assistant") fail("transcript-role");
+        if (message.stage !== "partial" && message.stage !== "final") fail("transcript-stage");
+        if (typeof message.text !== "string" || message.text.length === 0 || message.text.length > TRANSCRIPT_CHARS
+                || /[\x00-\x1f\x7f]/.test(message.text)) fail("transcript-text");
+        if (!Number.isSafeInteger(message.rev) || message.rev < 1) fail("transcript-rev");
         break;
     default:
         fail("type");

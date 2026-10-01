@@ -14,6 +14,8 @@ The installed [release policy and transport](jarvis-release.md) define the outbo
 
 The [wire brain](jarvis-brain.md) defines the shared owner, OpenAI-compatible driver and provider table. [Anthropic Messages](jarvis-anthropic.md) uses the same release, request lifetime and event stream reader. The daemon creates no brain yet.
 
+The [GPT-Live engine](jarvis-live.md) defines the duplex speech session, its audio path, interruption and idle close, and the Session regions it uses. The daemon creates no engine yet.
+
 ## Local speech inputs
 
 [jarvis-local.md](jarvis-local.md) defines the artifact declaration, bounded model inputs and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the choices. [Local setup](jarvis-setup.md) verifies installation and publishes readiness. The sidecar and admission remain separate owners.
@@ -62,7 +64,7 @@ The wire contract is in [jarvis-controls.md § Wire](jarvis-controls.md#wire).
 
 ## Boundaries still owned by later rows
 
-[The audio owner](jarvis-audio.md) implements audio process lifetime and capture teardown. [Half duplex](jarvis-audio-duplex.md) implements J15 and answers R3. [Playback accounting](jarvis-playback.md) implements J14. J16 owns the mapped indicator handshake. J20 owns the approval bubble, confirm key and final-transcript matcher. J33 connects the brain to the installed router. J42 owns local toggle turn detection; J43 owns always runtime; J57 owns the console. Their settings and actions enter only with their consumers. The reducer's ports do not implement those owners. Engines, adapter integrations and user interfaces stay with their assigned issues. [Account discovery](jarvis-accounts.md) implements explicit API and local Verify through the outbound door. Subscription and speech-only verification remain with their separate owners. [The action policy](jarvis-policy.md) names the routing, approval, audit, release and confinement owners.
+[The audio owner](jarvis-audio.md) implements audio process lifetime and capture teardown. [Half duplex](jarvis-audio-duplex.md) implements J15 and answers R3. [Playback accounting](jarvis-playback.md) implements J14. J37 owns GPT-Live delegation; [the engine](jarvis-live.md#delegation) refuses a delegation until then. Selecting the duplex engine in the daemon waits for the voice and account selection and the indicator. J16 owns the mapped indicator handshake. J20 owns the approval bubble, confirm key and final-transcript matcher. J33 connects the brain to the installed router. J42 owns local toggle turn detection; J43 owns always runtime; J57 owns the console. Their settings and actions enter only with their consumers. The reducer's ports do not implement those owners. Engines, adapter integrations and user interfaces stay with their assigned issues. [Account discovery](jarvis-accounts.md) implements explicit API and local Verify through the outbound door. Subscription and speech-only verification remain with their separate owners. [The action policy](jarvis-policy.md) names the routing, approval, audit, release and confinement owners.
 
 ## Evidence
 

@@ -144,6 +144,8 @@ function create(selected) {
         });
         return Object.freeze({ kind: "channel", events,
             get readyState() { return socket.readyState; },
+            // Bytes accepted by send but not yet written to the socket.
+            get bufferedAmount() { return socket.bufferedAmount; },
             send(frame, frameGrants = []) {
                 if (closed) throw new Error("jarvis: net=closed");
                 if (socket.readyState !== WebSocket.OPEN) throw new Error("jarvis: net=socket-not-open");

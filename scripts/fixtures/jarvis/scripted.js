@@ -1,5 +1,7 @@
 // Private scripted ports for the v1 Session effect contract, 2026-09-30.
 // No audio, provider, socket or tool runs. File gates advance callbacks only.
+// The duplex speech port, 2026-10-01, emits one caption per transcript gate
+// through the callbacks of the session it opened, live or closed.
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
@@ -83,15 +85,28 @@ function ports(root) {
             show: () => { throw new Error("scripted: unexpected-approval"); },
             end: () => { throw new Error("scripted: unexpected-approval"); },
             refused: () => { throw new Error("scripted: unexpected-approval"); }
+        },
+        speech: {
+            open: (e, events) => {
+                record("speech-open", e);
+                const caption = () => {
+                    events.transcript({ role: "user", text: "scripted words", stage: "partial", rev: 1 });
+                    wait("transcript", caption);
+                };
+                wait("transcript", caption);
+            },
+            close: e => record("speech-close", e),
+            flush: e => record("speech-flush", e)
         }
     };
 }
 
 // Install only in a disposable daemon. The installed product has no fixture
 // option, environment switch or import into scripts/.
-function instrument(file, root) {
+function instrument(file, root, engine = "chained") {
     const source = fs.readFileSync(file, "utf8");
     const changes = [
+        ['engine: "chained",', "engine: " + JSON.stringify(engine) + ","],
         ['ports.playback = audio.playbackPort;',
             'ports.playback = audio.playbackPort;\n    Object.assign(ports, require("./scripted-fixture.js").ports(' + JSON.stringify(root) + '));'],
         ['configured: false, settings: context.settings',

@@ -64,7 +64,8 @@ async function inside() {
                     mute: { kind: "off" }, capture: { kind: "closed" }, turn: { kind: "none" }, brain: { kind: "closed" },
                     playback: { kind: "idle" }, action: { kind: "none" }, approval: { kind: "none" }, fault: { kind: "none" },
                     conversation: { kind: "ended" }, input: { kind: "released" }, indicator: { kind: "gone" },
-                    duplex: { kind: "half" }, toggleAt: null
+                    duplex: { kind: "half" }, toggleAt: null,
+                    engine: { kind: "chained" }, speech: { kind: "closed" }
                 }, phase: "down" });
         }
         return lines;
@@ -506,6 +507,35 @@ async function inside() {
         await w.wait(m => m.state.conversation.kind === "ended");
         assert.equal(w.last().state.capture.kind, "closed");
     }, "toggle");
+    // The duplex wire: a caption from the live speech session reaches stdout as
+    // a judged transcript line; one from a closed session is counted stale.
+    const duplexGates = path.join(root, "duplex-gates");
+    const captions = file => conversation(file, async w => {
+        w.send("talk-down");
+        const open = await w.wait(m => m.state.speech.kind === "open" && m.phase === "listening");
+        fs.writeFileSync(path.join(duplexGates, "transcript"), "");
+        await w.wait(() => w.messages.some(m => m.type === "transcript"));
+        assert.deepEqual(w.messages.filter(m => m.type === "transcript"), [{ v: 1, type: "transcript", gen: open.gen,
+            revision: hello.revision, role: "user", text: "scripted words", stage: "partial", rev: 1 }]);
+        w.send("stop");
+        const ended = await w.wait(m => m.state.speech.kind === "closed");
+        fs.writeFileSync(path.join(duplexGates, "transcript"), "");
+        await w.wait(m => m.state.stale > ended.state.stale);
+        assert.equal(w.messages.filter(m => m.type === "transcript").length, 1, "a closed session's caption stays off the wire");
+    });
+    const duplex = daemonCopy("duplex");
+    instrument(duplex, duplexGates, "duplex");
+    await captions(duplex);
+    const silent = daemonCopy("duplex-silent");
+    const wireNeedle = 'if (!ending && context !== null) write({ v: 1, type: "transcript",';
+    const silentSource = fs.readFileSync(silent, "utf8");
+    assert.equal(silentSource.split(wireNeedle).length - 1, 1, "transcript wire mutation match");
+    fs.writeFileSync(silent, silentSource.replace(wireNeedle, 'if (false) write({ v: 1, type: "transcript",'));
+    instrument(silent, duplexGates, "duplex");
+    await assert.rejects(() => captions(silent), assert.AssertionError, "a dropped transcript port must turn red");
+    controls++;
+    console.log("test-jarvis-daemon: control=transcript-wire killed");
+
     async function blockedReader(file) {
         fs.writeFileSync(path.join(process.env.HOME, "audio-flood"), "");
         const child = cp.spawn("node", [file, "--tree", tree], {

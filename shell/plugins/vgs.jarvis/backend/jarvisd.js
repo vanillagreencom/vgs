@@ -182,6 +182,10 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     ports.capture = { ...ports.capture, ...audio.capturePort };
     ports.playback = audio.playbackPort;
     ports.mute = { store: storeMute };
+    ports.transcript = e => {
+        if (!ending && context !== null) write({ v: 1, type: "transcript", gen: e.gen,
+            revision: context.revision, role: e.role, text: e.text, stage: e.stage, rev: e.rev });
+    };
     const runner = new SessionRunner(Session, ports, {
         now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer)
     }, (state, phase) => {
@@ -289,7 +293,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     daemon: context.locked ? "locked" : "ready" });
                 // No speech adapter or indicator exists yet. A healthy
                 // child is not permission to capture or start a tool.
-                runner.dispatch({ type: "snapshot", locked: context.locked,
+                runner.dispatch({ type: "snapshot", locked: context.locked, engine: "chained",
                     configured: false, settings: context.settings });
                 if (first) void audio.discover().catch(error => {
                     if (!ending) audio.fault(error.message);

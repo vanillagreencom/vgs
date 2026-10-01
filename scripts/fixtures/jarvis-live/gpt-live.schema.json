@@ -1,0 +1,548 @@
+{
+ "source": {
+  "reference": "https://developers.openai.com/api/reference/resources/live/primary-websocket",
+  "markdown": "https://developers.openai.com/api/reference/resources/live/primary-websocket.md",
+  "sha256": "411cfac9fadae6ca00c35b81e7deb5abbb0de3e44f3a856be1b6c08aacf27e9c",
+  "fetched": "2026-10-01",
+  "operation": "WS /v1/live/sessions",
+  "guides": [
+   "https://developers.openai.com/api/docs/guides/voice-websockets?api=live",
+   "https://developers.openai.com/api/docs/guides/live-delegation",
+   "https://developers.openai.com/api/docs/guides/live-conversations",
+   "https://developers.openai.com/api/docs/guides/voice-server-controls?api=live"
+  ]
+ },
+ "rule": [
+  "Each schema transcribes the reference's schema of the same name to the checker's keyword set. String literals become enums; optional members stay optional.",
+  "SessionConfig keeps model, instructions, audio, delegation and store. AudioConfig keeps the PCM format and output.voice as a string. delegation keeps its ClientDelegation branch and null.",
+  "SessionResource keeps id, expires_at, model, status, audio, delegation, instructions, input as an untyped array, and store.",
+  "Server events keep every documented member. The checker closes every object."
+ ],
+ "omitted": [
+  "Client events the duplex engine does not send: session.update, session.input_audio.mute and unmute, session.instructions.append, session.thinking.append, session.commentary.append, response.item.create, response.create.",
+  "Server events a client-delegation primary WebSocket session does not request: session.updated, the input_audio muted and unmuted acknowledgments, the append acknowledgments, response.event, the reflected sideband session.input_audio.append, and the SIP transport and DTMF events.",
+  "AudioPCMU, AudioPCMA, CustomVoice, the Responses delegation branch, ClientConfig, and InitialItem member shapes."
+ ],
+ "schemas": {
+  "AudioPCM": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "audio/pcm"
+     ]
+    },
+    "rate": {
+     "type": "integer",
+     "enum": [
+      16000,
+      24000
+     ]
+    }
+   },
+   "required": [
+    "type",
+    "rate"
+   ]
+  },
+  "AudioConfig": {
+   "type": "object",
+   "properties": {
+    "format": {
+     "$ref": "#/schemas/AudioPCM"
+    },
+    "output": {
+     "type": "object",
+     "properties": {
+      "voice": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  "ClientDelegation": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "client"
+     ]
+    }
+   },
+   "required": [
+    "type"
+   ]
+  },
+  "SessionConfig": {
+   "type": "object",
+   "properties": {
+    "model": {
+     "type": "string"
+    },
+    "instructions": {
+     "type": "string",
+     "nullable": true
+    },
+    "audio": {
+     "$ref": "#/schemas/AudioConfig"
+    },
+    "delegation": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/ClientDelegation"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "store": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "model"
+   ]
+  },
+  "SessionResource": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "expires_at": {
+     "type": "number"
+    },
+    "model": {
+     "type": "string"
+    },
+    "status": {
+     "type": "string",
+     "enum": [
+      "active"
+     ]
+    },
+    "audio": {
+     "$ref": "#/schemas/AudioConfig"
+    },
+    "delegation": {
+     "$ref": "#/schemas/ClientDelegation"
+    },
+    "instructions": {
+     "type": "string",
+     "nullable": true
+    },
+    "input": {
+     "type": "array"
+    },
+    "store": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "id",
+    "expires_at",
+    "model",
+    "status"
+   ]
+  },
+  "SessionUsage": {
+   "type": "object",
+   "properties": {
+    "seconds": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "seconds"
+   ]
+  },
+  "LiveSessionStartEvent": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.start"
+     ]
+    },
+    "event_id": {
+     "type": "string",
+     "nullable": true
+    },
+    "session": {
+     "$ref": "#/schemas/SessionConfig"
+    }
+   },
+   "required": [
+    "type",
+    "session"
+   ]
+  },
+  "LiveInputAudioAppendEvent": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.input_audio.append"
+     ]
+    },
+    "event_id": {
+     "type": "string",
+     "nullable": true
+    },
+    "audio": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "audio"
+   ]
+  },
+  "LiveSessionCloseParam": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.close"
+     ]
+    },
+    "event_id": {
+     "type": "string",
+     "nullable": true
+    }
+   },
+   "required": [
+    "type"
+   ]
+  },
+  "LiveSessionStarted": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.started"
+     ]
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "client_event_id": {
+     "type": "string"
+    },
+    "session": {
+     "$ref": "#/schemas/SessionResource"
+    }
+   },
+   "required": [
+    "type",
+    "event_id",
+    "session"
+   ]
+  },
+  "LiveOutputAudioDelta": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.output_audio.delta"
+     ]
+    },
+    "delta": {
+     "type": "string"
+    },
+    "start_ms": {
+     "type": "number"
+    },
+    "end_ms": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "type",
+    "delta"
+   ]
+  },
+  "LiveInputTranscriptDelta": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.input_transcript.delta"
+     ]
+    },
+    "delta": {
+     "type": "string"
+    },
+    "start_ms": {
+     "type": "number"
+    },
+    "end_ms": {
+     "type": "number"
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "client_event_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "delta",
+    "start_ms",
+    "end_ms",
+    "event_id"
+   ]
+  },
+  "LiveOutputTranscriptDelta": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.output_transcript.delta"
+     ]
+    },
+    "delta": {
+     "type": "string"
+    },
+    "start_ms": {
+     "type": "number"
+    },
+    "end_ms": {
+     "type": "number"
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "client_event_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "delta",
+    "start_ms",
+    "end_ms",
+    "event_id"
+   ]
+  },
+  "LiveDelegationCreated": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.delegation.created"
+     ]
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "client_event_id": {
+     "type": "string"
+    },
+    "offset_ms": {
+     "type": "number"
+    },
+    "delegation": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "target": {
+       "type": "string",
+       "enum": [
+        "client",
+        "responses"
+       ]
+      },
+      "type": {
+       "type": "string",
+       "enum": [
+        "delegation"
+       ]
+      },
+      "response_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "id",
+      "target",
+      "type"
+     ]
+    }
+   },
+   "required": [
+    "type",
+    "event_id",
+    "offset_ms",
+    "delegation"
+   ]
+  },
+  "LiveSessionUsageUpdated": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.usage.updated"
+     ]
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "client_event_id": {
+     "type": "string"
+    },
+    "usage": {
+     "$ref": "#/schemas/SessionUsage"
+    },
+    "context_window": {
+     "type": "object",
+     "properties": {
+      "usage_ratio": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "usage_ratio"
+     ]
+    }
+   },
+   "required": [
+    "type",
+    "event_id",
+    "usage"
+   ]
+  },
+  "LiveSessionClosed": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "session.closed"
+     ]
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "client_event_id": {
+     "type": "string"
+    },
+    "reason": {
+     "type": "string",
+     "enum": [
+      "close_requested",
+      "expired",
+      "content",
+      "remote_hangup",
+      "connection_lost"
+     ]
+    },
+    "session": {
+     "$ref": "#/schemas/SessionResource"
+    },
+    "usage": {
+     "$ref": "#/schemas/SessionUsage"
+    }
+   },
+   "required": [
+    "type",
+    "event_id",
+    "reason",
+    "session",
+    "usage"
+   ]
+  },
+  "LiveErrorEvent": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "error"
+     ]
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "client_event_id": {
+     "type": "string"
+    },
+    "error": {
+     "type": "object",
+     "properties": {
+      "code": {
+       "type": "string"
+      },
+      "message": {
+       "type": "string"
+      },
+      "type": {
+       "type": "string"
+      },
+      "client_event_id": {
+       "type": "string"
+      },
+      "param": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "code",
+      "message",
+      "type"
+     ]
+    }
+   },
+   "required": [
+    "type",
+    "event_id",
+    "error"
+   ]
+  },
+  "LiveInfoEvent": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "info"
+     ]
+    },
+    "event_id": {
+     "type": "string"
+    },
+    "client_event_id": {
+     "type": "string"
+    },
+    "code": {
+     "type": "string"
+    },
+    "message": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "event_id",
+    "code",
+    "message"
+   ]
+  }
+ }
+}

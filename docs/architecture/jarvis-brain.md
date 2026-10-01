@@ -6,7 +6,7 @@ Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis
 
 ## Owners
 
-- `Providers.js` is the one provider table. A row names its driver, base URL, key need, image input, no-store request fields and retention note. `select(id, customBaseUrl)` returns a frozen row; `assertRow` accepts only those rows. The custom row reads the brain settings' `customBaseUrl`; every other row ignores it.
+- `Providers.js` is the one provider table. A row names its driver, base URL, key need, image input, no-store request fields and retention note. Its `openai-live` row belongs to [the duplex voice engine](jarvis-live.md); `WireBrain` refuses it with `brain=driver`. `select(id, customBaseUrl)` returns a frozen row; `assertRow` accepts only those rows. The custom row reads the brain settings' `customBaseUrl`; every other row ignores it.
 - `Sse.js::reader` parses the [WHATWG event stream format](https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation) from bytes. It owns no transport or timer. Its caller chooses the line, event and total byte ceilings.
 - `WireBrain.js::create` owns one conversation's history, release reports, looked-up key and live request. The session owns the [net owner, recipient set and grants](jarvis-release.md#owners). Both drivers use this owner; a provider row for a different driver refuses `brain=driver`.
 - `OpenAIChat.js` and `AnthropicMessages.js` own their wire encoding and event judges. They send only through the shared owner.

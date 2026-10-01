@@ -75,6 +75,8 @@ Item {
         if (quiet !== "ok") throw new Error("jarvis: " + quiet);
         const idle = shell.status.set("tasks", 0);
         if (idle !== "ok") throw new Error("jarvis: " + idle);
+        const silent = shell.status.set("transcript", null);
+        if (silent !== "ok") throw new Error("jarvis: " + silent);
         child.completion = null;
         child.stdinEnabled = true;
         publish("info", "Starting");
@@ -292,6 +294,15 @@ Item {
                 if (message.type === "level") {
                     if (sessionState !== null && message.gen === sessionState.gen) {
                         const reply = shell.status.set("level", message.level);
+                        if (reply !== "ok") throw new Error("jarvis: " + reply);
+                    }
+                    continue;
+                }
+                if (message.type === "transcript") {
+                    // A caption from an ended conversation never replaces the current one.
+                    if (sessionState !== null && message.gen === sessionState.gen) {
+                        const reply = shell.status.set("transcript", { gen: message.gen, role: message.role,
+                            text: message.text, stage: message.stage, rev: message.rev });
                         if (reply !== "ok") throw new Error("jarvis: " + reply);
                     }
                     continue;

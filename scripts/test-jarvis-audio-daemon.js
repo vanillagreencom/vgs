@@ -138,9 +138,9 @@ async function inside() {
     const admission = daemonCopy("half-admission-control", null, true);
     const sessionFile = path.resolve(admission, "../../Session.js");
     const sessionSource = fs.readFileSync(sessionFile, "utf8");
-    const admissionNeedle = '&& s.playback.kind === "idle"';
+    const admissionNeedle = '"shown"\n        && s.playback.kind === "idle"';
     assert.equal(sessionSource.split(admissionNeedle).length - 1, 1);
-    const admissionChanged = sessionSource.replace(admissionNeedle, '&& (true || s.playback.kind === "idle")');
+    const admissionChanged = sessionSource.replace(admissionNeedle, '"shown"\n        && (true || s.playback.kind === "idle")');
     assert.notEqual(admissionChanged, sessionSource);
     fs.writeFileSync(sessionFile, admissionChanged);
     await assert.rejects(() => run(admission, "speaking-complete"), assert.AssertionError);

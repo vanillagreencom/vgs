@@ -13,9 +13,9 @@ const copy = value => JSON.parse(JSON.stringify(value));
 const events = ["snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle", "stop",
     "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial", "final", "brain-done",
     "brain-failed", "cancelled", "play", "played", "flushed", "tool", "tool-done", "approval",
-    "shown", "confirm", "approval-cancel", "deadline", "lease-ended"];
+    "shown", "confirm", "approval-cancel", "deadline", "lease-ended", "speak", "transcript", "speech-idle", "speech-failed"];
 assert.deepEqual(copy(Session.EVENTS), events, "every supported event enters the pair matrix");
-const snapshot = extra => ({ type: "snapshot", at: 0, locked: false, configured: true,
+const snapshot = extra => ({ type: "snapshot", at: 0, locked: false, engine: "chained", configured: true,
     settings: {}, ...extra });
 const event = (type, at = 10, extra = {}) => ({ type, at, ...extra });
 const callback = (type, owner, at = 20, extra = {}) => event(type, at, {
@@ -49,6 +49,18 @@ function held(logic, physical = true) {
 const kinds = result => result.effects.map(e => e.kind);
 function confirmation(logic, s, at, extra = {}) {
     return step(logic, s, callback("confirm", s.approval, at, { source: "key", ...extra }));
+}
+// A duplex engine: talk opens the speech session; the voice model speaks.
+const duplexReady = logic => step(logic, ready(logic), snapshot({ engine: "duplex" })).state;
+function duplexListening(logic) {
+    let s = duplexReady(logic);
+    s = step(logic, s, event("talk-down")).state;
+    return step(logic, s, callback("capture-opened", s.capture)).state;
+}
+function duplexSpeaking(logic) {
+    let s = step(logic, duplexListening(logic), event("talk-up", 30)).state;
+    s = step(logic, s, callback("capture-closed", s.capture, 31)).state;
+    return step(logic, s, callback("speak", s.speech, 32)).state;
 }
 const table = [
     ["confirmation", logic => {
@@ -610,6 +622,76 @@ table.push(["next-setting", logic => {
     const s = held(logic);
     assert.equal(step(logic, s, snapshot({ settings: { microphone: "next" } })).state.gen, s.gen);
 }]);
+table.push(["duplex-open", logic => {
+    const chained = step(logic, ready(logic), event("talk-down"));
+    assert.equal(kinds(chained).includes("speech-open"), false, "a chained engine opens no speech session");
+    const r = step(logic, duplexReady(logic), event("talk-down"));
+    assert.deepEqual(kinds(r), ["speech-open", "capture-open"], "the session opens before capture; no utterance is collected");
+    assert.deepEqual([r.state.speech.op, r.state.turn.kind], [r.effects[0].op, "none"]);
+    const s = step(logic, r.state, callback("capture-opened", r.state.capture, 11)).state;
+    assert.equal(logic.phaseOf(s), "listening");
+}], ["duplex-hold-reply", logic => {
+    let s = step(logic, duplexListening(logic), callback("speak", duplexListening(logic).speech, 30)).state;
+    assert.deepEqual([s.speech.reply.kind, s.capture.kind, s.playback.kind], ["waiting", "open", "idle"],
+        "a reply waits while talk is held: half duplex never runs both");
+    const released = step(logic, s, event("talk-up", 31));
+    assert.equal(released.state.playback.kind, "playing");
+    assert.equal(released.state.playback.source, s.speech.op);
+    assert.equal(released.state.capture.kind, "closing");
+    const started = step(logic, released.state, callback("capture-closed", released.state.capture, 32));
+    assert.deepEqual(kinds(started), ["playback-start"]);
+}], ["duplex-interrupt", logic => {
+    const s = duplexSpeaking(logic);
+    const r = step(logic, s, event("talk-down", 40));
+    const flush = r.effects.find(e => e.kind === "speech-flush") ?? {};
+    assert.deepEqual([flush.gen, flush.target], [s.speech.gen, s.speech.op], "interrupt flushes the engine's reply");
+    assert.ok(kinds(r).includes("playback-flush"));
+    const queued = step(logic, duplexListening(logic), callback("speak", duplexListening(logic).speech, 30)).state;
+    const dropped = step(logic, queued, event("interrupt", 31));
+    assert.equal(dropped.state.speech.reply.kind, "none", "an interruption drops a queued reply");
+    assert.ok(kinds(dropped).includes("speech-flush"));
+}], ["duplex-speak-resumes", logic => {
+    const s = step(logic, duplexSpeaking(logic), event("interrupt", 40)).state;
+    assert.equal(s.conversation.kind, "interrupted");
+    const r = step(logic, s, callback("speak", s.speech, 41)).state;
+    assert.equal(r.conversation.kind, "active", "new output answers new input");
+    assert.equal(r.speech.reply.kind, "waiting");
+}], ["duplex-close", logic => {
+    const s = duplexListening(logic);
+    const stopped = step(logic, s, event("stop", 40));
+    const close = stopped.effects.find(e => e.kind === "speech-close") ?? {};
+    assert.deepEqual([close.target, close.mode, stopped.state.speech.kind], [s.speech.op, "graceful", "closed"]);
+    assert.equal((step(logic, s, event("lease-ended", 40)).effects.find(e => e.kind === "speech-close") ?? {}).mode, "abort");
+}], ["duplex-idle", logic => {
+    const s = duplexListening(logic);
+    const r = step(logic, s, callback("speech-idle", s.speech, 40));
+    assert.deepEqual([r.state.conversation.kind, r.state.speech.kind, r.state.capture.kind], ["ended", "closed", "closing"]);
+    assert.ok(r.state.gen > s.gen);
+    assert.equal((r.effects.find(e => e.kind === "speech-close") ?? {}).mode, "graceful");
+}], ["duplex-failed", logic => {
+    const s = duplexListening(logic);
+    const r = step(logic, s, callback("speech-failed", s.speech, 40, { reason: "live=fixture" }));
+    assert.deepEqual(r.state.fault, { kind: "error", reason: "live=fixture", retry: 0 });
+    assert.deepEqual([r.state.speech.kind, r.state.conversation.kind, kinds(r).includes("speech-close")], ["closed", "ended", false]);
+    assert.equal(logic.phaseOf(r.state), "error");
+}], ["duplex-stale", logic => {
+    const s = duplexListening(logic);
+    const stopped = step(logic, s, event("stop", 40)).state;
+    for (const type of ["speak", "transcript", "speech-idle", "speech-failed"]) {
+        const r = step(logic, stopped, callback(type, s.speech, 41, { role: "user", text: "late", stage: "partial", rev: 1, reason: "late" }));
+        assert.deepEqual([r.state.stale, r.effects], [stopped.stale + 1, []], type + " from a closed session is dropped and counted");
+    }
+}], ["duplex-transcript", logic => {
+    const s = duplexListening(logic);
+    const r = step(logic, s, callback("transcript", s.speech, 40, { role: "assistant", text: "Hi", stage: "final", rev: 3 }));
+    assert.deepEqual(r.effects.map(e => [e.kind, e.gen, e.role, e.text, e.stage, e.rev]), [["transcript", s.gen, "assistant", "Hi", "final", 3]]);
+}], ["duplex-engine", logic => {
+    const s = duplexListening(logic);
+    const r = step(logic, s, snapshot({ at: 40 }));
+    assert.deepEqual([r.state.engine.kind, r.state.conversation.kind, r.state.speech.kind], ["chained", "ended", "closed"],
+        "an engine change ends the conversation");
+    assert.throws(() => logic.reduce(s, { ...snapshot(), engine: undefined }), { message: "jarvis: session=engine" });
+}]);
 for (const [name, check] of table) { check(Session); }
 
 // Wire shape rules exercise the shared state judge without copying its table.
@@ -629,7 +711,9 @@ const shapes = [
     ["limit-tag", s => { s.action.limit = { kind: "unknown" }; }, acting],
     ["limit-time", s => { s.action.limit.deadline = -1; }, acting],
     ["capture-mode", s => { s.capture.mode = "unknown"; }, listening],
-    ["gate-reason", s => { s.gate.reason = "unknown"; }, logic => copy(logic.initial())]
+    ["gate-reason", s => { s.gate.reason = "unknown"; }, logic => copy(logic.initial())],
+    ["speech-reply-tag", s => { s.speech.reply = { kind: "unknown" }; }, duplexListening],
+    ["engine-tag", s => { s.engine = { kind: "unknown" }; }]
 ];
 for (const [name, mutate, seed = logic => copy(logic.initial())] of shapes) {
     const check = logic => {
@@ -651,12 +735,14 @@ const seeds = [ready(Session), listening(Session), thinking(Session), speaking(S
     step(Session, ready(Session), event("talk-down", 50)).state,
     step(Session, thinking(Session), event("cancel", 50)).state,
     step(Session, thinking(Session, true), callback("play", thinking(Session, true).turn, 40, { interruptible: true })).state,
-    step(Session, acting(Session), callback("deadline", acting(Session).action, 140)).state];
+    step(Session, acting(Session), callback("deadline", acting(Session).action, 140)).state,
+    duplexReady(Session), duplexListening(Session), duplexSpeaking(Session)];
 const pairEvents = events.map(type => ({ type, extra: {} })).concat([
     { type: "snapshot", extra: { locked: true } },
     { type: "snapshot", extra: { locked: null } },
     { type: "snapshot", extra: { configured: false } },
-    { type: "snapshot", extra: { settings: { brain: "new-account" } } }
+    { type: "snapshot", extra: { settings: { brain: "new-account" } } },
+    { type: "snapshot", extra: { engine: "duplex" } }
 ]);
 function fixtureEvent(type, s, at) {
     const regions = {
@@ -664,12 +750,13 @@ function fixtureEvent(type, s, at) {
         "playback-failed": "playback", partial: "turn", final: "turn",
         "brain-done": "turn", "brain-failed": "turn", cancelled: "turn", play: "turn",
         played: "playback", flushed: "playback", tool: "turn", "tool-done": "action",
-        approval: "turn", shown: "approval", confirm: "approval", "approval-cancel": "approval", deadline: "turn"
+        approval: "turn", shown: "approval", confirm: "approval", "approval-cancel": "approval", deadline: "turn",
+        speak: "speech", transcript: "speech", "speech-idle": "speech", "speech-failed": "speech"
     };
     const owner = s[regions[type]] || {};
     return { ...snapshot(), type, at, shown: true, text: "fixture", reason: "fixture", outcome: "completed",
         tool: "fixture", timeoutMs: 100, cancellable: true, interruptible: true, id: "fixture", digest: "a".repeat(64),
-        physical: true, source: "key",
+        physical: true, source: "key", role: "user", stage: "partial", rev: 1,
         ...(s.approval.kind === "held" && ["shown", "confirm", "approval-cancel"].includes(type)
             ? { id: s.approval.id, digest: s.approval.digest } : {}),
         gen: owner.gen === undefined ? s.gen : owner.gen, op: owner.op === undefined ? 99999 : owner.op };
@@ -687,6 +774,7 @@ function invariants(before, e, r) {
         assert.notEqual(s.fault.kind, "error");
         assert.notEqual(s.turn.kind, "cancelling");
         assert.equal(s.playback.kind, "idle");
+        if (s.engine.kind === "duplex") assert.equal(s.speech.kind, "open", "duplex capture has a speech session");
     }
     for (const effect of r.effects) {
         assert.ok(Number.isSafeInteger(effect.op) && effect.op > 0);
@@ -696,6 +784,8 @@ function invariants(before, e, r) {
         }
         if (effect.kind === "playback-start") assert.equal(s.capture.kind, "closed");
         if (effect.kind === "tool-cancel") assert.notEqual(before.action.cancellation.kind, "unavailable");
+        if (effect.kind === "collect") assert.equal(s.engine.kind, "chained");
+        if (effect.kind === "speech-open") assert.equal(s.engine.kind, "duplex");
     }
 }
 const createdCallbacks = [
@@ -763,6 +853,17 @@ const createdCallbacks = [
         assert.ok(["none", "collecting"].includes(r.state.turn.kind));
         assert.equal(r.state.brain.kind, "closed");
         assert.equal(r.effects.find(e => e.kind === "brain-close").target, s.brain.op);
+    } },
+    { effect: "speech-open", type: "speak", check: (s, r, e) => assert.ok(r.state.speech.reply.kind === "waiting"
+        || (r.state.playback.kind === "playing" && r.state.playback.source === e.op)) },
+    { effect: "speech-open", type: "transcript", check: (s, r) => assert.equal(r.effects.find(e => e.kind === "transcript").text, "fixture") },
+    { effect: "speech-open", type: "speech-idle", check: (s, r, e) => {
+        assert.equal(r.state.conversation.kind, "ended");
+        assert.equal(r.effects.find(e => e.kind === "speech-close").target, e.op);
+    } },
+    { effect: "speech-open", type: "speech-failed", check: (s, r) => {
+        assert.equal(r.state.fault.reason, "fixture");
+        assert.equal(r.state.speech.kind, "closed");
     } },
     { effect: "playback-start", type: "played", check: (s, r) => assert.equal(r.state.playback.kind, "idle") },
     { effect: "playback-flush", type: "flushed", check: (s, r) => assert.equal(r.state.playback.kind, "idle") },
@@ -832,7 +933,8 @@ function createdPairMatrix(logic) {
         "brain-cancel:cancelled", "brain-cancel:deadline",
         "playback-start:played", "playback-start:playback-failed", "playback-flush:flushed",
         "tool-start:tool-done", "tool-start:deadline",
-        "approval-show:shown", "approval-show:deadline"
+        "approval-show:shown", "approval-show:deadline",
+        "speech-open:speak", "speech-open:transcript", "speech-open:speech-idle", "speech-open:speech-failed"
     ].sort(), "created-owner discovery omitted a producer or deadline owner");
     assert.ok(count >= 18, "created-owner discovery did not complete its required callbacks");
     return count;
@@ -852,7 +954,7 @@ for (const seed of seeds) for (const a of pairEvents) for (const b of pairEvents
     }
     pairs++;
 }
-assert.equal(pairs, 14 * (events.length + 4) ** 2, "matrix discovery floor and exact event set");
+assert.equal(pairs, 17 * (events.length + 5) ** 2, "matrix discovery floor and exact event set");
 const createdPairs = createdPairMatrix(Session);
 
 const parent = path.resolve(__dirname, "../tmp");
@@ -943,10 +1045,25 @@ try {
         ["held", 's.approval.kind === "none";', '(true || s.approval.kind === "none");', "tool-held"],
         ["interrupt-tools", 's.conversation.kind === "active" && s.action', '(true || s.conversation.kind === "active") && s.action', "tool-interrupted"],
         ["tool-bound", "at >= s.action.limit.deadline", "false && at >= s.action.limit.deadline", "tool-deadline"],
-        ["half", '&& s.playback.kind === "idle"', '&& (true || s.playback.kind === "idle")', "half-duplex"],
+        ["half", '"shown"\n        && s.playback.kind === "idle"', '"shown"\n        && (true || s.playback.kind === "idle")', "half-duplex"],
         ["play-after-close", '&& s.capture.kind === "closed";', '&& (true || s.capture.kind === "closed");', "half-duplex"],
         ["echo-state", 'duplex: { half: "" }', 'duplex: { half: "", echo: "" }', "echo-unavailable"],
-        ["phase", 'if (s.approval.kind === "held") return "confirming";', 'if (false && s.approval.kind === "held") return "confirming";', "phase-priority"]
+        ["phase", 'if (s.approval.kind === "held") return "confirming";', 'if (false && s.approval.kind === "held") return "confirming";', "phase-priority"],
+        ["speech-open", 'if (s.engine.kind === "duplex" && s.speech.kind === "closed" && canCapture(s)) {', "if (false) {", "duplex-open"],
+        ["duplex-collect", 'if (s.engine.kind === "chained" && canCapture(s)', "if (canCapture(s)", "duplex-open"],
+        ["held-reply", '&& s.input.kind !== "held";', ";", "duplex-hold-reply"],
+        ["speech-flush", 'effect(s, effects, "speech-flush", { gen: s.speech.gen, target: s.speech.op });', "", "duplex-interrupt"],
+        ["reply-drop", 'target: s.speech.op });\n        s.speech.reply = { kind: "none" };', "target: s.speech.op });", "duplex-interrupt"],
+        ["speak-resume", 'if (s.conversation.kind === "interrupted") s.conversation = { kind: "active" };\n        s.speech.reply', "s.speech.reply", "duplex-speak-resumes"],
+        ["speech-close", 'closeSpeech(s, effects, reason === "lease" ? "abort" : "graceful");', "", "duplex-close"],
+        ["speech-abort", '"abort" : "graceful"', '"graceful" : "graceful"', "duplex-close"],
+        ["speech-idle", 'end(s, effects, e.at, "idle", false);', "", "duplex-idle"],
+        ["speech-fault", 's.fault = { kind: "error", reason: e.reason, retry: 0 };\n        end(s, effects, e.at, "speech-failed", false);',
+            'end(s, effects, e.at, "speech-failed", false);', "duplex-failed"],
+        ["speech-stale", 'if (!live(s, e, "speech", ["open"])) { stale(s); break; }\n        // New output', "// New output", "duplex-stale"],
+        ["transcript-effect", 'effect(s, effects, "transcript", { role: e.role, text: e.text, stage: e.stage, rev: e.rev });', "", "duplex-transcript"],
+        ["engine-change", " || s.engine.kind !== e.engine;", ";", "duplex-engine"],
+        ["engine-required", 'if (e.engine !== "chained" && e.engine !== "duplex") throw new Error("jarvis: session=engine");', "", "duplex-engine"]
     ];
     mutants.push(
         ["unknown-event", 'if (EVENTS.indexOf(e.type) === -1) throw', 'if (false && EVENTS.indexOf(e.type) === -1) throw', "unknown-event"],
@@ -987,7 +1104,9 @@ try {
         ["state-mode", '&& ["hold", "conversation", "follow-up", "armed"].indexOf(r.mode) === -1) return false;',
             '&& false && ["hold", "conversation", "follow-up", "armed"].indexOf(r.mode) === -1) return false;', "wire-capture-mode"],
         ["state-gate", '&& ["starting", "unconfigured", "node", "lock-unknown", "locked"].indexOf(r.reason) === -1) return false;',
-            '&& false && ["starting", "unconfigured", "node", "lock-unknown", "locked"].indexOf(r.reason) === -1) return false;', "wire-gate-reason"]
+            '&& false && ["starting", "unconfigured", "node", "lock-unknown", "locked"].indexOf(r.reason) === -1) return false;', "wire-gate-reason"],
+        ["state-reply", 'if (!exact(r[f], ["kind"]) || ["none", "waiting"].indexOf(r[f].kind) === -1) return false;',
+            'if (false) return false;', "wire-speech-reply-tag"]
     );
     for (const [name, needle, replacement, row] of mutants) {
         const count = source.split(needle).length - 1;
@@ -1015,7 +1134,7 @@ try {
         controls++;
     }
     for (const kind of ["capture-open", "capture-close", "collect", "brain-send", "brain-cancel",
-        "playback-start", "playback-flush", "tool-start", "approval-show"])
+        "playback-start", "playback-flush", "tool-start", "approval-show", "speech-open"])
         matrixControl("matrix-omit-" + kind, "for (const effect of firstResult.effects) {",
             'for (const effect of firstResult.effects) {\n            if (effect.kind === "' + kind + '") continue;');
     for (const kind of ["brain-send", "brain-cancel", "tool-start", "approval-show"])

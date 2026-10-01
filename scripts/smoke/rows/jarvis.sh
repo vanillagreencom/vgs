@@ -225,6 +225,20 @@ jarvis_audio_fault_assertion() {
    echo "$failures")
 }
 
+jarvis_transcript() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+t=json.load(sys.stdin)["status"].get("transcript")
+print("current" if isinstance(t,dict) and t.get("text")=="current caption" and t.get("role")=="assistant" else "pending")
+'
+}
+
+jarvis_transcript_assertion() {
+  (failures=0 behaviour_failures=0
+   expect_poll "the service publishes only the current generation's caption" current jarvis_transcript >"$sandbox/jarvis-transcript-control-assertions.log"
+   echo "$failures")
+}
+
 jarvis_seen_hello() {
   [[ -s $jarvis_seen ]] && echo seen || echo pending
 }
@@ -354,6 +368,38 @@ expect_poll "the status control still publishes real offers" devices jarvis_devi
 expect "offer-driven success breaks the actual fault-status assertion" 1 jarvis_audio_fault_assertion
 jarvis_disable
 cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+cp -- "$sandbox/jarvis-backend-original" "$jarvis_backend"
+jarvis_rescan
+
+# A caption for another generation must not replace the current one. Each
+# control keeps its branch and breaks one rule; the same assertion fails.
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --transcripts "$jarvis_backend"
+jarvis_rescan
+jarvis_enable
+expect_poll "the service publishes the current generation's caption" current jarvis_transcript
+jarvis_disable
+for jarvis_transcript_control in generation write; do
+  python3 - "$jarvis_service" "$jarvis_transcript_control" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+needle={"generation": "if (sessionState !== null && message.gen === sessionState.gen) {\n                        const reply = shell.status.set(\"transcript\"",
+        "write": "const reply = shell.status.set(\"transcript\""}[sys.argv[2]]
+replacement={"generation": "if (sessionState !== null) {\n                        const reply = shell.status.set(\"transcript\"",
+             "write": "const reply = false ? null : \"ok\"; void (\"transcript\""}[sys.argv[2]]
+assert s.count(needle)==1
+changed=s.replace(needle, replacement)
+assert changed != s
+p.write_text(changed)
+PY
+  jarvis_rescan
+  jarvis_enable
+  expect "a $jarvis_transcript_control control breaks the caption assertion" 1 jarvis_transcript_assertion
+  jarvis_disable
+  cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+  jarvis_rescan
+done
 cp -- "$sandbox/jarvis-backend-original" "$jarvis_backend"
 jarvis_rescan
 

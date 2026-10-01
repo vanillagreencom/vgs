@@ -170,6 +170,27 @@ function taskRequests(file, gates) {
     fs.writeFileSync(file, changed);
 }
 
+// Two transcript lines after the first state: one for the published
+// generation and one for another. The service must keep only the first.
+function transcripts(file) {
+    const source = fs.readFileSync(file, "utf8");
+    const start = '"use strict";';
+    const state = "revision: context.revision, seq: ++seq, state, phase });";
+    assert.equal(source.split(start).length - 1, 1);
+    assert.equal(source.split(state).length - 1, 1);
+    const fixture = `
+        if (!ending && context !== null && fixtureTranscript) {
+            fixtureTranscript = false;
+            for (const [gen, text, rev] of [[state.gen, "current caption", 1], [state.gen + 1, "other caption", 2]])
+                write({ v: 1, type: "transcript", gen, revision: context.revision,
+                    role: "assistant", text, stage: "partial", rev });
+        }`;
+    const changed = source.replace(start, start + "\nlet fixtureTranscript = true;")
+        .replace(state, state + fixture);
+    assert.notEqual(changed, source);
+    fs.writeFileSync(file, changed);
+}
+
 function service(sourceTree, tree, root) {
     require("./keys-world.js").standins(path.join(root, "standins"));
     standins(path.join(root, "standins"));
@@ -238,6 +259,9 @@ if (require.main === module) {
     } else if (process.argv[2] === "--task-requests") {
         assert.equal(process.argv.length, 5);
         taskRequests(process.argv[3], process.argv[4]);
+    } else if (process.argv[2] === "--transcripts") {
+        assert.equal(process.argv.length, 4);
+        transcripts(process.argv[3]);
     } else if (process.argv[2] === "--audio-fault-devices") {
         assert.equal(process.argv.length, 4);
         audioFaultThenDevices(process.argv[3]);

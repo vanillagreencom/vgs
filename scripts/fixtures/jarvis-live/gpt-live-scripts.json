@@ -1,0 +1,225 @@
+{
+ "source": {
+  "schema": "gpt-live.schema.json",
+  "model": "gpt-live-1",
+  "fetched": "2026-10-01",
+  "documentation": "https://developers.openai.com/api/reference/resources/live/primary-websocket",
+  "kind": "Synthetic scripts from the documented event shapes and examples. No recording or account data. Old-reply PCM is 0x11 bytes, new-reply PCM 0x22."
+ },
+ "scripts": {
+  "started": [
+   {
+    "type": "session.started",
+    "event_id": "evt_started_1",
+    "session": {
+     "id": "live_fixture",
+     "expires_at": 1790900000,
+     "model": "gpt-live-1",
+     "status": "active",
+     "audio": {
+      "format": {
+       "type": "audio/pcm",
+       "rate": 24000
+      },
+      "output": {
+       "voice": "marin"
+      }
+     },
+     "delegation": {
+      "type": "client"
+     },
+     "input": [],
+     "store": false
+    }
+   }
+  ],
+  "reply-old": [
+   {
+    "type": "session.output_audio.delta",
+    "delta": "ERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERER"
+   },
+   {
+    "type": "session.output_audio.delta",
+    "delta": "ERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERER"
+   },
+   {
+    "type": "session.output_audio.delta",
+    "delta": "ERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERER"
+   }
+  ],
+  "reply-new": [
+   {
+    "type": "session.output_audio.delta",
+    "delta": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+   },
+   {
+    "type": "session.output_audio.delta",
+    "delta": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+   },
+   {
+    "type": "session.output_audio.delta",
+    "delta": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+   }
+  ],
+  "late-old": [
+   {
+    "type": "session.output_audio.delta",
+    "delta": "ERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERER"
+   },
+   {
+    "type": "session.output_audio.delta",
+    "delta": "ERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERER"
+   }
+  ],
+  "captions": [
+   {
+    "type": "session.input_transcript.delta",
+    "event_id": "evt_in_1",
+    "delta": "What is",
+    "start_ms": 1000,
+    "end_ms": 1200
+   },
+   {
+    "type": "session.input_transcript.delta",
+    "event_id": "evt_in_2",
+    "delta": " the time?",
+    "start_ms": 1200,
+    "end_ms": 1600
+   },
+   {
+    "type": "session.output_transcript.delta",
+    "event_id": "evt_out_1",
+    "delta": "It is noon.",
+    "start_ms": 1800,
+    "end_ms": 2400
+   },
+   {
+    "type": "session.input_transcript.delta",
+    "event_id": "evt_in_3",
+    "delta": "Thanks.",
+    "start_ms": 4000,
+    "end_ms": 4400
+   }
+  ],
+  "speech-before": [
+   {
+    "type": "session.input_transcript.delta",
+    "event_id": "evt_in_4",
+    "delta": "earlier",
+    "start_ms": 0,
+    "end_ms": 10
+   }
+  ],
+  "speech-after": [
+   {
+    "type": "session.input_transcript.delta",
+    "event_id": "evt_in_5",
+    "delta": "Stop, tell me something else.",
+    "start_ms": 600000,
+    "end_ms": 600400
+   }
+  ],
+  "usage": [
+   {
+    "type": "session.usage.updated",
+    "event_id": "evt_usage_1",
+    "usage": {
+     "seconds": 12
+    },
+    "context_window": {
+     "usage_ratio": 0.42
+    }
+   },
+   {
+    "type": "info",
+    "event_id": "evt_info_1",
+    "code": "fixture_notice",
+    "message": "fixture-private-provider-text"
+   }
+  ],
+  "closed": [
+   {
+    "type": "session.closed",
+    "event_id": "evt_closed_1",
+    "reason": "close_requested",
+    "session": {
+     "id": "live_fixture",
+     "expires_at": 1790900000,
+     "model": "gpt-live-1",
+     "status": "active",
+     "audio": {
+      "format": {
+       "type": "audio/pcm",
+       "rate": 24000
+      },
+      "output": {
+       "voice": "marin"
+      }
+     },
+     "delegation": {
+      "type": "client"
+     },
+     "input": [],
+     "store": false
+    },
+    "usage": {
+     "seconds": 45.8
+    }
+   }
+  ],
+  "expired": [
+   {
+    "type": "session.closed",
+    "event_id": "evt_closed_2",
+    "reason": "expired",
+    "session": {
+     "id": "live_fixture",
+     "expires_at": 1790900000,
+     "model": "gpt-live-1",
+     "status": "active",
+     "audio": {
+      "format": {
+       "type": "audio/pcm",
+       "rate": 24000
+      },
+      "output": {
+       "voice": "marin"
+      }
+     },
+     "delegation": {
+      "type": "client"
+     },
+     "input": [],
+     "store": false
+    },
+    "usage": {
+     "seconds": 45.8
+    }
+   }
+  ],
+  "error": [
+   {
+    "type": "error",
+    "event_id": "evt_error_1",
+    "error": {
+     "type": "invalid_request_error",
+     "code": "unknown_parameter",
+     "message": "fixture-private-provider-text",
+     "param": "session.voice"
+    }
+   }
+  ],
+  "delegation": [
+   {
+    "type": "session.delegation.created",
+    "event_id": "evt_delegation_1",
+    "offset_ms": 3600,
+    "delegation": {
+     "id": "del_fixture",
+     "type": "delegation",
+     "target": "client"
+    }
+   }
+  ]
+ }
+}

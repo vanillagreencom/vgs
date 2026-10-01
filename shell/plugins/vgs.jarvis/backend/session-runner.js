@@ -1,7 +1,8 @@
 // Own reducer effects and deadlines in the daemon. Ports own their resources;
 // each receives a completion function stamped with its original gen/op.
 // Audio and the action router supply production ports. Speech and brain ports
-// remain unavailable until their owners enforce the session prerequisites.
+// remain unavailable until their owners enforce the session prerequisites. A
+// speech port's callbacks are stamped with the speech-open effect's identity.
 "use strict";
 
 class SessionRunner {
@@ -64,6 +65,15 @@ class SessionRunner {
         case "approval-ended": this.ports.approval.end(e); break;
         case "confirm-refused": this.ports.approval.refused(e); break;
         case "mute-store": this.ports.mute.store(e.muted); break;
+        case "speech-open": this.ports.speech.open(e, {
+            speak: () => done("speak"),
+            transcript: record => done("transcript", record),
+            idle: () => done("speech-idle"),
+            failed: reason => done("speech-failed", { reason })
+        }); break;
+        case "speech-close": this.ports.speech.close(e); break;
+        case "speech-flush": this.ports.speech.flush(e); break;
+        case "transcript": this.ports.transcript(e); break;
         default: throw new Error("jarvis: session=effect kind=" + e.kind);
         }
     }
@@ -103,7 +113,9 @@ function unavailable() {
         brain: { send: refuse, cancel: (e, done) => done(), close: () => {}, outcome: refuse },
         playback: { start: refuse, flush: (e, done) => done() },
         tools: { start: refuse, cancel: refuse, outcome: refuse, sync: () => {}, close: () => {} },
-        approval: { show: refuse, end: () => {}, refused: refuse }
+        approval: { show: refuse, end: () => {}, refused: refuse },
+        speech: { open: refuse, close: () => {}, flush: () => {} },
+        transcript: refuse
     };
 }
 

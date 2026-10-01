@@ -53,7 +53,7 @@ world(() => {
                     answers.push(done);
                 }, cancel: call => starts.push({ cancelled: call.id }) });
         }
-        runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} });
+        runner.dispatch({ type: "snapshot", locked: false, engine: "chained", configured: true, settings: {} });
         runner.dispatch({ type: "indicator", shown: true });
         function newTurn() { runner.dispatch({ type: "talk-down" }); transcript("final", "fixture user"); }
         newTurn();

@@ -50,8 +50,17 @@ const taskRequest = { v: 1, type: "request", gen: 0, revision: hello.revision, i
     args: ["/run/user/1000/vgs/jarvis/tasks/" + taskStop.task + ".json"] };
 const tasks = { v: 1, type: "tasks", gen: 0, revision: hello.revision, count: 2 };
 const taskAnswer = { v: 1, type: "task-answer", gen: 0, revision: hello.revision, task: taskStop.task, answer: "stop-incomplete" };
+const transcript = { v: 1, type: "transcript", gen: 0, revision: hello.revision, role: "user", text: " the time?", stage: "partial", rev: 1 };
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const cases = [
+    ["transcript-direction", JSON.stringify(transcript), "shell", "direction-transcript"],
+    ["transcript-shape", changed(transcript, { partial: true }), "daemon", "shape-transcript"],
+    ["transcript-role", changed(transcript, { role: "system" }), "daemon", "transcript-role"],
+    ["transcript-stage", changed(transcript, { stage: "done" }), "daemon", "transcript-stage"],
+    ["transcript-empty", changed(transcript, { text: "" }), "daemon", "transcript-text"],
+    ["transcript-long", changed(transcript, { text: "a".repeat(4097) }), "daemon", "transcript-text"],
+    ["transcript-control", changed(transcript, { text: "a\nb" }), "daemon", "transcript-text"],
+    ["transcript-rev", changed(transcript, { rev: 0 }), "daemon", "transcript-rev"],
     ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
     ["audio-fault", changed(audioFault, { reason: "" }), "daemon", "audio-fault"],
     ["device-setting", changed(hello, { settings: { ...hello.settings, microphone: 1 } }), "shell", "device-setting"],
@@ -184,7 +193,8 @@ for (const message of [confirm, { ...confirm, source: "button" }, cancel, shown]
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, mode: "toggle" },
     keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
-for (const message of [devices, level, audioFault, taskRequest, tasks, taskAnswer, { ...tasks, count: 0 }])
+for (const message of [devices, level, audioFault, taskRequest, tasks, taskAnswer, { ...tasks, count: 0 },
+    transcript, { ...transcript, role: "assistant", stage: "final", text: "a".repeat(4096), rev: 2 }])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
 for (const message of [taskStop, tuiState, { ...tuiState, running: false }, taskReply, { ...taskReply, answer: "ok" },
     { ...taskReply, answer: "x".repeat(300) }])
@@ -290,6 +300,13 @@ try {
         ["audio-fault-direction", 'if (direction !== "daemon") fail("direction-audio-fault");',
             'if (false) fail("direction-audio-fault");', "audio-fault-direction"],
         ["audio-fault", 'fail("audio-fault");', ';', "audio-fault"],
+        ["transcript-direction", 'if (direction !== "daemon") fail("direction-transcript");', 'if (false) fail("direction-transcript");', "transcript-direction"],
+        ["transcript-role", 'fail("transcript-role");', ";", "transcript-role"],
+        ["transcript-stage", 'fail("transcript-stage");', ";", "transcript-stage"],
+        ["transcript-empty", "message.text.length === 0 || ", "", "transcript-empty"],
+        ["transcript-long", "message.text.length > TRANSCRIPT_CHARS", "false", "transcript-long"],
+        ["transcript-control", "|| /[\\x00-\\x1f\\x7f]/.test(message.text)) fail", ") fail", "transcript-control"],
+        ["transcript-rev", 'fail("transcript-rev");', ";", "transcript-rev"],
         ["device-setting", 'fail("device-setting");', ';', "device-setting"],
         ["devices-direction", 'if (direction !== "daemon") fail("direction-devices");', 'if (false) fail("direction-devices");', "devices-direction"],
         ["choices", 'if (!Array.isArray(values) || values.length > 32) fail("choices");',
