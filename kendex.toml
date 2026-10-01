@@ -294,6 +294,7 @@ source = "kendex"
 harnesses = [
     "claude",
     "codex",
+    "copilot",
     "pi",
 ]
 
@@ -302,6 +303,7 @@ source = "kendex"
 harnesses = [
     "claude",
     "codex",
+    "copilot",
     "pi",
 ]
 
@@ -310,7 +312,26 @@ source = "kendex"
 harnesses = [
     "claude",
     "codex",
+    "copilot",
     "pi",
+]
+
+[hooks.lane-mail-prompt]
+source = "kendex"
+harnesses = [
+    "copilot",
+]
+
+[hooks.lane-mail-start]
+source = "kendex"
+harnesses = [
+    "copilot",
+]
+
+[hooks.lane-mail-compact]
+source = "kendex"
+harnesses = [
+    "copilot",
 ]
 
 [hooks.skill-load-check]

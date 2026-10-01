@@ -124,7 +124,7 @@ Keep one `## Doctrine` section in the spec copy. `--spec` selects that copy; the
 
 ### scope
 
-Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, and fail-open paths in gates, guards, or CI. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope. Report an input only after establishing that a shipped producer emits it in normal use; a full disk or a value past 2^53 is not one.
+Raise a defect only in changed lines or code those lines directly break. Report correctness defects, security defects, data loss, fail-open paths in gates, guards, or CI, and an unnamed indirect read of another system. Do not report unrelated defects. Do not question the inclusion of a file that the PR body explicitly includes in its scope. Report an input only after establishing that a shipped producer emits it in normal use; a full disk or a value past 2^53 is not one. A change that derives another system's state indirectly (scrapes its screen or pane, reads a status line, parses output text the system does not document as an interface, or reads its internal files) must name the documented interface it stands in for and why that interface cannot serve. Report a change that omits either as a blocking finding. Reading a documented interface, text or JSON output included, is not this finding.
 
 ### rounds
 

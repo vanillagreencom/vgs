@@ -46,10 +46,11 @@ Options:
                    threads below.
   --expected-head SHA
                    Bind GitHub's match-head merge guard to prepared SHA.
+  --unless-admin   With --auto only: read the merge route first (see Merge
+                   route), and where it reads admin, arm nothing. The arm
+                   right after a PR opens passes it, so a PR the immediate
+                   merge takes past the queue is left unarmed for it.
   --dry-run        Show what would happen without merging
-  --admin          Ask for the admin route. It is never taken: the PR's
-                   queue-only class is read and the request refused, naming
-                   it. See Merge route below.
 
 Modes:
   (default)        Run checks, block if critical issues, merge if pass
@@ -67,6 +68,9 @@ Merge-mode exit codes:
        Classic auto-merge is armed until protection clears.
   1    BLOCKED PR #N
        The requested operation failed; a pre-existing queue entry or auto-merge request may remain active.
+  1    merge-route: admin ruleset=<ids> bypass=<values>
+       --auto --unless-admin armed nothing: the immediate merge takes this PR
+       past the queue, and an arm would queue it first.
   1    arm: no-merge-gate=<allow_auto_merge|required_approval|required_thread_resolution|dismiss_stale_reviews|unverified> repo=<owner/repo>
        --auto refused, nothing mutated. allow_auto_merge: the repository has
        auto-merge off. required_approval: no ruleset on the base branch
@@ -86,27 +90,18 @@ Merge-mode exit codes:
        method could not be read; see Merge method below.
   1    CLOSED (not merged) PR #N
        The PR is closed unmerged. Nothing was attempted.
-  1    pr-merge: admin-refused class=queue-only pr=<N>
-       --admin on a queue-only PR, or on one whose class could not be read.
-       The next line is the classifier's queue-only line or the cause it was
-       not read. Nothing was merged or armed.
-  1    pr-merge: admin-retired class=not-queue-only pr=<N>
-       --admin on any other PR: the admin route is retired (D003). Nothing
-       was merged or armed.
-  1    pr-merge: retired-setting key=<NAME>
-       A retired merge setting is set. Every mode, --check included, refuses
-       before any pull-request read or merge call; see Retired settings below.
 
 --check exit:
   --check exits 0 after any valid readiness JSON, including can_merge=false for
-  blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero,
-  and so does the retired-setting refusal: exit 1, no JSON on stdout, the
-  refusal's first line on stderr.
+  blocked or CLOSED. Argument or dispatch failures before JSON remain nonzero.
 
 Exit 75 is volatile:
   A queue ejection can disarm merge state. Block on .agents/skills/orch/scripts/queue-wait <N> <poll> <budget> --json before returning; it produces the verdict for the head just armed. Size the poll and budget as orch merge-pr.md § 5 step 1 does: the default budget outlives any foreground call an agent harness holds, so a call without them is killed before the verdict.
   Route verdicts through queue-wait --help Verdicts, named by SKILL.md § PR Merge Outcomes; the review-gate reducer still reports fleet attention.
-  Re-arm only through github.sh pr-merge <N> --auto after that route.
+  Re-arm only through the merge route of orch merge-pr.md § 5 step 1 after
+  that route, never a bare github.sh pr-merge <N> --auto: that route picks
+  the direct attempt or the arm, and an --auto arm queues a PR the admin
+  route would take.
 
 Approvals and review threads:
   GitHub enforces both, through the base branch's ruleset pull_request
@@ -130,30 +125,70 @@ Approvals and review threads:
   there alone is refused as required_approval, which arms nothing.
 
 Merge route:
-  Every merge goes through the base branch's merge queue where the base
-  requires one. No mode passes --admin to GitHub, so GitHub enrolls the PR
-  in the queue (exit 75) rather than merging past it, under whatever token the
-  auth ladder selected: in a lane sandbox, the lanes app's installation token.
+  The immediate merge takes one of two routes past a merge queue, and reads
+  which before its merge call, under the merge's own token, since GitHub
+  answers the bypass question per caller. GitHub applies --admin to every
+  rule the token may bypass, not to the queue alone, so the route reads the
+  base branch's rules and each ruleset they name, current_user_can_bypass
+  included, and the branch's classic protection. It names the route on
+  stderr, ahead of the merge call:
 
-  Every PR arms --auto and takes the queue while kendex decision D003
-  stands, whatever its class. Only --admin reads the PR's queue-only
-  class, and refuses on both values, naming the class: admin-refused
-  class=queue-only or admin-retired class=not-queue-only. It is read from
-  <skills>/harness-ci/scripts/change-class, else change-class on PATH, over
-  the PR's base and head. The classifier takes a merge-base diff, so both
-  commits AND an ancestor they share must be in this checkout, and
-  baseRefOid is the base branch's current tip: the two SHAs are fetched from
-  origin (no tags, no FETCH_HEAD rewrite) when the range is not readable,
-  and it is checked again. Its stderr `queue-only: queue_only=true|false`
-  line is the class, and change-class --help states when it reads true. No
-  classifier, an unreadable range, a failed classifier and a missing line
-  all read queue-only.
+    merge-route: admin ruleset=<ids> bypass=<values>
+        Every ruleset holding a merge_queue rule holds no other rule and
+        answers always, pull_requests_only or exempt; every other ruleset on
+        the base answers never; the base has no classic protection; the base
+        allows a direct merge with one of the accepted methods (see Merge
+        method); and the PR is not queue-only. The merge call adds --admin, bound to the
+        verified head by --match-head-commit, and exits 0 once merged. So the
+        queue is all --admin skips: GitHub still refuses the merge unless
+        every other ruleset, the required checks, thread resolution and
+        approvals among them, passes on that head. ids and values name the
+        merge-queue rulesets, comma-joined. The next line is the
+        classifier's queue-only line.
+    merge-route: queue cause=<cause> [ruleset=<id>] [rule=<type>] [bypass=<value>] [allowed=<method,...|none> accepted=<method,...>] [read=<what>]
+        The merge call passes --auto and no --admin, so GitHub enrolls the
+        PR in the queue (exit 75): GitHub refuses a merge call on a queue
+        base that passes neither. This --auto reads no approval rule, as
+        the plain merge does not. cause is ruleset-unreadable
+        (that ruleset could not be read), queue-ruleset-mixed (that
+        merge-queue ruleset also holds the rule named as rule=), no-bypass
+        (that merge-queue ruleset answered another value for this token,
+        named as bypass=), other-bypass (that ruleset without the queue
+        answered a value other than never), classic-protection (the base has
+        classic branch protection), protection-unreadable (the branch's
+        protection could not be read), direct-method (a direct merge allows
+        none of the accepted methods, the methods it allows named as
+        allowed=), direct-method-unreadable (the methods a direct merge
+        allows could not be read, read= naming the read as the
+        merge-method-unreadable cause does) or queue-only (the next lines
+        are the classifier's queue-only line or the cause it was not read,
+        and its diagnostics).
+
+  A base whose rules hold no merge_queue rule prints no route line: there is
+  no queue to bypass, and the merge call is the plain one. --auto, --check
+  and --dry-run never pass --admin. Of them only --auto with --unless-admin,
+  the arm at creation, reads the route: where it reads
+  admin, the arm arms nothing and exits 1 on the admin line above, so the
+  immediate merge keeps that route; otherwise it arms.
+
+  The queue-only class is read only once everything else allows the admin
+  route, from <skills>/harness-ci/scripts/change-class, else change-class on
+  PATH, over the PR's base and head. The classifier takes a merge-base diff, so both commits AND an ancestor they share must be in this
+  checkout, and baseRefOid is the base branch's current tip: the two SHAs
+  are fetched from origin (no tags, no FETCH_HEAD rewrite) when the range is
+  not readable, and it is checked again. Its stderr
+  `queue-only: queue_only=true|false` line is the class, and change-class
+  --help states when it reads true. No classifier, an unreadable range, a
+  range whose head is not the head the merge is pinned to (cause=head-moved),
+  a failed classifier and a missing line all read queue-only.
 
 Merge method:
   The merge modes and --dry-run read the method from GitHub, never --check. A
   merge_queue rule on the base branch fixes it to the queue's merge_method.
   Otherwise the base allows the repository's allowed methods, narrowed by
-  the allowed_merge_methods of every pull_request rule on it. The first
+  the allowed_merge_methods of every pull_request rule on it. The admin
+  route merges past the queue, so it takes its method from that second set,
+  whatever the queue's merge_method. The first
   accepted method the base allows is passed to gh pr merge. A base that
   allows none of the accepted methods refuses before any mutation with one
   line, exit 1:
@@ -172,18 +207,6 @@ Branch deletion:
   cross-repository-unreadable: GitHub did not say whether the head is a
   fork's; setting-unreadable: the delete_branch_on_merge read failed.
   A merge the queue makes later is GitHub's alone.
-
-Retired settings:
-  ORCH_ADMIN_MERGE_GH_CONFIG_DIR, ORCH_ADMIN_MERGE_CLASSES and
-  ORCH_MERGE_BYPASS named the overseer's owner-credential merge and the direct
-  fast path ahead of the queue, and both routes are gone. The project settings
-  are loaded the way every kendex script loads them: kendex.settings.toml
-  [env], .kendex/settings.toml [env], the private env file (.env.local unless
-  KENDEX_ENV_FILE names another) and the environment. A key set in any of
-  them, empty value included, refuses every mode before any pull-request read
-  or merge call, one first line per key set, and the last line names the keys
-  again, so a repository that still expects either route learns it at the
-  first call.
 
 Terminal and mutation rules:
   After github.sh router setup, MERGED or CLOSED short-circuits pr-merge safety
@@ -654,13 +677,11 @@ merge_gate_gap() {
 }
 
 # The method the merge modes pass to gh pr merge: the first of the accepted
-# methods the base branch allows, kendex_github_merge_method's answer. With
-# none named, squash, merge and rebase are accepted in that order. A refusal
-# is the one line --help § Merge method names; stdout is the method.
-merge_method() { # PR TOKEN [ACCEPTED...]
+# methods the base branch allows, kendex_github_merge_method's answer. A
+# refusal is the one line --help § Merge method names; stdout is the method.
+merge_method() { # PR TOKEN ACCEPTED...
     local pr_num="$1" token="$2" base="" answer="" rc=0
     shift 2
-    [ "$#" -gt 0 ] || set -- squash merge rebase
     if ! base=$(with_token "$token" gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ]; then
         echo "pr-merge: merge-method-unreadable cause=base" >&2
         return 1
@@ -723,7 +744,7 @@ volatile_note() {
     echo "  NOTE: queue/auto-merge state is VOLATILE — an ejection or a failed protection check disarms it silently; follow orch merge-pr.md § 5 for PR #$pr_num" >&2
     local reducer="GH_REPO=$repo .agents/skills/review-gate/scripts/pr-watch.sh (disarmed lines)"
     [ -n "$repo" ] || reducer=".agents/skills/review-gate/scripts/pr-watch.sh with GH_REPO set to the repository (not resolvable locally here)"
-    echo "  Block on .agents/skills/orch/scripts/queue-wait $pr_num --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names before re-arming with .agents/skills/github/scripts/github.sh pr-merge $pr_num --auto" >&2
+    echo "  Block on .agents/skills/orch/scripts/queue-wait $pr_num --json once, with a poll interval and budget sized as orch merge-pr.md § 5 step 1 does; route its verdict by that same step, and never re-arm an unrecognized verdict. The fleet reducer is $reducer; repair what the cause names, then re-arm only through the merge route of orch merge-pr.md § 5 step 1, never a bare pr-merge $pr_num --auto, which queues a PR the admin route would take" >&2
 }
 
 post_merge_snapshot() {
@@ -788,39 +809,121 @@ post_merge_snapshot() {
     jq -cn '{state:"UNKNOWN",head:"",head_branch:"",cross_repository:null,merge_commit:"",auto_merge:false,in_merge_queue:false,merge_queue_entry:false,queue_state:"",source:"unavailable"}'
 }
 
-# The merge settings whose routes are retired. A set key is refused rather than
-# ignored: the repository setting it expects a merge this command no longer
-# makes, and a silent queue arm would leave that expectation standing.
-RETIRED_SETTINGS="ORCH_ADMIN_MERGE_GH_CONFIG_DIR ORCH_ADMIN_MERGE_CLASSES ORCH_MERGE_BYPASS"
-#
-# The keys are read after the project settings load, in a subshell so the load
-# changes nothing this command later reads: the router exports the settings
-# files' keys but sources the private env file without exporting it, so a key
-# set there never reaches this process otherwise. A load the loader rejects
-# exits 1 on the loader's own diagnostics, as the router's load does.
-refuse_retired_settings() {
-    local found key keys=""
-    # shellcheck disable=SC1091 # the loader is this package's own lib
-    found=$(
-        source "$SCRIPT_DIR/../lib/kendex-env.sh" || exit 1
-        kendex_load_project_env "$PROJECT_ROOT" >&2 || exit 1
-        for key in $RETIRED_SETTINGS; do
-            [ -z "${!key+set}" ] || printf '%s\n' "$key"
-        done
-    ) || exit 1
-    [ -n "$found" ] || return 0
-    for key in $found; do
-        echo "pr-merge: retired-setting key=$key" >&2
-        keys="${keys:+$keys }$key"
-    done
-    echo "  The overseer's admin merge and the ORCH_MERGE_BYPASS fast path are retired (kendex decision D003): every merge goes through the merge queue, armed with --auto." >&2
-    echo "  Remove $keys from kendex.settings.toml [env], .kendex/settings.toml [env], the private env file (.env.local unless KENDEX_ENV_FILE names another) and the environment, then retry." >&2
-    exit 1
+# The values of a ruleset's current_user_can_bypass under which this token may
+# merge a pull request past it. `never` and any value GitHub adds later keep
+# the queue. Values: docs.github.com/en/rest/repos/rules
+BYPASS_VALUES=" always pull_requests_only exempt "
+
+# The immediate merge's route past the base branch's merge queue, read under
+# the merge's own token and named on stderr: MERGE_ROUTE is admin, queue, or
+# plain where no ruleset on the base holds a merge_queue rule. GitHub applies
+# --admin to every rule the token may bypass, not to the queue alone, so the
+# admin route needs the queue to be all it skips: each merge-queue ruleset
+# holds that one rule and answers a bypass, every other ruleset on the base
+# answers never, and the base has no classic branch protection. Any read that
+# fails is the queue, never the admin route: the queue is the route GitHub
+# takes on --auto without --admin, so a failure costs a queue wait, not a merge
+# past a gate. A merge past the queue is direct, so GitHub holds it to the
+# repository's methods and the pull_request rules, not to the queue's method:
+# the route needs one of the accepted methods there, MERGE_ROUTE_METHOD. The
+# queue-only class is read last, and only where everything else allows the
+# admin route.
+MERGE_ROUTE=""
+MERGE_ROUTE_METHOD=""
+route_queue() { # FIELDS WHY
+    echo "merge-route: queue $1" >&2
+    echo "  $2 The merge call passes --auto and no --admin." >&2
+}
+merge_route() { # PR TOKEN HEAD ACCEPTED...
+    local pr_num="$1" token="$2" head="$3" branch base rules queue_ids ids id bypass bypasses="" rulesets="" mixed enabled direct rc=0
+    shift 3
+    MERGE_ROUTE=queue
+    MERGE_ROUTE_METHOD=""
+    if ! branch=$(with_token "$token" gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$branch" ] \
+        || ! base=$(jq -nr --arg v "$branch" '$v | @uri') \
+        || ! rules=$(with_token "$token" gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate \
+            --jq '.[] | "\(.ruleset_id) \(.type)"' 2>/dev/null) \
+        || ! queue_ids=$(awk '$2 == "merge_queue" && !seen[$1]++ { print $1 }' <<<"$rules") \
+        || ! mixed=$(awk '$2 == "merge_queue" { queue[$1] = 1 } { rule[NR] = $0 }
+            END { for (i = 1; i <= NR; i++) { split(rule[i], f, " "); if ((f[1] in queue) && f[2] != "merge_queue") { print rule[i]; exit } } }' <<<"$rules") \
+        || ! ids=$(awk '!seen[$1]++ { print $1 }' <<<"$rules"); then
+        echo "pr-merge: merge-method-unreadable cause=rules" >&2
+        return 1
+    fi
+    if [ -z "$queue_ids" ]; then
+        MERGE_ROUTE=plain
+        return 0
+    fi
+    if [ -n "$mixed" ]; then
+        route_queue "cause=queue-ruleset-mixed ruleset=${mixed%% *} rule=${mixed#* }" "The merge-queue ruleset holds another rule, which --admin would skip too."
+        return 0
+    fi
+    while IFS= read -r id; do
+        if ! bypass=$(with_token "$token" gh api "repos/{owner}/{repo}/rulesets/$id" --jq '.current_user_can_bypass // "absent"' 2>/dev/null) \
+            || [ -z "$bypass" ]; then
+            route_queue "cause=ruleset-unreadable ruleset=$id" "The ruleset could not be read, so no bypass is proven."
+            return 0
+        fi
+        if grep -qxF -- "$id" <<<"$queue_ids"; then
+            case "$BYPASS_VALUES" in
+            *" $bypass "*) ;;
+            *)
+                route_queue "cause=no-bypass ruleset=$id bypass=$bypass" "This token may not bypass the merge-queue ruleset."
+                return 0
+                ;;
+            esac
+            rulesets="${rulesets:+$rulesets,}$id"
+            bypasses="${bypasses:+$bypasses,}$bypass"
+        elif [ "$bypass" != never ]; then
+            route_queue "cause=other-bypass ruleset=$id bypass=$bypass" "This token may bypass another ruleset on the base, which --admin would skip too."
+            return 0
+        fi
+    done <<<"$ids"
+    # The branch object's protection.enabled is classic protection alone:
+    # rulesets set its protected field, never this one.
+    if ! enabled=$(with_token "$token" gh api "repos/{owner}/{repo}/branches/$base" --jq '.protection.enabled' 2>/dev/null); then
+        enabled=unreadable
+    fi
+    case "$enabled" in
+    false) ;;
+    true)
+        route_queue "cause=classic-protection" "The base branch has classic branch protection, which --admin would skip too."
+        return 0
+        ;;
+    *)
+        route_queue "cause=protection-unreadable" "The base branch's classic protection could not be read, so no bypass is proven."
+        return 0
+        ;;
+    esac
+    direct=$(with_token "$token" kendex_github_merge_method --direct '{owner}/{repo}' "$branch" "$@") || rc=$?
+    case "$rc" in
+    0) ;;
+    2)
+        local IFS=,
+        route_queue "cause=direct-method allowed=$direct accepted=$*" "A merge past the queue takes the repository's methods and the base's pull_request rules, which allow none of the accepted methods."
+        return 0
+        ;;
+    *)
+        route_queue "cause=direct-method-unreadable read=$direct" "The methods a merge past the queue may take could not be read."
+        return 0
+        ;;
+    esac
+    read_queue_only "$pr_num" "$head"
+    if [ "$QUEUE_ONLY" = true ]; then
+        route_queue "cause=queue-only" "A queue-only change runs in a merge group before it lands."
+        echo "  $QUEUE_ONLY_DETAIL" >&2
+        [ -z "$QUEUE_ONLY_NOTES" ] || printf '%s\n' "$QUEUE_ONLY_NOTES" >&2
+        return 0
+    fi
+    MERGE_ROUTE=admin
+    MERGE_ROUTE_METHOD="$direct"
+    echo "merge-route: admin ruleset=$rulesets bypass=$bypasses" >&2
+    echo "  $QUEUE_ONLY_DETAIL" >&2
 }
 
-# The merge-route class of one pull request, from harness-ci's change-class
-# beside this scripts tree, else change-class on PATH: asked about the pull
-# request's own range, it prints `queue-only: queue_only=true|false cause=...`
+# The merge-route class of one pull request at HEAD, the head the merge is
+# pinned to, from harness-ci's change-class beside this scripts tree, else
+# change-class on PATH: asked about the pull request's own range, it prints `queue-only: queue_only=true|false cause=...`
 # on stderr. This command asks; it never matches a path itself. Sets
 # QUEUE_ONLY to true or false, QUEUE_ONLY_DETAIL to the classifier's line or
 # the reason it was not read, and QUEUE_ONLY_NOTES to the diagnostics of a
@@ -830,8 +933,8 @@ refuse_retired_settings() {
 QUEUE_ONLY=""
 QUEUE_ONLY_DETAIL=""
 QUEUE_ONLY_NOTES=""
-read_queue_only() { # PR
-    local pr_num="$1" classifier root notes range base_sha head_sha line status=0
+read_queue_only() { # PR HEAD
+    local pr_num="$1" pinned="$2" classifier root notes range base_sha head_sha line status=0
     QUEUE_ONLY=true
     QUEUE_ONLY_NOTES=""
     classifier=$(sibling_script harness-ci change-class) || classifier=""
@@ -852,7 +955,11 @@ read_queue_only() { # PR
     else
         base_sha="${range% *}"
         head_sha="${range#* }"
-        if ! pr_range_materialize "$root" "$base_sha" "$head_sha" 2>"$notes"; then
+        # A push between the head read and this range read would classify a
+        # head the merge is not pinned to.
+        if [ "$head_sha" != "$pinned" ]; then
+            QUEUE_ONLY_DETAIL="cause=head-moved classified=$head_sha pinned=$pinned"
+        elif ! pr_range_materialize "$root" "$base_sha" "$head_sha" 2>"$notes"; then
             QUEUE_ONLY_DETAIL="cause=range-absent base=$base_sha head=$head_sha"
         else
             run_checkout_child "$notes" "$root" "$classifier" --event pull_request \
@@ -873,30 +980,10 @@ read_queue_only() { # PR
     rm -f -- "${notes:?}"
 }
 
-# --admin asks for the admin route, which this command does not take: it reads
-# the pull request's queue-only class and refuses, naming the class. A
-# queue-only change must run in a merge group; every other change meets the
-# retirement of the admin route (kendex decision D003). Nothing is merged or
-# armed either way.
-refuse_admin_route() { # PR
-    read_queue_only "$1"
-    if [ "$QUEUE_ONLY" = true ]; then
-        echo "pr-merge: admin-refused class=queue-only pr=$1" >&2
-        echo "  $QUEUE_ONLY_DETAIL" >&2
-        [ -z "$QUEUE_ONLY_NOTES" ] || printf '%s\n' "$QUEUE_ONLY_NOTES" >&2
-        echo "  A queue-only change runs in a merge group before it lands: arm it with --auto and wait in the queue. Nothing was merged or armed." >&2
-    else
-        echo "pr-merge: admin-retired class=not-queue-only pr=$1" >&2
-        echo "  $QUEUE_ONLY_DETAIL" >&2
-        echo "  The admin route is retired (kendex decision D003): every merge goes through the merge queue, armed with --auto. Nothing was merged or armed." >&2
-    fi
-    exit 1
-}
-
 main() {
-    local pr_num="" delete_branch=false admin=false
+    local pr_num="" delete_branch=false
     local -a accepted=()
-    local check_only=false dry_run=false auto=false supplied_head=""
+    local check_only=false dry_run=false auto=false supplied_head="" unless_admin=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -920,11 +1007,11 @@ main() {
             auto=true
             shift
             ;;
-        --admin)
-            admin=true
+        --expected-head) supplied_head="${2:-}"; shift 2 ;;
+        --unless-admin)
+            unless_admin=true
             shift
             ;;
-        --expected-head) supplied_head="${2:-}"; shift 2 ;;
         --dry-run)
             dry_run=true
             shift
@@ -944,16 +1031,17 @@ main() {
         esac
     done
 
-    refuse_retired_settings
-
     if [ -z "$pr_num" ]; then
         github_error 'PR number required'
         exit 1
     fi
+    [ "${#accepted[@]}" -gt 0 ] || accepted=(squash merge rebase)
     if [ -n "$supplied_head" ] && ! [[ "$supplied_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
         echo "Error: --expected-head must be a 40-character commit SHA" >&2; exit 1
     fi
-    [ "$admin" = false ] || refuse_admin_route "$pr_num"
+    if [ "$unless_admin" = true ] && [ "$auto" != true ]; then
+        echo "Error: --unless-admin gates the --auto arm and needs --auto" >&2; exit 1
+    fi
 
     if [ "$check_only" = true ]; then
         local check_json
@@ -1018,7 +1106,40 @@ main() {
     fi
 
     local method
-    method=$(merge_method "$pr_num" "$token" ${accepted[@]+"${accepted[@]}"}) || exit 1
+    method=$(merge_method "$pr_num" "$token" "${accepted[@]}") || exit 1
+
+    # Resolve and guard the exact head before mutating merge state. This prevents
+    # a review/CI race from queuing or merging a newer, unverified commit.
+    # It prints nothing unless it refuses, so it keeps the arm's first line.
+    local expected_head="" current_head
+    if [ "$dry_run" != true ]; then
+        if ! current_head=$(with_token "$token" gh pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$current_head" ]; then
+            echo "BLOCKED PR #$pr_num — could not resolve exact head SHA for guarded merge" >&2
+            exit 1
+        fi
+        expected_head="${supplied_head:-$current_head}"
+        if [ "$current_head" != "$expected_head" ]; then
+            echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
+        fi
+    fi
+
+    # The route is read-only. The arm at creation, the one --auto that passes
+    # --unless-admin, reads it too: an arm there would queue a PR the
+    # immediate merge takes past the queue, and GitHub enqueues an armed PR
+    # the moment its checks pass. It runs ahead of the warnings, since
+    # callers route on that arm's refusal's first line.
+    local route=plain
+    if [ "$dry_run" != true ] && { [ "$auto" != true ] || [ "$unless_admin" = true ]; }; then
+        merge_route "$pr_num" "$token" "$expected_head" "${accepted[@]}"
+        route="$MERGE_ROUTE"
+    fi
+    # The admin merge is direct, so it takes the direct method the route read,
+    # not the queue's.
+    [ "$route" != admin ] || method="$MERGE_ROUTE_METHOD"
+    if [ "$auto" = true ] && [ "$route" = admin ]; then
+        echo "  Nothing armed: the immediate merge takes this PR past the queue once its gates pass, and an arm now would queue it first." >&2
+        exit 1
+    fi
 
     local warnings
     warnings=$(echo "$check_result" | jq -r '.warnings | length')
@@ -1036,20 +1157,12 @@ main() {
         exit 0
     fi
 
-    # Resolve and guard the exact head before mutating merge state. This prevents
-    # a review/CI race from queuing or merging a newer, unverified commit.
-    local expected_head current_head
-    if ! current_head=$(with_token "$token" gh pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$current_head" ]; then
-        echo "BLOCKED PR #$pr_num — could not resolve exact head SHA for guarded merge" >&2
-        exit 1
-    fi
-    expected_head="${supplied_head:-$current_head}"
-    if [ "$current_head" != "$expected_head" ]; then
-        echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
-    fi
 
+    # GitHub enrolls a PR in a merge queue only through --auto: a merge call
+    # without it or --admin on a queue base is refused, gh exiting 0 on it.
     local -a cmd=(pr merge "$pr_num" "--$method" --match-head-commit "$expected_head")
-    [ "$auto" = true ] && cmd+=(--auto)
+    [ "$auto" != true ] && [ "$route" != queue ] || cmd+=(--auto)
+    [ "$route" != admin ] || cmd+=(--admin)
 
     local merge_output merge_exit=0
     if [ -n "$token" ]; then

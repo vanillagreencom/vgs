@@ -39,8 +39,9 @@
 #   ol_record_*            the session record in the oversee state's
 #                          `overseer` object: read, written before the first
 #                          turn, restored when the launch is abandoned, the
-#                          pending successor written apart from it, and the
-#                          current session's launch identity read back
+#                          pending successor written apart from it, the
+#                          current session's launch identity read back, and
+#                          a record lacking a fact its session knows healed
 #   ol_session_verify      the account read, the first working turn and the
 #                          confirming read, inside one deadline
 #   ol_session_inspect     the runtime's `inspect` of a recorded session: its
@@ -299,9 +300,10 @@ ol_account_id() { # DIR
 # (ol_entry_permitted), and skipped before its pick where it cannot be. A
 # Copilot entry's pick is skipped as successor-status-line where the account's
 # settings run no copilot-statusline (lib/adapters/copilot.sh §
-# lane_adapter_copilot_status_line): its context is measured only through the
-# record that status line writes, as a fleet lane on one is refused
-# (open-terminal). The rules a succession adds, each off while its setting is
+# lane_adapter_copilot_status_line): a succession installs no
+# kendex-lane-context extension, so the record that status line writes is the
+# one reading it can count on, the turn end's fallback where no extension
+# reading of the session stands. The rules a succession adds, each off while its setting is
 # empty or 0: each skip is a notice for the caller to print, one line of
 # tab-separated key and fields in OL_WALK_SKIPS.
 #   OL_WALK_REFUSE_ID       a pick naming this account (ol_account_id) is
@@ -538,22 +540,40 @@ ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 }
 
 # The jq definitions every reader and writer of the record shares, so none
-# spells either question a second time: `ol_identity` is the launch identity
-# an object carries, its six fields in their one order, and
+# spells a question a second time: `ol_identity` is the launch identity an
+# object carries, its six fields in their one order.
 # `ol_names($server; $start; $session)` is whether a record names that
 # session on that server, the pane on tmux and the session elsewhere. $start
 # is the start ol_session_start printed for that session's server, empty
-# where it could not be read: a record names the session only on the server
-# started at its `server_start`, since after a tmux restart a new server may be
-# handed the recorded pid and numbers its panes from %0 again, and a record
-# carrying none names no session.
-# lib/watch-overseer-record.sh takes `ol_names` for the watch start, and
-# `oversee launch` for its liveness refusal, there judging a record carrying
-# no start on the server and pane alone.
+# where it could not be read: ol_names names the session only on the server
+# started at the record's `server_start`, since after a tmux restart a new
+# server may be handed the recorded pid and numbers its panes from %0 again,
+# and never from a record carrying no start. ol_record_current, the
+# generation bump, the exit writes and oversee-watch's identification take
+# that strict answer; `oversee launch` takes it beside ol_owns for its
+# liveness refusal.
+# `ol_unstarted($server; $session)` is a record naming that session on that
+# server with no start at all, which no current writer leaves but a record
+# written before starts were recorded, or put back whole by
+# ol_record_restore, still is. The session in that pane is the one the
+# record was written for. The lane-mail-check hook's identification and
+# lane-mail's peer reader ask it rather than read an empty start.
+# `ol_owns($server; $start; $session)` is either answer: the record is that
+# session's, bound or unstarted. Its readers are the two writers that bind an
+# unstarted record to its session instead of reading it as another
+# session's: the watch start (lib/watch-overseer-record.sh §
+# overseer_command_record), which keeps its launch identity, and
+# ol_record_heal, which the lane-mail-check hook runs from the overseer's
+# turn ends and tool calls; `oversee launch` reads it for its liveness
+# refusal, so a live pane a startless record names blocks a second overseer.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_names($server; $start; $session): type == "object" and (.server // "") == $server
     and ((.pane // .session // "") == $session)
-    and (.server_start | tostring) == $start;'
+    and (.server_start | tostring) == $start;
+  def ol_unstarted($server; $session): type == "object" and (.server // "") == $server
+    and ((.pane // .session // "") == $session)
+    and .server_start == null;
+  def ol_owns($server; $start; $session): ol_names($server; $start; $session) or ol_unstarted($server; $session);'
 
 # ol_session_start SERVER SESSION — the start ol_names judges SESSION on
 # SERVER by: tmux_server_start's for a pane. Returns 1, printing nothing, where
@@ -774,8 +794,8 @@ ol_record_get() {
 # for a session this launch opened, merged over OL_PRIOR: `runtime`,
 # `session`, `window`, `server`, IDENTITY, the launch identity object
 # ol_identity or ol_record_line_identity built (every field present, null
-# where the launch does not know it, so no field of another session's
-# survives into this one's), `launch_line` where LINE is given, and `generation`: one more than
+# where the launch does not know it), `launch_line` where LINE is given, and
+# `generation`: one more than
 # the prior record's, or 1 where none was recorded, and the prior's own where
 # the prior names this very session on this server, which is a registration
 # repeated and never a second session. On tmux the session is the pane, and
@@ -786,20 +806,23 @@ ol_record_get() {
 # where that is unknown, and `server_start` is the server's start time read
 # off that pane (lib/tmux-server.sh § tmux_server_start), so no start of
 # another server's survives. A start that cannot be read writes nothing: a
-# record with no start names no session. `pending` is
+# record with no start is bound to no server, and a later server handed the
+# same pid and pane id would read it as its own (ol_unstarted). `pending` is
 # dropped: the successor it named is the session written here, or a launch
 # that never opened. `exit` is dropped: it is a session's that ended. The
-# prior's `launch_line` goes with it where LINE is empty: `oversee register`
-# writes a session a person opened by hand, whose line nothing here knows, and
-# a line kept from the prior would be replayed for this session's death as if
-# it were its own, the prior's account and permission words included. Every
-# other field the prior carried stays. The generation written is in
-# OL_GENERATION, empty where the write failed. Returns 1 with the writer's
+# prior's fields survive only where ol_names proves this same server, server
+# start and pane. There, only non-empty IDENTITY fields replace prior values,
+# and an empty LINE keeps the prior launch line. A different session takes
+# IDENTITY's nulls for unknown fields and inherits no launch line or other
+# prior fields. OL_GENERATION names the generation written. OL_RECORD_RETAINED
+# and OL_RECORD_FRESH name the retained non-empty fields and the fields read
+# afresh, as sorted comma-separated lists, or `none`, for register's report.
+# All three are empty where the write failed. Returns 1 with the writer's
 # words in DEP_ERR.
-OL_GENERATION=""
+OL_GENERATION="" OL_RECORD_RETAINED="" OL_RECORD_FRESH=""
 ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
-  local prior="${OL_PRIOR:-null}" record cwd rows="" start="" generation
-  OL_GENERATION=""
+  local prior="${OL_PRIOR:-null}" result record cwd rows="" start="" fields
+  OL_GENERATION="" OL_RECORD_RETAINED="" OL_RECORD_FRESH=""
   if [[ "$1" == tmux ]]; then
     cwd="$(jq -r '.cwd // empty' <<<"$5" 2>"$DEP_ERR")" || return 1
     rows="$(session_rows_overseer_file "${cwd:-$PWD}" "$4" "$2")"
@@ -808,22 +831,29 @@ ol_record_write() { # RUNTIME SESSION WINDOW SERVER IDENTITY [LINE]
       return 1
     fi
   fi
-  record="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
+  result="$(jq -cn --argjson prior "$prior" --argjson identity "$5" --arg runtime "$1" \
     --arg session "$2" --arg window "$3" --arg server "$4" --arg line "${6:-}" --arg rows "$rows" \
     --arg start "$start" "$OL_JQ_DEFS"'
+      def nonempty: with_entries(select(.value != null and .value != ""));
+      def field_names: keys | if length == 0 then "none" else join(",") end;
       ($prior // {}) as $p
+      | ($p | ol_names($server; $start; $session)) as $same
       | (($p.generation // 0) | if type == "number" then . else 0 end) as $g
-      | (if ($p | ol_names($server; $start; $session)) and $g > 0 then $g else $g + 1 end) as $next
-      | ($p | del(.pending, .exit, .launch_line)) + {runtime: $runtime, server: $server, window: $window, generation: $next}
-      + $identity
-      + (if $runtime == "tmux"
-         then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)}
-         else {session: $session} end)
-      + (if $line == "" then {} else {launch_line: $line} end)' 2>"$DEP_ERR")" \
-    || return 1
-  generation="$(jq -r '.generation' <<<"$record" 2>"$DEP_ERR")" || return 1
+      | (if $same and $g > 0 then $g else $g + 1 end) as $next
+      | ($identity | nonempty) as $known
+      | ($known + {runtime: $runtime, server: $server, window: $window, generation: $next}
+         + (if $runtime == "tmux"
+            then {pane: $session, session_rows: $rows, server_start: ($start | tonumber)}
+            else {session: $session} end)
+         + (if $line == "" then {} else {launch_line: $line} end)) as $fresh
+      | (if $same then $p | del(.pending, .exit) else $identity | map_values(null) end) as $base
+      | {record: ($base + $fresh),
+         retained: ($base | nonempty | with_entries(select(.key as $key | $fresh | has($key) | not)) | field_names),
+         fresh: ($fresh | field_names)}' 2>"$DEP_ERR")" || return 1
+  record="$(jq -c '.record' <<<"$result" 2>"$DEP_ERR")" || return 1
+  fields="$(jq -r '[.record.generation, .retained, .fresh] | @tsv' <<<"$result" 2>"$DEP_ERR")" || return 1
   "$SCRIPT_DIR/workflow-state" set oversee overseer "$record" >/dev/null 2>"$DEP_ERR" || return 1
-  OL_GENERATION="$generation"
+  IFS=$'\t' read -r OL_GENERATION OL_RECORD_RETAINED OL_RECORD_FRESH <<<"$fields"
 }
 
 # ol_record_pending LINE IDENTITY — the successor a succession is about to
@@ -867,6 +897,27 @@ ol_record_current() { # SERVER PANE
       else empty end' <<<"$record" 2>"$DEP_ERR")" || return 2
   [[ -n "$fields" ]] || return 1
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
+}
+
+# ol_record_heal SERVER PANE START HARNESS HOME — the record naming the session
+# SERVER PANE on the server started at START, bound or unstarted (ol_owns),
+# given each fact it lacks and the session itself knows: START
+# as `server_start`, HARNESS as `harness`, and HOME, the directory the harness
+# variable of that session carries, as `home`. A fact the record already
+# names stays, and a record naming another session is left as it stands. The
+# lane-mail-check hook runs it from the overseer's own turn end and tool calls,
+# so a record that lost the facts the transcript binding reads is filled from
+# the session they describe instead of leaving its context unread. An empty
+# HARNESS or HOME writes nothing for that field. Returns 1 with the writer's
+# words in DEP_ERR.
+ol_record_heal() { # SERVER PANE START HARNESS HOME
+  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" --arg start "$3" \
+    --arg harness "$4" --arg home "$5" "$OL_JQ_DEFS"'
+      if (.overseer | ol_owns($server; $start; $pane))
+      then .overseer |= (.server_start = ($start | tonumber)
+        | if (.harness // "") == "" and $harness != "" then .harness = $harness else . end
+        | if (.home // "") == "" and $home != "" then .home = $home else . end)
+      else . end' >/dev/null 2>"$DEP_ERR"
 }
 
 # ol_record_exit_clear SERVER PANE — the record's `exit` member dropped where

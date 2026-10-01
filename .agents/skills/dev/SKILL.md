@@ -38,6 +38,20 @@ orch is the caller and runtime: it owns delegation format, round acceptance, and
 
 Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/review.md`](../reviewer/workflows/review.md), [`../reviewer/workflows/qa-review.md`](../reviewer/workflows/qa-review.md). Command shapes are orch's [`../orch/SKILL.md`](../orch/SKILL.md) § Harness-Safe Shell; literal format tags and round mechanics are its [`../orch/references/skill-rules.md`](../orch/references/skill-rules.md) § Format Tags Are Literal and § Round Closure.
 
+## Implementer selection
+
+An `agent:X` label selects X. With no agent label, use the item's Location paths and required work:
+
+| Required work | Agent |
+|---|---|
+| Rust implementation under `crates/` | `rust` |
+| Iced UI implementation | `iced` |
+| Web UI implementation | `frontend` |
+| Non-UI shell, Python or TypeScript runtime implementation, with no `crates/` or UI path | `engineer` |
+| Documentation, references, file or configuration organization | `generalist` |
+
+For an item spanning domains, split the delegation by domain. If the selected agent is not installed, report the missing agent to the caller. Never substitute `generalist` for runtime implementation.
+
 ## Engineering Rules
 
 - Scope is the issue's Done-when. A behavioral surface that does not trace to it stays out of this change, and a committed render of a source file you changed traces to whatever its source traces to. Two exceptions:
@@ -65,6 +79,8 @@ Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): corre
 
 Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR. The orchestrator does that after review passes. A finding on a mechanism this diff introduces or arms is a fix whatever the round, unless Step 0 of the disposition flow excludes it; a `Declined:` there takes one of the reason forms [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) § Decision flow sets out, never a label or a test count.
 
+A session keeps the rule text it loaded, and a push, `worktree create --reuse` or a restack can rebase the branch onto a base that changed that text. A session that already ran a round on this branch runs this diff before the round's first step, `[PREVIOUS_ROUND_COMMIT]` being the commit its last round reported: `git diff --no-renames --name-only [PREVIOUS_ROUND_COMMIT] HEAD -- <each loaded file's repo path>`. Before that first step, it reads again each listed file. A listed path it loaded that no longer exists voids the text loaded from it; it reads again the skill's current `SKILL.md`, or the file that replaced it, in its place.
+
 **The completion artifact is the round.** `dev-return-write` writes it after the commit; never hand-author the JSON (schema: orch [`schemas/dev-return.md`](../orch/schemas/dev-return.md)).
 
 - `--issue` is the delegation's `Artifact Key:` line, the workflow-state key where one exists, or the `local-` key `workflow-state new-local-key` mints, per [`dev-return.md` § Identity: the round id](../orch/schemas/dev-return.md#identity-the-round-id); never the tracker-native `OWNER/REPO#N` or a bare number. `--round-id` is its `Round ID:` line.
@@ -89,6 +105,7 @@ The validation gate and role ownership are complete in [dev-implement.md § 5. V
 - **Claude Code.** Background the BARE command `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]` via `run_in_background`, never piped or chained, and read the `run-dir=` value off its `state=started` line. Then poll in the foreground with `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, under the harness's maximum command timeout because one call runs for up to nine minutes, repeating for as long as it exits 3 and prints `state=running`. Never idle for the completion notice and never depend on a background poller for it: the harness can kill your background shell on a low-memory heuristic that fires with free memory to spare, and the notice then never comes. Neither loses the verdict, because the sentinel is on disk. The verdict is the `validate=` value on the `state=done` line: `pass`, `FAILING`, or `no-verdict` for a run the bound cut off, which [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate) routes; the log holds command output and never an exit status. `state=timeout` and `state=lost` are both failed validations. Then resume the tail.
 - **Codex.** Run `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]` in the foreground and block. Where the harness's own foreground ceiling cuts that call off, the run and its verdict are still on disk: resume with `--wait --run-dir` on the `run-dir=` value from the `state=started` line, as Claude Code does.
 - **Pi.** Run that same command in the foreground, and resume a call the harness cut off the same way.
+- **A host whose agent warden kills detached jobs**, on any harness: add `--attached` to the start command and run it in the foreground, under a harness timeout above the `cap-secs=` value on its `state=started` line. The route fits only a harness whose call can outlast that cap. The run then stays inside the agent's own process tree and writes the same run directory, sentinel and record, which `dev-return-write` takes as it takes a detached run. A harness that cuts the call off kills only the parent, and the warden then reaps the child before its verdict: the run ends as `state=lost`, a failed validation. The `--wait --run-dir` resume above holds only on a host without such a warden.
 
 ## Reflect
 
