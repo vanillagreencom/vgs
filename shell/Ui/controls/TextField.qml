@@ -20,6 +20,8 @@ T.TextField {
     property string trailingIcon: ""
     property bool error: false
     property bool password: false
+    property bool escapeReverts: false
+    property string committedText: ""
     property alias actions: actionRow.data
     readonly property color outline: error ? Theme.textField.error : activeFocus ? Theme.textField.focus : hovered ? Theme.textField.hover : Theme.textField.borderColor
     readonly property real sidePadding: Theme.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, height), contentHeight)
@@ -41,6 +43,15 @@ T.TextField {
     font.weight: Theme.text.item.weight
     font.variableAxes: ({ wght: Theme.text.item.weight })
     Accessible.name: placeholderText
+    Keys.priority: Keys.BeforeItem
+    Keys.onEscapePressed: event => {
+        if (escapeReverts && text !== committedText) {
+            text = committedText;
+            event.accepted = true;
+            return;
+        }
+        event.accepted = false;
+    }
 
     background: Rectangle {
         radius: Theme.textField.radius

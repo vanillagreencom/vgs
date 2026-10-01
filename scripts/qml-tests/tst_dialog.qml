@@ -6,7 +6,7 @@ import qs.Ui
 import qs.Unit
 
 // Dialog: the card, the title and the message drawn from the `dialog`
-// tokens; the accept action focused first without a ring; Enter and Return
+// tokens; the accept action focused first with a ring; Enter and Return
 // pressing the focused action or the accept action, Escape rejecting; Tab
 // and Backtab cycling the enabled actions with the ring and never leaving
 // the dialog; a press answering with the action's role; the default
@@ -29,6 +29,7 @@ Item {
         message: "Nord ships 12 wallpapers, 42 MB."
         actions: [{ label: "Not now", role: "cancel" }, { label: "Download", role: "accept" }]
         Label { id: extra; role: "code"; text: "vgs-themes/nord.tar.gz" }
+        TextField { id: edit; placeholderText: "Filter wallpapers" }
     }
     Dialog {
         id: three
@@ -56,7 +57,7 @@ Item {
         y: 420
         title: "Apply theme?"
         actions: [{ label: "Cancel", role: "cancel" }, { label: "Apply", role: "accept" }]
-        Label { role: "body"; text: "Hidden"; visible: false }
+        Label { id: hiddenLabel; role: "body"; text: "Hidden"; visible: false }
     }
     Dialog {
         id: prompt
@@ -135,7 +136,7 @@ Item {
             compare(pane(dialog).scrollArea.rightInset, pane(dialog).contentInset);
         }
 
-        function test_accept_action_takes_the_focus_without_a_ring() {
+        function test_accept_action_takes_the_focus_with_a_ring() {
             const [notNow, download] = dialog.buttons();
             dialog.forceActiveFocus();
             compare(download.activeFocus, true);
@@ -147,8 +148,8 @@ Item {
             dialog.forceActiveFocus();
             compare(download.activeFocus, true);
             compare(notNow.activeFocus, false);
-            compare(download.visualFocus, false);
-            compare(ring(download).visible, false);
+            compare(download.visualFocus, true);
+            compare(ring(download).visible, true);
         }
 
         function test_enter_and_return_accept_and_escape_rejects() {
@@ -164,7 +165,7 @@ Item {
 
         function test_enter_presses_the_focused_action() {
             dialog.forceActiveFocus();
-            keyClick(Qt.Key_Tab);
+            dialog.buttons()[0].forceActiveFocus(Qt.TabFocusReason);
             compare(dialog.buttons()[0].activeFocus, true);
             keyClick(Qt.Key_Return);
             compare(rejects.count, 1);
@@ -175,6 +176,9 @@ Item {
             dialog.forceActiveFocus();
             const [notNow, download] = dialog.buttons();
             keyClick(Qt.Key_Tab);
+            compare(edit.activeFocus, true);
+            compare(outside.activeFocus, false);
+            keyClick(Qt.Key_Tab);
             compare(notNow.activeFocus, true);
             compare(notNow.visualFocus, true);
             compare(ring(notNow).visible, true);
@@ -184,12 +188,13 @@ Item {
             keyClick(Qt.Key_Backtab);
             compare(notNow.activeFocus, true);
             keyClick(Qt.Key_Backtab);
-            compare(download.activeFocus, true);
+            compare(edit.activeFocus, true);
             for (let i = 0; i < 5; i++) {
                 keyClick(Qt.Key_Tab);
                 compare(outside.activeFocus, false, "Tab " + i + " left the dialog");
             }
         }
+
 
         function test_an_initial_focus_field_takes_the_focus_and_answers() {
             const [cancel, authenticate] = prompt.buttons();
@@ -289,6 +294,35 @@ Item {
             compare(authenticate.activeFocus, true);
         }
 
+
+        function test_text_field_tab_stays_inside_modal_dialog() {
+            dialog.forceActiveFocus();
+            edit.forceActiveFocus(Qt.TabFocusReason);
+            keyClick(Qt.Key_Tab);
+            compare(outside.activeFocus, false);
+            compare(dialog.buttons()[0].activeFocus, true);
+            keyClick(Qt.Key_Backtab);
+            compare(edit.activeFocus, true);
+            keyClick(Qt.Key_Backtab);
+            compare(dialog.buttons()[1].activeFocus, true);
+            compare(outside.activeFocus, false);
+        }
+
+        function test_non_modal_dialog_lets_tab_and_escape_pass() {
+            const made = Qt.createQmlObject("import QtQuick\nimport qs.Ui\nItem { width: 360; height: 180; Button { id: before; text: \"Before\" } Dialog { id: d; y: 40; modal: false; actions: [{ label: \"Cancel\", role: \"cancel\" }, { label: \"OK\", role: \"accept\" }] } Button { id: after; y: 120; text: \"After\" } property alias dialog: d; property alias after: after }", root);
+            const spy = Qt.createQmlObject("import QtTest\nSignalSpy { signalName: \"rejected\" }", root);
+            spy.target = made.dialog;
+            made.dialog.forceActiveFocus();
+            made.dialog.buttons()[1].forceActiveFocus(Qt.TabFocusReason);
+            keyClick(Qt.Key_Tab);
+            compare(made.after.activeFocus, true);
+            made.dialog.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(spy.count, 0);
+            spy.destroy();
+            made.destroy();
+        }
+
         function test_tab_skips_a_disabled_action() {
             three.forceActiveFocus();
             const [keep, later, remove] = three.buttons();
@@ -374,7 +408,7 @@ Item {
             verify(top >= message.y + message.height, "the content starts under the message");
             const actions = dialog.buttons()[0].mapToItem(dialog, 0, 0).y;
             verify(top + extra.height <= actions, "the content ends above the actions");
-            compare(pane(three).scrollArea.contentItem.children[0].children[0].children[0].visible, false);
+            compare(hiddenLabel.visible, false);
         }
 
         function test_actions_keep_one_gap_under_the_header_when_the_body_is_empty() {

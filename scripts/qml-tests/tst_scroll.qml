@@ -25,6 +25,9 @@ Item {
     ScrollArea { id: tall; x: 240; width: 100; height: 100; Column { width: parent.width; Rectangle { width: parent.width; height: 100000; color: "transparent" } } }
     ScrollArea { id: inset; y: 140; width: 120; height: 100; rightInset: Theme.inset.window; Column { width: parent.width; Repeater { model: 10; Rectangle { width: parent.width; height: 20; color: "transparent" } } } }
     ScrollArea { id: singleFixed; x: 140; y: 140; width: 120; height: 100; Item { y: Theme.space.sm; width: parent.width; implicitHeight: root.singleFixedHeight } }
+    Button { id: beforeKeyboard; x: 260; y: 230; text: "Before" }
+    ScrollArea { id: keyboard; x: 260; y: 260; width: 100; height: 80; keyboardScroll: true; Column { width: parent.width; Repeater { model: 8; Rectangle { width: parent.width; height: 24; color: "transparent" } } } }
+    Button { id: afterKeyboard; y: 350; text: "After" }
     Item {
         id: hideParent
         x: 280
@@ -52,6 +55,7 @@ Item {
             UnitTheme.reset();
             area.contentY = 0;
             area.bar.hovered = false;
+            keyboard.contentY = 0;
             root.singleFixedHeight = Theme.size.control.lg;
             hideParent.visible = true;
             hiddenArea.contentY = 0;
@@ -138,6 +142,51 @@ Item {
             compare(area.contentY, 100, "a press under the thumb pages one view down, held at the end");
             mouseClick(area.bar, area.bar.width / 2, 5);
             compare(area.contentY, 0, "a press above the thumb pages one view up");
+        }
+
+        function test_keyboard_scroll_takes_tab_focus_and_draws_keyboard_ring_only() {
+            root.Window.window.requestActivate();
+            tryCompare(root.Window.window, "active", true);
+            wait(0);
+            const ring = keyboard.children.find(child => child.target === keyboard.focusProxy);
+            verify(ring !== undefined, "the keyboard focus ring is present");
+            beforeKeyboard.forceActiveFocus(Qt.TabFocusReason);
+            compare(beforeKeyboard.activeFocus, true);
+            compare(ring.visible, false);
+            keyClick(Qt.Key_Tab);
+            compare(keyboard.focusProxy.activeFocus, true);
+            compare(keyboard.activeFocus, false);
+            tryCompare(ring, "visible", true);
+            keyClick(Qt.Key_Tab);
+            compare(keyboard.focusProxy.activeFocus, false);
+            compare(afterKeyboard.activeFocus, true);
+            compare(ring.visible, false);
+            beforeKeyboard.forceActiveFocus(Qt.TabFocusReason);
+            compare(beforeKeyboard.activeFocus, true);
+            keyboard.focusProxy.forceActiveFocus(Qt.ShortcutFocusReason);
+            compare(ring.visible, true);
+            afterKeyboard.forceActiveFocus(Qt.MouseFocusReason);
+            compare(ring.visible, false);
+            keyboard.focusProxy.forceActiveFocus(Qt.MouseFocusReason);
+            compare(keyboard.focusProxy.visualFocus, false);
+            compare(ring.visible, false);
+        }
+
+        function test_keyboard_scroll_keys_move_the_body() {
+            root.Window.window.requestActivate();
+            tryCompare(root.Window.window, "active", true);
+            wait(0);
+            beforeKeyboard.forceActiveFocus(Qt.TabFocusReason);
+            compare(beforeKeyboard.activeFocus, true);
+            keyClick(Qt.Key_Tab);
+            compare(keyboard.focusProxy.activeFocus, true);
+            compare(keyboard.contentY, 0);
+            keyClick(Qt.Key_Down);
+            compare(keyboard.contentY, Theme.row.height);
+            keyClick(Qt.Key_PageDown);
+            compare(keyboard.contentY, Math.min(keyboard.contentHeight - keyboard.height, Theme.row.height + keyboard.height));
+            keyClick(Qt.Key_Home);
+            compare(keyboard.contentY, 0);
         }
 
         function test_the_bar_shows_while_scrolling_or_hovered_and_fades_after() {

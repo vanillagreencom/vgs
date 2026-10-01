@@ -13,12 +13,13 @@ Item {
 
     Slider { id: slider; from: 0; to: 100; stepSize: 10; value: 50; width: 200 }
     Slider { id: mirrored; from: 0; to: 100; value: 25; width: 200; y: 40; LayoutMirroring.enabled: true }
+    SignalSpy { id: moves; target: slider; signalName: "moved" }
 
     TestCase {
         name: "slider"
         when: windowShown
 
-        function init() { UnitTheme.reset(); slider.value = 50; }
+        function init() { UnitTheme.reset(); slider.value = 50; slider.pageStep = Qt.binding(() => slider.stepSize > 0 ? slider.stepSize * 5 : Math.abs(slider.to - slider.from) / 20); moves.clear(); }
 
         function fill() { return slider.background.children[0]; }
 
@@ -46,6 +47,25 @@ Item {
             compare(slider.value, 60);
             keyClick(Qt.Key_Left);
             compare(slider.value, 50);
+            keyClick(Qt.Key_Up);
+            compare(slider.value, 60);
+            compare(moves.count, 3);
+            keyClick(Qt.Key_Down);
+            compare(slider.value, 50);
+            compare(moves.count, 4);
+            keyClick(Qt.Key_Home);
+            compare(slider.value, 0);
+            compare(moves.count, 5);
+            keyClick(Qt.Key_End);
+            compare(slider.value, 100);
+            compare(moves.count, 6);
+            slider.value = 50;
+            slider.pageStep = 25;
+            keyClick(Qt.Key_PageUp);
+            compare(slider.value, 80);
+            keyClick(Qt.Key_PageDown);
+            compare(slider.value, 60);
+            compare(moves.count, 8);
         }
 
         function test_click_on_the_track_moves_the_value() {

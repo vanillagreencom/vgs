@@ -14,6 +14,7 @@ Rectangle {
     color: Theme.color.scrim
 
     // pointer-cursor-exempt: a press here is a click away from the modal surface, not a control
+    // keyboard-path: the modal surface that owns the scrim closes on Escape
     MouseArea {
         anchors.fill: root
         // A MouseArea passes hover, and a wheel no handler accepts, to the

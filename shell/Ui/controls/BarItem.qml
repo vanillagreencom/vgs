@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Templates as T
 import qs.Commons
 import qs.Ui
+import "../foundation/KeyNavLogic.js" as KeyNavLogic
 
 // One item of the bar: a workspace pill or a widget's button. It is
 // `bar.item.height` tall and its content, `bar.item.paddingX` in from each
@@ -21,6 +22,9 @@ T.AbstractButton {
     property bool spinning: false
     property bool active: false
     property color tone: Theme.bar.foreground
+    property string tooltip: ""
+    property string shortcut: ""
+    property bool focusPreview: false
     // What a screen reader and a probe name the item: its text, or the
     // widget's name for an item that draws an icon alone.
     property string label: text
@@ -37,6 +41,8 @@ T.AbstractButton {
     PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: label
+    Keys.onReturnPressed: KeyNavLogic.activate(root)
+    Keys.onEnterPressed: KeyNavLogic.activate(root)
 
     contentItem: Item {
         implicitWidth: row.implicitWidth
@@ -88,5 +94,10 @@ T.AbstractButton {
         color: root.active ? Theme.bar.active : root.down ? Theme.bar.item.pressed : root.hovered ? Theme.bar.item.hover : "transparent"
         Behavior on color { ColorAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
         FocusRing { target: root }
+    }
+
+    Tooltip {
+        text: root.tooltip !== "" ? root.tooltip : root.label
+        shortcut: root.shortcut
     }
 }

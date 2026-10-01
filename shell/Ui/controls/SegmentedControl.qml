@@ -11,11 +11,12 @@ import qs.Ui
 // that is not chosen fills on hover and more on a press; a segment's
 // corner is the control's less its inset, so it nests in a rounded
 // control, and a disabled control fades.
-Rectangle {
+T.Control {
     id: root
 
     property var model: []
     property int currentIndex: 0
+    property bool focusPreview: false
     signal activated(int index)
 
     function choose(index) {
@@ -24,26 +25,29 @@ Rectangle {
         activated(index);
     }
 
-    implicitWidth: row.implicitWidth + 2 * Theme.segmented.padding
+    implicitWidth: row.implicitWidth + leftPadding + rightPadding
     implicitHeight: Theme.segmented.height
-    radius: Theme.segmented.radius
-    color: Theme.segmented.background
-    border.width: Theme.border.thin
-    border.color: Theme.segmented.border
-    activeFocusOnTab: true
+    padding: Theme.segmented.padding
+    focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : Theme.opacity.disabled
-    Keys.onLeftPressed: choose(currentIndex - 1)
-    Keys.onRightPressed: choose(currentIndex + 1)
+    Keys.onPressed: event => { event.accepted = nav.handle(event); }
 
-    Row {
+    property KeyNav nav: KeyNav {
+        count: root.model.length
+        currentIndex: root.currentIndex
+        orientation: "horizontal"
+        wrap: false
+        onMoved: index => root.choose(index)
+    }
+
+    contentItem: Row {
         id: row
-        x: Theme.segmented.padding
-        y: Theme.segmented.padding
-        height: parent.height - 2 * Theme.segmented.padding
+        height: root.availableHeight
         spacing: Theme.segmented.gap
 
         Repeater {
             model: root.model
+            // keyboard-path: the segmented control is one tab stop and its arrow keys choose segments
             T.Button {
                 id: segment
                 required property int index
@@ -59,7 +63,7 @@ Rectangle {
                 PointerCursor {}
                 text: String(modelData)
                 Accessible.name: text
-                onClicked: { root.forceActiveFocus(); root.choose(index); }
+                onClicked: { root.forceActiveFocus(Qt.MouseFocusReason); root.choose(index); }
 
                 contentItem: Label {
                     role: "button"
@@ -77,5 +81,11 @@ Rectangle {
         }
     }
 
-    FocusRing { target: root; targetRadius: Theme.segmented.radius }
+    background: Rectangle {
+        radius: Theme.segmented.radius
+        color: Theme.segmented.background
+        border.width: Theme.border.thin
+        border.color: Theme.segmented.border
+        FocusRing { target: root; targetRadius: Theme.segmented.radius }
+    }
 }

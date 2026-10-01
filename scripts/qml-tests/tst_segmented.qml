@@ -22,7 +22,7 @@ Item {
 
         function init() { UnitTheme.reset(); control.currentIndex = 0; activations.clear(); }
 
-        function segment(index) { return control.children[0].children[index]; }
+        function segment(index) { return control.contentItem.children[index]; }
 
         // A segment that is not chosen fills on hover and more on a press;
         // its corner nests inside the control's inset; a disabled control
@@ -54,7 +54,7 @@ Item {
         }
 
         function test_keys_move_the_choice() {
-            const ring = control.children[control.children.length - 1];
+            const ring = control.background.children[0];
             compare(ring.visible, false);
             control.forceActiveFocus(Qt.TabFocusReason);
             compare(ring.visible, true);
@@ -65,7 +65,11 @@ Item {
             compare(control.currentIndex, 2);
             keyClick(Qt.Key_Left);
             compare(control.currentIndex, 1);
-            compare(activations.count, 3);
+            keyClick(Qt.Key_Home);
+            compare(control.currentIndex, 0);
+            keyClick(Qt.Key_End);
+            compare(control.currentIndex, 2);
+            compare(activations.count, 5);
             control.focus = false;
             compare(ring.visible, false);
         }
@@ -81,7 +85,7 @@ Item {
         }
 
         function test_tab_reaches_the_control_and_not_its_segments() {
-            const ring = control.children[control.children.length - 1];
+            const ring = control.background.children[0];
             control.focus = false;
             after.focus = false;
             root.forceActiveFocus();

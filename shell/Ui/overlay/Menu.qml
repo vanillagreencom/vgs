@@ -31,9 +31,7 @@ Item {
     property int currentIndex: -1
     // The height the entries take before the menu scrolls.
     property real maxHeight: Theme.menu.maxHeight
-    // The letters typed so far toward an entry, cleared after
-    // `menu.typeahead` milliseconds without one.
-    property string typed: ""
+    readonly property string typed: nav.typed
     readonly property alias scrollArea: scroll
     // The list's top and bottom inset inside the window; its side inset is
     // the border.
@@ -55,12 +53,13 @@ Item {
     function reachable(item) { return item.enabled && item.visible; }
 
     function open() {
-        typed = "";
+        nav.typed = "";
         // The cursor lands on the opening entry rather than travelling
         // from where the last opening left it.
         plate.disarm();
         plate.snap();
         currentIndex = items().findIndex(item => reachable(item) && item.checked);
+        if (currentIndex === -1) nav.first();
         window.visible = true;
         scope.forceActiveFocus();
         scroll.contentY = 0;
@@ -72,12 +71,7 @@ Item {
     // Move the highlight by `step` over the reachable entries: from none,
     // Down takes the first and Up the last.
     function move(step) {
-        const all = items();
-        const reach = all.map((item, index) => reachable(item) ? index : -1).filter(index => index !== -1);
-        if (reach.length === 0) return;
-        const at = reach.indexOf(currentIndex);
-        if (at === -1) keyTo(step > 0 ? reach[0] : reach[reach.length - 1]);
-        else keyTo(reach[(at + step + reach.length) % reach.length]);
+        nav.moveBy(step);
     }
 
     // Highlight the entry at `index` from a key: the pointer resting over
@@ -93,27 +87,14 @@ Item {
     // entry whose text starts with them; when none does, start again from
     // `letter` alone. Answers whether an entry matched.
     function typeAhead(letter) {
-        const all = items();
-        const find = prefix => all.findIndex(item => reachable(item) && String(item.text).toLowerCase().indexOf(prefix) === 0);
-        let wanted = typed + letter.toLowerCase();
-        let found = find(wanted);
-        if (found === -1) {
-            wanted = letter.toLowerCase();
-            found = find(wanted);
-        }
-        typed = wanted;
-        typing.restart();
-        if (found !== -1) keyTo(found);
-        return found !== -1;
+        return nav.typeAhead(letter);
     }
 
     // Scroll the highlighted entry into view.
     function reveal() {
         const all = items();
         if (currentIndex < 0 || currentIndex >= all.length) return;
-        const item = all[currentIndex];
-        if (item.y < scroll.contentY) scroll.contentY = item.y;
-        else if (item.y + item.height > scroll.contentY + scroll.height) scroll.contentY = item.y + item.height - scroll.height;
+        nav.reveal(currentIndex);
     }
 
     // The widest entry by its own content, before the column sets every
@@ -129,7 +110,19 @@ Item {
         reveal();
     }
 
-    Timer { id: typing; interval: Theme.menu.typeahead; onTriggered: root.typed = "" }
+    property KeyNav nav: KeyNav {
+        count: root.items().length
+        currentIndex: root.currentIndex
+        viewHeight: scroll.height
+        rowHeight: Theme.menu.item.height
+        reachable: index => root.reachable(root.items()[index])
+        labelAt: index => root.items()[index].text
+        cursor: plate
+        flickable: scroll
+        itemAt: index => root.items()[index]
+        onMoved: index => root.keyTo(index)
+        onActivated: index => root.triggerCurrent()
+    }
 
     // Every entry draws its highlight through the menu's cursor, and a
     // hover the cursor lets through highlights a reachable entry.
@@ -179,16 +172,10 @@ Item {
             anchors.fill: parent
             focus: true
             Keys.onEscapePressed: root.close()
-            Keys.onUpPressed: root.move(-1)
-            Keys.onDownPressed: root.move(1)
-            Keys.onReturnPressed: root.triggerCurrent()
-            Keys.onEnterPressed: root.triggerCurrent()
-            // A printable letter without a modifier jumps; every other key
-            // goes on to the handlers above.
+            Keys.onTabPressed: event => event.accepted = true
+            Keys.onBacktabPressed: event => event.accepted = true
             Keys.onPressed: event => {
-                const code = event.text.length === 1 ? event.text.charCodeAt(0) : 0;
-                const plain = !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier));
-                event.accepted = code > 32 && code !== 127 && plain ? root.typeAhead(event.text) : false;
+                event.accepted = nav.handle(event);
             }
 
             Rectangle {

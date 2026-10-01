@@ -16,6 +16,16 @@ Item {
     TextField { id: plain; placeholderText: "Search plugins"; width: 200 }
     TextField { id: iconed; leadingIcon: "search"; width: 200; y: 40; actions: [ IconButton { id: clear; iconName: "x"; label: "Clear"; size: "sm"; onClicked: iconed.clear() } ] }
     TextField { id: numeric; width: 200; y: 80; validator: IntValidator { bottom: 0; top: 99 } }
+    TextField { id: reverting; y: 180; width: 200; text: "saved"; committedText: "saved"; escapeReverts: true }
+    Item {
+        id: escapeOwner
+        y: 620
+        width: 220
+        height: 40
+        property int escapes: 0
+        Keys.onEscapePressed: escapes += 1
+        TextField { id: passEscape; width: parent.width; text: "saved"; committedText: "saved"; escapeReverts: true }
+    }
     Field { id: field; label: "Name"; hint: "Shown in the bar"; width: 200; y: 120; TextField { id: inner; width: parent.width } }
     Column {
         id: inlineGrid
@@ -103,6 +113,23 @@ Item {
             keyClick("2");
             compare(numeric.text, "42");
             compare(numeric.acceptableInput, true);
+        }
+
+        function test_escape_reverts_uncommitted_text_when_enabled() {
+            escapeOwner.escapes = 0;
+            reverting.forceActiveFocus();
+            reverting.text = "changed";
+            keyClick(Qt.Key_Escape);
+            compare(reverting.text, "saved");
+            compare(escapeOwner.escapes, 0);
+            passEscape.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(passEscape.text, "saved");
+            compare(escapeOwner.escapes, 1, "an unchanged field leaves Escape for its owner");
+            plain.text = "changed";
+            plain.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(plain.text, "changed", "a field without the opt-in keeps Escape for its owner");
         }
 
         function test_field_lays_out_label_hint_and_error() {

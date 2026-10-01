@@ -16,7 +16,17 @@ T.TabBar {
     implicitWidth: contentItem.implicitWidth
     implicitHeight: Theme.tabs.height
     spacing: Theme.tabs.gap
+    focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : Theme.opacity.disabled
+    Keys.onPressed: event => { event.accepted = nav.handle(event); }
+
+    property KeyNav nav: KeyNav {
+        count: root.count
+        currentIndex: root.currentIndex
+        orientation: "horizontal"
+        wrap: true
+        onMoved: index => root.currentIndex = index
+    }
 
     contentItem: ListView {
         model: root.contentModel
@@ -43,15 +53,18 @@ T.TabBar {
 
     Repeater {
         model: root.model
+        // keyboard-path: the tab bar is one tab stop and its arrow keys choose tabs
         T.TabButton {
             id: tab
             required property var modelData
+            readonly property bool selectedFocus: root.visualFocus && checked
             text: String(modelData)
             implicitWidth: implicitContentWidth + leftPadding + rightPadding
             implicitHeight: Theme.tabs.height
             leftPadding: Theme.tabs.paddingX
             rightPadding: Theme.tabs.paddingX
             hoverEnabled: true
+            focusPolicy: Qt.NoFocus
             PointerCursor {}
             Accessible.name: text
 
@@ -74,7 +87,7 @@ T.TabBar {
                     color: Theme.tabs.indicatorColor
                     visible: tab.checked
                 }
-                FocusRing { target: tab }
+                FocusRing { target: tab; visible: tab.selectedFocus }
             }
         }
     }

@@ -7,6 +7,8 @@ Divider 1.0 foundation/Divider.qml
 FocusRing 1.0 foundation/FocusRing.qml
 Scrim 1.0 foundation/Scrim.qml
 PointerCursor 1.0 foundation/PointerCursor.qml
+KeyNav 1.0 foundation/KeyNav.qml
+KeyNavLogic 1.0 foundation/KeyNavLogic.js
 ImageText 1.0 foundation/ImageText.qml
 Button 1.0 controls/Button.qml
 IconButton 1.0 controls/IconButton.qml
@@ -31,6 +33,8 @@ ProgressBar 1.0 feedback/ProgressBar.qml
 Badge 1.0 feedback/Badge.qml
 EmptyState 1.0 feedback/EmptyState.qml
 Kbd 1.0 feedback/Kbd.qml
+KeyCaps 1.0 feedback/KeyCaps.qml
+KeyHints 1.0 feedback/KeyHints.qml
 CodeLine 1.0 feedback/CodeLine.qml
 CommandDisclosure 1.0 feedback/CommandDisclosure.qml
 AvatarGroup 1.0 feedback/AvatarGroup.qml

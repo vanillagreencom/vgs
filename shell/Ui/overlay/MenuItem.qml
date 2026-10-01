@@ -16,6 +16,8 @@ import qs.Ui
 // entry's own side padding. `barRoom` is the strip at the entry's end the
 // menu's scroll bar draws over while the entries overflow: the text, the
 // shortcut and the check mark keep clear of it, and the fill still spans it.
+// keyboard-path: Menu owns keys and triggers its highlighted item
+// focus-indicator: Menu's ListCursor plate shows the highlighted item
 T.MenuItem {
     id: root
 
@@ -36,6 +38,7 @@ T.MenuItem {
     rightPadding: sidePadding + barRoom + (checked ? Theme.icon.size.sm + spacing : 0)
     spacing: Theme.menu.item.gap
     hoverEnabled: true
+    focusPolicy: Qt.NoFocus
     PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text

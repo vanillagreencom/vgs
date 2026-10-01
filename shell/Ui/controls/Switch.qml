@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Templates as T
 import qs.Commons
 import qs.Ui
+import "../foundation/KeyNavLogic.js" as KeyNavLogic
 
 // An on and off switch with an optional text after it. `size` is `md`, the
 // default, or `sm` for inline rows. The template holds `checked` and
@@ -17,6 +18,7 @@ T.Switch {
     id: root
 
     property string size: "md"
+    property bool focusPreview: false
     readonly property var sizeTokens: sizeOf(size)
 
     function sizeOf(name) {
@@ -34,6 +36,8 @@ T.Switch {
     PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
+    Keys.onReturnPressed: KeyNavLogic.activate(root)
+    Keys.onEnterPressed: KeyNavLogic.activate(root)
 
     indicator: Rectangle {
         implicitWidth: root.sizeTokens.width

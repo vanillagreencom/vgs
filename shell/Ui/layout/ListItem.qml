@@ -8,7 +8,9 @@ import qs.Ui
 // switch. Both lines draw at line height 1, `row.lineGap` apart, so the
 // pair's glyphs sit on the row's centre with the icon; a row with a
 // secondary line is `listItem.twoLineHeight` tall, one without
-// `listItem.height`. The template owns the click, `highlighted` and the keyboard.
+// `listItem.height`. The template owns the click and `highlighted`; a
+// plain row takes no keyboard focus. A composite list owns the keyboard and
+// writes its one selection.
 //
 // A row of a list that declares a ListCursor names it in `cursor`: the
 // cursor then draws the highlight and travels to the row while it is
@@ -20,6 +22,7 @@ import qs.Ui
 // content clears the drawn corner. `textStart` is where the row's text
 // starts, its padding plus its icon and icon gap, for content a caller
 // lines up under the text.
+// keyboard-path: a composite list owns keys and writes highlighted; a plain row is not a tab stop
 T.ItemDelegate {
     id: root
 

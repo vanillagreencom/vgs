@@ -72,6 +72,20 @@ Item {
             compare(disclosure.expanded, true);
         }
 
+        function test_return_enter_and_arrows_drive_the_disclosure() {
+            compare(disclosure.focusItem, row());
+            row().forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(disclosure.expanded, true);
+            keyClick(Qt.Key_Left);
+            compare(disclosure.expanded, false);
+            keyClick(Qt.Key_Right);
+            compare(disclosure.expanded, true);
+            disclosure.expanded = false;
+            keyClick(Qt.Key_Enter);
+            compare(disclosure.expanded, true);
+        }
+
         function test_a_row_that_cannot_expand_stays_closed() {
             const trailingWidth = row().contentItem.children[2].width;
             disclosure.expandable = false;

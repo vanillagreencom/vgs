@@ -100,10 +100,7 @@ Item {
         function test_menu_moves_and_triggers_by_key() {
             menu.open();
             compare(menu.opened, true);
-            compare(menu.currentIndex, -1);
-            menu.move(1);
             compare(menu.currentIndex, 0);
-            compare(menu.items()[0].highlighted, true);
             menu.move(1);
             compare(menu.currentIndex, 1);
             compare(menu.items()[0].highlighted, false);
@@ -236,7 +233,7 @@ Item {
             long.close();
             root.chosen = -1;
             long.open();
-            compare(long.currentIndex, -1, "with no checked entry nothing is highlighted");
+            compare(long.currentIndex, 0, "with no checked entry the first reachable item is highlighted");
             long.close();
             root.chosen = 4;
         }
@@ -282,6 +279,33 @@ Item {
             select.choose(0);
         }
 
+        function test_closed_select_keys_do_not_wrap() {
+            select.forceActiveFocus();
+            select.choose(0);
+            select.closedNav.moveBy(-1);
+            compare(select.currentIndex, 0);
+            keyClick(Qt.Key_Up);
+            compare(select.currentIndex, 0);
+            select.choose(2);
+            select.closedNav.moveBy(1);
+            compare(select.currentIndex, 2);
+            keyClick(Qt.Key_Down);
+            compare(select.currentIndex, 2);
+        }
+
+        function test_open_select_keys_do_not_wrap() {
+            select.openList();
+            const list = selectList(select);
+            tryVerify(() => list.itemAtIndex(2) !== null, 1000, "the list builds its entries");
+            list.currentIndex = 2;
+            keyClick(Qt.Key_Down);
+            compare(list.currentIndex, 2);
+            list.currentIndex = 0;
+            keyClick(Qt.Key_Up);
+            compare(list.currentIndex, 0);
+            select.choose(0);
+        }
+
         function test_typing_jumps_to_the_entry_starting_with_the_letters() {
             compare(UnitTheme.override({ menu: { typeahead: 200 } }), "ok");
             root.chosen = -1;
@@ -295,7 +319,7 @@ Item {
             compare(long.typed, "th");
             tryCompare(long, "typed", "", 2000);
             compare(long.typeAhead("b"), true);
-            compare(long.items()[long.currentIndex].text, "Bar", "after the pause the letters start again");
+            compare(long.items()[long.currentIndex].text, "Beta", "after the pause the letters start again from the current entry");
             compare(long.typeAhead("e"), true);
             compare(long.items()[long.currentIndex].text, "Beta", "two letters narrow the jump");
             long.close();
@@ -323,9 +347,8 @@ Item {
             const items = menu.items();
             const plate = items[0].cursor;
             verify(plate !== null, "the menu hands its entries a cursor");
-            compare(plate.shown, false, "an open menu with nothing highlighted shows no cursor");
+            compare(plate.shown, true, "an open menu highlights its first reachable entry");
             compare(String(plate.color), String(Qt.color(Theme.menu.item.hover)));
-            menu.move(1);
             verify(plate.target === items[0], "the highlighted entry holds the cursor");
             compare(String(items[0].background.color), "#00000000", "the entry draws no fill of its own");
             mouseMove(items[1], 10, 5);
@@ -426,7 +449,6 @@ Item {
             let window = null;
             for (let i = 0; i < menu.resources.length; i++)
                 if (menu.resources[i].anchor !== undefined) window = menu.resources[i];
-            menu.move(1);
             const plate = menu.items()[0].cursor;
             tryCompare(plate, "opacity", 1);
             tryVerify(() => plate.target === menu.items()[0] && plate.height === menu.items()[0].height, 2000, "the cursor holds the first entry");

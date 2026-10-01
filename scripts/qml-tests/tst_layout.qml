@@ -16,6 +16,7 @@ Item {
 
     ScrollArea { id: scroll; width: 100; height: 50; Column { Repeater { model: 10; Rectangle { width: 80; height: 20; color: "transparent" } } } }
     Tabs { id: tabs; model: ["Installed", "Available"]; y: 60 }
+    KeyHints { id: hints; y: 90; hints: [{ key: "Left/Right", text: "Move" }, { key: "Ctrl+Tab", text: "Tabs" }] }
     ListItem { id: row; text: "Plugin updates"; secondary: "1 update available"; iconName: "package"; width: 300; y: 100 }
     ListItem { id: bare; text: "Plugin updates"; secondary: "1 update available"; iconName: "package"; y: 300 }
     SectionHeader { id: header; text: "Listed since"; description: "Sep 24"; width: 300; y: 150 }
@@ -105,6 +106,17 @@ Item {
             verify(row.height >= Theme.listItem.height);
             // A row without a width prefers the width of its text.
             verify(bare.implicitWidth > 100, "a populated row without a width is " + bare.implicitWidth + " wide");
+        }
+
+        function test_key_hints_draw_alternative_keys_as_separate_caps() {
+            const firstPair = hints.children[0];
+            const caps = firstPair.children[0].children.filter(child => child.shortcut !== undefined);
+            compare(caps.length, 2);
+            compare(caps[0].shortcut, "Left");
+            compare(caps[1].shortcut, "Right");
+            const secondCaps = hints.children[1].children[0].children.filter(child => child.shortcut !== undefined);
+            compare(secondCaps.length, 1);
+            compare(secondCaps[0].shortcut, "Ctrl+Tab");
         }
 
         // The title and secondary lines draw with whole-pixel line boxes,

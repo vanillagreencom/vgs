@@ -60,6 +60,12 @@ Item {
             compare(ring.visible, true);
             keyClick(Qt.Key_Space);
             compare(clicks.count, 1);
+            keyClick(Qt.Key_Return);
+            compare(clicks.count, 2);
+            primary.focusPreview = true;
+            primary.focus = false;
+            compare(ring.visible, true);
+            primary.focusPreview = false;
             primary.focus = false;
             tryCompare(ring, "visible", false);
         }

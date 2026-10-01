@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Templates as T
 import qs.Commons
 import qs.Ui
+import "../foundation/KeyNavLogic.js" as KeyNavLogic
 
 // A checkbox with an optional text after it. The template holds `checked`
 // and toggles it on a click, Space or Enter; the box fills with the
@@ -13,6 +14,8 @@ import qs.Ui
 T.CheckBox {
     id: root
 
+    property bool focusPreview: false
+
     // The content's left padding already holds the indicator and the gap.
     implicitWidth: text !== "" ? implicitContentWidth : implicitIndicatorWidth
     implicitHeight: Math.max(Theme.size.control.sm, implicitIndicatorHeight, implicitContentHeight)
@@ -21,6 +24,8 @@ T.CheckBox {
     PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
+    Keys.onReturnPressed: KeyNavLogic.activate(root)
+    Keys.onEnterPressed: KeyNavLogic.activate(root)
 
     indicator: Rectangle {
         implicitWidth: Theme.checkbox.size

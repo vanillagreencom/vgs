@@ -23,12 +23,20 @@ Column {
     property alias trailing: extra.data
     property bool expanded: false
     property bool expandable: true
+    readonly property alias focusItem: row
     default property alias content: body.data
 
+    // focus-indicator: ListItem draws its FocusRing for the disclosure row
     ListItem {
         id: row
         width: root.width
+        focusPolicy: Qt.StrongFocus
         onClicked: if (root.expandable) root.expanded = !root.expanded
+        Keys.onReturnPressed: if (root.expandable) root.expanded = !root.expanded
+        Keys.onEnterPressed: if (root.expandable) root.expanded = !root.expanded
+        Keys.onSpacePressed: if (root.expandable) root.expanded = !root.expanded
+        Keys.onRightPressed: if (root.expandable) root.expanded = true
+        Keys.onLeftPressed: if (root.expandable) root.expanded = false
         trailing: [
             Row {
                 id: extra

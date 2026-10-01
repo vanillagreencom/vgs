@@ -48,6 +48,7 @@ Item {
     }
 
     // pointer-cursor-exempt: a scroll bar keeps the arrow, as Qt's own scroll bars do
+    // keyboard-path: the owning list or scroll surface owns keyboard scrolling
     MouseArea {
         id: grip
         property real grab: 0

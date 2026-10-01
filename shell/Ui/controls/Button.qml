@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Templates as T
 import qs.Commons
 import qs.Ui
+import "../foundation/KeyNavLogic.js" as KeyNavLogic
 
 // A push button. `variant` names a group of `Theme.button.variant`:
 // `primary`, `secondary`, `tertiary`, `ghost` or `danger`; `size` names a
@@ -9,7 +10,7 @@ import qs.Ui
 // `Theme.button.size`, which holds that size's padding, gap and icon. An
 // unknown name is logged and drawn as the default. `iconName` draws a
 // Lucide icon before the text. The template supplies press, hover, focus,
-// keyboard activation and the checked state; a checkable button draws
+// Space and Enter activation and the checked state; a checkable button draws
 // `Theme.button.checked` while checked, with its own hover and press. The
 // fill animates between states on `motion.duration.fast`. Under a rounded
 // theme the side padding grows until the content clears the drawn corner
@@ -20,6 +21,7 @@ T.Button {
     property string variant: "primary"
     property string size: "md"
     property string iconName: ""
+    property bool focusPreview: false
     readonly property var tokens: variantOf(variant)
     readonly property int controlHeight: sizeOf(size)
     readonly property var sizeTokens: Theme.button.size[size] !== undefined ? Theme.button.size[size] : Theme.button.size.md
@@ -49,6 +51,8 @@ T.Button {
     PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: text
+    Keys.onReturnPressed: KeyNavLogic.activate(root)
+    Keys.onEnterPressed: KeyNavLogic.activate(root)
 
     contentItem: Row {
         spacing: root.spacing

@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import qs.Commons
 import qs.Ui
+import "../foundation/KeyNavLogic.js" as KeyNavLogic
 
 // A confirmation card: a title, a message, the content declared inside it
 // and a row of actions. It is a card, not a window: the host places it in
@@ -21,14 +22,13 @@ import qs.Ui
 // such as a password field. `tabItems` lists further content items that
 // take the keys, such as a Select ahead of that field, in their order. Tab
 // and Backtab move the focus through the shown and enabled `tabItems`, the
-// initial focus item when the list does not hold it, and the enabled
-// actions, and wrap, so the keys stay in the dialog; any other content is
-// shown and never takes the focus. Enter and Return press the
-// focused action, or a focused `tabItems` button, one with a `clicked`
+// initial focus item when the list does not hold it, other focusable
+// content and the enabled actions, and wrap while `modal` holds. Enter and
+// Return press the focused action, or a focused item with a `clicked`
 // signal, such as a disclosure's toggle, or else the accept action, the
 // initial focus item included when it leaves the key unaccepted, and Escape
-// rejects. While `busy` holds, every action is disabled, a Spinner turns
-// beside them, and no key and no press answers.
+// rejects while `modal` holds. While `busy` holds, every action is disabled,
+// a Spinner turns beside them, and no key and no press answers.
 FocusScope {
     id: root
 
@@ -38,6 +38,7 @@ FocusScope {
     property bool busy: false
     property Item initialFocus: null
     property list<Item> tabItems
+    property bool modal: true
     // Hosts may set this. When they do not, the dialog reads its window's
     // screen height, so the cap remains relative to the surface it draws on.
     property real availableHeight: 0
@@ -87,32 +88,39 @@ FocusScope {
         if (entry.role === "accept") accepted(); else rejected();
     }
 
-    // Hand the focus to the accept action; a disabled one takes none.
-    function focusAccept() {
-        const button = buttons()[acceptIndex];
-        if (button !== undefined) button.forceActiveFocus();
+    // Hand the focus to the accept action, else to the first enabled action.
+    function focusInitial(reason) {
+        const enabled = buttons().filter(button => button.enabled);
+        const accept = buttons()[acceptIndex];
+        const target = accept !== undefined && accept.enabled ? accept : enabled[0];
+        if (target !== undefined) target.forceActiveFocus(reason === undefined ? Qt.TabFocusReason : reason);
     }
 
     // Hand the focus to the initial focus item, else the accept action.
     function takeFocus() {
         if (initialFocus !== null && initialFocus.enabled) initialFocus.forceActiveFocus();
-        else focusAccept();
+        else focusInitial();
     }
 
     function pressFocused() {
         const stop = contentStops().find(item => item.activeFocus && typeof item.clicked === "function");
         if (stop !== undefined) {
             stop.clicked();
+            focusChainLater.restart();
             return;
         }
         const focused = buttons().findIndex(button => button.activeFocus);
         trigger(focused !== -1 ? focused : acceptIndex);
     }
 
+    function shown(item) {
+        return KeyNavLogic.shown(item, root);
+    }
+
     // The content items in the cycle, in order: the shown and enabled
     // `tabItems`, then the initial focus item unless the list holds it.
     function contentStops() {
-        const items = Array.from(tabItems).filter(item => item.enabled && item.visible);
+        const items = Array.from(tabItems).filter(item => item.enabled && shown(item));
         const lead = initialFocus !== null && initialFocus.enabled && !items.includes(initialFocus) ? [initialFocus] : [];
         return items.concat(lead);
     }
@@ -120,11 +128,31 @@ FocusScope {
     // Move the focus by `step` over the content stops and the enabled
     // actions, wrapping; from none, Tab takes the first and Backtab the last.
     function cycle(step) {
-        const reach = contentStops().concat(buttons().filter(button => button.enabled));
+        const reach = cycleStops();
         if (reach.length === 0) return;
-        const at = reach.findIndex(button => button.activeFocus);
+        const focused = root.Window.window === null ? null : root.Window.window.activeFocusItem;
+        const holds = item => KeyNavLogic.contains(item, focused) || item.activeFocus;
+        const at = reach.findIndex(holds);
+        focusCycleIndex(reach, at, step);
+    }
+
+    function cycleFrom(item, step) {
+        const reach = cycleStops();
+        focusCycleIndex(reach, reach.indexOf(item), step);
+    }
+
+    function focusCycleIndex(reach, at, step) {
+        if (reach.length === 0) return;
         const next = at === -1 ? reach[step > 0 ? 0 : reach.length - 1] : reach[(at + step + reach.length) % reach.length];
         next.forceActiveFocus(step > 0 ? Qt.TabFocusReason : Qt.BacktabFocusReason);
+    }
+
+    function cycleStops() {
+        const explicit = contentStops();
+        const actionButtons = buttons().filter(button => button.enabled);
+        if (explicit.length > 0) return explicit.concat(actionButtons);
+        const automatic = KeyNavLogic.focusables(root).filter(item => explicit.indexOf(item) === -1 && actionButtons.indexOf(item) === -1);
+        return explicit.concat(automatic, actionButtons);
     }
 
     implicitWidth: Theme.dialog.width
@@ -134,16 +162,14 @@ FocusScope {
     Accessible.description: message
 
     // A scope gives the focus back to the child that last held it; the
-    // initial focus item or the accept action takes it instead, so an action
-    // clicked in an earlier showing never answers Enter in the next.
+    // initial focus item or the accept action takes it instead, so an
+    // action clicked in an earlier showing never answers Enter in the next.
     onActiveFocusChanged: if (activeFocus) takeFocus()
-    Keys.onTabPressed: cycle(1)
-    Keys.onBacktabPressed: cycle(-1)
 
     // An item that takes Tab focus moves the focus along Qt's own chain
     // before the key reaches the dialog, out of it on Backtab; the dialog's
     // cycle moves it instead.
-    Binding { target: root.initialFocus; property: "activeFocusOnTab"; value: false; when: root.initialFocus !== null }
+    Binding { target: root.initialFocus; property: "activeFocusOnTab"; value: false; when: root.modal && root.initialFocus !== null }
     Instantiator {
         model: root.tabItems
         delegate: Binding {
@@ -151,11 +177,24 @@ FocusScope {
             target: modelData
             property: "activeFocusOnTab"
             value: false
+            when: root.modal
         }
     }
     Keys.onReturnPressed: pressFocused()
     Keys.onEnterPressed: pressFocused()
-    Keys.onEscapePressed: if (!busy) rejected()
+    Keys.onEscapePressed: event => { if (modal && !busy) rejected(); else event.accepted = false; }
+
+    Shortcut {
+        sequences: ["Tab"]
+        enabled: root.modal && root.activeFocus
+        onActivated: root.cycle(1)
+    }
+
+    Shortcut {
+        sequences: ["Backtab", "Shift+Tab"]
+        enabled: root.modal && root.activeFocus
+        onActivated: root.cycle(-1)
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -228,16 +267,13 @@ FocusScope {
                         id: repeater
                         model: root.entries
                         Button {
+                            id: actionButton
                             required property var modelData
                             required property int index
                             text: modelData.label
                             variant: modelData.variant
                             enabled: modelData.enabled && !root.busy
                             onClicked: root.trigger(index)
-                            // Qt moves the focus along its chain at the
-                            // focused item, before the key reaches the dialog.
-                            Keys.onTabPressed: root.cycle(1)
-                            Keys.onBacktabPressed: root.cycle(-1)
                         }
                     }
                 }

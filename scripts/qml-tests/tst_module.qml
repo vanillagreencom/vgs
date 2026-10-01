@@ -33,6 +33,7 @@ Item {
             verify(listed.length >= 20, "the qmldir read found " + listed.length + " components; the read is broken");
             const bare = { Icon: "name: \"check\"", IconButton: "iconName: \"x\"; label: \"close\"", FocusRing: "target: root", SlimScrollBar: "thin: 2; wide: 6; minLength: 20; color: \"white\"; radius: 0; idleOpacity: 1; movingOpacity: 1; activeOpacity: 1; widthStep: ({ duration: 0, easing: Easing.Linear }); opacityStep: ({ duration: 0, easing: Easing.Linear }); flickable: Flickable {}" };
             for (const entry of listed) {
+                if (entry.file.endsWith(".js")) continue;
                 if (entry.name === "BarWidget") continue;
                 const source = "import QtQuick\nimport qs.Ui\n" + entry.name + " { " + (bare[entry.name] || "") + " }";
                 let item = null;
@@ -46,6 +47,13 @@ Item {
                 if (item instanceof Item) verify(item.implicitWidth >= 0 && item.implicitHeight >= 0, entry.name + " has a size");
                 item.destroy();
             }
+        }
+
+        function test_key_nav_logic_is_public_for_plugins() {
+            const source = "import QtQuick\nimport qs.Ui as Ui\nQtObject { property bool inactive: Ui.KeyNavLogic.activate({ enabled: false }) }";
+            const item = Qt.createQmlObject(source, root, "keynavlogic-public");
+            compare(item.inactive, false);
+            item.destroy();
         }
     }
 }

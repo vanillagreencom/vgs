@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "../foundation/KeyNavLogic.js" as KeyNavLogic
 
 // A popup under the item it is declared in: its own surface anchored to
 // that item, so it leaves a bar of any height; it takes keyboard focus
@@ -29,15 +30,29 @@ Item {
     }
     Component.onDestruction: share(false)
 
-    function open() {
+    function open(reason) {
         window.visible = true;
-        scope.forceActiveFocus();
+        Qt.callLater(() => {
+            if (!focusFirst(scope, reason === undefined ? Qt.TabFocusReason : reason))
+                scope.forceActiveFocus(reason === undefined ? Qt.TabFocusReason : reason);
+        });
     }
     function close() { window.visible = false; }
     function toggle() { if (opened) close(); else open(); }
     function screenHeight() {
         const output = OverlayState.outputOf(anchorItem);
         return output === null ? 0 : output.height;
+    }
+    function focusFirst(item, reason) {
+        for (const child of item.children) {
+            if (child.visible === false || child.enabled === false) continue;
+            if (KeyNavLogic.canTabFocus(child)) {
+                child.forceActiveFocus(reason);
+                return true;
+            }
+            if (focusFirst(child, reason)) return true;
+        }
+        return false;
     }
 
     PopupWindow {

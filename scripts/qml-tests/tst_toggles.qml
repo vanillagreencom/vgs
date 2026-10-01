@@ -74,6 +74,10 @@ Item {
             sw.forceActiveFocus();
             keyClick(Qt.Key_Space);
             compare(sw.checked, true);
+            keyClick(Qt.Key_Return);
+            compare(sw.checked, false);
+            keyClick(Qt.Key_Enter);
+            compare(sw.checked, true);
             keyClick(Qt.Key_Space);
             compare(sw.checked, false);
         }
@@ -88,15 +92,41 @@ Item {
             box.forceActiveFocus();
             keyClick(Qt.Key_Space);
             compare(box.checked, false);
+            keyClick(Qt.Key_Return);
+            compare(box.checked, true);
         }
 
         function test_radios_are_exclusive() {
             compare(one.checked, true);
+            compare(one.activeFocusOnTab, true);
+            compare(two.activeFocusOnTab, false);
             mouseClick(two.indicator);
             compare(two.checked, true);
             compare(one.checked, false);
+            compare(one.activeFocusOnTab, false);
+            compare(two.activeFocusOnTab, true);
             compare(two.indicator.children[0].visible, true);
             compare(one.indicator.children[0].visible, false);
+            one.forceActiveFocus(Qt.TabFocusReason);
+            keyClick(Qt.Key_Down);
+            compare(two.checked, true);
+            compare(two.activeFocus, true);
+            keyClick(Qt.Key_Up);
+            compare(one.checked, true);
+            compare(one.activeFocus, true);
+        }
+
+        function test_radio_arrows_skip_other_checkable_siblings() {
+            const mixed = Qt.createQmlObject("import QtQuick\nimport qs.Ui\nColumn { Radio { id: first; objectName: \"first\"; text: \"First\"; checked: true } Checkbox { id: check; objectName: \"check\"; text: \"Check\" } Radio { id: second; objectName: \"second\"; text: \"Second\" } }", root);
+            const first = mixed.children.find(child => child.objectName === "first");
+            const check = mixed.children.find(child => child.objectName === "check");
+            const second = mixed.children.find(child => child.objectName === "second");
+            first.forceActiveFocus(Qt.TabFocusReason);
+            keyClick(Qt.Key_Down);
+            compare(second.activeFocus, true);
+            compare(second.checked, true);
+            compare(check.checked, false);
+            mixed.destroy();
         }
 
         // Hover and press differ from rest on each indicator.

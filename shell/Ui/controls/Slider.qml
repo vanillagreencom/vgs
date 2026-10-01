@@ -12,11 +12,43 @@ import qs.Ui
 T.Slider {
     id: root
 
+    property real pageStep: stepSize > 0 ? stepSize * 5 : Math.abs(to - from) / 20
+    property bool focusPreview: false
+
+    function clamp(value) {
+        return Math.max(Math.min(from, to), Math.min(Math.max(from, to), value));
+    }
+
+    function snap(value) {
+        if (stepSize <= 0) return value;
+        const low = Math.min(from, to);
+        const steps = Math.round((value - low) / stepSize);
+        return clamp(low + steps * stepSize);
+    }
+
+    function commit(value) {
+        root.value = snap(clamp(value));
+        root.moved();
+    }
+
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset, implicitHandleWidth + leftPadding + rightPadding)
     implicitHeight: Math.max(Theme.size.control.sm, implicitBackgroundHeight + topInset + bottomInset, implicitHandleHeight + topPadding + bottomPadding)
     hoverEnabled: true
     PointerCursor {}
     opacity: enabled ? 1 : Theme.opacity.disabled
+    Keys.onPressed: event => {
+        if (event.key === Qt.Key_Up) commit(value + (stepSize > 0 ? stepSize : pageStep));
+        else if (event.key === Qt.Key_Down) commit(value - (stepSize > 0 ? stepSize : pageStep));
+        else if (event.key === Qt.Key_Home) commit(from);
+        else if (event.key === Qt.Key_End) commit(to);
+        else if (event.key === Qt.Key_PageUp) commit(value + pageStep);
+        else if (event.key === Qt.Key_PageDown) commit(value - pageStep);
+        else {
+            event.accepted = false;
+            return;
+        }
+        event.accepted = true;
+    }
 
     background: Rectangle {
         x: root.leftPadding

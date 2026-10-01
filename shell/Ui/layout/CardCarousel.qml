@@ -53,48 +53,50 @@ Item {
     // Whether Tab and Shift+Tab step cards. Full-screen browsers turn this
     // off so Tab switches their top-level tabs.
     property bool tabSteps: true
+    // Whether Space activates the current card.
+    property bool spaceActivates: true
     // Device pixels per pixel of the carousel, for the decode sizes.
     property real devicePixelRatio: Screen.devicePixelRatio
 
     signal activated(int index)
+    signal tabStepped(int delta)
 
     implicitHeight: Theme.carousel.expandedHeight * internal.widthUnit
 
     onCurrentIndexChanged: internal.follow()
+    activeFocusOnTab: !tabSteps
 
     // Move `delta` cards from the current one, wrapping at either end.
     function step(delta) {
-        const count = cards.count;
-        if (count > 0)
-            currentIndex = ((currentIndex + delta) % count + count) % count;
+        nav.moveBy(delta);
     }
 
     Keys.onPressed: event => {
         switch (event.key) {
-        case Qt.Key_Left:
-            step(-1);
-            break;
         case Qt.Key_Backtab:
             if (!tabSteps) return;
             step(-1);
-            break;
-        case Qt.Key_Right:
-            step(1);
-            break;
+            event.accepted = true;
+            return;
         case Qt.Key_Tab:
             if (!tabSteps) return;
             step(event.modifiers & Qt.ShiftModifier ? -1 : 1);
-            break;
-        case Qt.Key_Home:
-            step(-currentIndex);
-            break;
-        case Qt.Key_End:
-            step(cards.count - 1 - currentIndex);
-            break;
-        default:
+            event.accepted = true;
             return;
+        default:
+            event.accepted = nav.handle(event);
         }
-        event.accepted = true;
+    }
+
+    property KeyNav nav: KeyNav {
+        count: cards.count
+        currentIndex: root.currentIndex
+        orientation: "horizontal"
+        wrap: true
+        spaceActivates: root.spaceActivates
+        onMoved: index => root.currentIndex = index
+        onActivated: index => root.activated(index)
+        onTabStepped: delta => root.tabStepped(delta)
     }
 
     QtObject {

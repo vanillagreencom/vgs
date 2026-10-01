@@ -16,6 +16,7 @@ Button {
     id: root
 
     property string label: ""
+    property string shortcut: ""
     readonly property real glyphStart: leftPadding + contentItem.painted[0]
     readonly property real glyphEnd: rightPadding + contentItem.size - contentItem.painted[2]
 
@@ -35,5 +36,10 @@ Button {
         color: root.foreground
         opacity: root.enabled && !(root.hovered || root.visualFocus || root.down || root.checked) ? Theme.iconButton.restOpacity : 1
         Behavior on opacity { NumberAnimation { duration: Theme.motion.duration.fast; easing.type: Theme.motion.easing.standard } }
+    }
+
+    Tooltip {
+        text: root.label
+        shortcut: root.shortcut
     }
 }

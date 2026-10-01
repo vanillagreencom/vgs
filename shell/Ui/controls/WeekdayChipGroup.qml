@@ -6,6 +6,7 @@ import qs.Ui
 // `mon` through `sun`; a click toggles one key and keeps the list in week
 // order. The group is one tab stop and the arrow keys move the current
 // chip.
+// focus-indicator: the focused chip's ToggleButton draws the ring.
 FocusScope {
     id: root
 

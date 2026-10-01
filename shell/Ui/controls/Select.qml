@@ -33,6 +33,7 @@ T.AbstractButton {
     readonly property string currentText: textAt(currentIndex)
     readonly property bool listOpen: list.visible
     property bool counted: false
+    readonly property string typed: closedNav.typed
     // A user choice only. Model and binding updates never emit this.
     signal activated(int index)
 
@@ -93,10 +94,16 @@ T.AbstractButton {
     opacity: enabled ? 1 : Theme.opacity.disabled
     Accessible.name: currentText
     onClicked: if (list.visible) list.visible = false; else openList()
-    Keys.onUpPressed: choose(currentIndex - 1)
-    Keys.onDownPressed: choose(currentIndex + 1)
-    Keys.onReturnPressed: openList()
-    Keys.onEnterPressed: openList()
+    Keys.onPressed: event => { event.accepted = closedNav.handle(event); }
+
+    property KeyNav closedNav: KeyNav {
+        count: root.count
+        currentIndex: root.currentIndex
+        wrap: false /* closed select */
+        labelAt: index => root.textAt(index)
+        onMoved: index => root.choose(index)
+        onActivated: root.openList()
+    }
 
     contentItem: Label {
         role: "item"
@@ -174,10 +181,23 @@ T.AbstractButton {
             readonly property bool overflowing: listBar.needed
             // A key moves the highlight: the pointer resting over the list
             // takes it again only once it moves. The key goes on to the view.
-            Keys.onPressed: event => { plate.disarm(); event.accepted = false; }
-            Keys.onReturnPressed: root.choose(currentIndex)
-            Keys.onEnterPressed: root.choose(currentIndex)
             Keys.onEscapePressed: list.visible = false
+            Keys.onPressed: event => { event.accepted = openNav.handle(event); }
+
+            property KeyNav openNav: KeyNav {
+                count: entries.count
+                currentIndex: entries.currentIndex
+                wrap: false /* open select */
+                viewHeight: entries.height
+                rowHeight: Theme.menu.item.height
+                labelAt: index => root.textAt(index)
+                cursor: plate
+                onMoved: index => {
+                    entries.currentIndex = index;
+                    entries.positionViewAtIndex(index, ListView.Contain);
+                }
+                onActivated: index => root.choose(index)
+            }
 
             delegate: T.ItemDelegate {
                 id: entry

@@ -1,6 +1,9 @@
 import QtQuick
+import QtQuick.Window
+import QtQuick.Templates as T
 import qs.Commons
 import qs.Ui
+import "../foundation/KeyNavLogic.js" as KeyNavLogic
 
 // A vertically scrolling area for content taller than it: children go in
 // the flickable's content item and the content height follows them. The
@@ -20,11 +23,14 @@ Flickable {
 
     property real rightInset: Theme.scrollArea.gutter
     property bool barOverContent: false
+    property bool keyboardScroll: false
     readonly property real measuredContentHeight: measureContentHeight()
     readonly property bool overflowing: scrollBar.needed
     readonly property alias bar: scrollBar
+    readonly property Item focusProxy: keyboardFocus
 
     clip: true
+    activeFocusOnTab: false
     contentWidth: width - (barOverContent ? 0 : rightInset)
     contentHeight: measuredContentHeight
     boundsBehavior: Flickable.StopAtBounds
@@ -44,15 +50,65 @@ Flickable {
         if (!barOverContent && Theme.scrollArea.gutter > rightInset)
             console.error("ScrollArea: gutter=" + Theme.scrollArea.gutter + " exceeds rightInset=" + rightInset);
     }
+    function reveal(item) {
+        if (item === null || item === undefined) return;
+        const at = item.mapToItem(contentItem, 0, 0);
+        contentY = KeyNavLogic.revealY(at.y, item.height, contentY, height, Theme.focusRing.offset + Theme.focusRing.width);
+    }
+    function scrollBy(delta) {
+        contentY = Math.max(0, Math.min(contentHeight - height, contentY + delta));
+    }
     Component.onCompleted: checkInset()
     onRightInsetChanged: checkInset()
     onBarOverContentChanged: checkInset()
 
+    function handleScrollKey(event) {
+        const action = KeyNavLogic.intent(event.key, event.modifiers, "vertical", false);
+        if (action === "prev") root.scrollBy(-Theme.row.height);
+        else if (action === "next") root.scrollBy(Theme.row.height);
+        else if (action === "pagePrev") root.scrollBy(-root.height);
+        else if (action === "pageNext") root.scrollBy(root.height);
+        else if (action === "first") root.contentY = 0;
+        else if (action === "last") root.contentY = Math.max(0, root.contentHeight - root.height);
+        else return false;
+        return true;
+    }
+
+    Connections {
+        target: root === null ? null : root.Window.window
+        function onActiveFocusItemChanged() {
+            if (root === null || root.Window.window === null) return;
+            const item = root.Window.window.activeFocusItem;
+            if (item !== null && item !== root && root.contentItem !== null && KeyNavLogic.contains(root.contentItem, item)) {
+                root.reveal(item);
+                return;
+            }
+        }
+    }
+
     HoverHandler { id: hover }
+
+    T.Control {
+        id: keyboardFocus
+        parent: root
+        anchors.fill: parent
+        z: -1
+        visible: root.keyboardScroll
+        enabled: root.keyboardScroll
+        focusPolicy: root.keyboardScroll ? Qt.StrongFocus : Qt.NoFocus
+        activeFocusOnTab: root.keyboardScroll
+        Keys.onPressed: event => { event.accepted = root.handleScrollKey(event); }
+    }
 
     ScrollBar {
         id: scrollBar
         flickable: root
         hovered: hover.hovered
+    }
+
+    FocusRing {
+        parent: root
+        target: keyboardFocus
+        visible: root.keyboardScroll && keyboardFocus.visualFocus
     }
 }
