@@ -19,7 +19,8 @@ function seedTaskEvents(folder, count, from = 1) {
 function freshSuite(tree, suite, root) {
     const clone = path.join(root, "f");
     const relative = "scripts/test-jarvis-" + suite + ".js";
-    for (const folder of ["scripts/fixtures/jarvis", "scripts/lib", "bin/lib", "shell/Core", "shell/Commons", "shell/plugins/vgs.jarvis/backend"])
+    for (const folder of ["scripts/fixtures/jarvis", "scripts/fixtures/jarvis-brain", "scripts/lib", "bin/lib",
+        "shell/Core", "shell/Commons", "shell/plugins/vgs.jarvis/backend"])
         fs.mkdirSync(path.join(clone, folder), { recursive: true });
     for (const file of [relative, "scripts/fixtures/jarvis/prepare.js", "scripts/lib/jarvis-env.sh",
         "bin/lib/qml-library.js", "shell/plugins/vgs.jarvis/JarvisProtocol.js",
@@ -29,17 +30,20 @@ function freshSuite(tree, suite, root) {
         "scripts/fixtures/jarvis/scripted.js", "shell/plugins/vgs.jarvis/backend/Audio.js",
         "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
         "scripts/fixtures/jarvis/audio-tool.py", "scripts/fixtures/jarvis/desktop.js",
-        "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Core/HyprlandLayer.js", "shell/Commons/DesktopLaunch.js"])
+        "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Core/HyprlandLayer.js", "shell/Commons/DesktopLaunch.js",
+        "scripts/fixtures/jarvis/engine.js", "scripts/fixtures/schema-check.js",
+        "scripts/fixtures/jarvis-brain/openai-chat.schema.json", "scripts/fixtures/jarvis-brain/openai-chat-frames.js"])
         fs.copyFileSync(path.join(tree, file), path.join(clone, file));
-    for (const name of ["ShellRequests.js", "Desktop.js", "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "TaskRunner.js",
-        "AgentProfiles.js", "task-run.py", "ToolBridge.js", "Mcp.js", "Private.js"])
-        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend", name),
-            path.join(clone, "shell/plugins/vgs.jarvis/backend", name));
+    fs.cpSync(path.join(tree, "shell/plugins/vgs.jarvis/backend"), path.join(clone, "shell/plugins/vgs.jarvis/backend"),
+        { recursive: true });
+    fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/AccountProviders.js"),
+        path.join(clone, "shell/plugins/vgs.jarvis/AccountProviders.js"));
     const file = path.join(clone, relative);
     const run = () => cp.spawnSync(process.execPath, [file, "--fresh"], {
         cwd: clone, env: { PATH: "/usr/bin:/bin", HOME: clone, LC_ALL: "C",
             JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
-        encoding: "utf8", timeout: 30000
+        // Bounds a hung suite, not a latency: the daemon suite runs real children.
+        encoding: "utf8", timeout: 90000
     });
     assert.equal(fs.existsSync(path.join(clone, "tmp")), false);
     const good = run();

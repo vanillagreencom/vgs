@@ -156,8 +156,10 @@ world(async () => {
             { id: "toolu_focus", item: kit.Policy.item("focused", ["desktop"]) }];
         for (const bad of [[], [results[0]], [results[0], results[0]], [results[0], { ...results[1], id: "stale" }]])
             assert.throws(() => brain.send({ kind: "tool-results", results: bad }), { message: "jarvis: brain=tool-results" });
+        assert.throws(() => brain.send({ kind: "tool-results", results, instructions: "Restated." }),
+            { message: "jarvis: brain=instructions" }, "Messages has no instruction message after results");
         const turn = brain.send({ kind: "tool-results", results });
-        assert.deepEqual(turn.release, { withheld: [], needed: ["file"] });
+        assert.deepEqual(turn.release, { withheld: [], needed: ["file"], labels: ["speech", "desktop"] });
         assert.equal((await drain(turn)).error, null);
         assert.deepEqual(last().body.messages.slice(1), [
             { role: "assistant", content: [{ type: "text", text: "Checking." },
@@ -177,7 +179,7 @@ world(async () => {
         const turn = () => ({ kind: "user", items: [speech(kit), kit.Policy.item("PRIVATE notes", ["file"])],
             images: [{ type: "image/png", item: kit.Policy.item(PNG, ["screen"]) }] });
         const asked = brain.send(turn());
-        assert.deepEqual(asked.release, { withheld: [], needed: ["file", "screen"] });
+        assert.deepEqual(asked.release, { withheld: [], needed: ["file", "screen"], labels: ["speech"] });
         assert.equal((await drain(asked)).error, null);
         assert.deepEqual(last().body.messages[0].content, [
             { type: "text", text: "What time is it?" }, { type: "text", text: "[withheld: file text]" },
@@ -191,7 +193,7 @@ world(async () => {
         assert.throws(() => brain.send(user(kit)), { message: "jarvis: brain=history-release" });
         const never = open(kit, undefined, { remoteVoice: true, cloudVision: "never" });
         const withheld = never.brain.send(turn(), [{ recipients: never.recipients, labels: ["screen", "file"] }]);
-        assert.deepEqual(withheld.release, { withheld: ["screen"], needed: [] });
+        assert.deepEqual(withheld.release, { withheld: ["screen"], needed: [], labels: ["speech", "file"] });
         await drain(withheld);
         assert.equal(last().body.messages[0].content.at(-1).text, "[withheld: screen content]");
         const jpeg = open(kit);
@@ -314,7 +316,8 @@ world(async () => {
             await assert.rejects(turn.events.next(), { message: "jarvis: brain=cancelled" });
             if (mode !== "close") {
                 await drain(brain.send(user(kit)));
-                assert.equal(last().body.messages.length, 1, "cancelled turn leaves no history");
+                assert.deepEqual(last().body.messages.map(message => message.role), ["user", "user"],
+                    "a sent, cancelled turn stays unanswered without its partial reply");
             }
         }
     }
@@ -480,7 +483,8 @@ world(async () => {
                 altered(text(), events => events[3].delta.type = "input_json_delta"), "brain=delta-shape")],
             ["tool-delta-type", 'value.delta.type !== "input_json_delta" || ', "", refusal("delta-type")],
             ["tool-delta-shape", ' || typeof value.delta.partial_json !== "string"', "", refusal("tool-delta")],
-            ["driver", 'if (provider.driver !== protocol.driver) fail("driver");', "", drivers, path.join(backend, "WireBrain.js")]
+            ["driver", 'if (provider.driver !== protocol.driver) fail("driver");', "", drivers, path.join(backend, "WireBrain.js")],
+            ["instruction-encoder", " || protocol.instruction === undefined", "", toolTurns, path.join(backend, "WireBrain.js")]
         ];
         for (const [name, needle, replacement, check, target] of mutations) await control(name, needle, replacement, check, target);
         for (const reason of ["max_tokens", "refusal", "pause_turn", "model_context_window_exceeded", "unknown"])

@@ -27,7 +27,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Audio.js, shell/plugins/vgs.jarvis/back
 | Service | `devices`, `level` and `audio-fault` wire messages | Declared choices reach Settings through `optionsFrom`. The hidden level reaches the plugin's status record. The service retains an audio fault until daemon restart. Offers alone prove neither capture nor probe recovery. |
 | Chained or duplex speech engine | Constructor `captureSink` and `playbackSource` | Supplies a Writable PCM sink and a Readable PCM source. Audio owns their release. The engine owns transcripts and provider disconnects. [GPT-Live](jarvis-live.md) implements both. |
 
-The shipping daemon supplies no speech sink or playback source. Its gate remains unconfigured until the speech engine and mapped indicator exist. Capture collection still belongs to speech. It never returns a successful transcript from an unavailable port.
+The [chained engine](jarvis-engine.md) supplies the speech sink and playback source. The shipping daemon's gate remains unconfigured until a speech row and the mapped indicator exist. Capture collection still belongs to speech. It never returns a successful transcript from an unavailable port.
 
 Playback consumes the speech owner's PCM stream and owns the real `pw-cat` process. [Playback accounting](jarvis-playback.md) defines its pacing, heard-prefix reports and speech-source contract. Sidecar protocol and model lifetime remain with the local-adapter row. These later owners must use Audio's existing lifetime, not start a second audio process.
 

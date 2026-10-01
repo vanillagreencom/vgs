@@ -38,7 +38,7 @@ Audio inserts a space between sentence texts. It bounds retained text and alignm
 | `heardFrames` | Nonnegative written frames minus the full lead and requested node latency. This is a conservative software account, not a device's played-frame counter. |
 | `heardText` | Transcript prefix ending at the last supplied word boundary within `heardFrames`. It can be empty even when PCM was submitted. |
 
-Teardown freezes the account before waiting for child closure. A later clock tick cannot extend an interrupted prefix. Natural EOF does not promote buffered or received frames to heard frames. The Session runner retains its existing acknowledgment events and ignores extra callback arguments. The planned chained engine wraps these callbacks to tell its brain the heard prefix. [The GPT-Live engine](jarvis-live.md#interruption) supplies byte sources and discards its own pending PCM on flush. `sourceLimit` exports the high-water mark a source may declare; a producer that cannot pause its provider sizes its queue by it.
+Teardown freezes the account before waiting for child closure. A later clock tick cannot extend an interrupted prefix. Natural EOF does not promote buffered or received frames to heard frames. The Session runner retains its existing acknowledgment events and ignores extra callback arguments. The [chained engine](jarvis-engine.md) wraps the flush callback to tell its brain the heard prefix; a natural completion adds no context. [The GPT-Live engine](jarvis-live.md#interruption) supplies byte sources and discards its own pending PCM on flush. `sourceLimit` exports the high-water mark a source may declare; a producer that cannot pause its provider sizes its queue by it.
 
 ## Evidence
 

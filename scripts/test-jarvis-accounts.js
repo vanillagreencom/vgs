@@ -9,7 +9,7 @@ world(async () => {
     const directory = path.join(env.XDG_STATE_HOME, "vgs/jarvis");
     const { Accounts } = require(path.join(plugin, "backend/Accounts.js"));
     const { Secrets, ownReference } = require(path.join(plugin, "backend/Secrets.js"));
-    const { keyPresence, helperFailure, feedDiagnostic, probeFailure } = require(path.join(plugin, "AccountProviders.js"));
+    const { PROVIDERS, keyPresence, helperFailure, feedDiagnostic, probeFailure } = require(path.join(plugin, "AccountProviders.js"));
     const mode = (name, value) => fs.writeFileSync(path.join(env.XDG_STATE_HOME, name + "-mode"), value);
     const calls = name => fs.existsSync(path.join(env.XDG_STATE_HOME, name))
         ? fs.readFileSync(path.join(env.XDG_STATE_HOME, name), "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [];
@@ -232,6 +232,31 @@ world(async () => {
             await assert.rejects(() => judge.verify(item.id, "user", async () => ({ kind: "inference", text: "OK" })),
                 /verify=provider-unsupported/);
         });
+    controls++;
+    cases++;
+    // The daemon resolves a saved choice without discovery's vendor commands.
+    const resolution = Judge => {
+        const judge = new Judge(directory, env);
+        const found = store.discover();
+        const before = [calls("cli-calls").length, calls("port-calls").length, calls("secret-calls").length];
+        const keyring = found.find(item => item.source.reference?.account === "chosen label");
+        assert.deepEqual(judge.resolve(keyring.id), { id: keyring.id, provider: "anthropic", label: "chosen label",
+            source: keyring.source, model: "claude-haiku-4-5" });
+        const local = store.account(PROVIDERS.find(row => row.id === "ollama"), "local", { kind: "found" },
+            { kind: "local", origin: "http://127.0.0.1:11434" });
+        assert.deepEqual(judge.resolve(local.id), { id: local.id, provider: "ollama", label: "local",
+            source: local.source, model: "" });
+        for (const other of [found.find(item => item.source.kind === "cli").id, unknown.id, "", "keyring:0"]) {
+            let value;
+            assert.doesNotThrow(() => { value = judge.resolve(other); }, "resolution judges every saved reference");
+            assert.equal(value, null, "a subscription, unsupported or unknown id selects nothing");
+        }
+        assert.deepEqual([calls("cli-calls").length, calls("port-calls").length, calls("secret-calls").length], before,
+            "resolution runs no vendor command, port read or key lookup");
+    };
+    resolution(Accounts);
+    await mutant("backend/Accounts.js", "resolve-unsupported", 'if (row.kind !== "key" && row.kind !== "local") continue;', "",
+        folder => resolution(require(path.join(folder, "backend/Accounts.js")).Accounts));
     controls++;
     cases++;
     safe(fs.readFileSync(references.file, "utf8"));

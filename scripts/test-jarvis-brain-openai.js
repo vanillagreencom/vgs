@@ -22,25 +22,7 @@ function kitFrom(folder) {
         Net: load("net.js"), Secrets: load("Secrets.js") };
 }
 
-const BASE = { id: "chatcmpl-fixture", object: "chat.completion.chunk", created: 1790000000, model: "fixture-model" };
-function pinned(name, value, label) {
-    assert.deepEqual(Check.errors(excerpt, name, value), [], label + " matches the pinned " + name);
-}
-// A frame is a script entry or a raw string that is deliberately outside
-// the pinned schema. Schema-shaped frames are validated before they are sent.
-function encode(frame, label) {
-    if (frame === "[DONE]") return "data: [DONE]\n\n";
-    if (typeof frame === "string") return frame;
-    if (Object.hasOwn(frame, "error")) {
-        pinned("ErrorResponse", frame, label);
-        return "data: " + JSON.stringify(frame) + "\n\n";
-    }
-    const chunk = Object.hasOwn(frame, "usage") ? { ...BASE, choices: [], usage: frame.usage }
-        : { ...BASE, choices: [{ index: 0, delta: frame.delta, finish_reason: frame.finish_reason }] };
-    pinned("CreateChatCompletionStreamResponse", chunk, label);
-    return "data: " + JSON.stringify(chunk) + "\n\n";
-}
-const delta = (value, finish = null) => ({ delta: value, finish_reason: finish });
+const { BASE, pinned, encode, delta } = require("./fixtures/jarvis-brain/openai-chat-frames.js");
 function calls(count) {
     return Array.from({ length: count }, (_, index) => delta({ tool_calls: [{ index, id: "call_" + index,
         type: "function", function: { name: "windows_focus", arguments: "{}" } }] }));
@@ -235,7 +217,7 @@ world(async () => {
     async function textTurns(kit) {
         const { brain } = open(kit, { base: first + "/text" });
         const turn = brain.send(user(kit));
-        assert.deepEqual(turn.release, { withheld: [], needed: [] });
+        assert.deepEqual(turn.release, { withheld: [], needed: [], labels: ["speech"] });
         assert.deepEqual(await drain(turn), { error: null, events: [
             { kind: "text", text: "Hello" }, { kind: "text", text: " there." }, { kind: "done", reason: "stop" }] });
         assert.deepEqual(last().body.messages, [{ role: "system", content: "Fixture guidance." },
@@ -271,6 +253,48 @@ world(async () => {
                 { id: "call_read", type: "function", function: { name: "files_read", arguments: "{\"path\":\"/home/user/notes\"}" } }] },
             { role: "tool", tool_call_id: "call_focus", content: "focused" },
             { role: "tool", tool_call_id: "call_read", content: "notes text" }]);
+    }
+
+    // record() appends answers without a request; the next send renders them.
+    async function unanswered(kit) {
+        const { brain } = open(kit, { base: first + "/tool-calls,after-tools" });
+        await drain(brain.send(user(kit)));
+        assert.throws(() => brain.record(user(kit)), { message: "jarvis: brain=tool-results-pending" });
+        const count = records.length;
+        brain.record({ kind: "tool-results", results: [
+            { id: "call_focus", item: kit.Policy.item("{\"kind\":\"interrupted\"}", ["desktop"]) },
+            { id: "call_read", item: kit.Policy.item("{\"kind\":\"interrupted\"}", ["desktop"]) }] });
+        assert.equal(records.length, count, "record sends nothing");
+        let turn;
+        assert.doesNotThrow(() => { turn = brain.send(user(kit, speech(kit, "And now?"))); }, "recorded results answer the calls");
+        await drain(turn);
+        assert.deepEqual(last().body.messages.slice(2).map(message => [message.role, message.content]), [
+            ["assistant", null], ["tool", "{\"kind\":\"interrupted\"}"], ["tool", "{\"kind\":\"interrupted\"}"],
+            ["user", "And now?"]]);
+    }
+    // Shipped guidance restated after tool results, as a system message.
+    async function instructions(kit) {
+        const { brain } = open(kit, { base: first + "/tool-calls,after-tools" });
+        await drain(brain.send(user(kit)));
+        const results = [{ id: "call_focus", item: kit.Policy.item("focused", ["desktop"]) },
+            { id: "call_read", item: kit.Policy.item("notes", ["desktop"]) }];
+        assert.throws(() => brain.send({ kind: "tool-results", results, instructions: 7 }), { message: "jarvis: brain=instructions" });
+        await drain(brain.send({ kind: "tool-results", results, instructions: "Restated rule." }));
+        assert.deepEqual(last().body.messages.slice(-3).map(message => message.role), ["tool", "tool", "system"]);
+        assert.deepEqual(last().body.messages.at(-1), { role: "system", content: "Restated rule." });
+    }
+    // The plan's 40 user turns: the 40th is sent, the 41st refuses.
+    async function contextBound(kit) {
+        const { brain } = open(kit, { base: first + "/text" });
+        for (let index = 1; index < 40; index++) brain.record(user(kit, speech(kit, "turn " + index)));
+        let turn;
+        assert.doesNotThrow(() => { turn = brain.send(user(kit)); }, "the fortieth turn is accepted");
+        assert.equal((await drain(turn)).error, null, "the fortieth turn is sent");
+        assert.equal(last().body.messages.filter(message => message.role === "user").length, 40);
+        const count = records.length;
+        assert.throws(() => brain.send(user(kit)), { message: "jarvis: brain=context-limit" });
+        assert.throws(() => brain.record(user(kit)), { message: "jarvis: brain=context-limit" });
+        assert.equal(records.length, count, "a refused turn sends nothing");
     }
 
     async function refused(kit, script, cause) {
@@ -343,17 +367,18 @@ world(async () => {
         const conversation = open(kit, { base: remote + "/text", wrap });
         const file = kit.Policy.item("PRIVATE file text", ["file"]);
         const abandoned = conversation.brain.send(user(kit, speech(kit), file));
-        assert.deepEqual(abandoned.release, { withheld: [], needed: ["file"] });
+        assert.deepEqual(abandoned.release, { withheld: [], needed: ["file"], labels: ["speech"] });
         const count = records.length;
         await abandoned.events.return();
         assert.equal(records.length, count, "an abandoned turn sends nothing");
         await drain(conversation.brain.send(user(kit, speech(kit), file)));
         assert.equal(last().body.messages[1].content, "What time is it?\n\n[withheld: file text]");
+        assert.equal(last().body.messages.length, 2, "an unsent, abandoned turn leaves no history");
         assert.equal(JSON.stringify(last().body).includes("PRIVATE"), false);
         assert.deepEqual(seen.at(-1), ["speech"], "the request item carries only included labels");
         const grants = [{ recipients: conversation.recipients, labels: ["file"] }];
         const granted = conversation.brain.send(user(kit, speech(kit, "Now?")), grants);
-        assert.deepEqual(granted.release, { withheld: [], needed: [] });
+        assert.deepEqual(granted.release, { withheld: [], needed: [], labels: ["speech", "file"] });
         await drain(granted);
         assert.equal(last().body.messages[1].content, "What time is it?\n\nPRIVATE file text", "a later grant releases history");
         assert.deepEqual(seen.at(-1), ["speech", "file"]);
@@ -361,7 +386,7 @@ world(async () => {
             "a reply that carries a granted label needs that grant");
         const only = open(kit, { base: remote + "/text,text" });
         const empty = only.brain.send(user(kit, file));
-        assert.deepEqual(empty.release, { withheld: [], needed: ["file"] }, "an empty request still reports its grant");
+        assert.deepEqual(empty.release, { withheld: [], needed: ["file"], labels: [] }, "an empty request still reports its grant");
         const before = records.length;
         await assert.rejects(() => empty.events.next(), { message: "jarvis: brain=release-empty" });
         assert.equal(records.length, before, "an empty request is not sent");
@@ -369,7 +394,7 @@ world(async () => {
         assert.equal(asked.error, null, "the granted turn sends");
         const never = open(kit, { base: remote + "/text", profile: "trusted", cloudVision: "never" });
         const screen = never.brain.send(user(kit, speech(kit), kit.Policy.item("PRIVATE screen text", ["screen"])));
-        assert.deepEqual(screen.release, { withheld: ["screen"], needed: [] });
+        assert.deepEqual(screen.release, { withheld: ["screen"], needed: [], labels: ["speech"] });
         await drain(screen);
         assert.equal(last().body.messages[1].content, "What time is it?\n\n[withheld: screen content]");
     }
@@ -395,7 +420,7 @@ world(async () => {
     }
 
     async function localRows(kit) {
-        for (const [id, port] of [["ollama", 11434], ["llama-server", 8080], ["lmstudio", 1234]]) {
+        for (const [id, port] of [["ollama", 11434], ["llama-server", 8080], ["lm-studio", 1234]]) {
             const { brain } = open(kit, { id });
             assert.deepEqual((await drain(brain.send(user(kit)))).events.at(-1), { kind: "done", reason: "stop" }, id);
             assert.deepEqual([last().headers.host, last().url, last().headers.authorization],
@@ -474,7 +499,8 @@ world(async () => {
         await assert.rejects(() => turn.events.next(), { message: "jarvis: brain=cancelled" });
         assert.deepEqual(await turn.events.next(), { value: undefined, done: true });
         assert.equal((await drain(brain.send(user(kit)))).error, null, "the brain is free after cancel");
-        assert.deepEqual(last().body.messages.slice(1), [{ role: "user", content: "What time is it?" }], "a cancelled turn leaves no history");
+        assert.deepEqual(last().body.messages.slice(1), [{ role: "user", content: "What time is it?" },
+            { role: "user", content: "What time is it?" }], "a sent, cancelled turn stays unanswered without its partial reply");
     }
     async function cancelBeforeHeaders(kit) {
         const { brain } = open(kit, { base: first + "/stall" });
@@ -518,7 +544,8 @@ world(async () => {
         await within(ack, "cancel acknowledgement");
         await next;
         await drain(brain.send(user(kit, speech(kit, "Again"))));
-        assert.deepEqual(last().body.messages.slice(1), [{ role: "user", content: "Again" }], "the cancelled turn left no history");
+        assert.deepEqual(last().body.messages.slice(1), [{ role: "user", content: "What time is it?" },
+            { role: "user", content: "Again" }], "the cancelled turn's reply never entered history");
     }
     // Node's fetch ends a stream in the same turn as its abort. A stand-in
     // body that ends a timer later shows that the acknowledgement waits.
@@ -614,7 +641,8 @@ world(async () => {
     try {
         const kit = kitFrom(backend);
         for (const scenario of [textTurns, toolTurns, toolCallsStop, bounds, failedTurnKeepsHistory, keys, release, images, localRows, cloudRows,
-            cancelHeld, cancelBeforeHeaders, cancelRace, cancelOrder, cancelBuffered, breakLoop, cancelUnstarted, closeHeld, starts, noTools]) await scenario(kit);
+            cancelHeld, cancelBeforeHeaders, cancelRace, cancelOrder, cancelBuffered, breakLoop, cancelUnstarted, closeHeld, starts, noTools,
+            unanswered, instructions, contextBound]) await scenario(kit);
         for (const [script] of refusals) await refusal(script)(kit);
         assert.deepEqual(faults, [], "every request matched the pinned schema");
         // The server-side close observation is an instrument: a connection
@@ -667,7 +695,8 @@ world(async () => {
             ["error-body", "await response.body?.cancel();", 'const detail = await response.text(); if (detail) fail("http " + detail);', refusal("http-401")],
             ["history", 'history.push(entry, { role: "assistant"', 'void ({ role: "assistant"', textTurns],
             ["commit-on-done", "commit = () => history.push(", "commit = () => {}; history.push(", cancelRace],
-            ["cancel-wins", "                state = { kind: \"cancelled\" };\n                wake();", "                wake();", cancelBuffered],
+            ["cancel-wins", "                state = { kind: \"cancelled\" };\n                history.push(entry);\n                wake();",
+                "                history.push(entry);\n                wake();", cancelBuffered],
             ["stream-failed", 'fail(controller.signal.aborted ? "cancelled" : "stream-failed")', 'fail("cancelled")', refusal("reset")],
             ["status-fallback", '(protocol.status[response.status] ?? "http")', "(protocol.status[response.status])", refusal("http-502")],
             ["calls-bound-low", "calls.length === TOOL_CALLS", "calls.length === TOOL_CALLS - 1", bounds],
@@ -711,7 +740,18 @@ world(async () => {
             ["cancel-abort", "            controller.abort();\n            switch (state.kind) {", "            switch (state.kind) {", cancelHeld],
             ["unstarted-cancel", "                state = { kind: \"cancelled\" };\n                ended();", "                ended();", cancelUnstarted],
             ["close-cancels", "if (active !== null) active.cancel();", "", closeHeld],
-            ["return-cancels", "await current.cancel();", "", breakLoop]
+            ["return-cancels", "await current.cancel();", "", breakLoop],
+            ["cancel-keeps-entry", "                state = { kind: \"cancelled\" };\n                history.push(entry);\n                wake();",
+                "                state = { kind: \"cancelled\" };\n                wake();", cancelHeld],
+            ["unsent-no-entry", "                state = { kind: \"cancelled\" };\n                ended();",
+                "                state = { kind: \"cancelled\" };\n                history.push(entry);\n                ended();", release],
+            ["record-appends", "        history.push(entryOf(turn));", "        entryOf(turn);", unanswered],
+            ["context-limit", 'if (history.filter(entry => entry.role === "user").length >= TURNS) fail("context-limit");', "", contextBound],
+            ["context-bound-low", "const TURNS = 40;", "const TURNS = 39;", contextBound],
+            ["context-bound-high", "const TURNS = 40;", "const TURNS = 41;", contextBound],
+            ["instructions-render", "if (entry.instructions !== null) messages.push(protocol.instruction(entry.instructions));", "", instructions],
+            ["instructions-type", 'typeof instructions !== "string" ||', "", instructions],
+            ["release-labels-report", "labels: Object.freeze(labels) })", "labels: Object.freeze([]) })", textTurns]
         ];
         for (const [name, needle, replacement, check] of plain) await control(name, needle, replacement, check);
         console.log("test-jarvis-brain-openai: ok scripts=" + Object.keys(fixtures.scripts).length + " refusals=" + refusals.length

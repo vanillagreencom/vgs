@@ -114,7 +114,8 @@ const protocol = {
             ({ id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } }));
         return message;
     },
-    results: results => results.map(result => ({ role: "tool", tool_call_id: result.id, content: result.content }))
+    results: results => results.map(result => ({ role: "tool", tool_call_id: result.id, content: result.content })),
+    instruction: text => ({ role: "system", content: text })
 };
 /** Create the OpenAI-compatible implementation of the shared brain contract. */
 function create(options) { return WireBrain.create(options, protocol); }

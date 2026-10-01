@@ -50,7 +50,7 @@ const ROWS = Object.freeze({
         noStore: null, retention: LOCAL },
     "llama-server": { driver: "openai-chat", base: "http://127.0.0.1:8080/v1", key: "optional", images: true,
         noStore: null, retention: LOCAL },
-    lmstudio: { driver: "openai-chat", base: "http://127.0.0.1:1234/v1", key: "optional", images: true,
+    "lm-studio": { driver: "openai-chat", base: "http://127.0.0.1:1234/v1", key: "optional", images: true,
         noStore: null, retention: LOCAL },
     // A user's own server: no documentation states its image support or
     // retention, so images go to OCR text and the operator owns retention.

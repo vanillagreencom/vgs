@@ -1,8 +1,8 @@
 // Own reducer effects and deadlines in the daemon. Ports own their resources;
 // each receives a completion function stamped with its original gen/op.
-// Audio and the action router supply production ports. Speech and brain ports
-// remain unavailable until their owners enforce the session prerequisites. A
-// speech port's callbacks are stamped with the speech-open effect's identity.
+// Audio, the action router and the chained engine supply production ports.
+// unavailable() covers a port no owner has installed yet.
+// A speech port's callbacks are stamped with the speech-open effect's identity.
 "use strict";
 
 class SessionRunner {

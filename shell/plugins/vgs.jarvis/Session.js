@@ -376,7 +376,9 @@ function reduce(state, e) {
         break;
     case "cancelled":
         if (!live(s, e, "turn", ["cancelling"])) { stale(s); break; }
-        closeBrain(s, effects);
+        // An acknowledged cancel leaves the adapter idle. A live conversation
+        // keeps it, so the next turn keeps its history and heard prefix.
+        if (s.conversation.kind === "ended") closeBrain(s, effects);
         s.turn = { kind: "none" };
         break;
     case "play":

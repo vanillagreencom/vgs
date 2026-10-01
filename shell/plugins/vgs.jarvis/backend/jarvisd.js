@@ -8,7 +8,8 @@
 // Startup validates coding-task records and publishes their durable producer,
 // then TaskRunner observes them; tasks outlive this process and EOF stops
 // only that observation. A task-stop intent answers with task-answer.
-// Device discovery is read-only. Speech/indicator prerequisites keep capture
+// Device discovery is read-only. The chained engine raises the gate only for a
+// ready speech adapter and brain; no adapter row ships, so capture stays
 // unconfigured. EOF closes the audio owner and waits for all child exits.
 "use strict";
 const path = require("node:path");
@@ -34,6 +35,8 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const Desktop = require("./Desktop.js");
     const TaskRunner = require("./TaskRunner.js");
     const ToolBridge = require("./ToolBridge.js");
+    const ChainedEngine = require("./ChainedEngine.js");
+    const { Accounts } = require("./Accounts.js");
     const { load } = require(path.join(process.argv[3], "bin/lib/qml-library.js"));
     const { onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
@@ -50,6 +53,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let audit = null;
     let requests = null;
     let desktop = null;
+    let engine = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
@@ -58,6 +62,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         // The bridge ends its connections while the router can still drop their results.
         if (bridge !== null) bridge.close();
         runner.close();
+        if (engine !== null) engine.close();
         if (desktop !== null) desktop.close();
         if (requests !== null) requests.close();
         if (audit !== null) audit.close();
@@ -155,6 +160,11 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         }
     }
 
+    function fault(reason) {
+        if (!ending && context !== null) write({ v: 1, type: "audio-fault", gen: runner.state.gen,
+            revision: context.revision, reason: String(reason).replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) });
+    }
+
     function write(message) {
         const wire = JSON.stringify(message);
         Protocol.accept(wire, "daemon");
@@ -176,11 +186,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             if (!ending && context !== null) write({ v: 1, type: "level", gen,
                 revision: context.revision, level });
         },
-        fault: reason => {
-            if (!ending && context !== null) write({ v: 1, type: "audio-fault", gen: runner.state.gen,
-                revision: context.revision, reason: String(reason).replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) });
-        },
-        captureSink: null, playbackSource: null
+        fault, captureSink: null, playbackSource: null
     });
     const ports = unavailable();
     ports.capture = { ...ports.capture, ...audio.capturePort };
@@ -194,6 +200,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer)
     }, (state, phase) => {
         audio.observe(state);
+        if (engine !== null) engine.observe(state);
         if (state.gate.kind === "down") void audio.teardown("gate", ["capture", "playback"]);
         if (!ending && context !== null) write({ v: 1, type: "state", gen: state.gen,
             revision: context.revision, seq: ++seq, state, phase });
@@ -251,13 +258,13 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         || JSON.stringify(message.directories) !== JSON.stringify(context.directories)))
                     throw new Error("jarvis: protocol=identity");
                 const first = context === null;
-                let engine = null;
+                let taskEvent = null;
                 if (first) {
-                    engine = Tasks.publish(message.directories.data, __dirname);
+                    taskEvent = Tasks.publish(message.directories.data, __dirname);
                     // A crash between an exit record and prune can leave an
                     // extra ended task. Recovery uses the same locked writer.
                     const recovered = cp.spawnSync(process.execPath,
-                        [engine, "--state", message.directories.state, "--prune"], {
+                        [taskEvent, "--state", message.directories.state, "--prune"], {
                             env: { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" },
                             encoding: "utf8", maxBuffer: 8192
                         });
@@ -268,10 +275,10 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                 context = message;
                 if (first) {
                     audit = Audit.create({ state: context.directories.state });
+                    const profile = () => runner.state.settings.policy ?? "standard";
                     const router = ToolRouter.create({ session: Session, state: () => runner.state,
                         dispatch: event => runner.dispatch(event), audit,
-                        context: () => ({ profile: runner.state.settings.policy ?? "standard",
-                            locked: context.locked, denied: null }),
+                        context: () => ({ profile: profile(), locked: context.locked, denied: null }),
                         result: value => bridge.deliver(value) || runner.ports.brain.outcome(value) });
                     // No harness brain exists yet, so no bridge session opens and no socket exists.
                     bridge = ToolBridge.create({ router, state: () => runner.state, audit,
@@ -285,7 +292,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     // The task executor needs an agent profile and a release port
                     // for the conversation's recipients. Neither exists yet, so
                     // TaskRunner only observes and stops recorded tasks.
-                    tasks = TaskRunner.create({ directories: context.directories, engine, backend: __dirname,
+                    tasks = TaskRunner.create({ directories: context.directories, engine: taskEvent, backend: __dirname,
                         settings: () => context.settings,
                         display: { run: taskTui },
                         count: count => {
@@ -294,14 +301,25 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         },
                         failed: fatal,
                         clock: { now: Date.now, set: (fn, ms) => setTimeout(fn, ms).unref(), clear: timer => clearTimeout(timer) } });
+                    const state = context.directories.state;
+                    // cloudVision has no setting yet; "ask" is the plan's default.
+                    engine = ChainedEngine.create({ session: Session, state: () => runner.state, audit, router,
+                        accounts: () => new Accounts(state, process.env),
+                        policy: () => ({ profile: profile(), cloudVision: "ask" }), fault });
+                    runner.ports.brain = engine.brain;
+                    runner.ports.capture = { ...runner.ports.capture, collect: engine.collect };
+                    runner.ports.playback = engine.playback(audio.playbackPort);
+                    audio.captureSink = engine.captureSink;
+                    audio.playbackSource = engine.playbackSource;
                 }
                 if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,
                     daemon: context.locked ? "locked" : "ready" });
-                // No speech adapter or indicator exists yet. A healthy
-                // child is not permission to capture or start a tool.
+                // No indicator exists yet. A healthy child is not
+                // permission to capture or start a tool.
+                const configuration = engine.configure(context.settings);
                 runner.dispatch({ type: "snapshot", locked: context.locked, engine: "chained",
-                    configured: false, settings: context.settings });
+                    configured: configuration.kind === "ready", settings: context.settings });
                 if (first) void audio.discover().catch(error => {
                     if (!ending) audio.fault(error.message);
                 });

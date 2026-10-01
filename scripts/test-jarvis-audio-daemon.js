@@ -10,15 +10,15 @@ const plugin = path.join(tree, "shell/plugins/vgs.jarvis");
 function daemonCopy(name, mutant = null, half = false) {
     const folder = path.join(process.env.JARVIS_TEST_ROOT, name);
     copyBackend(path.join(folder, "backend"));
-    for (const file of ["JarvisProtocol.js", "Session.js"])
+    for (const file of ["JarvisProtocol.js", "Session.js", "AccountProviders.js"])
         fs.copyFileSync(path.join(plugin, file), path.join(folder, file));
     let source = fs.readFileSync(path.join(folder, "backend/jarvisd.js"), "utf8");
     for (const [needle, replacement] of [
-        ["captureSink: null, playbackSource: null",
-            'captureSink: () => new (require("node:stream").Writable)({ write(frame, encoding, done) { done(); } }), playbackSource: null'],
-        ["ports.capture = { ...ports.capture, ...audio.capturePort };",
-            "ports.capture = { ...ports.capture, ...audio.capturePort, collect: () => {} };"],
-        ["configured: false, settings: context.settings });",
+        ["audio.playbackSource = engine.playbackSource;",
+            'audio.playbackSource = engine.playbackSource;\n' +
+            '                    audio.captureSink = () => new (require("node:stream").Writable)({ write(frame, encoding, done) { done(); } });\n' +
+            '                    runner.ports.capture = { ...runner.ports.capture, collect: () => {} };' + (half ? "\n                    fixtureSpeech();" : "")],
+        ['configured: configuration.kind === "ready", settings: context.settings });',
             'configured: true, settings: context.settings });\n' +
             '                runner.dispatch({ type: "indicator", shown: true });\n' +
             '                runner.dispatch({ type: "talk-down" });']
@@ -32,18 +32,20 @@ function daemonCopy(name, mutant = null, half = false) {
         const needle = "ports.playback = audio.playbackPort;";
         assert.equal(source.split(needle).length - 1, 1);
         source = source.replace(needle, needle + '\n' +
-            '    const speech = require("./scripted-fixture.js").ports(process.env.HOME);\n' +
-            '    ports.capture.collect = speech.capture.collect;\n' +
-            '    ports.brain = speech.brain;\n' +
-            '    audio.playbackSource = () => {\n' +
-            '        const source = new (require("node:stream").PassThrough)();\n' +
-            '        source.write(Buffer.alloc(480));\n' +
-            '        const timer = setInterval(() => {\n' +
-            '            if (fs.existsSync(path.join(process.env.HOME, "audio-complete"))) source.end();\n' +
-            '        }, 10);\n' +
-            '        source.once("close", () => clearInterval(timer));\n' +
-            '        return source;\n' +
-            '    };');
+            '    function fixtureSpeech() {\n' +
+            '        const speech = require("./scripted-fixture.js").ports(process.env.HOME);\n' +
+            '        ports.capture.collect = speech.capture.collect;\n' +
+            '        ports.brain = speech.brain;\n' +
+            '        audio.playbackSource = () => {\n' +
+            '            const source = new (require("node:stream").PassThrough)();\n' +
+            '            source.write(Buffer.alloc(480));\n' +
+            '            const timer = setInterval(() => {\n' +
+            '                if (fs.existsSync(path.join(process.env.HOME, "audio-complete"))) source.end();\n' +
+            '            }, 10);\n' +
+            '            source.once("close", () => clearInterval(timer));\n' +
+            '            return source;\n' +
+            '        };\n' +
+            '    }');
     }
     fs.writeFileSync(path.join(folder, "backend/jarvisd.js"), source);
     if (mutant) {

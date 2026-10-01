@@ -16,6 +16,8 @@ The [audio lifetime suites](jarvis-audio.md#evidence) reuse this world with synt
 
 The [desktop executor suite](jarvis-desktop-tools.md#evidence) uses this world with a stand-in `hyprctl` that answers two batch reads from a synthetic state file in the world's runtime directory and refuses every other argv, a dispatch included. Its fake shell side builds replies with the protocol's own builders. Its `cli` row selects on the executors, the request owner, the tool table, the protocol, the core's `Dispatch.js` and its fixtures. The request owner's suite needs no world and runs in `logic`.
 
+The [chained engine suite](jarvis-engine.md#evidence) uses this world with the synthetic PipeWire commands, an injected playback clock and an OpenAI-compatible loopback brain on the Ollama row's default port. No host server can answer that port inside the private network.
+
 The [action router suite](jarvis-approval.md#evidence-and-comparison) uses this world with real scratch audit files and stand-in executors. Its injected clock exercises confirmation timing without a wait. Reducer copies and backend copies carry the independent defects; shipped APIs contain no fixture or confirmation backdoor.
 
 The [task control suite](jarvis-task-control.md#evidence) runs the real launcher, a stand-in agent and real signals in this world. Production names its tmux socket with `-S`, which the PATH wrapper refuses, so the suite runs the bootstrap tmux with `-S` on a socket under the world's runtime directory. Every signal it sends targets a group it recorded.

@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/backend/net.js, scripts/test-jarvis-release.js, scripts/test-jarvis-net.js, scripts/fixtures/jarvis/policy.js
 
-[D073](../decisions/D073-jarvis-release-and-origin-bound-keys.md) records the outbound boundary. [The plan § Release gate](../plans/v2-jarvis-plan.md#38-release-gate-what-leaves-the-machine) fixes the label rules. The skeleton daemon starts no transport. This interface does not implement an adapter, account store, approval prompt, audit writer or conversation lifecycle.
+[D073](../decisions/D073-jarvis-release-and-origin-bound-keys.md) records the outbound boundary. [The plan § Release gate](../plans/v2-jarvis-plan.md#38-release-gate-what-leaves-the-machine) fixes the label rules. The [chained engine](jarvis-engine.md) creates one transport owner per conversation. This interface does not implement an adapter, account store, approval prompt, audit writer or conversation lifecycle.
 
 ## Owners
 
@@ -10,7 +10,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 - `Policy.summary` retains the union of all contributing labels. The session keeps those labels for the conversation, including across repeated summaries.
 - `Policy.recipients` copies and freezes the whole brain and speech set. `Policy.release` judges that set, not just the adapter's destination.
 - `net.create` owns transport handles for that immutable set. The session closes it when the conversation ends. The daemon and adapters must use this door rather than create their own sockets.
-- Session owns ending the conversation. J33 connects context and transport teardown when provider, account or policy changes. [The action router](jarvis-approval.md) owns application and site grants only. Recipient-labelled release grants remain the release-consent integration's responsibility. Each release must use [Audit.before](jarvis-audit.md) before transfer. The [tool bridge](jarvis-bridge.md#calls-and-results) does so for each harness tool result; the brain and speech integrations are not present in the skeleton.
+- Session owns ending the conversation. The chained engine closes the context and transport when the generation changes, including a provider, account or policy change. [The action router](jarvis-approval.md) owns application and site grants only. The engine keeps the recipient-labelled grant list; no consent producer exists yet. The engine uses [Audit.before](jarvis-audit.md) before each transfer. The [tool bridge](jarvis-bridge.md#calls-and-results) does so for each harness tool result.
 - A harness brain still needs release consent for its cloud provider. Its vendor owns its sockets. The harness integration must enforce that handoff boundary; `net.js` does not intercept another program's networking.
 
 ## Recipient and item contract
@@ -28,7 +28,7 @@ The release judge derives offline state from the full set. Loopback and local re
 
 An adapter receives a marker rather than withheld data. It encodes that marker into its provider's request format. The session retains the contributing labels separately. It must not relabel an original or summary as speech to evade consent. The gate cannot discover missing source labels from arbitrary bytes.
 
-Changing a provider, account or policy creates a new recipient set. Old grants fail against it. This identity rule does not end a session by itself. J11 must close the old owner and remove the old context before it starts the replacement.
+Changing a provider, account or policy creates a new recipient set. Old grants fail against it. This identity rule does not end a session by itself. Session ends it, and the chained engine closes the old owner and removes the old context before it starts the replacement.
 
 ## Transport contract
 

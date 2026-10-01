@@ -18,7 +18,7 @@ const documented = {
     gemini: ["https://generativelanguage.googleapis.com/v1beta/openai", "required", true, null],
     ollama: ["http://127.0.0.1:11434/v1", "optional", true, null],
     "llama-server": ["http://127.0.0.1:8080/v1", "optional", true, null],
-    lmstudio: ["http://127.0.0.1:1234/v1", "optional", true, null]
+    "lm-studio": ["http://127.0.0.1:1234/v1", "optional", true, null]
 };
 function pinned(logic) {
     for (const [id, [base, key, images, noStore]] of Object.entries(documented)) {

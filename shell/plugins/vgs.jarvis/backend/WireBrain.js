@@ -12,6 +12,9 @@ const REQUEST_BYTES = 20 * 1024 * 1024;
 // Bound one wire response and the reply its conversation keeps in history.
 const SSE_LIMITS = Object.freeze({ line: 1024 * 1024, event: 1024 * 1024, total: 8 * 1024 * 1024 });
 const TOOLS = 64;
+// The plan's context bound in user turns. Its overflow refuses until older
+// turns can be summarised; nothing is dropped silently.
+const TURNS = 40;
 const IMAGE_TYPES = ["image/png", "image/jpeg"];
 function fail(code) { throw new Error("jarvis: brain=" + code); }
 function plain(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -55,6 +58,7 @@ function create({ provider, model, net, recipients, key }, protocol) {
         switch (turn?.kind) {
         case "user": {
             if (pending().length !== 0) fail("tool-results-pending");
+            if (history.filter(entry => entry.role === "user").length >= TURNS) fail("context-limit");
             const images = turn.images ?? [];
             if (!Array.isArray(turn.items) || !Array.isArray(images) || turn.items.length + images.length === 0)
                 fail("turn");
@@ -72,7 +76,12 @@ function create({ provider, model, net, recipients, key }, protocol) {
             if (calls.length === 0 || !Array.isArray(results) || results.length !== calls.length) fail("tool-results");
             const byId = new Map(results.map(result => [result?.id, result?.item]));
             if (byId.size !== calls.length || !calls.every(call => byId.has(call.id))) fail("tool-results");
-            return { role: "tool-results", results: calls.map(call => ({ id: call.id, item: textItem(byId.get(call.id)) })) };
+            // Shipped guidance restated after a result, never a released item.
+            const instructions = turn.instructions ?? null;
+            if (instructions !== null && (typeof instructions !== "string" || protocol.instruction === undefined))
+                fail("instructions");
+            return { role: "tool-results", instructions,
+                results: calls.map(call => ({ id: call.id, item: textItem(byId.get(call.id)) })) };
         }
         default: return fail("turn");
         }
@@ -105,6 +114,7 @@ function create({ provider, model, net, recipients, key }, protocol) {
             case "tool-results":
                 messages.push(...protocol.results(entry.results.map(result =>
                     ({ id: result.id, content: released(result.item).content }))));
+                if (entry.instructions !== null) messages.push(protocol.instruction(entry.instructions));
                 break;
             default: throw new Error("jarvis: brain=history-role");
             }
@@ -114,7 +124,8 @@ function create({ provider, model, net, recipients, key }, protocol) {
             ...(context.tools.length === 0 ? {} : { tools: context.tools }), ...provider.noStore });
         if (Buffer.byteLength(body) > REQUEST_BYTES) fail("request-limit");
         return { item: labels.length === 0 ? null : Policy.item(body, labels), sent,
-            release: Object.freeze({ withheld: Object.freeze([...withheld]), needed: Object.freeze([...needed]) }) };
+            release: Object.freeze({ withheld: Object.freeze([...withheld]), needed: Object.freeze([...needed]),
+                labels: Object.freeze(labels) }) };
     }
 
     function send(turn, grants = []) {
@@ -132,6 +143,8 @@ function create({ provider, model, net, recipients, key }, protocol) {
         function release() {
             if (active === current) active = null;
         }
+        // A sent turn's entry stays, unanswered: the provider has seen it.
+        // Its partial reply never enters history. An unsent turn leaves none.
         const current = { cancel() {
             controller.abort();
             switch (state.kind) {
@@ -141,6 +154,7 @@ function create({ provider, model, net, recipients, key }, protocol) {
                 break;
             case "streaming": case "complete": case "failed":
                 state = { kind: "cancelled" };
+                history.push(entry);
                 wake();
                 break;
             case "cancelled": case "ended": break;
@@ -250,6 +264,12 @@ function create({ provider, model, net, recipients, key }, protocol) {
         active = current;
         return Object.freeze({ release: request.release, events });
     }
+    /** Append a turn with no request; the next send renders it unanswered. */
+    function record(turn) {
+        usable();
+        if (context === null) fail("not-started");
+        history.push(entryOf(turn));
+    }
     function cancel() { return active === null ? Promise.resolve() : active.cancel(); }
     function close() {
         if (closed) return;
@@ -260,6 +280,6 @@ function create({ provider, model, net, recipients, key }, protocol) {
         context = null;
         history = [];
     }
-    return Object.freeze({ start, send, cancel, close });
+    return Object.freeze({ start, send, record, cancel, close });
 }
 module.exports = { create };

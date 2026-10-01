@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/Guidance.js, shell/plugins/vgs.jarvis/backend/Speakable.js, shell/plugins/vgs.jarvis/backend/SpeechLanguage.js, shell/plugins/vgs.jarvis/backend/skills/voice/, scripts/test-jarvis-guidance.js, scripts/test-jarvis-speakable.js, scripts/test-jarvis-speech-language.js, scripts/fixtures/jarvis-voice/
 
-The [voice contract](../plans/v2-jarvis-plan.md#5-voice-agent-skill) assigns guidance layers to model classes. The [Jarvis service](jarvis.md) has no engine yet. These Node modules are its future engines' text boundary. They open no provider, device, account or process. They add no runtime dependency.
+The [voice contract](../plans/v2-jarvis-plan.md#5-voice-agent-skill) assigns guidance layers to model classes. These Node modules are the engines' text boundary. The [chained engine](jarvis-engine.md) consumes both. They open no provider, device, account or process. They add no runtime dependency.
 
 ## Guidance
 

@@ -329,6 +329,24 @@ class Accounts {
     }
 
     /**
+     * The daemon's brain selection: a saved Brain account id among keyring
+     * references and local servers, with the declaration's default model.
+     * It runs no vendor command and reads no port, so it proves neither
+     * login nor a listening server. A subscription or unknown id is null.
+     */
+    resolve(id) {
+        const rows = this.secrets.references().map(reference => [provider(reference.provider), reference.account,
+            { kind: "keyring", reference }]).concat(PROVIDERS.filter(row => row.kind === "local")
+            .map(row => [row, "local", { kind: "local", origin: row.origin }]));
+        for (const [row, label, source] of rows) {
+            if (row.kind !== "key" && row.kind !== "local") continue;
+            const account = identity(source.kind, [row.id, source, label]);
+            if (account === id) return { id, provider: row.id, label, source, model: row.probe.model };
+        }
+        return null;
+    }
+
+    /**
      * Explicit user action only. Each operation names the current discovery
      * epoch. A refresh or a replacement Verify invalidates its late result.
      * Production uses the origin-bound door; a caller may supply a transport

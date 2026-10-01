@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/AnthropicMessages.js, scripts/test-jarvis-brain-anthropic.js, scripts/fixtures/jarvis-brain/anthropic-messages*
 
-[D079](../decisions/D079-brains-wire-and-harness-adapters.md) assigns this wire driver. It implements the [shared brain contract](jarvis-brain.md#driver-contract). Account choice, the tool bridge, session integration and image capture remain separate plan rows. No shipped daemon path creates a brain yet.
+[D079](../decisions/D079-brains-wire-and-harness-adapters.md) assigns this wire driver. It implements the [shared brain contract](jarvis-brain.md#driver-contract). The [chained engine](jarvis-engine.md) selects it for a saved Anthropic key. The tool bridge and image capture remain separate plan rows.
 
 ## Owners
 
@@ -29,7 +29,7 @@ The required `max_tokens` field uses a fixed allowance of 4096. This is an outpu
 - `end_turn` and `stop_sequence` complete a text turn. `tool_use` completes a turn with calls. A missing reason, a mismatched call count, truncation, refusal, a paused server-tool turn or an unknown reason fails. The failure key never includes an arbitrary vendor reason.
 - Thinking and server-tool content are not offered by this driver. Receiving such a block fails explicitly rather than discarding content that assistant history would need.
 
-Cancellation uses the shared request owner. The acknowledgement follows stream teardown and response closure. The next read refuses queued text and calls. Failed and cancelled turns enter no history.
+Cancellation uses the shared request owner. The acknowledgement follows stream teardown and response closure. The next read refuses queued text and calls. A failed turn enters no history. A sent, cancelled turn keeps only its entry, as the shared owner defines. Messages has no instruction message after tool results, so a tool-results turn with instructions refuses `brain=instructions`.
 
 ## Vendor sources
 

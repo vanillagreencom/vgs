@@ -108,9 +108,10 @@ function instrument(file, root, engine = "chained") {
     const source = fs.readFileSync(file, "utf8");
     const changes = [
         ['engine: "chained",', "engine: " + JSON.stringify(engine) + ","],
-        ['ports.playback = audio.playbackPort;',
-            'ports.playback = audio.playbackPort;\n    Object.assign(ports, require("./scripted-fixture.js").ports(' + JSON.stringify(root) + '));'],
-        ['configured: false, settings: context.settings',
+        ['audio.playbackSource = engine.playbackSource;',
+            'audio.playbackSource = engine.playbackSource;\n                    const scripted = require("./scripted-fixture.js").ports(' + JSON.stringify(root) + ');\n' +
+            '                    Object.assign(runner.ports, { capture: scripted.capture, brain: scripted.brain, playback: scripted.playback, speech: scripted.speech });'],
+        ['configured: configuration.kind === "ready", settings: context.settings',
             'configured: true, settings: context.settings'],
         ['runner.dispatch({ type: "snapshot", locked: context.locked,',
             'runner.dispatch({ type: "indicator", shown: true });\n                runner.dispatch({ type: "snapshot", locked: context.locked,']

@@ -362,7 +362,12 @@ const table = [
         assert.deepEqual(kinds(r), ["brain-cancel"]);
         const ack = step(logic, r.state, callback("cancelled", r.state.turn, 200));
         assert.equal(ack.state.turn.kind, "none");
-        assert.deepEqual(kinds(ack), ["brain-close"]);
+        assert.deepEqual(kinds(ack), [], "a live conversation keeps its acknowledged adapter");
+        assert.deepEqual(ack.state.brain, s.brain);
+        const stopped = step(logic, thinking(logic), event("stop", 100)).state;
+        const closed = step(logic, stopped, callback("cancelled", stopped.turn, 200));
+        assert.deepEqual(kinds(closed), ["brain-close"], "an ended conversation closes its adapter");
+        assert.equal(closed.state.brain.kind, "closed");
     }],
     ["cancel-timeout", logic => {
         let s = step(logic, thinking(logic), event("cancel", 100)).state;
@@ -846,8 +851,13 @@ const createdCallbacks = [
     } },
     { effect: "brain-cancel", type: "cancelled", target: true, check: (s, r) => {
         assert.ok(["none", "collecting"].includes(r.state.turn.kind));
-        assert.equal(r.state.brain.kind, "closed");
-        assert.equal(r.effects.find(e => e.kind === "brain-close").target, s.brain.op);
+        if (s.conversation.kind === "ended") {
+            assert.equal(r.state.brain.kind, "closed");
+            assert.equal(r.effects.find(e => e.kind === "brain-close").target, s.brain.op);
+        } else {
+            assert.deepEqual(r.state.brain, s.brain);
+            assert.equal(kinds(r).includes("brain-close"), false);
+        }
     } },
     { effect: "brain-cancel", type: "deadline", target: true, deadline: "turn", check: (s, r) => {
         assert.ok(["none", "collecting"].includes(r.state.turn.kind));
@@ -1021,7 +1031,11 @@ try {
         ["end-gen", 's.gen++;\n        s.conversation = { kind: "ended" };', 's.gen += 0;\n        s.conversation = { kind: "ended" };', "end-generation"],
         ["settings", 'a[key] !== b[key]', '(false && a[key] !== b[key])', "settings-model"],
         ["mute-ack", 's.mute.kind === "muting" && s.capture.kind === "closed"', 's.mute.kind === "muting"', "mute-ack"],
-        ["cancel-ack", '["cancelling"])) { stale(s); break; }\n        closeBrain', '["none"])) { stale(s); break; }\n        closeBrain', "cancel-ack"],
+        ["cancel-ack", 'live(s, e, "turn", ["cancelling"])', 'live(s, e, "turn", ["none"])', "cancel-ack"],
+        ["cancel-ack-retains", 'if (s.conversation.kind === "ended") closeBrain(s, effects);\n        s.turn',
+            'closeBrain(s, effects);\n        s.turn', "cancel-ack"],
+        ["cancel-ack-ended", 'if (s.conversation.kind === "ended") closeBrain(s, effects);\n        s.turn',
+            'if (false) closeBrain(s, effects);\n        s.turn', "cancel-ack"],
         ["cancel-bound", "deadline: at + 2000", "deadline: at + 2001", "cancel-timeout"],
         ["think-bound", 's.turn.kind === "thinking" && at >= s.turn.deadline',
             's.turn.kind === "thinking" && false && at >= s.turn.deadline', "thinking-timeout"],

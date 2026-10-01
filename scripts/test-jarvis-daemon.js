@@ -168,16 +168,7 @@ async function inside() {
     await run(floorFile, [], 78, "jarvis: node=21.0.0 need=22");
     async function control(name, needle, replacement, check) {
         assert.equal(source.split(needle).length - 1, 1, name + " mutation match");
-        const copyDir = path.join(root, name);
-        fs.mkdirSync(path.join(copyDir, "backend"), { recursive: true });
-        fs.writeFileSync(path.join(copyDir, "JarvisProtocol.js"), protocol);
-        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"), path.join(copyDir, "Session.js"));
-        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/session-runner.js"), path.join(copyDir, "backend/session-runner.js"));
-        for (const filename of ["Tasks.js", "task-event", "Audio.js", "audio-child.py",
-            "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "ShellRequests.js", "Desktop.js",
-            "TaskRunner.js", "AgentProfiles.js", "task-run.py", "ToolBridge.js", "Mcp.js", "Private.js"])
-            fs.copyFileSync(path.join(path.dirname(daemon), filename), path.join(copyDir, "backend", filename));
-        const copy = path.join(copyDir, "backend/jarvisd.js");
+        const copy = daemonCopy(name);
         fs.writeFileSync(copy, source.replace(needle, replacement));
         await assert.rejects(() => check(copy), assert.AssertionError, name + " must turn red");
         controls++;
@@ -247,14 +238,8 @@ async function inside() {
 
     function daemonCopy(name) {
         const directory = path.join(root, name);
-        fs.mkdirSync(path.join(directory, "backend"), { recursive: true });
-        for (const relative of ["JarvisProtocol.js", "Session.js", "backend/session-runner.js",
-            "backend/jarvisd.js", "backend/Tasks.js", "backend/task-event",
-            "backend/Audio.js", "backend/audio-child.py", "backend/ToolRouter.js",
-            "backend/Audit.js", "backend/Redact.js", "backend/Tools.js", "backend/Policy.js",
-            "backend/ShellRequests.js", "backend/Desktop.js",
-            "backend/TaskRunner.js", "backend/AgentProfiles.js", "backend/task-run.py",
-            "backend/ToolBridge.js", "backend/Mcp.js", "backend/Private.js"])
+        fs.cpSync(path.join(tree, "shell/plugins/vgs.jarvis/backend"), path.join(directory, "backend"), { recursive: true });
+        for (const relative of ["JarvisProtocol.js", "Session.js", "AccountProviders.js"])
             fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis", relative), path.join(directory, relative));
         return path.join(directory, "backend/jarvisd.js");
     }
@@ -645,6 +630,89 @@ async function inside() {
     };
     await stopIntent(daemon);
     await control("task-stop-intent", "void tasks.stop(task).then(answer => {", "void Promise.resolve(\"stopped\").then(answer => {", stopIntent);
+    // The installed daemon stays unconfigured: no speech row ships. A
+    // disposable copy adds the scripted row, a model for the local brain row
+    // and the indicator, then drives phases through the real engine.
+    const Engine = require("./fixtures/jarvis/engine.js");
+    function engineCopy(name) {
+        const file = daemonCopy(name);
+        const directory = path.dirname(path.dirname(file));
+        for (const [relative, needle, replacement] of [
+            ["backend/ChainedEngine.js", "const SPEECH = Object.freeze({});",
+                "const SPEECH = Object.freeze({ scripted: (fixture => (fixture.reset({ utterances: [fixture.utterance(\"What time is it?\")] }), fixture.row))(require(" + JSON.stringify(require.resolve("./fixtures/jarvis/engine.js")) + ")) });"],
+            ["AccountProviders.js", 'probe: { driver: "ollama", path: "/api/generate", model: "" }',
+                'probe: { driver: "ollama", path: "/api/generate", model: "fixture-model" }'],
+            ["backend/jarvisd.js", 'runner.dispatch({ type: "snapshot", locked: context.locked,',
+                'runner.dispatch({ type: "indicator", shown: true });\n                runner.dispatch({ type: "snapshot", locked: context.locked,']]) {
+            const target = path.join(directory, relative);
+            const original = fs.readFileSync(target, "utf8");
+            assert.equal(original.split(needle).length - 1, 1, name + " engine instrumentation");
+            fs.writeFileSync(target, original.replace(needle, replacement));
+        }
+        return file;
+    }
+    const { Accounts } = require(path.join(tree, "shell/plugins/vgs.jarvis/backend/Accounts.js"));
+    const { PROVIDERS } = require(path.join(tree, "shell/plugins/vgs.jarvis/AccountProviders.js"));
+    const ollama = PROVIDERS.find(row => row.id === "ollama");
+    const brainId = new Accounts(hello.directories.state, { HOME: process.env.HOME })
+        .account(ollama, "local", { kind: "found" }, { kind: "local", origin: ollama.origin }).id;
+    const loopback = Engine.brain(11434);
+    await loopback.ready;
+    async function engineConversation(file) {
+        const child = cp.spawn("node", [file, "--tree", tree], { env: {
+            PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR
+        }, stdio: ["pipe", "pipe", "pipe"] });
+        const states = [];
+        let tail = "", err = "";
+        child.stdout.on("data", data => {
+            const lines = (tail + data).split("\n");
+            tail = lines.pop();
+            for (const message of lines.map(line => JSON.parse(line))) if (message.type === "state") states.push(message);
+        });
+        child.stderr.on("data", data => { err += data; });
+        child.stdin.on("error", error => { if (error.code !== "EPIPE") throw error; });
+        const closed = once(child, "close");
+        const send = message => child.stdin.write(JSON.stringify(message) + "\n");
+        // Real capture, a loopback request and paced playback cross pipes.
+        const wait = async (predicate, label) => {
+            for (let attempts = 0; attempts < 1000 && child.exitCode === null; attempts++) {
+                if (states.length && predicate(states.at(-1))) return;
+                await new Promise(resolve => setTimeout(resolve, 5));
+            }
+            assert.fail(label + ": " + JSON.stringify(states.at(-1)?.state) + " stderr=" + err);
+        };
+        try {
+            const before = loopback.requests.length;
+            loopback.replies.push(Engine.text("It is noon."));
+            send({ ...hello, settings: { ...hello.settings, brain: brainId } });
+            await wait(m => m.state.gate.kind === "up", "the engine raises the gate");
+            send(intent("talk-down"));
+            await wait(m => m.phase === "listening", "listening");
+            send(intent("talk-up"));
+            await wait(m => m.phase === "idle" && m.state.conversation.kind !== "ended" && m.state.turn.kind === "none"
+                && states.some(state => state.phase === "speaking"), "speech completes");
+            const phases = states.map(state => state.phase).filter((phase, index, all) => phase !== all[index - 1]);
+            const order = ["listening", "thinking", "speaking", "idle"].map(phase => phases.lastIndexOf(phase));
+            assert.deepEqual(order.slice().sort((a, b) => a - b), order, "phases advance in order: " + phases.join(","));
+            assert.equal(loopback.requests.length, before + 1);
+            assert.deepEqual(loopback.requests.at(-1).body.messages.filter(message => message.role === "user")
+                .map(message => message.content), ["What time is it?"], "the final reaches the loopback brain");
+            child.stdin.end();
+            const [code] = await closed;
+            assert.equal(code, 0, err);
+            cases++;
+        } finally { if (child.exitCode === null) { child.kill("SIGKILL"); await closed; } }
+    }
+    try {
+        await engineConversation(engineCopy("engine"));
+        const unconfigured = engineCopy("engine-stock-speech");
+        const stockEngine = path.join(path.dirname(unconfigured), "ChainedEngine.js");
+        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/ChainedEngine.js"), stockEngine);
+        await assert.rejects(() => engineConversation(unconfigured), assert.AssertionError,
+            "the stock speech table keeps the daemon unconfigured");
+        controls++;
+        assert.deepEqual(loopback.faults, []);
+    } finally { await loopback.close(); }
     console.log("test-jarvis-daemon: ok cases=" + cases + " controls=" + controls);
 }
 
@@ -660,7 +728,8 @@ async function main() {
         desktopFixture.standins(path.join(root, "standins"));
         const result = cp.spawnSync("/bin/bash", [launcher, path.join(root, "standins"), "--", "node", __filename, "--inside"],
             { env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
-                encoding: "utf8", timeout: 30000 });
+                // Bounds a hung world, not a latency: the suite runs real children.
+                encoding: "utf8", timeout: 90000 });
         process.stdout.write(result.stdout || "");
         process.stderr.write(result.stderr || "");
         if (result.error) throw result.error;

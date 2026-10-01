@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis/backend/WireBrain.js, shell/plugins/vgs.jarvis/backend/Providers.js, shell/plugins/vgs.jarvis/backend/Sse.js, scripts/test-jarvis-brain-openai.js, scripts/test-jarvis-providers.js, scripts/test-jarvis-sse.js, scripts/test-schema-check.js, scripts/fixtures/schema-check.js, scripts/fixtures/jarvis-brain/
 
-[D079](../decisions/D079-brains-wire-and-harness-adapters.md) records the brain adapter kinds. [The plan § Brain adapters](../plans/v2-jarvis-plan.md#36-brain-adapters) fixes the interface. This page defines the shared wire owner and the OpenAI-compatible driver. [Anthropic Messages](jarvis-anthropic.md) defines the other driver. No shipped daemon path creates a brain yet.
+[D079](../decisions/D079-brains-wire-and-harness-adapters.md) records the brain adapter kinds. [The plan § Brain adapters](../plans/v2-jarvis-plan.md#36-brain-adapters) fixes the interface. This page defines the shared wire owner and the OpenAI-compatible driver. [Anthropic Messages](jarvis-anthropic.md) defines the other driver. The [chained engine](jarvis-engine.md) creates a brain per conversation.
 
 ## Owners
 
@@ -10,7 +10,7 @@ Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis
 - `Sse.js::reader` parses the [WHATWG event stream format](https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation) from bytes. It owns no transport or timer. Its caller chooses the line, event and total byte ceilings.
 - `WireBrain.js::create` owns one conversation's history, release reports, looked-up key and live request. The session owns the [net owner, recipient set and grants](jarvis-release.md#owners). Both drivers use this owner; a provider row for a different driver refuses `brain=driver`.
 - `OpenAIChat.js` and `AnthropicMessages.js` own their wire encoding and event judges. They send only through the shared owner.
-- The session's turn loop (J33) connects the driver to the [session ports](jarvis-session.md) and [action router](jarvis-approval.md), and owns context bounds and summaries. Account choice and the `brains` and `models` choices status belong to J27. The driver publishes no model list. The router owns action scopes; J33 integrates recipient-labelled release consent. J20 owns approval display. J50 owns OCR text for a brain without image input.
+- The [chained engine](jarvis-engine.md) connects the driver to the [session ports](jarvis-session.md) and [action router](jarvis-approval.md). It keeps the conversation's release grants. Account choice and the `brains` and `models` choices status belong to J27. The driver publishes no model list. The router owns action scopes. J20 owns approval display. J50 owns OCR text for a brain without image input.
 
 ## Driver contract
 
@@ -18,13 +18,14 @@ Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis
 |---|---|
 | `create({provider, model, net, recipients, key})` | `provider` is a `Providers.select` row. `net` is the session's `net.create` owner for `recipients`. `key` is `null` or `{secrets, reference}`, a `Secrets` store and the account's key reference. A cloud row refuses `null` with `brain=no-key`. A key that requests to the row's base could never carry, by `net.assertKeyTarget`, refuses here before any keyring lookup. |
 | `start({instructions, tools})` | Begins a new history. `instructions` is the shipped guidance text, encoded by the driver. A tool is `{id, description, parameters}`. A tool id's dots become underscores on the wire. A name outside letters, digits, underscores and dashes, longer than 64, or two ids with one wire name, refuse. `Tools.wireNames` owns that spelling; the [tool bridge](jarvis-bridge.md) uses it too. |
-| `send(turn, grants?)` | Renders the whole request at once and returns `{release: {withheld, needed}, events}`. Nothing leaves until the caller iterates `events`. A caller can ask for a grant and call `events.return()` instead. |
-| turn | `{kind: "user", items, images?}`, with Policy items and images `{type, item}` of type PNG or JPEG; or `{kind: "tool-results", results: [{id, item}]}`, answering every pending call once. |
+| `send(turn, grants?)` | Renders the whole request at once and returns `{release: {withheld, needed, labels}, events}`. `labels` names the labels the request sends; its reply inherits them. Nothing leaves until the caller iterates `events`. A caller can ask for a grant and call `events.return()` instead. |
+| turn | `{kind: "user", items, images?}`, with Policy items and images `{type, item}` of type PNG or JPEG; or `{kind: "tool-results", results: [{id, item}], instructions?}`, answering every pending call once. `instructions` is shipped guidance the driver encodes after the results; a driver without that encoding refuses `brain=instructions`. |
+| `record(turn)` | Appends a turn to history with no request. The next request renders it unanswered. |
 | `events` | Yields `{kind: "text", text}` as the stream arrives, then each assembled `{kind: "tool-call", id, tool, arguments}`, then one `{kind: "done", reason}` with reason `stop` or `tool-calls`. Every other ending throws a keyed error. |
 | `cancel()` | Aborts the live request. It resolves after the request's stream has ended and the net owner's response is closed. The next read then throws `brain=cancelled`; text queued before the acknowledgement never reaches the caller. An unstarted turn is cancelled without a request. |
 | `close()` | Cancels the live request, zeroes the looked-up key and refuses further use. |
 
-A turn and its reply enter history together when the caller reads `done`. A failed or cancelled turn changes no history. A turn stays live until its caller reads `done` or the error, or cancels it. One turn is live at a time; a second `send` or `start` refuses `brain=busy`.
+A turn and its reply enter history together when the caller reads `done`. A failed turn changes no history. A cancelled turn that sent its request keeps its entry, unanswered: the provider has seen it. Its partial reply never enters history. A cancelled turn that sent nothing leaves no entry. A turn stays live until its caller reads `done` or the error, or cancels it. One turn is live at a time; a second `send` or `start` refuses `brain=busy`.
 
 The key is looked up through `Secrets.lookup` at the first request and kept for the conversation. Net receives it as the [origin-bound key](jarvis-release.md#transport-contract) with the driver's credential scheme. The header copies JavaScript makes cannot be zeroed; they are unreachable after each request. The key never enters argv, a log, status or an error.
 
@@ -53,6 +54,7 @@ The driver posts `{model, messages, stream: true, tools?}` plus the row's no-sto
 | A request body | 20 MiB | The lowest documented request ceiling among the rows: Groq, with an image |
 | Tools | 64 | The tool table holds fewer; the bound is the offer list's buffer |
 | Tool calls in one reply | 16 | Each index holds an arguments buffer |
+| History | 40 user turns | The plan's context bound. The next user turn refuses `brain=context-limit`; no turn is summarised or dropped |
 
 ## Providers
 
@@ -68,7 +70,7 @@ The OpenAI-compatible rows below use the pinned schema's bearer `ApiKeyAuth`. Th
 | `gemini` | [OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai) | required | the same page | none | [terms](https://ai.google.dev/gemini-api/terms) |
 | `ollama` | `127.0.0.1:11434/v1` ([compatibility](https://github.com/ollama/ollama/blob/1abe35e6e6e777e858bbfbba283667ee8d516801/docs/api/openai-compatibility.mdx)) | optional | base64 only, the same page | none | loopback |
 | `llama-server` | `127.0.0.1:8080/v1` ([server](https://github.com/ggml-org/llama.cpp/blob/0c1e57098bba43ac29e6e3b677cdceebdd22334f/tools/server/README.md)) | optional, `--api-key` | with a projector, the same page | none | loopback |
-| `lmstudio` | `127.0.0.1:1234/v1` ([compatibility](https://lmstudio.ai/docs/developer/openai-compat)) | optional ([authentication](https://lmstudio.ai/docs/developer/core/authentication)) | the same page | none | loopback |
+| `lm-studio` | `127.0.0.1:1234/v1` ([compatibility](https://lmstudio.ai/docs/developer/openai-compat)) | optional ([authentication](https://lmstudio.ai/docs/developer/core/authentication)) | the same page | none | loopback |
 | `custom` | the `customBaseUrl` setting | optional | no | none | the server's operator |
 
 - Local servers use the numeric loopback address that `net.endpoint` pins for `localhost`.
@@ -81,7 +83,8 @@ The OpenAI-compatible rows below use the pinned schema's bearer `ApiKeyAuth`. Th
 - `scripts/test-jarvis-brain-openai.js` runs in the [Jarvis test world](validation-jarvis.md). Loopback servers replay `scripts/fixtures/jarvis-brain/openai-chat-scripts.json`. Each frame is validated against the pinned excerpt before it is sent, and each request body is validated when it arrives. The excerpt names its source commit, file hash and the rules that cut it from OpenAI's published OpenAPI document.
 - It covers streamed text, a tool call split across chunks, the tool result round trip, history, images and their refusals, release markers and grants, the fixture key reaching only its origin, every documented error status without its body, a status outside that list, a mid-stream reset, every finish reason, malformed frames, the stream and request bounds, and the local rows on their default ports in the private network.
 - Cancellation is read at the loopback server: the server sees the connection close. A harness defect that keeps the real request open while the driver acknowledges must turn that observation red. Stand-in bodies fix orders a socket cannot: a read that resolves in the same turn as cancel, a stream that ends a timer after its abort, and text one read buffered before cancel or close.
-- Each bound has an accepted row at the bound and a refused row past it, so raising or lowering a ceiling fails.
+- Each bound has an accepted row at the bound and a refused row past it, so raising or lowering a ceiling fails. The 40th user turn is sent and the 41st refuses.
+- Recorded answers, the unanswered entry of a sent and cancelled turn, the restated instruction after results and the release report's labels have their own cases and controls.
 - Cloud origins cannot be served on loopback, so their requests reach a recording net stand-in. It pins each documented URL, the bearer key and the no-store fields.
 - Its disposable mutants remove each rule, including the plan's control: a dropped tool-call chunk must not yield a call. History, release, key and lifecycle mutations target their shared owner, `WireBrain.js`.
 - `scripts/test-jarvis-sse.js` runs every row whole and byte by byte, with controls for terminators, the first-line byte order mark, decoding and each bound. `scripts/test-jarvis-providers.js` pins the rows and the custom base URL judge. `scripts/test-schema-check.js` pins the checker's keyword table and refuses a keyword it does not implement.
