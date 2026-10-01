@@ -131,6 +131,9 @@ expect "the Dev Tools Tab tour reveals each focused action and Return reaches In
 expect_poll "Return on the focused Install hands the install TUI the row's id" "$(words vgs.devtools/install tui/install.sh "$agent_id")" recorded_tail
 expect_poll "the keyboard install run's presenter exits" moved ended_record_moved vgs.devtools/install "$install_before"
 expect_run_end "the keyboard install run ends" vgs.devtools/install
+# The run's terminal took the keyboard; Escape waits until Hyprland hands
+# it back to the window, or it reaches whatever holds it meanwhile.
+expect_poll "the Dev Tools window holds the keyboard again after the run" true ipc smoke windowFocused window vgs.devtools
 type_keys -k Escape || fail "Escape after the Dev Tools keyboard path failed"
 expect "Escape closes the Dev Tools window after the keyboard path" hidden window_shown
 expect_poll "the Dev Tools window is gone after Escape-equivalent hide" hidden window_shown
