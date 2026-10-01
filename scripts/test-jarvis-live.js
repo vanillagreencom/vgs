@@ -436,7 +436,7 @@ world(async () => {
         conn.play("speech-after");
         conn.play("reply-old");
         await until(() => w.state.speech.reply.kind === "waiting", "the reply waits behind the held key");
-        assert.equal(w.state.capture.kind, "open", "a reply never cuts off held talk without echo cancellation");
+        assert.equal(w.state.capture.kind, "open", "half duplex: a reply never cuts off held talk");
         w.dispatch("interrupt");
         assert.equal(w.state.speech.reply.kind, "none");
         w.dispatch("talk-up");
