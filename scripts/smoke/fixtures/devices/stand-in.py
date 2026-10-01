@@ -10,14 +10,16 @@ from files a row plants under STATE.
 
 - Every call appends its argv as one JSON list line to
   STATE/calls/NAME.calls. A bluetoothctl transcript also appends each
-  stdin line it reads, as {"stdin": LINE}.
+  stdin line it reads, as {"stdin": LINE}, and {"eof": true} when its
+  stdin ends past the last step.
 - rfkill keeps STATE/rfkill.json, {"devices": [{"id", "type", "device",
   "soft", "hard"}]} with "blocked" or "unblocked", as its only state: it
   lists it as util-linux's rfkill does and block, unblock and toggle
   change the soft state of the devices that one or more IDs, TYPEs,
   aliases or `all` select. A hard block is never changed, as on real
   hardware.
-- bluetoothctl with no argument replays STATE/replies/bluetoothctl
+- bluetoothctl with no argument, or with exactly `--agent CAPABILITY` as
+  the core's Bluetooth agent starts it, replays STATE/replies/bluetoothctl
   .transcript.json, a list of {"out": TEXT}, printed at once, and
   {"in": LINE}, which reads one stdin line and ends with status 1 when it
   differs; past the last step it records stdin until EOF.
@@ -132,6 +134,7 @@ def transcript(state, path):
             refuse("bluetoothctl", "transcript=diverged want=" + json.dumps(step["in"]) + " got=" + json.dumps(line))
     for line in sys.stdin:
         append(calls, {"stdin": line.rstrip("\n")})
+    append(calls, {"eof": True})
 
 
 def replies(name, state, argv):
@@ -158,7 +161,8 @@ def main():
         rfkill(state, argv)
         return
     script = os.path.join(state, "replies", "bluetoothctl.transcript.json")
-    if name == "bluetoothctl" and not argv and os.path.exists(script):
+    agent = len(argv) == 2 and argv[0] == "--agent"
+    if name == "bluetoothctl" and (not argv or agent) and os.path.exists(script):
         transcript(state, script)
         return
     replies(name, state, argv)

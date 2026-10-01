@@ -77,8 +77,9 @@ PY
 device_reply_clear() { # NAME
   rm -f -- "$devices_dir/replies/$1.json"
 }
-# device_transcript STEPS_JSON: the session bluetoothctl with no argument
-# replays, steps as stand-in.py reads them; `-` removes it.
+# device_transcript STEPS_JSON: the session bluetoothctl with no argument,
+# or with `--agent CAPABILITY`, replays, steps as stand-in.py reads them;
+# `-` removes it.
 device_transcript() { # STEPS_JSON|-
   if [[ $1 == - ]]; then rm -f -- "$devices_dir/replies/bluetoothctl.transcript.json"; return; fi
   printf '%s\n' "$1" >"$devices_dir/replies/bluetoothctl.transcript.json"

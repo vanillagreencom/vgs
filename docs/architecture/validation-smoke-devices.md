@@ -22,7 +22,7 @@ The fakes a System row reads instead of the host's audio, radios, network, VPN, 
 
 - `rfkill`, `tailscale`, `ddcutil`, `brightnessctl`, `nmcli`, `pactl`, `bluetoothctl`, `systemctl`, `udevadm`, `modprobe`, `xdg-open` and `gum` stand in the shell's own PATH directory for the whole run, written before the first shell starts. Each runs `fixtures/devices/stand-in.py`, which records the argv and never runs the host's command.
 - `rfkill` keeps its radios in the sandbox's `rfkill.json`, a Bluetooth and a Wi-Fi radio unblocked at start. Block, unblock and toggle accept one or more ids, types, aliases or `all`, and change the soft state alone; a hard block never changes.
-- `bluetoothctl` with no argument replays the transcript `device_transcript` plants and ends with status 1 on a line it does not expect.
+- `bluetoothctl` with no argument, or with exactly `--agent <capability>` as the core's Bluetooth agent starts it, replays the transcript `device_transcript` plants and ends with status 1 on a line it does not expect. Past the transcript's last step it records each stdin line, then `{"eof": true}` when its stdin ends.
 - Every other call answers from a reply `device_reply` planted for its exact argv. A later reply for the same argv replaces the earlier reply. `device_reply_clear NAME` removes one stand-in's planted replies. A call no reply answers prints `stand-in: name=<name> reply=none argv=<json>` on stderr and exits 1.
 - A row that needs a stand-in to answer its own way stands over it with `sentinel_stand_over` and puts it back with `sentinel_restore`, as `scripts/smoke/rows/agent-warden.sh` does for `systemctl`. `scripts/smoke/rows/auth-sentinel.sh` reads that list empty at the end.
 

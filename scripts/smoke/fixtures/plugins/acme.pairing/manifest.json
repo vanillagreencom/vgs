@@ -1,0 +1,2 @@
+{ "schemaVersion": 1, "id": "acme.pairing", "name": "Pairing", "version": "0.1.0", "author": "acme", "description": "smoke fixture holding the Bluetooth pairing agent",
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }, "capabilities": ["bluetoothAgent", "ipc"] }
