@@ -47,7 +47,7 @@ Everything outside the core is a plugin, [D003](../decisions/D003-everything-is-
 
 ## Decisions
 
-One line per decision record is in [decisions.md](decisions.md); the full log is [INDEX.md](../decisions/INDEX.md).
+One line per decision record is in [decisions.md](decisions.md) and its linked topic lists; the full log is [INDEX.md](../decisions/INDEX.md).
 
 ## Topics
 

@@ -89,7 +89,8 @@ const CASES = [
     ["cancelling a turn", up({ turn: { kind: "cancelling", gen: 1, op: 4, deadline: 70 } }), ["working", "loader", "info", "Jarvis is thinking" + MUTE]],
     ["speaking", up({ playback: { kind: "playing", gen: 1, op: 5, source: 4, interruptible: true, admission: { kind: "started" } } }),
         ["working", "loader", "info", "Jarvis is speaking" + MUTE]],
-    ["confirming", up({ approval: { kind: "held", gen: 1, op: 6, id: "a1", digest: "d1", deadline: 90, shownAt: null } }),
+    ["confirming", up({ approval: { kind: "held", gen: 1, op: 6, id: "a1", digest: "d1", deadline: 90, shownAt: null,
+        physical: true, text: "Fixture action", tool: "fixture", timeoutMs: 1000, cancellable: false, brain: 4 } }),
         ["working", "loader", "info", "Jarvis is waiting for your confirmation" + MUTE]],
     ["acting", up({ action: { kind: "running", gen: 1, op: 7, tool: "shell", brain: 4, limit: { kind: "expired" }, cancellation: { kind: "available" } } }),
         ["working", "loader", "info", "Jarvis is running a task" + MUTE]]
