@@ -21,6 +21,8 @@ restore_windows_lua() { cp -- "$sandbox/hyprland-before-windows.lua" "$windows_l
 # The titles of the shell process's clients, sorted.
 shell_clients() { hypr -j clients | py_reply 'import json,sys; print(json.dumps(sorted(c["title"] for c in json.load(sys.stdin) if c["pid"] == int(sys.argv[1]))))' "$shell_qs_pid"; }
 settings_search() { ipc smoke readDescendant window vgs.settings TextField text; }
+# true while an item of the Settings window holds Qt's active focus.
+settings_keyboard() { ipc smoke activeFocusIn window vgs.settings; }
 
 expect "enabling the Settings plugin for the window rows is allowed" ok ipc shell setPluginEnabled vgs.settings true
 expect_poll "the Settings service is built for the window rows" True record_exists vgs.settings
@@ -42,16 +44,16 @@ expect "the nested instance reloads hyprland.lua after the rule control" ok hypr
 # toplevel helper. The pointer rests off every window, since under
 # Hyprland's default follow_mouse a float toggle that tiles Settings under
 # the pointer hands it the keyboard, so only the focus dispatch returns it.
-# The shell must read the keyboard leaving Settings before that return:
-# Qt's Wayland client can drop a return that lands in one batch with the
-# reply to the leave's sync, leaving Settings with the keyboard and no
-# focused item (docs/architecture/runtime-qml.md).
+# Before each return of the keyboard to Settings the shell must read the
+# keyboard leaving it: Qt's Wayland client can drop a return that lands in
+# one batch with the reply to the leave's sync, leaving Settings with the
+# keyboard and no focused item (docs/architecture/runtime-qml.md).
 expect "the IPC opens the Settings window for the keyboard rows" ok ipc shell summon window vgs.settings '{}'
 expect_poll "the Settings window is focused for the keyboard rows" "[\"$shell_class\", \"Settings\"]" active_window
 rest_pointer || fail "moving the pointer off the Settings window failed"
 if open_other "$sandbox/toplevel-windows.log"; then
   expect_poll "the new window takes the focus" '["smoke.other", "Other window"]' active_window
-  expect_poll "the shell reads the Settings window without the keyboard" false ipc smoke activeFocusIn window vgs.settings
+  expect_poll "the shell reads the Settings window without the keyboard" false settings_keyboard
   leaves_before="$(other_events '^keyboard leave$')"
   if address="$(window_address Settings)" && [[ $address == 0x* ]]; then
     expect "a float toggle aimed at the window answers ok" ok hypr dispatch "hl.dsp.window.float({ action = \"toggle\", window = \"address:$address\" })"
@@ -67,7 +69,7 @@ if open_other "$sandbox/toplevel-windows.log"; then
     # focused, typed letters reach its search field and the helper gets no
     # key; once the helper is focused, the next letter reaches the helper
     # and the field keeps its text.
-    expect_poll "the Settings search field takes the keyboard" true ipc smoke activeFocusIn window vgs.settings
+    expect_poll "the Settings search field takes the keyboard" true settings_keyboard
     keys_before="$(other_events '^key ')"
     type_keys zz || fail "typing into the Settings window failed"
     expect_poll "keys typed with Settings focused reach its search field" '"zz"' settings_search
@@ -78,8 +80,10 @@ if open_other "$sandbox/toplevel-windows.log"; then
     type_keys q || fail "typing into the other window failed"
     expect_poll "a key typed once the other window is focused reaches it" "$((keys_before + 2))" other_events '^key '
     expect "the Settings search field kept its text" '"zz"' settings_search
+    expect_poll "the shell reads the Settings window without the keyboard again" false settings_keyboard
     expect "a focus dispatch gives Settings the keyboard back" ok hypr dispatch "hl.dsp.focus({ window = \"address:$address\" })"
     expect_poll "Settings is focused again" "[\"$shell_class\", \"Settings\"]" active_window
+    expect_poll "the Settings search field takes the keyboard again" true settings_keyboard
     type_keys -k BackSpace -k BackSpace || fail "clearing the Settings search failed"
     expect_poll "the Settings search field is empty again" '""' settings_search
 
