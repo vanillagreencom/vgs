@@ -32,7 +32,7 @@ A manifest's `requirements` key, and the core's own `config/requirements.json`, 
 - `Registry.missingCommands` holds each listed plugin's missing commands and is replaced only when a scan finds a different set, so an installed or removed command rebuilds nothing.
 - `PluginLogic.requirementRows` gives each requirement its `state`: `missing` when the last scan did not find its command, else `present`. The manager rows ([manager.md](manager.md)) and each `listPlugins` plugin row carry these rows as `requirements`.
 - `vgsh plugin list` prints one line per missing requirement: `missing <id> <command> (<package>)`, with ` optional` after an optional one. The package is the one `PackageManagers.packageFor` picks from `vgsh pkg detect`: the primary's, then an overlay's, then a source's. With no present manager mapped the line names the command alone. Detection runs once per list, and only when a missing requirement names a package; a detection that fails refuses the list with `detect=failed exit=<status>`.
-- `config/requirements.json` holds the core's own commands: `node`, `python3`, `git`, `flock` and `setpriv`, and, optional, the floating TUIs' `xdg-terminal-exec`, `gum` and `fzf`. Each package name was checked against its distribution's package index.
+- `config/requirements.json` holds the core's own commands: `node`, `python3`, `git`, `flock` and `setpriv`, and, optional, the floating TUIs' `xdg-terminal-exec`, `gum` and `fzf` and the Bluetooth agent's `bluetoothctl`. Each package name was checked against its distribution's package index.
 
 ## Command line
 

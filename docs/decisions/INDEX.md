@@ -84,6 +84,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D080 | VGS-694 | Hyprland options and monitor rules are rendered from data and written only when set | No plugin writes Hyprland configuration; an untouched setting leaves Hyprland and the user's lines alone | A setting needs an option outside the table, or Hyprland lists devices or option sources itself | Active | [Full](D080-hyprland-options-rendered-from-data.md) |
 | 2026-09-30 | D081 | VGS-697 | Privileged one-time setup is a closed core table of system steps, `vgsh system`, run in the floating TUI | One reviewed script holds every root command; probes read real access | A step needs more than sudo, or a distribution ships the grants | Active | [Full](D081-system-steps-closed-core-table.md) |
 | 2026-10-01 | D083 | VGS-705 | Brightness uses a one-shot plugin helper over hidraw, DDC and backlight, with a uaccess-only rule | QML cannot ioctl hidraw; measured p95 36.6 ms needs no resident process | Release-to-write p95 above 150 ms, hidraw fails on an Apple model, or no i2c uaccess rule | Active | [Full](D083-brightness-helper-and-uaccess-rule.md) |
+| 2026-10-01 | D085 | VGS-712 | The Bluetooth agent is a core-lent exclusive capability over `bluetoothctl`, held per lease | Quickshell has no agent; BlueZ's default stack restores the earlier agent on release | Quickshell ships an agent type, or BlueZ lets a client read the default | Active | [Full](D085-bluetooth-agent-core-lent-over-bluetoothctl.md) |
 
 ---
 

@@ -5,6 +5,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [plugins.md](plugins.md): read before writing a plugin or a host.
 - [surfaces.md](surfaces.md): read before touching the summon host, an application window, a popup a summon builds, or a plugin's choice between a window and an overlay.
 - [capabilities.md](capabilities.md): read before touching a capability's provider, its lending record or its release.
+- [bluetooth-agent.md](bluetooth-agent.md): read before touching the `bluetoothAgent` capability, its bluetoothctl child, its transcript test or its smoke row.
 - [appearance.md](appearance.md): read before writing a plugin that owns its look, or touching `Theme.appearance` or its judge.
 - [layers.md](layers.md): read before drawing a passive surface that takes no keyboard, or touching the `layers` capability or its host.
 - [hyprland.md](hyprland.md): read before touching the Hyprland layer, a manifest's `hyprland` key, a `plugins[].keys` entry or `vgsh hypr`.
