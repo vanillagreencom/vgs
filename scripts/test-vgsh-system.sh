@@ -280,6 +280,18 @@ printf '%s' "$user" >"$tmp/operator"
 check "the caller as operator reads ready" test "$(step_state tailscale-operator)" == "ready granted"
 touch "$tmp/tailscaled-down"
 check "an unreachable tailscaled reads unknown" test "$(step_state tailscale-operator)" == "unknown tailscaled-unreachable"
+# A login name the operator cannot take reads that step unknown, the rest
+# as before; id answers -un with it while $tmp/odd-user exists.
+id_real="$(readlink -- "$bin/id")"
+rm -f -- "${bin:?}/id"
+printf '#!/bin/sh\nif [ -e %q ] && [ "$1" = -un ]; then echo john.doe; exit 0; fi\nexec %q "$@"\n' "$tmp/odd-user" "$id_real" >"$bin/id"
+chmod +x "$bin/id"
+fresh; touch "$tmp/odd-user"
+run "status with an unsupported login name" 0 "" status --json
+check "an unsupported login name reads only the operator unknown" out_is "$(state_json needed hidraw-denied needed module-not-loaded needed inactive absent unit-missing unknown user-unsupported)"
+run "apply refuses the operator for an unsupported login name" 1 "vgs-system: refused: state=unknown reason=user-unsupported step=tailscale-operator" apply tailscale-operator
+check "the refused operator runs no sudo" no_sudo
+rm -f -- "${tmp:?}/odd-user"
 
 # apply asks before anything: with no terminal, declined or cancelled,
 # nothing is written and no sudo runs.
@@ -388,7 +400,8 @@ check "i2c-dev records, then loads the module" test "$(sudo_calls)" == "$(sessio
   "-- $(p install) -d -m 0755 -o root -g root -- $records" \
   "-- $(p tee) -- $records/.i2c-dev" \
   "-- $(p mv) -fT -- $records/.i2c-dev $records/i2c-dev" \
-  "-- $(p modprobe) i2c-dev")"
+  "-- $(p modprobe) i2c-dev" \
+  "-- $(p udevadm) settle")"
 check "the i2c-dev record names the boot" test "$(cat "$records/i2c-dev")" == "$(printf 'uid=%s\nloaded=1\nboot=%s' "$uid" "$boot_a")"
 check "i2c-dev reports ready" last_out_is "ok system=i2c-dev state=ready"
 rm -f -- "$tmp/sudo.log"
@@ -428,6 +441,20 @@ check "undo never disables a unit VGS did not enable" test "$(sudo_calls)" == "$
   "-- $(p systemctl) stop bluetooth.service" \
   "-- $(p rm) -f -- $records/service-bluetooth")"
 check "the unit stays enabled" test -e "$tmp/units/bluetooth.service.enabled"
+fresh
+run_tty "apply a service VGS will enable" 0 apply service-bluetooth
+rm -f -- "${tmp:?}/units/bluetooth.service.active"
+run_tty "apply the same service again once it stopped" 0 apply service-bluetooth
+check "a second apply keeps that VGS enabled the unit" test "$(cat "$records/service-bluetooth")" == "$(printf 'uid=%s\nenabled=1\nstarted=1\nboot=%s' "$uid" "$boot_a")"
+rm -f -- "${tmp:?}/sudo.log"
+run_tty "undo after the second apply" 0 undo service-bluetooth
+check "undo still disables the unit VGS enabled first" grep -qxF -- "-- $(p systemctl) disable bluetooth.service" "$tmp/sudo.log"
+fresh
+run_tty "apply before another uid's record" 0 apply service-bluetooth
+sed -i "s/^uid=$uid\$/uid=4242/" "$records/service-bluetooth"; rm -f -- "${tmp:?}/units/bluetooth.service.active" "${tmp:?}/sudo.log"
+run "apply refuses over another uid's record" 1 "vgs-system: refused: record=other-uid uid=4242 path=$records/service-bluetooth" apply service-bluetooth
+check "the other uid's record stays" grep -qx "uid=4242" "$records/service-bluetooth"
+check "a refused record asks nothing and runs no sudo" no_sudo
 fresh; touch "$tmp/units/bluetooth.service.enabled"
 run_tty "apply before a reboot" 0 apply service-bluetooth
 printf '%s\n' "$boot_b" >"$root/proc/sys/kernel/random/boot_id"; rm -f -- "$tmp/sudo.log"

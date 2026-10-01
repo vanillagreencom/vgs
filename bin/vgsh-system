@@ -13,11 +13,14 @@
 #                        /etc/udev/rules.d/60-vgs-apple-displays.rules, then
 #                        `udevadm control --reload` and
 #                        `udevadm trigger --subsystem-match=hidraw --action=change --settle`
-#   i2c-dev              `modprobe i2c-dev`; the ddcutil package's own udev rule and
-#                        modules-load.d file grant the access and load it at boot
+#   i2c-dev              `modprobe i2c-dev`, then `udevadm settle`; the ddcutil package's
+#                        own udev rule and modules-load.d file grant the access and
+#                        load it at boot
 #   service-bluetooth    `systemctl enable --now bluetooth.service`
 #   service-tailscaled   `systemctl enable --now tailscaled.service`
-#   tailscale-operator   `tailscale set --operator=<the caller's own login name>`
+#   tailscale-operator   `tailscale set --operator=<the caller's own login name>`; a
+#                        login name outside `[a-z_][a-z0-9_-]*$?` reads this step
+#                        unknown, reason user-unsupported
 #
 # Each step's state is one of:
 #
@@ -286,6 +289,8 @@ read_operator() {
 
 probe_tailscale_operator() {
   command -v tailscale >/dev/null || { set_probe absent tailscale-missing; return; }
+  # The name reaches tailscale's argv and the NixOS snippet only from here.
+  [[ $user =~ $name_pattern ]] || { set_probe unknown user-unsupported; return; }
   read_operator || { set_probe unknown tailscaled-unreachable; return; }
   if [[ $operator == "$user" ]]; then set_probe ready granted
   elif [[ -z $operator ]]; then set_probe needed operator-unset
@@ -458,17 +463,25 @@ apply_apple_displays() {
 }
 
 apply_i2c_dev() {
-  local modprobe
+  local modprobe udevadm
+  read_record i2c-dev || true
   program modprobe modprobe
+  program udevadm udevadm
   record_put i2c-dev "uid=$uid"$'\n'"loaded=1"$'\n'"boot=$boot"
   cmd "$modprobe" i2c-dev
+  # The package's uaccess rule reaches the new nodes through udev's queue,
+  # after modprobe returns; the probe after the commands must read it.
+  cmd "$udevadm" settle
 }
 
 apply_service() { # STEP
-  local unit systemctl text="uid=$uid"
+  local unit systemctl text="uid=$uid" enabled=""
   unit_of "$1"
   program systemctl systemctl
-  systemctl is-enabled --quiet "$unit" || text+=$'\n'"enabled=1"
+  # A unit VGS enabled before stays VGS's to disable after it stopped.
+  if read_record "$1"; then enabled="${record[enabled]-}"; fi
+  systemctl is-enabled --quiet "$unit" || enabled=1
+  [[ -z $enabled ]] || text+=$'\n'"enabled=1"
   text+=$'\n'"started=1"$'\n'"boot=$boot"
   record_put "$1" "$text"
   cmd "$systemctl" enable --now "$unit"
@@ -476,6 +489,7 @@ apply_service() { # STEP
 
 apply_tailscale_operator() {
   local tailscale
+  read_record tailscale-operator || true
   program tailscale tailscale
   record_put tailscale-operator "uid=$uid"$'\n'"operator=$user"$'\n'"previous="
   cmd "$tailscale" set "--operator=$user"
@@ -665,7 +679,6 @@ main() {
   ((EUID != 0)) || refuse 1 "caller=root" "run vgsh system as your own user; sudo asks for the password"
   uid="$(id -u)" || refuse 1 "user=unknown"
   user="$(id -un)" || refuse 1 "user=unknown"
-  [[ $user =~ $name_pattern ]] || refuse 1 "user=unsupported name=$(printf '%q' "$user")"
   declare -gA record=()
   "verb_$verb" "$@"
 }

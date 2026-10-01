@@ -19,10 +19,11 @@
 # sentinel_stand_over, puts the sentinel back with sentinel_restore, and
 # reads the state still needed, since the core probes on its own only when
 # a run ends; the run's end then flips the state to ready, the action is no
-# longer offered and the manager refuses it. The refusals are the row's
-# controls: a disabled fixture's act and a ready step's act are refused and
-# start no terminal, and the reading before the run's end shows the flip
-# is the re-probe's. rows/auth-sentinel.sh, the last row, reads the log
+# longer offered and the manager refuses it. With the node closed again,
+# the step reads ready until a plugin scan ends, then needed. The refusals
+# are the row's controls: a disabled fixture's act and a ready step's act
+# are refused and start no terminal, and the readings before the run's end
+# and before the scan show each flip is that re-probe's. rows/auth-sentinel.sh, the last row, reads the log
 # empty. Every reading is expect_poll's: 25 reads 0.2 s apart.
 set -euo pipefail
 if ! command -v unshare >/dev/null 2>&1 || ! unshare -r true 2>/dev/null; then
@@ -118,6 +119,10 @@ expect_poll "a ready step offers no Allow" '[["apple", "Allow", false]]' offered
 forget_record
 expect "the manager refuses Allow once the step is ready" "refused: action=apple reason=not-offered" settings_act acme.system apple
 expect "the refused ready act started no terminal" absent recorded
+chmod 0000 "$system_hidraw"
+expect "the core reads the step ready until a scan ends" "ready granted" system_core
+expect "a rescan with the node closed again answers ok" ok ipc shell rescanPlugins
+expect_poll "a plugin scan's end probes again and the step reads needed" "needed hidraw-denied" system_core
 expect "disabling the system fixture is allowed" ok ipc shell setPluginEnabled acme.system false
 expect_poll "no plugin holds system once the fixture is disabled" '[]' system_holders
 expect "the manager refuses Allow while the fixture is disabled" "refused: action=apple reason=disabled" settings_act acme.system apple

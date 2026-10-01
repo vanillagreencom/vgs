@@ -6,7 +6,8 @@ import "PluginLogic.js" as Logic
 // Owns the `system` capability (D081): the states of the core's system
 // steps and the one `bin/vgsh-system status --json` that reads them. It
 // probes while a plugin holds the capability, once when the first holder
-// arrives and again after every `core/system` run the manager opened ends;
+// arrives, again after every `core/system` run the manager opened ends and
+// after every plugin scan, which ends each requirement install;
 // a request while a probe runs starts one more after it, never two at a
 // time. PluginLogic.systemReport judges each report, and a run that gives
 // none reads every step unknown. `revision` rises when a report changes a
@@ -28,6 +29,13 @@ Scope {
     readonly property string coreBin: Quickshell.shellDir + "/../bin"
 
     onActiveChanged: if (active) probe()
+
+    // A requirement install ends with a scan, and a unit or command it
+    // installed changes a step from absent.
+    Connections {
+        target: Registry
+        function onScanFinished() { if (root.active) root.probe(); }
+    }
 
     // `state`: the calling plugin's declared steps, each { state, reason },
     // one frozen copy per read; `revision`: the count of changed reports.
