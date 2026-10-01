@@ -50,6 +50,11 @@ function isPlainObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// Whether P is a position, `{ x, y }` whole numbers.
+function isPosition(p) {
+    return isPlainObject(p) && Object.keys(p).length === 2 && Number.isInteger(p.x) && Number.isInteger(p.y);
+}
+
 // VALUE as a refusal shows it: JSON, cut to 60 characters.
 function shown(value) {
     var text = JSON.stringify(value);
@@ -162,8 +167,7 @@ function judgeRule(raw, i) {
         return { ok: false, error: at + "mode=" + shown(raw.mode) + " want=WxH@R" };
     rule.mode = raw.mode;
     var p = raw.position;
-    if (!isPlainObject(p) || Object.keys(p).length !== 2 || !Number.isInteger(p.x) || !Number.isInteger(p.y))
-        return { ok: false, error: at + "position=" + shown(p) + " want={x,y}-whole-numbers" };
+    if (!isPosition(p)) return { ok: false, error: at + "position=" + shown(p) + " want={x,y}-whole-numbers" };
     rule.position = { x: p.x, y: p.y };
     if (typeof raw.scale !== "number" || !isFinite(raw.scale) || raw.scale < SCALE_MIN)
         return { ok: false, error: at + "scale=" + shown(raw.scale) + " want=number>=" + SCALE_MIN };
@@ -355,4 +359,206 @@ function overridden(rules, outputs) {
         if (differs) out.push(rule.output);
     });
     return out.sort();
+}
+
+// The preview: rules applied through `hyprctl eval` under a record and a
+// detached guard that restores the state captured before them
+// (docs/architecture/hyprland-monitors-preview.md). bin/lib/monitor-preview.js
+// runs the steps; these decide each one.
+
+var PREVIEW_VERSION = 1;
+var PREVIEW_SECONDS_MIN = 2;
+var PREVIEW_SECONDS_MAX = 60;
+// The fields a capture cannot read back, so no restore could put them back.
+var PREVIEW_UNRESTORED = ["bitdepth", "cm"];
+var RECORD_KEYS = ["version", "token", "deadline", "signature", "captured"];
+var CAPTURE_KEYS = ["output", "disabled", "mode", "position", "scale", "transform", "mirror", "vrr"];
+var TOKEN = /^[0-9a-f]{32}$/;
+// HYPRLAND_INSTANCE_SIGNATURE as Hyprland makes it: the commit, the start
+// time and a random number joined by `_`. hyprctl --instance reads a value
+// of digits alone as an instance index, so none is one.
+var SIGNATURE = /^(?![0-9]+$)[A-Za-z0-9_]{1,128}$/;
+var PREVIEW_REPLY = /^ok token=([0-9a-f]{32}) deadline=([1-9][0-9]*)$/;
+
+// SECONDS as a preview's length, or the refusal line.
+function previewSecondsError(seconds) {
+    if (Number.isInteger(seconds) && seconds >= PREVIEW_SECONDS_MIN && seconds <= PREVIEW_SECONDS_MAX) return "";
+    return "refused: seconds=" + shown(seconds) + " want=" + PREVIEW_SECONDS_MIN + ".." + PREVIEW_SECONDS_MAX;
+}
+
+// What LISTED, one output parseOutputs read, shows now, kept under rule
+// selector OUTPUT: off, or its mode, position, scale, transform and mirror;
+// `vrr` whether adaptive sync runs, read only when VRR_SET, since monitors -j
+// prints no rule's setting. Null for an enabled output with no mode, which no
+// rule could give back.
+function captureOf(output, listed, vrrSet) {
+    if (listed.disabled) return { output: output, disabled: true };
+    var mode = listed.width + "x" + listed.height + "@" + listed.refreshRate.toFixed(3);
+    if (!MODE.test(mode)) return null;
+    return {
+        output: output, disabled: false, mode: mode, position: { x: listed.x, y: listed.y }, scale: listed.scale,
+        transform: listed.transform, mirror: listed.mirrorOf, vrr: vrrSet ? listed.vrr : null
+    };
+}
+
+// A preview of RULES, a list a plugin hands monitors.preview, judged as
+// write judges it against OUTPUTS and SAVED: { ok: true, rules, applied,
+// captured } or { ok: false, error }. `rules` is every judged rule, the list
+// Keep saves; `applied` the ones naming a listed output, which the preview
+// applies; `captured` each listed output's state before them, one entry per
+// output, under the first rule naming it. A rule for an output Hyprland does
+// not list is kept and not applied. A rule that sets a field no capture
+// reads back is refused.
+function previewPlan(rules, outputs, saved) {
+    var judged = judge({ version: VERSION, rules: rules }, outputs, saved);
+    if (!judged.ok) return judged;
+    var applied = [];
+    var captured = [];
+    var seen = [];
+    for (var i = 0; i < judged.rules.length; i++) {
+        var rule = judged.rules[i];
+        for (var u = 0; u < PREVIEW_UNRESTORED.length; u++)
+            if (hasOwn(rule, PREVIEW_UNRESTORED[u]))
+                return { ok: false, error: "refused: rule=" + i + " " + PREVIEW_UNRESTORED[u] + "=" + shown(rule[PREVIEW_UNRESTORED[u]]) + " want=absent-in-preview" };
+        var index = resolve(outputs, rule.output);
+        if (index === -1) continue;
+        applied.push(rule);
+        if (seen.indexOf(index) !== -1) continue;
+        seen.push(index);
+        var entry = captureOf(rule.output, outputs[index], rule.vrr !== undefined);
+        if (entry === null) return { ok: false, error: "refused: capture=unsized output=" + shown(rule.output) };
+        captured.push(entry);
+    }
+    return { ok: true, rules: judged.rules, applied: applied, captured: captured };
+}
+
+// One captured entry judged: "" or the refusal's text after
+// `record.captured=<i> `.
+function captureError(entry) {
+    if (!isPlainObject(entry)) return "entry=" + shown(entry) + " want=object";
+    var keys = Object.keys(entry);
+    for (var k = 0; k < keys.length; k++)
+        if (CAPTURE_KEYS.indexOf(keys[k]) === -1) return "key=" + shown(keys[k]) + " want=" + CAPTURE_KEYS.join(",");
+    if (typeof entry.output !== "string" || !IDENTIFIER.test(entry.output)) return "output=" + shown(entry.output) + " want=identifier";
+    if (typeof entry.disabled !== "boolean") return "disabled=" + shown(entry.disabled) + " want=boolean";
+    if (entry.disabled) return keys.length === 2 ? "" : "keys=" + shown(keys) + " want=output,disabled";
+    if (keys.length !== CAPTURE_KEYS.length) return "keys=" + shown(keys) + " want=" + CAPTURE_KEYS.join(",");
+    if (typeof entry.mode !== "string" || !MODE.test(entry.mode)) return "mode=" + shown(entry.mode) + " want=WxH@R";
+    var p = entry.position;
+    if (!isPosition(p)) return "position=" + shown(p) + " want={x,y}-whole-numbers";
+    if (typeof entry.scale !== "number" || !isFinite(entry.scale) || entry.scale < SCALE_MIN) return "scale=" + shown(entry.scale) + " want=number>=" + SCALE_MIN;
+    if (!Number.isInteger(entry.transform) || entry.transform < 0 || entry.transform > 7) return "transform=" + shown(entry.transform) + " want=0..7";
+    if (entry.mirror !== null && (typeof entry.mirror !== "string" || !IDENTIFIER.test(entry.mirror))) return "mirror=" + shown(entry.mirror) + " want=identifier|null";
+    if (entry.vrr !== null && typeof entry.vrr !== "boolean") return "vrr=" + shown(entry.vrr) + " want=boolean|null";
+    return "";
+}
+
+// The preview record's text, judged: { ok: true, record } or { ok: false,
+// error } naming the first fault.
+function readRecord(text) {
+    var record;
+    try {
+        record = JSON.parse(text);
+    } catch (e) {
+        return { ok: false, error: "refused: record=unparsed " + String(e.message || e) };
+    }
+    if (!isPlainObject(record)) return { ok: false, error: "refused: record=" + shown(record) + " want=object" };
+    var keys = Object.keys(record);
+    if (keys.length !== RECORD_KEYS.length || RECORD_KEYS.some(function (key) { return !hasOwn(record, key); }))
+        return { ok: false, error: "refused: record.keys=" + shown(keys) + " want=" + RECORD_KEYS.join(",") };
+    if (record.version !== PREVIEW_VERSION) return { ok: false, error: "refused: record.version=" + shown(record.version) + " want=" + PREVIEW_VERSION };
+    if (typeof record.token !== "string" || !TOKEN.test(record.token)) return { ok: false, error: "refused: record.token=" + shown(record.token) + " want=32-hex" };
+    if (!Number.isInteger(record.deadline) || record.deadline <= 0) return { ok: false, error: "refused: record.deadline=" + shown(record.deadline) + " want=epoch-seconds" };
+    if (typeof record.signature !== "string" || !SIGNATURE.test(record.signature)) return { ok: false, error: "refused: record.signature=" + shown(record.signature) + " want=signature" };
+    if (!Array.isArray(record.captured)) return { ok: false, error: "refused: record.captured=" + shown(record.captured) + " want=list" };
+    for (var i = 0; i < record.captured.length; i++) {
+        var fault = captureError(record.captured[i]);
+        if (fault !== "") return { ok: false, error: "refused: record.captured=" + i + " " + fault };
+    }
+    return { ok: true, record: record };
+}
+
+function recordText(record) {
+    return JSON.stringify(record) + "\n";
+}
+
+// The restore of CAPTURED against OUTPUTS, the outputs listed now: { lines,
+// rules, skipped }. `lines` sets each listed output's captured state again,
+// one `hl.monitor` per entry with every captured field written, since an
+// `hl.monitor` for a name a rule holds keeps each field it leaves out:
+// `disabled` either way, a mirror of `""` for none, and `vrr` only where the
+// preview set it.
+// `rules` are the same states as judged rules, which `overridden` reads back.
+// `skipped` names each entry whose output is no longer listed.
+function restorePlan(captured, outputs) {
+    var out = { lines: [], rules: [], skipped: [] };
+    captured.forEach(function (entry) {
+        if (resolve(outputs, entry.output) === -1) {
+            out.skipped.push(entry.output);
+            return;
+        }
+        var head = "hl.monitor({ output = \"" + entry.output + "\", ";
+        if (entry.disabled) {
+            out.lines.push(head + "disabled = true })");
+            out.rules.push({ output: entry.output, disabled: true });
+            return;
+        }
+        var fields = ["disabled = false", "mode = \"" + entry.mode + "\"", "position = \"" + entry.position.x + "x" + entry.position.y + "\"",
+                      "scale = " + String(entry.scale), "transform = " + entry.transform, "mirror = \"" + (entry.mirror === null ? "" : entry.mirror) + "\""];
+        if (entry.vrr !== null) fields.push("vrr = " + (entry.vrr ? 1 : 0));
+        out.lines.push(head + fields.join(", ") + " })");
+        var rule = { output: entry.output, mode: entry.mode, position: entry.position, scale: entry.scale, transform: entry.transform };
+        if (entry.mirror !== null) rule.mirror = entry.mirror;
+        out.rules.push(rule);
+    });
+    return out;
+}
+
+// What the guard holding TOKEN does with RECORD, null when none, at NOW,
+// epoch seconds, as the guard of Hyprland instance SIGNATURE: `gone` when
+// the record is gone or another preview's, `foreign` when another
+// instance's, which it leaves, `wait` before the deadline, `restore` from
+// the deadline on.
+function guardAction(record, token, signature, now) {
+    if (record === null || record.token !== token) return "gone";
+    if (record.signature !== signature) return "foreign";
+    return now < record.deadline ? "wait" : "restore";
+}
+
+// What a shell start does with RECORD, null when none, as Hyprland instance
+// SIGNATURE, while a guard holds the guard lock (GUARDED) or none does:
+// `none`, `foreign` for another instance's record, which it leaves,
+// `guarded` when a guard runs, `arm` to start one.
+function adoptAction(record, signature, guarded) {
+    if (record === null) return "none";
+    if (record.signature !== signature) return "foreign";
+    return guarded ? "guarded" : "arm";
+}
+
+// Why confirm or revert of TOKEN by Hyprland instance SIGNATURE may not act
+// on RECORD, null when none: "" when it may, else the refusal line.
+function tokenError(record, token, signature) {
+    if (record === null) return "refused: preview=gone";
+    if (record.token !== token) return "refused: token=mismatch";
+    if (record.signature !== signature) return "refused: preview=foreign signature=" + record.signature;
+    return "";
+}
+
+// The helper's answer to a run that exited with CODE, STDOUT and STDERR as
+// the shell reads it: { ok: true, token, deadline } for a preview's `ok`
+// line, { ok: true } for another verb's, else { ok: false, error } with the
+// helper's refusal line, `vgsh: ` dropped, or `refused: monitor-guard=failed
+// status=<code>` for a run that printed none, such as one killed. CODE is -1
+// for a run that did not start.
+function guardReply(code, stdout, stderr) {
+    var first = stderr.split("\n")[0];
+    if (code !== 0) {
+        if (first.indexOf("vgsh: refused: ") === 0) return { ok: false, error: first.slice("vgsh: ".length) };
+        return { ok: false, error: "refused: monitor-guard=failed status=" + code };
+    }
+    var line = stdout.trim();
+    var m = PREVIEW_REPLY.exec(line);
+    if (m !== null) return { ok: true, token: m[1], deadline: Number(m[2]) };
+    if (line === "ok" || line.indexOf("ok ") === 0) return { ok: true };
+    return { ok: false, error: "refused: monitor-guard=unread reply=" + shown(line) };
 }

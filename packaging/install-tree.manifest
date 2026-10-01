@@ -5,6 +5,7 @@ f share/vgs/bin/lib/check-manifests.js
 f share/vgs/bin/lib/ipc-reply.sh
 f share/vgs/bin/lib/judge-files.js
 f share/vgs/bin/lib/logo.txt
+f share/vgs/bin/lib/monitor-preview.js
 f share/vgs/bin/lib/pkg-run.sh
 f share/vgs/bin/lib/qml-library.js
 f share/vgs/bin/lib/self.js
@@ -21,6 +22,7 @@ f share/vgs/bin/vgsh-browser-policy
 f share/vgs/bin/vgsh-hypr-judge
 f share/vgs/bin/vgsh-lock
 f share/vgs/bin/vgsh-migrate
+f share/vgs/bin/vgsh-monitor-guard
 f share/vgs/bin/vgsh-pkg
 f share/vgs/bin/vgsh-plugin-judge
 f share/vgs/bin/vgsh-scan

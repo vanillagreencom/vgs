@@ -18,13 +18,13 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const https = require("https");
-const { spawnSync } = require("child_process");
 const os = require("os");
 const path = require("path");
 const zlib = require("zlib");
 const { Writable } = require("stream");
 const { pipeline } = require("stream/promises");
 const { fileURLToPath } = require("url");
+const { lockFile } = require(path.join(__dirname, "judge-files.js"));
 
 // The most bytes one unpacked member may hold, v1's CATALOG_MAX_FILE_BYTES.
 const MEMBER_CEILING = 128 * 1024 * 1024;
@@ -59,24 +59,14 @@ function cacheDir(env = process.env) {
 
 // Take the download lock of cache DIR, `download.lock` there, without
 // waiting, and answer `{ release() }`, which frees it; the process's exit
-// frees it too. A lock held elsewhere is refused `busy`, one that cannot be
-// taken `lock-failed`. flock(1) locks the descriptor it inherits as its fd
-// 3, and a flock lock belongs to the open file description, which this
-// process keeps open after the child exits, so the lock stays held here.
+// frees it too (bin/lib/judge-files.js lockFile). A lock held elsewhere is
+// refused `busy`, one that cannot be taken `lock-failed`.
 function holdDownloadLock(dir) {
     const file = path.join(dir, LOCK_FILE);
-    let fd;
-    try {
-        fs.mkdirSync(dir, { recursive: true });
-        fd = fs.openSync(file, "a");
-    } catch (e) {
-        throw new AssetRefusal("fetch", "lock-failed", "path=" + file + " error=" + e.code);
-    }
-    const taken = spawnSync("flock", ["-n", "-E", "75", "3"], { stdio: ["ignore", "ignore", "ignore", fd] });
-    if (taken.status === 0) return { release() { fs.closeSync(fd); } };
-    fs.closeSync(fd);
-    if (taken.status === 75) throw new AssetRefusal("fetch", "busy", "path=" + file);
-    throw new AssetRefusal("fetch", "lock-failed", "path=" + file + " error=" + (taken.error ? taken.error.code : "status=" + taken.status));
+    const lock = lockFile(file, false);
+    if (lock.state === "held") return lock;
+    if (lock.state === "busy") throw new AssetRefusal("fetch", "busy", "path=" + file);
+    throw new AssetRefusal("fetch", "lock-failed", "path=" + file + " error=" + lock.error);
 }
 
 // The URL of PIN's archive, `<base>/<release>/<archive>`, BASE defaulting to

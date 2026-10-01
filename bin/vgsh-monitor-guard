@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# vgsh-monitor-guard: the monitor preview's transaction and the guard that
+# restores the outputs a preview changed once its deadline passes, whatever
+# became of the shell and the runner.
+#
+#   vgsh-monitor-guard preview <seconds> <request>
+#   vgsh-monitor-guard confirm <token>
+#   vgsh-monitor-guard revert <token>
+#   vgsh-monitor-guard adopt
+#   vgsh-monitor-guard <token>         the guard a preview or adopt starts
+#
+# bin/lib/monitor-preview.js runs each verb; its header holds the files, the
+# replies and the refusals, and docs/architecture/hyprland-monitors-preview.md
+# the contract. A preview starts the guard in a session of its own, so no
+# signal to the shell's or the runner's group reaches it.
+#
+# Before anything else this closes every descriptor above 2 it inherited
+# without close-on-exec, so neither the guard nor anything it starts holds
+# a file its caller had open, such as the runner's instance lock
+# (docs/decisions/D053-runner-holds-the-instance-lock.md). Its own script
+# descriptor is close-on-exec and stays until the exec.
+set -euo pipefail
+
+for entry in /proc/$$/fd/*; do
+  fd="${entry##*/}"
+  (( fd > 2 )) || continue
+  flags=""
+  if [[ -r /proc/$$/fdinfo/$fd ]]; then
+    while read -r key value; do
+      if [[ $key == flags: ]]; then flags="$value"; fi
+    done <"/proc/$$/fdinfo/$fd"
+  fi
+  # A descriptor gone since the listing, as the listing's own, has no flags.
+  [[ -n $flags ]] || continue
+  (( 8#$flags & 8#2000000 )) || exec {fd}>&-
+done
+
+lib="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/lib/monitor-preview.js"
+case "${1:-}" in
+  preview|confirm|revert|adopt) exec node "$lib" "$@" ;;
+  *) exec node "$lib" guard "$@" ;;
+esac

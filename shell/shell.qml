@@ -25,9 +25,11 @@ ShellRoot {
         return guarded ? reply() : guardRefusal;
     }
 
+    // The runner's shell hands a monitor preview record that outlived the
+    // shell before it to a guard (docs/architecture/hyprland-monitors-preview.md).
     Component.onCompleted: {
-        if (!guarded)
-            console.error("shell: refusing to draw; start it with `vgsh run`, VGSH_RUNNER_PID=" + JSON.stringify(Quickshell.env("VGSH_RUNNER_PID")) + " pid=" + Quickshell.processId);
+        if (guarded) Capabilities.monitors.adopt();
+        else console.error("shell: refusing to draw; start it with `vgsh run`, VGSH_RUNNER_PID=" + JSON.stringify(Quickshell.env("VGSH_RUNNER_PID")) + " pid=" + Quickshell.processId);
     }
 
     Variants {

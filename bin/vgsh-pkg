@@ -126,7 +126,7 @@ const path = require("path");
 
 const repo = path.join(__dirname, "..");
 const table = require(path.join(__dirname, "lib", "qml-library.js")).load(path.join(repo, "shell", "Core", "PackageManagers.js"));
-const { Refusal, refuse, main, onPath, readConfig, refuseOutsideTerminal, shellWord } = require(path.join(__dirname, "lib", "judge-files.js"));
+const { Refusal, refuse, main, onPath, readConfig, refuseOutsideTerminal, shellWord, lockFile } = require(path.join(__dirname, "lib", "judge-files.js"));
 
 const OS_RELEASE = ["/etc/os-release", "/usr/lib/os-release"];
 const RUNNER = path.join(__dirname, "lib", "pkg-run.sh");
@@ -157,22 +157,12 @@ function osRelease() {
     return "";
 }
 
-// Take the check lock on a descriptor this process keeps open: flock(1)
-// locks the open file it inherits, and the lock stays while this process
-// holds that file, so it outlives the flock process. The queries do not
-// inherit the descriptor, since node opens every file close-on-exec.
+// Take the check lock, held until this process exits; the queries do not
+// inherit it (bin/lib/judge-files.js lockFile).
 function holdCheckLock(dir) {
     const file = path.join(dir, "pkg-check.lock");
-    let fd;
-    try {
-        fs.mkdirSync(dir, { recursive: true });
-        fd = fs.openSync(file, "a");
-    } catch (e) {
-        refuse("lock=failed path=" + file + " error=" + e.code);
-    }
-    const r = childProcess.spawnSync("flock", ["3"], { stdio: ["ignore", "ignore", "ignore", fd] });
-    if (r.error !== undefined) refuse("lock=failed path=" + file + " error=" + r.error.code);
-    if (r.status !== 0) refuse("lock=failed path=" + file + " error=exit-" + r.status);
+    const lock = lockFile(file, true);
+    if (lock.state !== "held") refuse("lock=failed path=" + file + " error=" + lock.error);
 }
 
 // Whether checkupdates may skip its sync: VGS synced its copy of the
