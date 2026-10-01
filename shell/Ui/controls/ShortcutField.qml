@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Templates as T
 import qs.Commons
 import qs.Ui
+import "../foundation/KeyNavLogic.js" as KeyNavLogic
 
 // A key combo entry the user presses instead of typing. The box shows the
 // key in effect as key caps; a click, Enter, Return or Space starts a
@@ -21,11 +22,14 @@ import qs.Ui
 // only types. The keyboard
 // button swaps the box for a text field that takes the combo as `MOD+KEY`,
 // for a key the capture cannot name, the key in effect selected so typing
-// replaces it; Enter there types it and Escape goes back. `committed(key)` reports a captured combo, written as the text
+// replaces it; Enter there types it, and Escape first restores the key in
+// effect, as a text field's `escapeReverts` does, then goes back to the box. `committed(key)` reports a captured combo, written as the text
 // field's judge writes it, `typed(text)` a typed one as entered, and
 // `cleared()` the clear button. `conflict` is a hint drawn under the box in
 // the warning colour; it never blocks a combo. The field is one focus scope
-// whose focus starts on the box.
+// whose focus starts on the box; Enter, Return and keypad Enter activate the
+// box through KeyNavLogic.activate, as every button-like control does
+// (D068), and `focusPreview` draws its focus ring for the gallery.
 FocusScope {
     id: root
 
@@ -34,6 +38,7 @@ FocusScope {
     property bool editable: true
     property string placeholder: "Unbound"
     property string conflict: ""
+    property bool focusPreview: false
     property alias actions: actionRow.data
     readonly property bool capturing: capture !== null && capture.holder === root
     readonly property bool typing: entry.visible
@@ -117,6 +122,16 @@ FocusScope {
         box.forceActiveFocus(Qt.TabFocusReason);
     }
 
+    // Escape the text entry leaves unaccepted, with the key in effect
+    // already back, ends the typing; any other Escape goes on up.
+    Keys.onEscapePressed: event => {
+        if (!typing) {
+            event.accepted = false;
+            return;
+        }
+        stopTyping();
+    }
+
     onCapturingChanged: {
         if (capturing) return;
         held = [];
@@ -136,6 +151,7 @@ FocusScope {
 
             T.AbstractButton {
                 id: box
+                readonly property bool focusPreview: root.focusPreview
                 visible: !entry.visible
                 focus: true
                 width: line.width - tools.width - line.spacing
@@ -151,14 +167,9 @@ FocusScope {
                 PointerCursor {}
                 onClicked: root.start()
                 onActiveFocusChanged: if (!activeFocus) root.stop("focus")
-                Keys.onPressed: event => {
-                    if (root.capturing) {
-                        root.pressed(event);
-                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        event.accepted = true;
-                        root.start();
-                    }
-                }
+                Keys.onPressed: event => { if (root.capturing) root.pressed(event); }
+                Keys.onReturnPressed: event => { if (root.capturing) root.pressed(event); else KeyNavLogic.activate(box); }
+                Keys.onEnterPressed: event => { if (root.capturing) root.pressed(event); else KeyNavLogic.activate(box); }
                 Keys.onReleased: event => { if (root.capturing) root.released(event); }
 
                 background: Rectangle {
@@ -172,18 +183,14 @@ FocusScope {
 
                 contentItem: Row {
                     spacing: root.caps.length === 0 ? 0 : Theme.space.sm
-                    Row {
+                    KeyCaps {
                         id: capRow
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: Theme.space.xs
-                        Repeater {
-                            model: root.caps
-                            Kbd { text: String(modelData) }
-                        }
+                        shortcut: root.caps.join("+")
                     }
                     Label {
                         role: "item"
-                        width: box.availableWidth - capRow.width - parent.spacing
+                        width: box.availableWidth - (capRow.visible ? capRow.width : 0) - parent.spacing
                         anchors.verticalCenter: parent.verticalCenter
                         elide: Text.ElideRight
                         color: Theme.textField.placeholder
@@ -198,12 +205,13 @@ FocusScope {
                 visible: false
                 width: box.width
                 placeholderText: "MOD+KEY, such as SUPER+SPACE"
+                escapeReverts: true
+                committedText: root.key
                 onAccepted: {
                     const text = entry.text.trim();
                     root.stopTyping();
                     if (text !== root.key) root.typed(text);
                 }
-                Keys.onEscapePressed: root.stopTyping()
             }
 
             Row {

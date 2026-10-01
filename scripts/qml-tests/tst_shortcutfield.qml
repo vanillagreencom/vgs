@@ -33,10 +33,13 @@ Item {
     }
 
     property var events: []
+    // Escapes the fields leave to their surface, as a page's back step reads them.
+    property int escapes: 0
 
     Column {
         width: parent.width
         spacing: Theme.space.md
+        Keys.onEscapePressed: root.escapes += 1
         Button { id: before; text: "Before"; focusPolicy: Qt.StrongFocus }
         ShortcutField {
             id: field
@@ -62,6 +65,7 @@ Item {
             capture.failed = false;
             capture.ended = { item: null, reason: "" };
             root.events = [];
+            root.escapes = 0;
             field.notice = "";
             field.conflict = "";
             field.capture = capture;
@@ -199,10 +203,29 @@ Item {
             compare(JSON.stringify(root.events), '["typed SUPER+K"]');
             verify(box(field).activeFocus);
             press(field, "Type the keys");
+            keyClick(Qt.Key_End);
             keyClick("X");
             keyClick(Qt.Key_Escape);
-            compare(field.typing, false);
+            compare(field.typing, true, "the first Escape restores the key in effect");
+            compare(descendant(field, item => item.escapeReverts === true).text, field.key);
+            keyClick(Qt.Key_Escape);
+            compare(field.typing, false, "the next Escape goes back to the box");
+            verify(box(field).activeFocus);
             compare(JSON.stringify(root.events), '["typed SUPER+K"]');
+        }
+
+        function test_a_focus_preview_draws_the_ring() {
+            const ring = descendant(box(field), item => item.ringColor !== undefined);
+            compare(ring.visible, false);
+            field.focusPreview = true;
+            compare(ring.visible, true);
+            field.focusPreview = false;
+        }
+
+        function test_escape_on_the_idle_box_goes_on_up() {
+            box(field).forceActiveFocus(Qt.TabFocusReason);
+            keyClick(Qt.Key_Escape);
+            compare(root.escapes, 1);
         }
 
         function test_typing_ends_a_capture() {
@@ -300,7 +323,7 @@ Item {
             tryVerify(() => b.leftPadding > 4, 1000, "padding " + b.leftPadding);
             compare(b.leftPadding, field.sidePadding);
             compare(b.rightPadding, field.sidePadding);
-            const cap = descendant(b, item => item.text === "SUPER" && item.radius !== undefined);
+            const cap = descendant(b, item => item.text === "Super" && item.radius !== undefined);
             compare(cap.mapToItem(b, 0, 0).x, b.leftPadding);
         }
 

@@ -578,6 +578,12 @@ Item {
                                 property bool focusPreview: true
                                 text: "Focused text"
                             }
+                            ShortcutField {
+                                property string focusExample: "ShortcutField"
+                                focusPreview: true
+                                width: Theme.size.panel.sm / 2
+                                key: "SUPER+SPACE"
+                            }
                             Slider {
                                 property string focusExample: "Slider"
                                 focusPreview: true
