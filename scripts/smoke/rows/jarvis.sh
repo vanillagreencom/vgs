@@ -209,6 +209,21 @@ jarvis_devices_assertion() {
    echo "$failures")
 }
 
+jarvis_audio_fault() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+status=json.load(sys.stdin)["status"]
+expected={"tone":"danger","text":"capture-overflow"}
+print("fault" if status.get("audio")==expected else "pending")
+'
+}
+
+jarvis_audio_fault_assertion() {
+  (failures=0 behaviour_failures=0
+   expect_poll "device offers do not clear the capture fault" fault jarvis_audio_fault >"$sandbox/jarvis-audio-fault-control-assertions.log"
+   echo "$failures")
+}
+
 jarvis_seen_hello() {
   [[ -s $jarvis_seen ]] && echo seen || echo pending
 }
@@ -313,6 +328,32 @@ jarvis_enable
 expect "removing offer publication breaks the real consumer assertion" 1 jarvis_devices_assertion
 jarvis_disable
 cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+jarvis_rescan
+
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --audio-fault-devices "$jarvis_backend"
+jarvis_rescan
+jarvis_enable
+expect_poll "the fault fixture still publishes real device offers" devices jarvis_devices
+expect_poll "a later device message retains the owning audio fault" fault jarvis_audio_fault
+jarvis_disable
+python3 - "$jarvis_service" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+s=p.read_text()
+needle='if (audioHealth.kind === "reading")'
+assert s.count(needle)==1
+changed=s.replace(needle, 'if (true)')
+assert changed != s
+p.write_text(changed)
+PY
+jarvis_rescan
+jarvis_enable
+expect_poll "the status control still publishes real offers" devices jarvis_devices
+expect "offer-driven success breaks the actual fault-status assertion" 1 jarvis_audio_fault_assertion
+jarvis_disable
+cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+cp -- "$sandbox/jarvis-backend-original" "$jarvis_backend"
 jarvis_rescan
 
 jarvis_drop="$sandbox/jarvis-dropped-first-reply"

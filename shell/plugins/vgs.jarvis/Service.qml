@@ -13,6 +13,7 @@ Item {
     property string outputTail: ""
     property string errorTail: ""
     property string cause: ""
+    property var audioHealth: ({ kind: "reading" })
     property var sessionState: null
     readonly property bool locked: lockObservation()
     readonly property var effectiveKeys: shell === null ? null : shell.shortcut.keys
@@ -46,6 +47,7 @@ Item {
         outputTail = "";
         errorTail = "";
         cause = "";
+        audioHealth = { kind: "reading" };
         sessionState = null;
         const result = shell.status.set("detail", null);
         if (result !== "ok") throw new Error("jarvis: " + result);
@@ -160,11 +162,15 @@ Item {
                         const reply = shell.status.set(key, message[key]);
                         if (reply !== "ok") throw new Error("jarvis: " + reply);
                     }
-                    const report = shell.status.set("audio", { tone: "ok", text: "Device list ready" });
-                    if (report !== "ok") throw new Error("jarvis: " + report);
+                    if (audioHealth.kind === "reading") {
+                        audioHealth = { kind: "ready" };
+                        const report = shell.status.set("audio", { tone: "ok", text: "Device list ready" });
+                        if (report !== "ok") throw new Error("jarvis: " + report);
+                    }
                     continue;
                 }
                 if (message.type === "audio-fault") {
+                    audioHealth = { kind: "fault", reason: message.reason };
                     const report = shell.status.set("audio", { tone: "danger", text: message.reason });
                     if (report !== "ok") throw new Error("jarvis: " + report);
                     continue;

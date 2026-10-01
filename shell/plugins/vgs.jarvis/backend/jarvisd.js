@@ -99,7 +99,9 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         if (!process.stdout.write(wire + "\n")) process.stdin.pause();
     }
     const audio = new Audio({
-        session: Session, environment: process.env, clock: { now: () => performance.now() },
+        session: Session, environment: process.env, clock: {
+            now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer)
+        },
         offers: devices => {
             if (!ending && context !== null) write({ v: 1, type: "devices", gen: runner.state.gen,
                 revision: context.revision, ...devices });
@@ -122,7 +124,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer)
     }, (state, phase) => {
         audio.observe(state);
-        if (state.gate.kind === "down") void audio.teardown("gate");
+        if (state.gate.kind === "down") void audio.teardown("gate", ["capture", "echo", "playback"]);
         if (!ending && context !== null) write({ v: 1, type: "state", gen: state.gen,
             revision: context.revision, seq: ++seq, state, phase });
     });

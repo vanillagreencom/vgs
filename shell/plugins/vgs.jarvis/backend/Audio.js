@@ -29,7 +29,7 @@ class Audio {
         this.state = null;
         this.lifetime = { kind: "open" };
         this.devices = { microphones: [], speakers: [] };
-        this.discovery = null;
+        this.discovery = { kind: "idle", retries: 0 };
         this.nodes = new Map();
         this.capture = null;
         this.playback = null;
@@ -40,11 +40,11 @@ class Audio {
         this.release = Promise.resolve();
         this.capturePort = {
             open: (e, done, failed) => this.openCapture(e, done, failed),
-            close: (e, done) => this.teardown("capture-close").then(done)
+            close: (e, done) => this.teardown("capture-close", ["capture", "echo"]).then(done)
         };
         this.playbackPort = {
             start: (e, done, failed) => this.startPlayback(e, done, failed),
-            flush: (e, done) => this.teardown("interrupt").then(done)
+            flush: (e, done) => this.teardown("interrupt", ["playback"]).then(done)
         };
     }
 
@@ -101,25 +101,68 @@ class Audio {
     // Read-only node discovery. node.name is the stable target accepted by
     // pw-cat; the transient object id is never saved as a setting.
     discover() {
-        if (this.discovery !== null) return this.discovery;
-        this.discovery = this.monitor();
-        return this.discovery;
+        if (this.lifetime.kind === "closed") return Promise.reject(new Error("audio-start-refused"));
+        const prior = this.discovery;
+        switch (prior.kind) {
+        case "starting":
+        case "monitoring":
+            return prior.ready;
+        case "retiring":
+            return prior.closed.then(() => this.discover());
+        case "failed":
+            return Promise.reject(prior.error);
+        case "waiting":
+            this.clock.clear(prior.timer);
+            break;
+        case "idle":
+            break;
+        default:
+            throw new Error("discovery-state: " + prior.kind);
+        }
+        const discovery = { kind: "starting", retries: prior.retries, ready: null };
+        this.discovery = discovery;
+        discovery.ready = this.monitor(discovery);
+        return discovery.ready;
     }
 
-    async monitor() {
-        const owner = await this.spawn("discovery", "pw-dump", ["--monitor", "--no-colors"]);
+    retireDiscovery(discovery, error) {
+        if (discovery.kind === "retiring" || this.discovery !== discovery || this.lifetime.kind === "closed") return;
+        discovery.kind = "retiring";
+        discovery.closed = this.teardown("discovery-failed", ["discovery"]).then(() => {
+            if (this.lifetime.kind === "closed") return;
+            // pw-dump's monitor ends when its PipeWire connection ends.
+            // Bound reconnection over this Audio lifetime, including flapping.
+            if (discovery.retries === 3) {
+                const exhausted = new Error("discovery-recovery-exhausted: " + error.message);
+                this.discovery = { kind: "failed", error: exhausted };
+                this.fault(exhausted.message);
+                return;
+            }
+            const waiting = { kind: "waiting", retries: discovery.retries + 1, timer: null };
+            this.discovery = waiting;
+            waiting.timer = this.clock.set(() => {
+                if (this.lifetime.kind === "closed" || this.discovery !== waiting) return;
+                void this.discover().catch(error => this.fault(error.message));
+            }, 250 * Math.pow(2, discovery.retries));
+        });
+        this.devices = { microphones: [], speakers: [] };
+        this.nodes.clear();
+        this.offers(this.devices);
+        this.failCapture("discovery-failed", error.message);
+        this.fault(error.message);
+    }
+
+    async monitor(discovery) {
+        let owner;
+        try { owner = await this.spawn("discovery", "pw-dump", ["--monitor", "--no-colors"]); }
+        catch (error) { this.retireDiscovery(discovery, error); throw error; }
         return new Promise((resolve, reject) => {
             let tail = "", size = 0, depth = 0, quoted = false, escaped = false, started = false;
             const { StringDecoder } = require("node:string_decoder");
             const decoder = new StringDecoder("utf8");
             const failed = error => {
                 reject(error);
-                this.offers({ microphones: [], speakers: [] });
-                this.devices = { microphones: [], speakers: [] };
-                this.nodes.clear();
-                this.failCapture("discovery-failed", error.message);
-                this.fault(error.message);
-                void this.teardown("discovery-failed", ["discovery"]);
+                this.retireDiscovery(discovery, error);
             };
             owner.child.stdout.on("data", data => {
                 if (owner.stopping) return;
@@ -143,6 +186,7 @@ class Audio {
                             tail = "";
                             size = 0;
                             started = false;
+                            discovery.kind = "monitoring";
                             resolve();
                         }
                     }
@@ -264,11 +308,11 @@ class Audio {
             owner.closed.then(() => {
                 if (this.capture === capture && !owner.stopping) void this.captureExited(capture, owner);
             });
-            if (!this.allowed("capture")) await this.teardown("capture-refused");
+            if (!this.allowed("capture")) await this.teardown("capture-refused", ["capture", "echo"]);
         } catch (error) {
             if (capture !== null && this.capture !== capture) return;
             if (capture !== null) capture.kind = "failed";
-            await this.teardown("capture-failed");
+            await this.teardown("capture-failed", ["capture", "echo"]);
             failed(error.message === "device-lost" ? "device-lost" : "audio-start: " + error.message);
         }
     }
@@ -277,7 +321,7 @@ class Audio {
     // Read a fresh snapshot before deciding whether the selected device was
     // lost. This one-shot read belongs to the same discovery owner.
     async captureExited(capture, owner) {
-        await this.teardown("capture-failed");
+        await this.teardown("capture-failed", ["capture", "echo"]);
         if (!this.session.live(this.state, capture.e, "capture", ["opening", "open"])) return;
         try {
             await this.refreshDevices();
@@ -316,7 +360,7 @@ class Audio {
         const capture = this.capture;
         if (capture === null || capture.kind === "failed" || (capture.owner !== null && capture.owner.stopping)) return;
         capture.kind = "failed";
-        void this.teardown(reason).then(() => capture.failed(reason));
+        void this.teardown(reason, ["capture", "echo"]).then(() => capture.failed(reason));
         if (diagnostic !== "") this.fault(reason + ": " + diagnostic.slice(0, 200));
     }
 
@@ -353,7 +397,7 @@ class Audio {
             ]);
             owner.child.stdout.resume();
             if (this.playback !== playback) return;
-            if (!this.allowed("playback")) { await this.teardown("playback-refused"); return; }
+            if (!this.allowed("playback")) { await this.teardown("playback-refused", ["playback"]); return; }
             playback.kind = "feeding";
             owner.closed.then(() => {
                 if (this.playback === playback && playback.kind === "feeding" && !owner.stopping)
@@ -382,7 +426,7 @@ class Audio {
             }
         } catch (error) {
             if (playback !== null && this.playback !== playback) return;
-            await this.teardown("playback-failed");
+            await this.teardown("playback-failed", ["playback"]);
             failed(error.message);
         }
     }
@@ -391,14 +435,12 @@ class Audio {
         const playback = this.playback;
         if (playback === null || playback.kind === "failed") return;
         playback.kind = "failed";
-        void this.teardown("playback-failed").then(() => playback.failed(reason));
+        void this.teardown("playback-failed", ["playback"]).then(() => playback.failed(reason));
     }
 
     // The only release path. Mark owners before closing pipes so callbacks
     // cannot treat requested teardown as a device failure or reopen capture.
-    teardown(reason, kinds = reason === "capture-close" || reason === "capture-failed"
-            || reason === "device-lost" || reason === "provider-disconnected"
-        ? ["capture", "echo"] : ["capture", "echo", "playback"]) {
+    teardown(reason, kinds) {
         const owners = [...this.children.values()].filter(owner => kinds.includes(owner.kind));
         const feeds = [];
         for (const owner of owners) {
@@ -431,6 +473,7 @@ class Audio {
 
     close(reason) {
         this.lifetime = { kind: "closed" };
+        if (this.discovery.kind === "waiting") this.clock.clear(this.discovery.timer);
         return this.teardown(reason, ["capture", "echo", "playback", "discovery"]);
     }
 }

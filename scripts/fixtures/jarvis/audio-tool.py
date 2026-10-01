@@ -43,6 +43,14 @@ if name == "pw-dump":
         sys.stdout.flush()
         while True:
             time.sleep(0.01)
+            if (home / "monitor-crashes").exists():
+                sys.exit(1)
+            if (home / "monitor-exits").exists():
+                (home / "monitor-exits").unlink()
+                sys.exit(1)
+            if (home / "monitor-malformed").exists():
+                (home / "monitor-malformed").unlink()
+                print("{}", flush=True)
             if (home / "remove-device").exists():
                 print('[{"id":91,"info":null}]', flush=True)
                 (home / "remove-device").unlink()

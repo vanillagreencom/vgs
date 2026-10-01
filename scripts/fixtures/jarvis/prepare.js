@@ -110,6 +110,25 @@ function fixtureWrite(wire) {
     fs.writeFileSync(file, source.replace(start, start + fixture).replace(write, "fixtureWrite(wire);"));
 }
 
+function audioFaultThenDevices(file) {
+    const source = fs.readFileSync(file, "utf8");
+    const start = '"use strict";';
+    const offers = 'revision: context.revision, ...devices });';
+    assert.equal(source.split(start).length - 1, 1);
+    assert.equal(source.split(offers).length - 1, 1);
+    const fixture = `
+            if (!ending && context !== null && fixtureAudioFault) {
+                fixtureAudioFault = false;
+                audio.fault("capture-overflow");
+                write({ v: 1, type: "devices", gen: runner.state.gen,
+                    revision: context.revision, ...devices });
+            }`;
+    const changed = source.replace(start, start + "\nlet fixtureAudioFault = true;")
+        .replace(offers, offers + fixture);
+    assert.notEqual(changed, source);
+    fs.writeFileSync(file, changed);
+}
+
 function service(sourceTree, tree, root) {
     require("./keys-world.js").standins(path.join(root, "standins"));
     standins(path.join(root, "standins"));
@@ -153,6 +172,9 @@ if (require.main === module) {
     } else if (process.argv[2] === "--floor-daemon") {
         assert.equal(process.argv.length, 4);
         floorDaemon(process.argv[3]);
+    } else if (process.argv[2] === "--audio-fault-devices") {
+        assert.equal(process.argv.length, 4);
+        audioFaultThenDevices(process.argv[3]);
     } else {
         assert.equal(process.argv.length, 5);
         service(...process.argv.slice(2));
