@@ -529,6 +529,14 @@ world(async () => {
         assert.equal(conn.count(APPEND), 0, "a withheld frame writes nothing");
     }
 
+    async function releaseConnect(kit) {
+        const w = rig(kit);
+        w.dispatch("talk-down");
+        fault(w, "live=release-withhold");
+        await turn();
+        assert.equal(main.conns.filter(conn => conn.rig === String(w.id)).length, 0, "a withheld connection opens no socket");
+    }
+
     // The full opening fits; it leaves after session.started in order, ahead
     // of later words, without meeting the send backlog.
     async function opening(kit) {
@@ -596,6 +604,8 @@ world(async () => {
         failures, startTimeout, keys, opening, replyQueue, backlog, frameBound };
     const withheld = ["Policy.js", "const current = item(value.content, value.labels);",
         'const current = item(value.content, value.labels);\n    if (String(current.content).includes("input_audio.append")) return { kind: "withhold", content: "[withheld]", labels: current.labels };'];
+    const withheldConnect = ["Policy.js", "const current = item(value.content, value.labels);",
+        'const current = item(value.content, value.labels);\n    if (String(current.content).endsWith("/v1/live/sessions")) return { kind: "withhold", content: "[withheld]", labels: current.labels };'];
     let controls = 0;
     async function control(name, needle, replacement, check) {
         await mutant(file, name, needle, replacement, async (_module, folder) => check(folder), "GptLive.js");
@@ -605,6 +615,7 @@ world(async () => {
     try {
         for (const check of Object.values(cases)) await check(kitFrom(backend));
         await release(kitFrom(backend, [withheld]));
+        await releaseConnect(kitFrom(backend, [withheldConnect]));
         const as = name => folder => cases[name](kitFrom(folder));
         const row = name => folder => failures(kitFrom(folder), name);
         const mutations = [
@@ -666,10 +677,12 @@ world(async () => {
                 as("replyQueue")],
             ["backlog", 'if (session.channel.bufferedAmount > SEND_BACKLOG_BYTES) fail("send-backlog");', "", as("backlog")],
             ["release", 'if (answer.kind !== "send") fail("release-" + answer.kind);\n        if (session.channel', "if (session.channel",
-                folder => release(kitFrom(folder, [withheld]))]
+                folder => release(kitFrom(folder, [withheld]))],
+            ["release-connect", 'if (answer.kind !== "channel") fail("release-" + answer.kind);', 'if (answer.kind !== "channel") return;',
+                folder => releaseConnect(kitFrom(folder, [withheldConnect]))]
         ];
         for (const [name, needle, replacement, check] of mutations) await control(name, needle, replacement, check);
-        console.log("test-jarvis-live: ok cases=" + (Object.keys(cases).length + 1) + " controls=" + controls
+        console.log("test-jarvis-live: ok cases=" + (Object.keys(cases).length + 2) + " controls=" + controls
             + " connections=" + main.conns.length);
     } finally {
         for (const net of nets) net.close();
