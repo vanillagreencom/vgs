@@ -148,7 +148,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.
 
 ## Skill Rules
 
-Delegation, agent lifecycle, round closure, coordination, and lane output: [references/skill-rules.md](references/skill-rules.md). A design, an item brief or research on another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
+Delegation, planner launch, lifecycle, round closure, coordination, and lane output: [skill-rules](references/skill-rules.md). A design, an item brief or research on another system is held to [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering).
 
 ### Workflow Execution
 

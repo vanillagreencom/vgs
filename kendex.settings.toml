@@ -74,7 +74,7 @@ REVIEW_GATE_MODE = "off"
 
 # The agent-routing labels the project-management taxonomy declares. A create
 # carrying none of them is refused: such an issue is invisible to routing.
-LINEAR_AGENT_LABELS = "agent:generalist, agent:multi, agent:human, agent:researcher"
+LINEAR_AGENT_LABELS = "agent:maintainer, agent:multi, agent:human, agent:researcher"
 
 # Every created issue names what reaches it in a `Reached by:` line.
 LINEAR_REQUIRE_REACH = "1"

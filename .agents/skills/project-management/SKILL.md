@@ -52,7 +52,7 @@ Label creation rule: if a label listed here is missing from live Linear inventor
 
 | Label | Use when |
 |-------|----------|
-| `agent:generalist` | Maintenance, docs cleanup, tooling/workflow tasks, repository organization, or mixed low-risk work — including QML/Go/helper implementation until dedicated domain agents exist. |
+| `agent:maintainer` | Maintenance, docs cleanup, tooling/workflow tasks, repository organization, or mixed low-risk work — including QML/Go/helper implementation until dedicated domain agents exist. |
 | `agent:multi` | Bundle parent or coordination issue whose children span 2+ domains. Avoid on leaf implementation issues unless the issue is truly orchestration-only. |
 | `agent:human` | Manual/user-owned work, external dependency/vendor action, or work intentionally not delegated to an AI agent. |
 | `agent:researcher` | Research issue owned by the researcher workflow/agent. Must be paired with `research`. |
