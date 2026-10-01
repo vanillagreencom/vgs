@@ -451,6 +451,7 @@ mutations=(
   "a cursor in a painting parent is not refused|layout/ListCursor.qml|if (parent !== null && parent.color !== undefined && parent.color.a > 0)|if (false)|tst_listcursor.qml"
   "a reopened menu's cursor travels from the dismissed entry|overlay/Menu.qml|        plate.snap();|        Qt.callLater(plate.snap);|tst_overlays.qml"
   "a reopened select list's cursor travels from the dismissed entry|controls/Select.qml|        plate.snap();|        Qt.callLater(plate.snap);|tst_overlays.qml"
+  "an open preset list keeps its highlight across a clock tick|../plugins/vgs.settings/SettingField.qml|loader.item.listOpen !== true))|true)|tst_settingfield.qml"
   "a click leaves the pointer disarmed|layout/ListCursor.qml|function arm() { state.armed = true; }|function arm() {}|tst_listcursor.qml"
   "the list cursor snaps past its turn|layout/ListCursor.qml|function settle() { snapping = false; }|function settle() {}|tst_listcursor.qml"
   "a later turn's rows wait behind the earlier turn's|layout/ListCursor.qml|if (state.arrivals === 0) Qt.callLater(state.endArrivals);|if (false) Qt.callLater(state.endArrivals);|tst_listcursor.qml"

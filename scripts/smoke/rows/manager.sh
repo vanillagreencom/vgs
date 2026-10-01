@@ -293,9 +293,10 @@ page_alignment() {
   label_gap="$(ipc smoke themeValue field.labelGap)" || return
   inset="$(ipc smoke themeValue inset.window)" || return
   ring="$(( $(ipc smoke themeValue focusRing.width) + $(ipc smoke themeValue focusRing.offset) ))" || return
-  python3 - "$rows" "$label_w" "$label_gap" "$inset" "$1" "$2" "$ring" <<'PY'
+  python3 - "$rows" "$label_w" "$label_gap" "$inset" "$1" "$2" "$ring" "${3:-}" <<'PY'
 import json, sys
-rows, label_w, label_gap, inset, want_settings, want_keys, ring = (json.loads(a) for a in sys.argv[1:])
+rows, label_w, label_gap, inset, want_settings, want_keys, ring = (json.loads(a) for a in sys.argv[1:8])
+plant = sys.argv[8] == "plant"
 out = []
 def inside(j, i):
     while j != -1:
@@ -315,6 +316,18 @@ page = [i for i, r in enumerate(rows) if r["type"] == "PluginPage"]
 areas = [i for i, r in enumerate(rows) if r["type"] == "ScrollArea" and page and inside(i, page[0])]
 if len(page) != 1 or len(areas) != 1:
     print(json.dumps(["pages=%d areas=%d" % (len(page), len(areas))])); sys.exit()
+if plant:
+    slider_planted = False
+    segment_planted = False
+    for j, r in enumerate(rows):
+        if r["type"] == "Slider" and inside(j, page[0]) and not slider_planted:
+            labels_after = [q for q, row in enumerate(rows) if row["type"] == "Label" and row.get("role") == "label" and row["box"][0] > right(r) and inside(q, page[0])]
+            if labels_after:
+                rows[labels_after[0]] = dict(rows[labels_after[0]], box=[right(r) + label_gap - 8] + rows[labels_after[0]]["box"][1:])
+                slider_planted = True
+        if r["type"] == "SegmentedControl" and inside(j, page[0]) and not segment_planted:
+            rows[j] = dict(r, box=r["box"][:2] + [r["box"][2] + 8, r["box"][3]])
+            segment_planted = True
 area = rows[areas[0]]
 column_right = right(area) - inset
 # Pane's viewport starts a focus ring's room left of the content edge.
@@ -360,6 +373,8 @@ print(json.dumps(out))
 PY
 }
 geometry expect_poll "the page's fields share one label edge, one control edge and one right edge, each label on its control" '[]' page_alignment 9 0
+page_alignment_planted() { page_alignment 9 0 plant | py_reply 'import json,sys; o=json.load(sys.stdin); print(any(".slider.gap=" in e for e in o) and any(".segmented.width=" in e for e in o))'; }
+expect "control: overlapping the slider value and stretching a segmented control are each refused" True page_alignment_planted
 
 # The page scrolls under its bar: a drag on the thumb moves the content
 # with it, and a press on the track under the thumb pages one view down.
