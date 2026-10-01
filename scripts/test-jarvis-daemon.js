@@ -235,6 +235,8 @@ async function inside() {
     await muteCheck(daemon);
     const restoreCheck = file => conversation(file, async w => {
         assert.equal(w.last().state.mute.kind, "on");
+        await w.wait(m => m.state.mute.kind === "on" && w.messages.some(message =>
+            message.type === "devices" && message.microphones.some(item => item.value === "fixture.mic")));
         w.send("talk-down"); w.send("talk-up"); w.send("stop");
         await w.wait(m => m.seq >= 5);
         assert.equal(w.last().state.capture.kind, "closed");
@@ -243,6 +245,8 @@ async function inside() {
         assert.deepEqual(JSON.parse(fs.readFileSync(muteFile, "utf8")), { muted: false });
     });
     await restoreCheck(daemon);
+    fs.writeFileSync(muteFile, JSON.stringify({ muted: true }));
+    await control("muted-device-offers", "if (first) void audio.discover()", "if (seq === 1) void audio.discover()", restoreCheck);
     fs.writeFileSync(muteFile, JSON.stringify({ muted: true }));
     await control("mute-restore", 'if (first && readMute()) runner.dispatch({ type: "mute" });',
         'if (false && first && readMute()) runner.dispatch({ type: "mute" });', restoreCheck);

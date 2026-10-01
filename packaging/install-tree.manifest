@@ -210,8 +210,8 @@ f share/vgs/shell/plugins/vgs.jarvis/Keys.qml
 f share/vgs/shell/plugins/vgs.jarvis/Service.qml
 f share/vgs/shell/plugins/vgs.jarvis/Session.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
-f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audio.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/OpenAIChat.js

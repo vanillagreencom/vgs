@@ -89,7 +89,8 @@ function ports(root) {
 function instrument(file, root) {
     const source = fs.readFileSync(file, "utf8");
     const changes = [
-        ['unavailable()', 'require("./scripted-fixture.js").ports(' + JSON.stringify(root) + ')'],
+        ['ports.playback = audio.playbackPort;',
+            'ports.playback = audio.playbackPort;\n    Object.assign(ports, require("./scripted-fixture.js").ports(' + JSON.stringify(root) + '));'],
         ['configured: false, echoCancel: false, settings: context.settings',
             'configured: true, echoCancel: false, settings: context.settings'],
         ['runner.dispatch({ type: "snapshot", locked: context.locked,',

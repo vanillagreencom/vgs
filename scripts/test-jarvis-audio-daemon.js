@@ -52,7 +52,8 @@ async function run(file, trigger) {
     child.stderr.on("data", data => { error += data; });
     child.stdin.on("error", e => { if (e.code !== "EPIPE") throw e; });
     const hello = locked => JSON.stringify({ v: 1, type: "hello", gen: 0,
-        settings: { microphone: "", speaker: "" }, keys: {}, locked,
+        settings: { mode: "hold", microphone: "", speaker: "" },
+        keys: { talk: null, mute: null, stop: null }, locked,
         directories: { state: process.env.HOME, data: process.env.HOME, runtime: process.env.XDG_RUNTIME_DIR },
         revision: "a".repeat(64) }) + "\n";
     try {

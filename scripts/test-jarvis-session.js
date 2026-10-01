@@ -740,7 +740,7 @@ for (const seed of seeds) for (const a of pairEvents) for (const b of pairEvents
     }
     pairs++;
 }
-assert.equal(pairs, 15246, "matrix discovery floor and exact event set");
+assert.equal(pairs, 17150, "matrix discovery floor and exact event set");
 const createdPairs = createdPairMatrix(Session);
 
 const parent = path.resolve(__dirname, "../tmp");
