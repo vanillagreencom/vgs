@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import Quickshell
 import Quickshell.Wayland
 import qs.Core
@@ -41,6 +42,9 @@ Scope {
                     // surface goes.
                     property var entry: null
                     property Item content: null
+                    property var targetScreen: onScreen.modelData
+                    property bool framePresented: false
+                    readonly property bool presented: visible && backingWindowVisible && framePresented
                     // The screen name the content was built on, kept while the
                     // screen itself reads null during teardown.
                     property string builtOn: ""
@@ -48,15 +52,26 @@ Scope {
                     inset: 0
                     inputAll: content !== null && content.inputAll === true
                     inputItems: content !== null && content.inputItems !== undefined ? content.inputItems : []
-                    screen: onScreen.modelData
-                    // Mapped only once its content is built, so a content the
-                    // host refused leaves no surface.
-                    visible: content !== null
+                    screen: targetScreen
+                    // `shown` is independent of Item.visible, which inherits
+                    // the hidden host and cannot request that host's map.
+                    visible: targetScreen !== null && content !== null
+                             && (content.shown === undefined || content.shown === true)
                     WlrLayershell.namespace: "vgs:layer"
                     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
                     Component.onCompleted: build()
                     Component.onDestruction: drop()
+                    onVisibleChanged: framePresented = false
+                    onBackingWindowVisibleChanged: framePresented = false
+                    onContentChanged: framePresented = false
+
+                    Connections {
+                        target: win.content !== null ? win.content.Window.window : null
+                        function onFrameSwapped() {
+                            if (win.visible && win.backingWindowVisible) win.framePresented = true;
+                        }
+                    }
 
                     Connections {
                         target: Layers
@@ -76,7 +91,7 @@ Scope {
                             return;
                         }
                         try {
-                            item.screen = screen;
+                            item.screen = Qt.binding(() => win.targetScreen);
                             item.anchors.fill = win.contentItem;
                         } catch (e) {
                             console.error("layers: " + entry.pluginId + " content not built on " + name + ": " + e.message);

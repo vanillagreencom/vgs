@@ -104,7 +104,7 @@ function ports(root) {
 
 // Install only in a disposable daemon. The installed product has no fixture
 // option, environment switch or import into scripts/.
-function instrument(file, root, engine = "chained") {
+function instrument(file, root, engine = "chained", mappedIndicator = false) {
     const source = fs.readFileSync(file, "utf8");
     const changes = [
         ['engine: "chained",', "engine: " + JSON.stringify(engine) + ","],
@@ -113,10 +113,11 @@ function instrument(file, root, engine = "chained") {
             '                    runner.ports.speech = scripted.speech;\n' +
             '                    Object.assign(runner.ports, { capture: scripted.capture, brain: scripted.brain, playback: scripted.playback });'],
         ['configured: configuration.kind === "ready", settings: context.settings',
-            'configured: true, settings: context.settings'],
-        ['runner.dispatch({ type: "snapshot", locked: context.locked,',
-            'runner.dispatch({ type: "indicator", shown: true });\n                runner.dispatch({ type: "snapshot", locked: context.locked,']
+            'configured: true, settings: context.settings']
     ];
+    if (!mappedIndicator) changes.push(
+        ['runner.dispatch({ type: "snapshot", locked: context.locked,',
+            'runner.dispatch({ type: "indicator", shown: true });\n                runner.dispatch({ type: "snapshot", locked: context.locked,']);
     let changed = source;
     for (const [needle, value] of changes) {
         if (changed.split(needle).length !== 2) throw new Error("scripted: instrumentation-match=" + needle);
@@ -128,4 +129,8 @@ function instrument(file, root, engine = "chained") {
 }
 
 module.exports = { ports, instrument };
-if (require.main === module) instrument(process.argv[2], process.argv[3]);
+if (require.main === module) {
+    if (process.argv.length !== 4 && (process.argv.length !== 5 || process.argv[4] !== "--mapped-indicator"))
+        throw new Error("scripted: arguments");
+    instrument(process.argv[2], process.argv[3], "chained", process.argv[4] === "--mapped-indicator");
+}

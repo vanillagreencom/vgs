@@ -33,6 +33,24 @@ expect "every surface takes no keyboard, sits on the overlay layer and clears re
 read -r mon_w mon_h bar_reserved < <(monitor_size)
 geometry expect_poll "the surface covers the screen below the bar's reserved space" "[[0, $bar_reserved, $mon_w, $((mon_h - bar_reserved))]]" layers_of vgs:layer
 
+layer_hidden_assertion() {
+  (failures=0 behaviour_failures=0
+   expect_poll "hidden content maps no passive surface" 0 layer_count vgs:layer >"$sandbox/layer-hidden-assertion.log"
+   echo "$failures")
+}
+expect "the observer retains the host for the ignored-map control" ok ipc smoke layerWindowRemember acme.layers
+expect "the content requests no map without destroying its copies" ok layered shown 0
+expect "hidden content maps no passive surface" 0 layer_hidden_assertion
+expect "hidden copies still belong to the registration" "$(screen_names)" built_screens
+expect "control: the host ignores the content's map request" ok ipc smoke layerWindowSet acme.layers visible true
+expect_poll "control: the changed host wrongly maps hidden content" "$monitors" layer_count vgs:layer
+expect "control: ignoring shown breaks the same map assertion" 1 layer_hidden_assertion
+expect "the observer releases its control references" ok ipc smoke layerWindowForget
+expect "a redraw restores the host's map binding" ok layered redraw
+expect "the restored hidden registration maps no surface" 0 layer_hidden_assertion
+expect "the content requests its map again" ok layered shown 1
+expect_poll "shown content maps its retained copies" "$monitors" layer_count vgs:layer
+
 # Every reading counts press AND release on both the layer and a real xdg
 # client below it. An unchanged layer counter cannot prove pass-through:
 # an oversized mask with no handler below the point could swallow input.
@@ -146,6 +164,22 @@ for control in "NoLeft left $left_x client" "NoRight right $right_x client" "NoM
 done
 expect "the fixture shows the original layer after mask controls" ok layered draw
 expect_poll "the original layer maps after mask controls" "$monitors" layer_count vgs:layer
+
+expect "the fixture moves only the pads' parent" ok layered offset 80
+layer_input_begin left "$((left_x + 80))" "$pad_y" || { fail "the moved parent click failed"; exit 1; }
+expect_poll "an ancestor move updates the pad's input rectangle" ok layer_input_result
+expect "the parent returns before its control" ok layered offset 0
+expect "control: the probe loads a mask without ancestor observation" ok ipc smoke layerSurfaceLoad NoAncestors "$repo/shell/Hosts/OverlaySurfaceNoAncestors.qml" acme.layers
+expect_poll "control: the ancestor-blind surface maps" 1 layer_count vgs:layer-control
+expect "control: release the original before the ancestor move" ok layered undraw
+expect_poll "control: no original mask can catch the moved pad" 0 layer_count vgs:layer
+expect "control: move only the copied pads' parent" ok layered offset 80
+layer_input_begin left "$((left_x + 80))" "$pad_y" || { fail "the ancestor control click failed"; exit 1; }
+expect "control: ignoring ancestors breaks the same input reader" violation layer_input_result
+expect "control: the probe drops the ancestor-blind surface" ok ipc smoke popupDrop NoAncestors
+expect "the pads return to their neutral positions" ok layered offset 0
+expect "the fixture restores its ordinary layer" ok layered draw
+expect_poll "the restored layer maps after the ancestor control" "$monitors" layer_count vgs:layer
 
 # The receiver is also controlled: a copy that hides button events cannot
 # pass the same client assertion. A key round trip proves the client has

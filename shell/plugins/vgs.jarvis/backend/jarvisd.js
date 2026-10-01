@@ -232,6 +232,14 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     requests.reply(message);
                     continue;
                 }
+                if (message.type === "indicator") {
+                    if (context === null || message.revision !== context.revision)
+                        throw new Error("jarvis: protocol=indicator-identity");
+                    // Mapping is service lifetime input, not a turn callback.
+                    // A gone observation must close capture even across gen.
+                    runner.dispatch({ type: "indicator", shown: message.shown });
+                    continue;
+                }
                 if (message.type === "intent") {
                     intentIdentity(message);
                     // Key edges are ordered input, not asynchronous completions.
@@ -316,8 +324,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                 if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,
                     daemon: context.locked ? "locked" : "ready" });
-                // No indicator exists yet. A healthy child is not
-                // permission to capture or start a tool.
+                // A healthy child is not permission to capture or start a tool.
                 const configuration = engine.configure(context.settings);
                 runner.dispatch({ type: "snapshot", locked: context.locked, engine: "chained",
                     configured: configuration.kind === "ready", settings: context.settings });

@@ -6,6 +6,8 @@ The nested sandbox, its harness and the smoke's verdicts. The process rules the 
 
 The shader frame row observes a passive layer's own window. It separates advancing presentation from quiet reduced-motion and unmapped windows, with controls in that row. GPU cost runs in a standalone scene through the same harness, with no product services: [validation-shaders.md](validation-shaders.md).
 
+The physical Jarvis key row runs [the bubble row](jarvis-bubble.md#evidence) inside its scripted-port lifetime. The row reads the actual host and its presented indicator, with no bar widget, and keeps capture refusal and input pass-through separate from shader pixels.
+
 The read-only-prefix row also exercises the installed [coding-task producer](jarvis-tasks.md) from its data copy. It writes only synthetic records inside J09 and opens no task TUI.
 
 The [local setup row](jarvis-setup.md#evidence) runs a J09 status-process double and an allow-listed TUI fixture. It starts no real installer, downloader or inference runtime.

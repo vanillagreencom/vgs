@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/manifest.json, shell/plugins/vgs.jarvis/Service.qml, shell/plugins/vgs.jarvis/JarvisProtocol.js, shell/plugins/vgs.jarvis/Session.js, shell/plugins/vgs.jarvis/backend/jarvisd.js, shell/plugins/vgs.jarvis/backend/session-runner.js, scripts/fixtures/jarvis/scripted.js, scripts/smoke/rows/jarvis-keys.sh, scripts/test-jarvis-daemon.js, scripts/test-jarvis-protocol.js
 
-The [Jarvis architecture](jarvis.md) owns the service, child lease and Session regions. The installed daemon remains unconfigured. It installs real [audio ports](jarvis-audio.md), while speech and indicator prerequisites remain unavailable. Its [router](jarvis-approval.md) registers the [window and application executors](jarvis-desktop-tools.md) and [clipboard, media and notify executors](jarvis-tools.md), which no brain calls yet. The controls cannot open a microphone, speaker or provider.
+The [Jarvis architecture](jarvis.md) owns the service, child lease and Session regions. The installed daemon remains unconfigured. It installs real [audio ports](jarvis-audio.md) and consumes the [bubble's indicator observation](jarvis-bubble.md), while speech remains unavailable. Its [router](jarvis-approval.md) registers the [window and application executors](jarvis-desktop-tools.md) and [clipboard, media and notify executors](jarvis-tools.md). The controls cannot open a microphone, speaker or provider.
 
 ## Keys and modes
 
@@ -45,6 +45,8 @@ A `transcript` message carries one speaker's caption segment: `role` user or ass
 Key presence uses a separate service-owned reader, not a new daemon wire type. The coding-task types `task-stop`, `tui-state`, `tasks` and `task-answer` belong to [task control](jarvis-task-control.md#display). Task display uses the shared `request` and `reply` owner below. Hello also carries `taskTerminal`.
 
 The daemon asks the service to act with `request`; the service answers each with one `reply`. [Jarvis desktop tools § Request wire](jarvis-desktop-tools.md#request-wire) defines their kinds, bounds and stale replies.
+
+The bubble sends the implemented indicator wire through the same child. Its [indicator contract](jarvis-bubble.md#demand-and-presentation) owns mapping, presentation and lifetime identity.
 
 Both endpoints frame chunks before retaining an unfinished line. QML uses `SplitParser` with an empty `splitMarker`, not its default unbounded line buffer. The daemon uses a UTF-8 decoder across reads. [The Quickshell 0.3.1 reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/SplitParser/) documents arbitrary chunk lengths for the empty marker. The [Process reference](https://quickshell.org/docs/v0.3.1/types/Quickshell.Io/Process/) documents stdin closure, explicit environments and restart from `runningChanged`.
 

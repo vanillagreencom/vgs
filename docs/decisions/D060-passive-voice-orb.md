@@ -23,3 +23,9 @@
 **Verification**: `scripts/qml-tests/tst_voiceorb.qml` reads properties and animation lifetime, with mutations in `scripts/test-qml-unit.sh`. `scripts/check-voiceorb-shader.py` compiles and checks the shipped pack, with controls in `scripts/test-check-voiceorb-shader.py`. `scripts/smoke/rows/gallery.sh` captures each example's actual tone pixels, beside a control that must draw before its shader is hidden. The read-only prefix row runs the installed component.
 
 **References**: [Jarvis plan §4.3](../plans/v2-jarvis-plan.md#43-bubble-and-orb), [runtime-qml-shaders.md](../architecture/runtime-qml-shaders.md)
+
+## Bubble composition
+
+`Bubble.qml` composes the generic orb in the service's passive layer. Only the labelled Mute and Stop controls enter the input union. Their global keys remain available while no bubble maps. The orb, text and gaps take no press. The service builds no bar widget to obtain its indicator.
+
+The [bubble contract](../architecture/jarvis-bubble.md) defines presentation and its controls. The read-only Omarchy OSD uses the same bottom-centred, keyboard-passive composition. VGS uses the generic host's reserved-space handling and input-item union rather than local bar geometry or an entirely empty region.

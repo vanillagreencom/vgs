@@ -21,6 +21,8 @@ Item {
     property var bareRelease: null
     property bool full: false
     property bool voice: false
+    property bool shown: true
+    property int padOffset: 0
     property int pads: 2
     property int presses: 0
     property int releases: 0
@@ -47,6 +49,7 @@ Item {
         Item {
             id: layer
             property var screen: null
+            readonly property bool shown: root !== null && root.shown
             readonly property string screenName: screen ? screen.name : ""
             readonly property bool inputAll: root !== null && root.full
             readonly property var inputItems: root === null || root.pads === 0 ? [] : root.pads === 1 ? [leftPad] : [leftPad, rightPad]
@@ -70,23 +73,28 @@ Item {
                 anchors.fill: parent
                 onPressed: mouse => {
                     root.presses += 1;
-                    if (mouse.x >= leftPad.x && mouse.x < leftPad.x + leftPad.width && mouse.y < leftPad.height) root.leftPresses += 1;
-                    if (mouse.x >= rightPad.x && mouse.x < rightPad.x + rightPad.width && mouse.y < rightPad.height) root.rightPresses += 1;
+                    const left = leftPad.mapToItem(layer, 0, 0);
+                    const right = rightPad.mapToItem(layer, 0, 0);
+                    if (mouse.x >= left.x && mouse.x < left.x + leftPad.width && mouse.y < left.y + leftPad.height) root.leftPresses += 1;
+                    if (mouse.x >= right.x && mouse.x < right.x + rightPad.width && mouse.y < right.y + rightPad.height) root.rightPresses += 1;
                 }
                 onReleased: root.releases += 1
             }
-            Rectangle {
-                id: leftPad
-                width: 80
-                height: 40
-                color: "transparent"
-            }
-            Rectangle {
-                id: rightPad
-                x: 160
-                width: 80
-                height: 40
-                color: "transparent"
+            Item {
+                x: root.padOffset
+                Rectangle {
+                    id: leftPad
+                    width: 80
+                    height: 40
+                    color: "transparent"
+                }
+                Rectangle {
+                    id: rightPad
+                    x: 160
+                    width: 80
+                    height: 40
+                    color: "transparent"
+                }
             }
         }
     }
@@ -130,6 +138,12 @@ Item {
         });
         shell.ipc.handle("full", arg => { root.full = arg === "1"; return "ok"; });
         shell.ipc.handle("voice", arg => { root.voice = arg === "1"; return "ok"; });
+        shell.ipc.handle("shown", arg => { root.shown = arg === "1"; return "ok"; });
+        shell.ipc.handle("offset", arg => {
+            if (arg !== "0" && arg !== "80") return "refused: offset";
+            root.padOffset = Number(arg);
+            return "ok";
+        });
         shell.ipc.handle("pads", arg => {
             if (arg !== "0" && arg !== "1" && arg !== "2") return "refused: pads";
             root.pads = Number(arg);

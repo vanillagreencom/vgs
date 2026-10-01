@@ -1,9 +1,11 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 import "." as Jarvis
 import "JarvisProtocol.js" as Protocol
+import "Session.js" as Session
 
 Item {
     id: root
@@ -17,6 +19,12 @@ Item {
     property var sessionState: null
     // The request handlers, built on the first request; see requestHandlers().
     property var requests: null
+    property var bubbles: []
+    property var indicatorDelivery: ({ kind: "unknown" })
+    readonly property string focusedOutput: Hyprland.focusedMonitor === null ? "" : Hyprland.focusedMonitor.name
+    readonly property bool bubbleWanted: !lockObservation() && lifetime.kind === "ready" && cause === ""
+        && sessionState !== null && Session.indicatorWanted(sessionState)
+    readonly property bool indicatorPresented: bubbles.some(item => item !== null && item.presented)
     readonly property bool locked: lockObservation()
     readonly property var effectiveKeys: shell === null ? null : shell.shortcut.keys
     // The daemon judges one floating task at a time from this run state.
@@ -39,6 +47,7 @@ Item {
             // The console's Stop button and `vgsh ipc call vgs.jarvis
             // stop-task <id>` stop one coding task. The Stop key does not.
             shell.ipc.handle("stop-task", task => stopTask(task));
+            shell.layers.show(bubble);
             start();
         }
         else hello();
@@ -46,6 +55,29 @@ Item {
     onLockedChanged: hello()
     onEffectiveKeysChanged: hello()
     onTaskTuiRunningChanged: sendTuiState()
+    onIndicatorPresentedChanged: {
+        const shown = indicatorPresented;
+        // Keep every loss edge, but never grant a queued stale presentation.
+        Qt.callLater(() => sendIndicator(shown));
+    }
+    onSessionStateChanged: Qt.callLater(() => sendIndicator(indicatorPresented))
+
+    function attachBubble(item) { bubbles = bubbles.concat([item]); }
+    function detachBubble(item) { bubbles = bubbles.filter(found => found !== item); }
+
+    function sendIndicator(shown) {
+        if (shell === null || lifetime.kind !== "ready" || sessionState === null || cause !== "" || !child.running) return;
+        if (shown && !indicatorPresented) shown = false;
+        const kind = shown ? "shown" : "gone";
+        if (indicatorDelivery.kind === kind) return;
+        try {
+            const wire = JSON.stringify({ v: 1, type: "indicator", gen: sessionState.gen,
+                revision: shell.manifest.__revision, shown: shown });
+            Protocol.accept(wire, "shell");
+            indicatorDelivery = { kind: kind };
+            child.write(wire + "\n");
+        } catch (error) { broken(error.message); }
+    }
 
     function lockObservation() {
         return shell === null || shell.session === undefined || shell.session.locked !== false;
@@ -63,6 +95,7 @@ Item {
         cause = "";
         audioHealth = { kind: "reading" };
         sessionState = null;
+        indicatorDelivery = { kind: "unknown" };
         const result = shell.status.set("detail", null);
         if (result !== "ok") throw new Error("jarvis: " + result);
         for (const key of ["microphones", "speakers"]) {
@@ -324,6 +357,7 @@ Item {
                 helloDeadline.stop();
                 publish("info", message.daemon === "locked" ? "Locked; no capture" : "Ready; no capture");
                 sendTuiState();
+                Qt.callLater(() => sendIndicator(indicatorPresented));
             }
         } catch (error) { broken(error.message); }
     }
@@ -361,6 +395,11 @@ Item {
         retry.stop();
         helloDeadline.stop();
         child.stdinEnabled = false;
+    }
+
+    Component {
+        id: bubble
+        Jarvis.Bubble { service: root }
     }
 
     Process {

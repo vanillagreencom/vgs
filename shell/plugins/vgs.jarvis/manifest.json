@@ -9,7 +9,7 @@
   "icon": "mic",
   "kinds": ["bar-widget", "service"],
   "entryPoints": { "bar-widget": "Widget.qml", "service": "Service.qml" },
-  "capabilities": ["compositor", "ipc", "run", "session", "status", "toasts", "tui", "shortcut"],
+  "capabilities": ["compositor", "ipc", "run", "session", "status", "toasts", "tui", "shortcut", "layers"],
   "defaultSection": "right",
   "settings": { "mode": "hold", "microphone": "", "speaker": "", "brain": "", "taskTerminal": "auto" },
   "schema": {

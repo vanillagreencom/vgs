@@ -44,6 +44,15 @@ function phaseOf(s) {
     return "idle";
 }
 
+// Demand precedes capture admission. Waiting for capture here would wait
+// forever for the indicator that must be presented before capture opens.
+function indicatorWanted(s) {
+    if (s.capture.kind !== "closed") return true;
+    var phase = phaseOf(s);
+    if (phase !== "idle" && phase !== "down") return true;
+    return canEngage(s) && s.conversation.kind !== "ended" && s.input.kind !== "released";
+}
+
 function operation(s) { return s.nextOp++; }
 
 function effect(s, effects, kind, values) {

@@ -56,6 +56,8 @@ A component group may hold a share a component judges by, as `deviceRow.battery.
 
 `VoiceOrb` publishes its palette-derived visual values through `Theme.voiceOrb`. Its timing tokens follow `motion.scale`, and its driver also checks that scale before ticking: [components-media.md § VoiceOrb](components-media.md#voiceorb).
 
+`Theme.voiceBubble` supplies the [passive voice composition](jarvis-bubble.md)'s dimensions and text ceiling. It composes the existing surface, inset and control tokens.
+
 ## Setup steps
 
 A step a user must take to set something up is automatic, or one click: a button on a Settings row, a notice or a dialog. A step that asks a question or needs a privilege opens in a floating TUI or the requirement notice from that button. A secret is typed into a `TextField` with `password` set and VGS stores it. A command a user could run by hand shows only in a `CommandDisclosure` beside that button, never as the instruction itself. The Settings page draws a manifest's status actions and secrets this way ([status.md § Shown](status.md#shown)), and `scripts/check-user-commands.py` fails text that tells the user to run a command: [D061](../decisions/D061-no-manual-commands.md).

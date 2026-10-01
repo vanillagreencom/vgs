@@ -14,7 +14,7 @@ cp -- "$jarvis_key_lua" "$sandbox/jarvis-key-lua-before"
 cp -- "$jarvis_key_service" "$sandbox/jarvis-key-service-before"
 cp -- "$jarvis_key_backend" "$sandbox/jarvis-key-backend-before"
 expect "the key row starts with Jarvis disabled" absent ipc smoke jarvisProcess
-"$node_bin" "$source_repo/scripts/fixtures/jarvis/scripted.js" "$jarvis_key_backend" "$jarvis_key_gates"
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/scripted.js" "$jarvis_key_backend" "$jarvis_key_gates" --mapped-indicator
 cp -- "$jarvis_key_backend" "$sandbox/jarvis-key-scripted-before"
 jarvis_gate="$sandbox/jarvis-key-startup-gate"
 jarvis_seen="$sandbox/jarvis-key-startup-seen"
@@ -288,6 +288,7 @@ jarvis_enable
 jarvis_key_mode hold
 jarvis_key_active_stop thinking
 jarvis_key_active_stop speaking
+smoke_row jarvis-bubble
 jarvis_key_initial_opens="$(jarvis_key_effects capture-open)"
 jarvis_key_talk_down
 expect_poll "the physical talk key starts listening" listening jarvis_key_state phase

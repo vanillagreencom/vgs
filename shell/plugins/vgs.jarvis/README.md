@@ -18,6 +18,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - A click on the bar icon toggles mute, as the Mute key does.
 - The child records refused action approvals and privacy cleanup.
 - Window, workspace and application tools read each change back from Hyprland before they report it done.
+- The listening bubble needs no bar widget. Its orb and text let clicks reach the application below.
+- Labelled Mute and Stop buttons use the same actions as their keys.
 - Settings opens Add key in a floating terminal with hidden key input.
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
 - Settings and the launcher open local voice setup in a floating terminal.
@@ -52,7 +54,7 @@ No coding agent is connected yet, so Jarvis starts no coding task. It still watc
 
 Task terminal chooses where a coding task opens. Auto uses tmux when it is installed, so several tasks can run at once, and the floating terminal otherwise. Floating opens one task at a time.
 
-Talk mode defaults to Hold. Toggle keeps conversation demand open until the next press. No mode captures audio until an engine and its indicator are available.
+Talk mode defaults to Hold. Toggle keeps conversation demand open until the next press. No mode captures audio until a speech engine is available and the listening bubble has drawn.
 
 Turn on Show in bar on the Jarvis page to put the Jarvis icon in the bar's right section. Its tooltip names the state and what a click does.
 

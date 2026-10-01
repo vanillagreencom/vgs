@@ -146,6 +146,7 @@ for name, old, new in (
     ("NoLeft", "model: surface.inputItems", "model: surface.inputItems.slice(1)"),
     ("NoRight", "model: surface.inputItems", "model: surface.inputItems.slice(0, 1)"),
     ("NoMask", "mask: inputAll ? null : inputRegion", "mask: inputAll ? null : null"),
+    ("NoAncestors", "lineage: surface.lineageOf(modelData)", "lineage: [modelData]"),
 ):
     assert text.count(old) == 1, f"{name}: mutation must match once"
     changed = text.replace(old, new)

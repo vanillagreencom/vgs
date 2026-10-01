@@ -110,6 +110,11 @@ async function inside() {
     await run(daemon, ["a".repeat(262145)], 65, "jarvis: protocol=line-too-long");
     await run(daemon, [JSON.stringify({ ...hello, type: "unknown" }) + "\n"], 65, "jarvis: protocol=type");
     const intent = name => ({ v: 1, type: "intent", gen: 0, revision: hello.revision, intent: name });
+    const indicator = shown => ({ v: 1, type: "indicator", gen: 0, revision: hello.revision, shown });
+    await run(daemon, [JSON.stringify(indicator(true)) + "\n"], 65, "jarvis: protocol=indicator-identity");
+    await run(daemon, [JSON.stringify(hello) + "\n",
+        JSON.stringify({ ...indicator(true), revision: "b".repeat(64) }) + "\n"],
+        65, "jarvis: protocol=indicator-identity", states([false]));
     await run(daemon, [JSON.stringify(intent("talk-down")) + "\n"], 65, "jarvis: protocol=identity");
     await run(daemon, [JSON.stringify(hello) + "\n",
         JSON.stringify({ ...intent("stop"), revision: "b".repeat(64) }) + "\n"],
@@ -192,11 +197,16 @@ async function inside() {
     await control("state-publish", 'if (!ending && context !== null) write({ v: 1, type: "state"',
         'if (false && !ending && context !== null) write({ v: 1, type: "state"',
         file => run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false])));
-    await control("intent-identity", 'if (context === null || message.revision !== context.revision)',
-        'if (false)',
+    await control("intent-identity", 'if (context === null || message.revision !== context.revision)\n                        throw new Error("jarvis: protocol=identity");',
+        'if (false) throw new Error("jarvis: protocol=identity");',
         file => run(file, [JSON.stringify(hello) + "\n",
             JSON.stringify({ ...intent("stop"), revision: "b".repeat(64) }) + "\n"],
             65, "jarvis: protocol=identity", states([false])));
+    await control("indicator-identity", 'if (context === null || message.revision !== context.revision)\n                        throw new Error("jarvis: protocol=indicator-identity");',
+        'if (false) throw new Error("jarvis: protocol=indicator-identity");',
+        file => run(file, [JSON.stringify(hello) + "\n",
+            JSON.stringify({ ...indicator(true), revision: "b".repeat(64) }) + "\n"],
+            65, "jarvis: protocol=indicator-identity", states([false])));
     await control("snapshot-identity", 'if (context !== null && (message.revision !== context.revision',
         'if (false && context !== null && (message.revision !== context.revision',
         file => run(file, [JSON.stringify(hello) + "\n",
@@ -276,7 +286,8 @@ async function inside() {
             send({ ...hello, settings: { ...hello.settings, mode } });
             if (beforeState !== null) await beforeState({ messages });
             await wait(m => m.state.gate.kind !== "down" || m.state.gate.reason === "unconfigured");
-            await check({ send: name => send(intent(name)), raw: send, reply: send, wait, last, messages });
+            await check({ send: name => send(intent(name)), raw: send, reply: send,
+                indicator: shown => send(indicator(shown)), wait, last, messages });
             child.stdin.end();
             const [code, signal] = await closed;
             assert.equal(signal, null, "EOF releases the real child");
@@ -443,6 +454,34 @@ async function inside() {
     const count = kind => fs.readFileSync(path.join(gates, "effects.jsonl"), "utf8").trim().split("\n")
         .filter(line => JSON.parse(line).kind === kind).length;
     const gate = name => fs.writeFileSync(path.join(gates, name), "");
+    const mapped = daemonCopy("mapped-indicator");
+    instrument(mapped, gates, "chained", true);
+    const mappedCheck = async file => conversation(file, async w => {
+        assert.equal(w.last().state.indicator.kind, "gone");
+        w.send("talk-down");
+        const waiting = await w.wait(m => m.state.input.kind === "held");
+        assert.equal(waiting.state.capture.kind, "closed", "no screen keeps capture closed");
+        w.indicator(true);
+        await w.wait(m => m.phase === "listening");
+        w.indicator(false);
+        const gone = await w.wait(m => m.state.indicator.kind === "gone" && m.state.capture.kind === "closed");
+        assert.equal(gone.state.capture.kind, "closed", "indicator loss releases capture");
+        w.send("stop");
+        await w.wait(m => m.state.conversation.kind === "ended");
+    });
+    await mappedCheck(mapped);
+    for (const [name, needle, replacement] of [
+        ["indicator-delivery", 'runner.dispatch({ type: "indicator", shown: message.shown });', 'void message.shown;'],
+        ["indicator-loss", 'shown: message.shown', 'shown: true']
+    ]) {
+        const copy = daemonCopy(name);
+        instrument(copy, gates, "chained", true);
+        const before = fs.readFileSync(copy, "utf8");
+        assert.equal(before.split(needle).length - 1, 1);
+        fs.writeFileSync(copy, before.replace(needle, replacement));
+        await assert.rejects(() => mappedCheck(copy), assert.AssertionError, name + " must turn red");
+        controls++;
+    }
     const activeStop = async (file, phase) => conversation(file, async w => {
         w.send("talk-down");
         await w.wait(m => m.phase === "listening");

@@ -342,6 +342,16 @@ const table = [
         const r = step(logic, s, event("talk-down"));
         assert.equal(r.state.capture.kind, "closed");
         assert.equal(r.state.input.kind, "held");
+        assert.equal(logic.indicatorWanted(s), false, "ready idle maps no indicator");
+        assert.equal(logic.indicatorWanted(r.state), true, "demand maps before capture admission");
+        const opening = step(logic, r.state, event("indicator", 11, { shown: true }));
+        assert.equal(opening.state.capture.kind, "opening");
+        const lost = step(logic, opening.state, event("indicator", 12, { shown: false }));
+        assert.equal(lost.state.capture.kind, "closing");
+        assert.equal(logic.indicatorWanted(lost.state), true, "capture drain retains the visual request");
+        const ended = step(logic, lost.state, event("stop", 13));
+        const closed = step(logic, ended.state, callback("capture-closed", ended.state.capture, 14));
+        assert.equal(logic.indicatorWanted(closed.state), false);
     }],
     ["mute-ack", logic => {
         const s = listening(logic);
@@ -1047,6 +1057,8 @@ try {
         ["playback-fault", 'end(s, effects, e.at, "playback-failed", false);',
             'if (false) end(s, effects, e.at, "playback-failed", false);', "playback-fault"],
         ["indicator", 's.indicator.kind === "shown"', '(true || s.indicator.kind === "shown")', "indicator-gate"],
+        ["indicator-demand", 'return canEngage(s) && s.conversation.kind !== "ended" && s.input.kind !== "released";',
+            'return false;', "indicator-gate"],
         ["hold", 'if (s.input.kind === "held") break;',
             'if (false && s.input.kind === "held") break;', "hold-edges"],
         ["retire-collect", 'else if (s.turn.kind === "collecting") s.turn = { kind: "none" };',

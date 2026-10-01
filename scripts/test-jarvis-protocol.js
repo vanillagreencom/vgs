@@ -17,6 +17,7 @@ const id = "11111111-1111-4111-8111-111111111111";
 const confirm = { ...intent, intent: "confirm", id, digest: "a".repeat(64), source: "key" };
 const cancel = { ...intent, intent: "cancel", id };
 const shown = { v: 1, type: "shown", gen: 0, revision: hello.revision, id };
+const indicator = { v: 1, type: "indicator", gen: 0, revision: hello.revision, shown: true };
 const status = { v: 1, type: "status", gen: 0, revision: hello.revision, daemon: "ready" };
 const state = { v: 1, type: "state", gen: 0, revision: hello.revision, seq: 1,
     state: JSON.parse(JSON.stringify(Protocol.Session.initial())), phase: "down" };
@@ -61,6 +62,9 @@ const cases = [
     ["transcript-long", changed(transcript, { text: "a".repeat(4097) }), "daemon", "transcript-text"],
     ["transcript-control", changed(transcript, { text: "a\nb" }), "daemon", "transcript-text"],
     ["transcript-rev", changed(transcript, { rev: 0 }), "daemon", "transcript-rev"],
+    ["indicator-direction", JSON.stringify(indicator), "daemon", "direction-indicator"],
+    ["indicator-shape", changed(indicator, { extra: true }), "shell", "shape-indicator"],
+    ["indicator-shown", changed(indicator, { shown: 1 }), "shell", "indicator"],
     ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
     ["audio-fault", changed(audioFault, { reason: "" }), "daemon", "audio-fault"],
     ["device-setting", changed(hello, { settings: { ...hello.settings, microphone: 1 } }), "shell", "device-setting"],
@@ -191,6 +195,8 @@ for (const name of ["talk-down", "talk-up", "mute", "stop"])
     assert.equal(Protocol.accept(changed(intent, { intent: name }), "shell").intent, name);
 for (const message of [confirm, { ...confirm, source: "button" }, cancel, shown])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
+for (const shown of [false, true])
+    assert.equal(Protocol.accept(changed(indicator, { shown }), "shell").shown, shown);
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, mode: "toggle" },
     keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
 for (const message of [devices, level, audioFault, taskRequest, tasks, taskAnswer, { ...tasks, count: 0 },
@@ -290,6 +296,12 @@ try {
             'if (false) fail("approval-source");', "confirm-voice"],
         ["shown-direction", 'if (direction !== "shell") fail("direction-shown");',
             'if (false) fail("direction-shown");', "shown-direction"],
+        ["indicator-direction", 'if (direction !== "shell") fail("direction-indicator");',
+            'if (false) fail("direction-indicator");', "indicator-direction"],
+        ["indicator-shown", 'if (typeof message.shown !== "boolean") fail("indicator");',
+            'if (false) fail("indicator");', "indicator-shown"],
+        ["indicator-shape", 'keys(message, ["v", "type", "gen", "revision", "shown"], "indicator");',
+            'void message;', "indicator-shape"],
         ["mode", 'if (message.settings.mode !== "hold" && message.settings.mode !== "toggle") fail("mode");',
             'if (false) fail("mode");', "mode"],
         ["key-type", 'fail("key-" + shortcut);', ';', "key-type"],

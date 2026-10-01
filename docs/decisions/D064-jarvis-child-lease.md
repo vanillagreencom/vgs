@@ -18,7 +18,7 @@
 - omarchy-voice uses a graphical-session systemd unit. VGS rejects that lifetime because it can outlive the shell's future capture indicator.
 - Automations use systemd because their work must survive the shell. Jarvis has the opposite requirement.
 
-**Scope**: J10 establishes the child and wire only. J11 owns region state. J13 owns audio children, forced-death cleanup and capture refusal while locked or lock state is unknown. J16 owns the mapped indicator handshake. No capture exists in this skeleton.
+**Scope**: J10 establishes the child and wire. J11 owns region state. J13 owns audio children, forced-death cleanup and capture refusal while locked or lock state is unknown. J16 supplies the presented-indicator handshake. The installed daemon has no speech engine and remains unconfigured.
 
 **Revisit When**: Quickshell provides a stronger child lease, or capture moves to a process whose lifetime the shell cannot own.
 
@@ -41,3 +41,9 @@ Every audio child starts through `setpriv --pdeathsig KILL`. An expected-parent 
 - A capture unit: its lifetime can exceed the enabled service and indicator.
 
 The [audio contract](../architecture/jarvis-audio.md) defines the interfaces and sources. `scripts/test-jarvis-audio.js` proves reducer-triggered releases with real stand-in processes. `scripts/test-jarvis-audio-daemon.js` proves EOF, lock and forced daemon death before the outer test world ends.
+
+## Indicator lease
+
+The service registers the [bubble](../architecture/jarvis-bubble.md) without any widget placement. Input demand requests the map before capture can open. A copy grants availability only after a usable host maps and queues a frame for presentation. The ordered wire forwards shown and gone observations to Session, which alone admits or closes capture. Screen loss, unmap, lock and daemon loss revoke the visual; service or shell loss also ends the child's existing lease.
+
+Component existence is not an alternative acknowledgment. It would grant capture while nothing maps. Capture state alone cannot request the visual, because capture waits for that acknowledgment. The daemon does not use a systemd unit, polled state file or independent indicator owner.

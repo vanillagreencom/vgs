@@ -25,6 +25,15 @@ PanelWindow {
 
     readonly property var edges: edgesOf(placement)
 
+    function lineageOf(item) {
+        const items = [];
+        while (item !== null) {
+            items.push(item);
+            item = item.parent;
+        }
+        return items;
+    }
+
     function edgesOf(placement) {
         switch (placement) {
         case "center": return { top: true, bottom: true, left: true, right: true };
@@ -63,8 +72,33 @@ PanelWindow {
             items = items.filter(item => item !== object);
         }
         delegate: Region {
+            id: inputPart
             required property Item modelData
-            item: modelData
+            property int geometryRevision: 0
+            readonly property var lineage: surface.lineageOf(modelData)
+            readonly property rect rectangle: {
+                const revision = geometryRevision;
+                return modelData === null ? Qt.rect(0, 0, 0, 0) : surface.itemRect(modelData);
+            }
+            onLineageChanged: geometryRevision++
+            x: Math.trunc(rectangle.x)
+            y: Math.trunc(rectangle.y)
+            width: Math.ceil(rectangle.width)
+            height: Math.ceil(rectangle.height)
+
+            // Region.item in 0.3.1 observes only the item's local geometry.
+            // Parent layout, scrolling and remapping also move its mask.
+            property QtObject geometryWatch: Instantiator {
+                model: inputPart.lineage
+                delegate: Connections {
+                    required property Item modelData
+                    target: modelData
+                    function onXChanged() { inputPart.geometryRevision++; }
+                    function onYChanged() { inputPart.geometryRevision++; }
+                    function onWidthChanged() { inputPart.geometryRevision++; }
+                    function onHeightChanged() { inputPart.geometryRevision++; }
+                }
+            }
         }
     }
 }

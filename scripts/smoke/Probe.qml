@@ -63,6 +63,7 @@ Scope {
     // [window, size] per window windowDrawn listens on: the size, `WxH`,
     // of the last frame it presented.
     property var drawnWindows: []
+    property var rememberedLayers: []
     // The vgs.polkit prompt over a stand-in authentication flow, for the
     // polkit scene of scripts/sandbox-shots.sh: no sandbox path runs a live
     // flow (docs/architecture/lock-polkit.md § Validation). While shown it
@@ -583,6 +584,54 @@ Scope {
                     out.push([name, win.WlrLayershell.keyboardFocus === WlrKeyboardFocus.None, win.WlrLayershell.layer === WlrLayer.Overlay, win.exclusionMode === ExclusionMode.Normal]);
                 }
             return root.json(out);
+        }
+        function layerWindows(id: string): string {
+            const out = [];
+            for (const entry of Layers.entries.filter(e => e.pluginId === id))
+                for (const name of Object.keys(entry.screens).sort()) {
+                    const item = entry.screens[name];
+                    const win = item.QsWindow.window;
+                    out.push({ screen: name, shown: item.shown, visible: win !== null && win.visible,
+                        presented: win !== null && win.presented, width: win === null ? 0 : win.width,
+                        height: win === null ? 0 : win.height });
+                }
+            return root.json(out);
+        }
+        function layerWindowRemember(id: string): string {
+            const entries = Layers.entries.filter(e => e.pluginId === id);
+            if (entries.length !== 1) return "registrations=" + entries.length;
+            const entry = entries[0];
+            root.rememberedLayers = Object.keys(entry.screens).map(name =>
+                ({ serial: entry.serial, name: name, window: entry.screens[name].QsWindow.window }));
+            return "ok";
+        }
+        function layerWindowForget(): string { root.rememberedLayers = []; return "ok"; }
+        // Plant lost map, screen or presentation in the owned sandbox host.
+        // Disable/redraw restores its original bindings.
+        function layerWindowSet(id: string, property: string, value: bool): string {
+            const entries = Layers.entries.filter(e => e.pluginId === id);
+            if (entries.length !== 1) return "registrations=" + entries.length;
+            for (const name of Object.keys(entries[0].screens)) {
+                let win = entries[0].screens[name].QsWindow.window;
+                if (win === null) {
+                    const remembered = root.rememberedLayers.find(row => row.serial === entries[0].serial && row.name === name);
+                    if (remembered !== undefined) win = remembered.window;
+                }
+                if (win === null) return "no-window";
+                if (property === "screen") win.targetScreen = null;
+                else if (property === "visible") win.visible = value;
+                else if (property === "framePresented") win.framePresented = value;
+                else return "refused: property";
+            }
+            return "ok";
+        }
+        function layerShaderSet(id: string, visible: bool): string {
+            const item = root.layerItem(id, "VoiceOrb", "active", "true");
+            if (item === null) return "absent";
+            const shader = root.descendants(item).find(child => child.fragmentShader !== undefined);
+            if (shader === undefined) return "missing-shader";
+            shader.visible = visible;
+            return "ok";
         }
         // A missing LayerHost inputItems binding, planted only in the
         // sandbox instance. A redraw restores the shipped binding.

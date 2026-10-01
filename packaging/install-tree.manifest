@@ -235,6 +235,7 @@ f share/vgs/shell/plugins/vgs.gallery/manifest.json
 f share/vgs/shell/plugins/vgs.gallery/sample-emoji.png
 f share/vgs/shell/plugins/vgs.jarvis/AccountProviders.js
 f share/vgs/shell/plugins/vgs.jarvis/Accounts.qml
+f share/vgs/shell/plugins/vgs.jarvis/Bubble.qml
 f share/vgs/shell/plugins/vgs.jarvis/JarvisProtocol.js
 f share/vgs/shell/plugins/vgs.jarvis/Keys.qml
 f share/vgs/shell/plugins/vgs.jarvis/LocalRuntime.qml
