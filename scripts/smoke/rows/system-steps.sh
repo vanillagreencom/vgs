@@ -116,6 +116,7 @@ expect_run_end "the core/system run ends" core/system
 expect_poll "the run's end probes again and the step reads ready" "ready granted" system_core
 expect_poll "the fixture publishes the ready step" '{"apple": {"tone": "ok", "text": "ready granted", "action": false}}' system_status
 expect_poll "a ready step offers no Allow" '[["apple", "Allow", false]]' offered_actions acme.system
+expected_errors+=('settings: acme\.system/apple refused: action=apple reason=(not-offered|disabled)')
 forget_record
 expect "the manager refuses Allow once the step is ready" "refused: action=apple reason=not-offered" settings_act acme.system apple
 expect "the refused ready act started no terminal" absent recorded
