@@ -38,6 +38,7 @@ Recommends:     curl
 Recommends:     libsecret
 Recommends:     bubblewrap
 Recommends:     uv
+Recommends:     glib2
 Recommends:     systemd
 Recommends:     iproute
 Recommends:     ImageMagick

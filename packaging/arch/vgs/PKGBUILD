@@ -45,6 +45,7 @@ optdepends=(
   'libsecret: secret-tool, for Slack tokens and Jarvis provider keys in the keyring'
   'bubblewrap: kernel confinement for Jarvis shell commands'
   'uv: installs the locked Jarvis local voice runtime'
+  'glib2: gio, opens files and web links for Jarvis'
   'nvidia-utils: verifies a selected Jarvis CUDA local voice tier'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'
   'mise: Dev Tools installs, updates and removes developer tools'

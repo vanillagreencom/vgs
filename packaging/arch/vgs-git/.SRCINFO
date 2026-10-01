@@ -36,6 +36,7 @@ pkgbase = vgs-git
 	optdepends = libsecret: secret-tool, for Slack tokens and Jarvis provider keys in the keyring
 	optdepends = bubblewrap: kernel confinement for Jarvis shell commands
 	optdepends = uv: installs the locked Jarvis local voice runtime
+	optdepends = glib2: gio, opens files and web links for Jarvis
 	optdepends = nvidia-utils: verifies a selected Jarvis CUDA local voice tier
 	optdepends = vsys: the agent dashboard and warden the Agent Warden plugin reads
 	optdepends = mise: Dev Tools installs, updates and removes developer tools
