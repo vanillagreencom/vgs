@@ -9,6 +9,8 @@ set -euo pipefail
 surf="$home/.config/vgs/plugins/acme.surfaces"
 mkdir -p "$surf"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.surfaces/." "$surf/"
+respaced() { "$@" | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
+surface_focused() { respaced ipc smoke focused "$1" acme.surfaces | py_reply 'import json,sys; row=json.load(sys.stdin); row[0]="Control"; print(json.dumps(row))'; }
 expect "rescan after adding the hosts fixture answers ok" ok ipc shell rescanPlugins
 expect_poll "the hosts fixture is discovered" True plugin_known acme.surfaces
 expect_poll "enabling the hosts fixture is allowed" ok ipc shell setPluginEnabled acme.surfaces true
@@ -40,6 +42,208 @@ expect "toggle opens a closed panel" ok ipc shell toggle panel acme.surfaces '{}
 expect_poll "the toggled panel is mapped" 1 layer_count vgs:panel
 expect "toggle closes an open panel" ok ipc shell toggle panel acme.surfaces '{}'
 expect_poll "the toggled panel is gone" 0 layer_count vgs:panel
+
+expect "a panel summons over IPC for keyboard focus" ok ipc shell summon panel acme.surfaces '{}'
+expect_poll "the IPC panel gives its initialFocus visual focus" '["Control", "Initial focus", true, true, true]' surface_focused panel
+type_keys -k Escape || fail "sending Escape to the IPC panel failed"
+expect_poll "Escape closes an IPC panel the plugin leaves unaccepted" 0 layer_count vgs:panel
+
+slot_now="$repo/shell/Hosts/PluginSlotFocusNow.qml"
+slot_now_panel="$repo/shell/Hosts/PluginSlotFocusNowPanel.qml"
+slot_mouse="$repo/shell/Hosts/PluginSlotMouseReason.qml"
+slot_mouse_panel="$repo/shell/Hosts/PluginSlotMouseReasonPanel.qml"
+summon_noescape="$repo/shell/Hosts/SummonPopupNoEscape.qml"
+summon_copy="$repo/shell/Hosts/SummonPopupNoGrab.qml"
+focus_control="$home/.config/vgs/plugins/acme.focus-control"
+python3 - "$repo/shell/Hosts/PluginSlot.qml" "$slot_now" <<'PYEDIT'
+import pathlib, sys
+source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = source.read_text()
+start = text.index("    function focusInitial(reason) {\n")
+end = text.index("\n\n    Connections {", start)
+new = """    function focusInitial(reason) {
+        clearPendingFocus();
+        focusTarget().forceActiveFocus(reason);
+    }"""
+target.write_text(text[:start] + new + text[end:])
+assert target.read_text().count(new) == 1
+PYEDIT
+python3 - "$repo/shell/Hosts/PluginSlot.qml" "$slot_mouse" <<'PYEDIT'
+import pathlib, sys
+source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = source.read_text()
+old = "target.forceActiveFocus(reason);"
+assert text.count(old) == 2, "the PluginSlot focus call must occur twice"
+target.write_text(text.replace(old, "target.forceActiveFocus(Qt.MouseFocusReason);"))
+PYEDIT
+python3 - "$repo/shell/Hosts/SummonPopup.qml" "$summon_noescape" <<'PYEDIT'
+import pathlib, sys
+source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = source.read_text()
+old = "        Keys.onEscapePressed: popup.dismissed()\n"
+assert text.count(old) == 1, "the SummonPopup Escape handler must occur once"
+target.write_text(text.replace(old, ""))
+PYEDIT
+python3 - "$repo/shell/Hosts/SummonPopup.qml" "$summon_copy" <<'PYEDIT'
+import pathlib, sys
+source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = source.read_text()
+assert text.count("    grabFocus: true\n") == 1, "the SummonPopup grab must occur once"
+target.write_text(text.replace("    grabFocus: true\n", "    grabFocus: false\n"))
+PYEDIT
+cat >"$slot_now_panel" <<'QML'
+import QtQuick
+import Quickshell
+import Quickshell.Wayland
+import qs.Core
+import qs.Commons
+
+PanelWindow {
+    id: win
+
+    required property string pluginId
+    property var screen: null
+    readonly property var place: PluginLogic.surfacePlacement("panel", {}, Theme.space.md)
+
+    anchors { top: place.anchors.top; bottom: place.anchors.bottom; left: place.anchors.left; right: place.anchors.right }
+    margins { top: place.margins.top; bottom: place.margins.bottom; left: place.margins.left; right: place.margins.right }
+    exclusionMode: place.exclusion === "ignore" ? ExclusionMode.Ignore : ExclusionMode.Normal
+    exclusiveZone: 0
+    implicitWidth: slot.instance ? Math.max(1, slot.instance.implicitWidth) : 1
+    implicitHeight: slot.instance ? Math.max(1, slot.instance.implicitHeight) : 1
+    color: "transparent"
+    WlrLayershell.namespace: "vgs:slot-focus-control"
+    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.keyboardFocus: PluginLogic.layerKeyboardFocus("panel", false) === "exclusive" ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+
+    PluginSlotFocusNow {
+        id: slot
+        kind: "panel"
+        pluginId: win.pluginId
+        hostKey: "slot-control"
+        screen: win.screen
+        closeOnUnload: true
+        anchors.fill: parent
+        focus: true
+        onBuilt: instance => {
+            instance.open("{}");
+            slot.focusInitial(Qt.ShortcutFocusReason);
+            slot.forceActiveFocus(Qt.ActiveWindowFocusReason);
+            slot.focusTarget().forceActiveFocus(Qt.ActiveWindowFocusReason);
+        }
+        onBuildFailed: key => win.destroy()
+    }
+}
+QML
+cat >"$slot_mouse_panel" <<'QML'
+import QtQuick
+import Quickshell
+import Quickshell.Wayland
+import qs.Core
+import qs.Commons
+
+PanelWindow {
+    id: win
+
+    required property string pluginId
+    property var screen: null
+    readonly property var place: PluginLogic.surfacePlacement("panel", {}, Theme.space.md)
+
+    anchors { top: place.anchors.top; bottom: place.anchors.bottom; left: place.anchors.left; right: place.anchors.right }
+    margins { top: place.margins.top; bottom: place.margins.bottom; left: place.margins.left; right: place.margins.right }
+    exclusionMode: ExclusionMode.Normal
+    exclusiveZone: 0
+    implicitWidth: slot.instance ? Math.max(1, slot.instance.implicitWidth) : 1
+    implicitHeight: slot.instance ? Math.max(1, slot.instance.implicitHeight) : 1
+    color: "transparent"
+    WlrLayershell.namespace: "vgs:slot-mouse-reason-control"
+    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
+    PluginSlotMouseReason {
+        id: slot
+        kind: "panel"
+        pluginId: win.pluginId
+        hostKey: "slot-mouse-reason"
+        screen: win.screen
+        closeOnUnload: true
+        anchors.fill: parent
+        focus: true
+        onBuilt: instance => {
+            instance.open("{}");
+            slot.focusInitial(Qt.ShortcutFocusReason);
+            slot.forceActiveFocus(Qt.ActiveWindowFocusReason);
+        }
+        onBuildFailed: key => win.destroy()
+    }
+}
+QML
+mkdir -p "$focus_control"
+cat >"$focus_control/manifest.json" <<'JSON'
+{ "schemaVersion": 1, "id": "acme.focus-control", "name": "Focus control", "version": "0.1.0", "author": "acme", "description": "smoke fixture for host focus controls", "kinds": ["panel"], "entryPoints": { "panel": "Summoned.qml" } }
+JSON
+cat >"$focus_control/Summoned.qml" <<'QML'
+import QtQuick
+import QtQuick.Templates as T
+import qs.Ui
+
+Item {
+    property var shell: null
+    property alias initialFocus: focusTarget
+    implicitWidth: 200
+    implicitHeight: 120
+    function open(payloadJson) {}
+    function close() {}
+    T.Control {
+        id: focusTarget
+        property string text: "Initial focus"
+        width: 120
+        height: 40
+        anchors.centerIn: parent
+        focusPolicy: Qt.StrongFocus
+        background: Item { FocusRing { target: focusTarget } }
+    }
+}
+QML
+expect "the focus control fixture is scanned" ok ipc shell rescanPlugins
+expect_poll "the focus control fixture is discovered" True plugin_known acme.focus-control
+expect "enabling the focus control fixture is allowed" ok ipc shell setPluginEnabled acme.focus-control true
+expect "control: the probe builds a slot copy that focuses before activation" ok ipc smoke panelHostLoad slot-focus-now "$slot_now_panel" acme.focus-control
+focus_control_focused() { respaced ipc smoke focused slot-control acme.focus-control | py_reply 'import json,sys; row=json.load(sys.stdin); row[0]="Control"; print(json.dumps(row))'; }
+expect_poll "control: focusing before activation loses visual focus" '["Control", "Initial focus", false, false, true]' focus_control_focused
+expect "control: the probe drops the immediate-focus slot copy" ok ipc smoke popupDrop slot-focus-now
+expect_poll "control: the immediate-focus slot copy leaves the build records" absent ipc smoke readInstance slot-control acme.focus-control opened
+expect "control: the probe builds a slot copy that forces MouseFocusReason" ok ipc smoke panelHostLoad slot-mouse-reason "$slot_mouse_panel" acme.focus-control
+mouse_reason_focused() { respaced ipc smoke focused slot-mouse-reason acme.focus-control | py_reply 'import json,sys; row=json.load(sys.stdin); row[0]="Control"; print(json.dumps(row))'; }
+expect_poll "control: MouseFocusReason loses the unanchored summon ring" '["Control", "Initial focus", false, false, true]' mouse_reason_focused
+expect "control: the probe drops the mouse-reason slot copy" ok ipc smoke popupDrop slot-mouse-reason
+expect_poll "control: the mouse-reason slot copy leaves the build records" absent ipc smoke readInstance slot-mouse-reason acme.focus-control opened
+expect "disabling the focus control fixture is allowed" ok ipc shell setPluginEnabled acme.focus-control false
+rm -rf -- "$focus_control"
+scans_before_focus_remove="$(scans_done)"
+expect "the focus control fixture removal is scanned" ok ipc shell rescanPlugins
+expect_log "the focus control fixture removal is complete" "$((scans_before_focus_remove + 1))" 'plugins: scan complete '
+
+cp -- "$home/.config/vgs/plugins/acme.surfaces/Summoned.qml" "$sandbox/Summoned.initial-focus"
+python3 - "$home/.config/vgs/plugins/acme.surfaces/Summoned.qml" <<'PYEDIT'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = "    property alias initialFocus: focusTarget\n"
+assert s.count(old) == 1
+p.write_text(s.replace(old, ""))
+PYEDIT
+scans_before_initial="$(scans_done)"
+expect "the fixture without initialFocus is rescanned" ok ipc shell rescanPlugins
+expect_log "the fixture without initialFocus is available" "$((scans_before_initial + 1))" 'plugins: scan complete '
+expect "the panel without initialFocus opens" ok ipc shell summon panel acme.surfaces '{}'
+expect_poll "without initialFocus the plugin has no visual focus" no-focus ipc smoke focused panel acme.surfaces
+type_keys -k Escape || fail "sending Escape to the no-initialFocus panel failed"
+expect_poll "the slot still closes a panel without initialFocus on Escape" 0 layer_count vgs:panel
+mv -T -- "$sandbox/Summoned.initial-focus" "$home/.config/vgs/plugins/acme.surfaces/Summoned.qml"
+scans_before_initial_restore="$(scans_done)"
+expect "the fixture with initialFocus is restored" ok ipc shell rescanPlugins
+expect_log "the fixture with initialFocus is available again" "$((scans_before_initial_restore + 1))" 'plugins: scan complete '
 
 expect "an overlay summons over IPC" ok ipc shell summon overlay acme.surfaces '{}'
 geometry expect_poll "the overlay covers its screen" "[[0, 0, $mon_w, $mon_h]]" layers_of vgs:overlay
@@ -122,13 +326,20 @@ expect "the widget summons its panel under itself" ok ipc smoke invokeInstance "
 geometry expect_poll "the popup panel sits under its widget" placed placed_below panel "bar:$screen_name" geometry
 expect "the anchored panel received the widget's payload" '"{\"from\":\"widget\"}"' ipc smoke readInstance panel acme.surfaces lastPayload
 expect "the anchored panel uses no layer surface" 0 layer_count vgs:panel
-expect "hiding the anchored panel is allowed" ok ipc shell hide panel acme.surfaces
+expect_poll "the anchored panel focuses initialFocus without a ring" '["Control", "Initial focus", false, false, true]' surface_focused panel
+type_keys -k Escape || fail "sending Escape to the anchored panel failed"
+expect_poll "Escape closes an anchored panel the plugin leaves unaccepted" absent ipc smoke readInstance panel acme.surfaces opened
 
 expect "the unanchored panel opens for a nested menu" ok ipc shell summon panel acme.surfaces '{}'
 expect_poll "the parent panel is mapped" 1 layer_count vgs:panel
 read -r panel_x panel_y < <(panel_origin)
 expect "the panel summons a menu from its own item" ok ipc smoke invokeInstance panel acme.surfaces menuHere '{}'
 geometry expect_poll "the nested menu uses its parent's window coordinates" placed placed_below menu panel anchorGeometry "$panel_x" "$panel_y"
+type_keys -k Escape || fail "sending Escape to the nested menu failed"
+expect_poll "Escape closes the nested menu" absent ipc smoke readInstance menu acme.surfaces opened
+expect_poll "closing a popup returns focus to the parent panel" '["Control", "Initial focus", false, false, true]' surface_focused panel
+expect "the panel summons a menu from its own item again" ok ipc smoke invokeInstance panel acme.surfaces menuHere '{}'
+geometry expect_poll "the nested menu still uses its parent's window coordinates" placed placed_below menu panel anchorGeometry "$panel_x" "$panel_y"
 anchor_updates="$(log_lines 'summon popup: anchor updated for acme\.surfaces')" || fail "instance log unreadable: $instance_log"
 expect "moving an anchor ancestor is allowed" ok ipc smoke invokeInstance panel acme.surfaces moveAnchor ''
 expect_log "the host updates the popup's anchor for the moved ancestor" "$((anchor_updates + 1))" 'summon popup: anchor updated for acme\.surfaces'
@@ -151,14 +362,14 @@ expect "hiding the edge menu is allowed" ok ipc shell hide menu acme.surfaces
 # panel, stays open through the click that closes the menu. The shell
 # reads both popups' events on one connection in order, so once the menu
 # has closed the copy has had any dismissal the same click brought.
-summon_copy="$repo/shell/Hosts/SummonPopupNoGrab.qml"
-python3 - "$repo/shell/Hosts/SummonPopup.qml" "$summon_copy" <<'PYEDIT'
-import pathlib, sys
-source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-text = source.read_text()
-assert text.count("    grabFocus: true\n") == 1, "the SummonPopup grab must occur once"
-target.write_text(text.replace("    grabFocus: true\n", "    grabFocus: false\n"))
-PYEDIT
+expect "the probe builds the SummonPopup copy without Escape" ok ipc smoke popupLoad summon-noescape "$summon_noescape" "bar:$screen_name" acme.surfaces '{"pluginId":"acme.surfaces","kind":"panel","request":{"anchor":"@instance","anchored":true,"payloadJson":"{}"}}'
+expect "the no-Escape copy's panel takes a payload" '' ipc smoke invokeInstance panel acme.surfaces open '{}'
+expect_poll "the no-Escape copy is shown before Escape" true ipc smoke popupRead summon-noescape visible
+type_keys -k Escape || fail "sending Escape to the no-Escape copy failed"
+expect_poll "control: the no-Escape copy stays open" true ipc smoke popupRead summon-noescape visible
+expect "the probe drops the no-Escape copy" ok ipc smoke popupDrop summon-noescape
+expect_poll "the no-Escape copy's panel leaves the build records" absent ipc smoke readInstance panel acme.surfaces opened
+
 click_centre "bar:$screen_name" acme.surfaces || fail "the click on the widget failed"
 expect "the probe builds the SummonPopup copy without the grab" ok ipc smoke popupLoad summon-nograb "$summon_copy" "bar:$screen_name" acme.surfaces '{"pluginId":"acme.surfaces","kind":"panel","request":{"anchor":"@instance","anchored":true,"payloadJson":"{}"}}'
 expect_poll "the grabless copy has built its panel" 0 ipc smoke readInstance panel acme.surfaces opened
@@ -185,7 +396,7 @@ python3 - "$home/.config/vgs/plugins/acme.surfaces/Summoned.qml" <<'PYEDIT'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 s = p.read_text()
-old = 'if (JSON.parse(payloadJson).fail === true)'
+old = 'if (payload.fail === true)'
 assert s.count(old) == 1
 p.write_text(s.replace(old, 'if (true)'))
 PYEDIT

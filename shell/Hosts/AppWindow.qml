@@ -34,6 +34,10 @@ FloatingWindow {
     color: Theme.surface.level.raised.background
     onClosed: dismissed()
 
+    function focusInitial(reason) {
+        slot.focusInitial(reason);
+    }
+
     PluginSlot {
         id: slot
         kind: win.kind
@@ -47,6 +51,7 @@ FloatingWindow {
         onBuilt: instance => {
             win.built(instance);
             win.visible = true;
+            slot.focusInitial(Qt.ShortcutFocusReason);
         }
         onBuildFailed: key => win.dismissed()
     }

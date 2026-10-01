@@ -5,7 +5,7 @@ import qs.Core
 // builds through the core, rebuilds when the plugin id or the plugin
 // source revision changes, destroys before every rebuild and on its own
 // destruction. Every host is a surface plus one of these per plugin.
-Item {
+FocusScope {
     id: slot
 
     required property string kind
@@ -25,6 +25,8 @@ Item {
     // Call the instance's close() before destroying it: a summoned kind's
     // host sets it, so a plugin closed by hide or by being disabled hears it.
     property bool closeOnUnload: false
+    property Item pendingFocusTarget: null
+    property int pendingFocusReason: Qt.OtherFocusReason
 
     // Only code failures suppress a host until its source changes. A
     // temporary enablement or lending refusal must remain eligible to retry.
@@ -38,7 +40,53 @@ Item {
     Component.onCompleted: reload()
     Component.onDestruction: unload()
 
+    function focusTarget() {
+        let target = slot;
+        if (instance !== null && instance.initialFocus !== undefined && instance.initialFocus !== null) target = instance.initialFocus;
+        return typeof target.forceActiveFocus === "function" ? target : slot;
+    }
+
+    function keyFocusReason(reason) {
+        return reason === Qt.ShortcutFocusReason || reason === Qt.TabFocusReason || reason === Qt.BacktabFocusReason;
+    }
+
+    function applyPendingFocus() {
+        if (pendingFocusTarget === null) return;
+        const target = pendingFocusTarget;
+        const reason = pendingFocusReason;
+        pendingFocusTarget = null;
+        pendingFocusReason = Qt.OtherFocusReason;
+        target.forceActiveFocus(reason);
+    }
+
+    function focusInitial(reason) {
+        pendingFocusTarget = null;
+        pendingFocusReason = Qt.OtherFocusReason;
+        const target = focusTarget();
+        const window = slot.Window.window;
+        if (!keyFocusReason(reason) || (window !== null && window.active)) {
+            target.forceActiveFocus(reason);
+            return;
+        }
+        pendingFocusTarget = target;
+        pendingFocusReason = reason;
+    }
+
+    Connections {
+        id: windowFocusConnection
+        target: slot.Window.window
+        function onActiveChanged() {
+            if (windowFocusConnection.target.active) slot.applyPendingFocus();
+        }
+    }
+
+    function clearPendingFocus() {
+        pendingFocusTarget = null;
+        pendingFocusReason = Qt.OtherFocusReason;
+    }
+
     function unload() {
+        clearPendingFocus();
         if (instance !== null) {
             if (closeOnUnload) {
                 try {

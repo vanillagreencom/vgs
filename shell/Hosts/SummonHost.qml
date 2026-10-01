@@ -28,6 +28,8 @@ Scope {
     property var requests: ({})
     // id -> the built instance, set when its slot builds.
     property var instances: ({})
+    // id -> function(reason) that focuses that instance's host slot.
+    property var focusers: ({})
     // id -> the error open() threw, read by summon.
     property var openErrors: ({})
 
@@ -42,14 +44,24 @@ Scope {
             next[id] = Object.assign({}, requests[id], { payloadJson: payloadJson });
             requests = next;
             const error = callOpen(id, instances[id], payloadJson);
-            if (error === "") return "ok";
+            if (error === "") {
+                focusOpen(id, next[id]);
+                return "ok";
+            }
             drop(id);
             return "refused: open-failed=" + id;
         }
         const screen = origin && origin.screen ? origin.screen : Compositor.focusedScreen();
         if (screen === null) return "refused: screen=none";
         const next = Object.assign({}, requests);
-        next[id] = { payloadJson: payloadJson, anchor: origin ? origin.anchor : null, anchored: !!(origin && origin.anchor), screen: screen };
+        next[id] = {
+            payloadJson: payloadJson,
+            anchor: origin ? origin.anchor : null,
+            anchored: !!(origin && origin.anchor),
+            screen: screen,
+            returnFocus: origin && origin.returnFocus ? origin.returnFocus : null,
+            returnFocusWasVisual: !!(origin && origin.returnFocusWasVisual)
+        };
         requests = next;
         openIds = openIds.concat([id]);
         if (!PluginLogic.hasOwn(instances, id)) {
@@ -87,13 +99,12 @@ Scope {
         if (host.kind !== "overlay") return "ignored";
         if (Layer.overlayCaptureDirections().indexOf(direction) === -1)
             return "refused: direction=" + JSON.stringify(direction);
-        for (let i = openIds.length - 1; i >= 0; i--) {
-            const id = openIds[i];
-            const instance = instances[id];
-            if (instance && typeof instance.navigate === "function") {
-                instance.navigate(direction);
-                return "ok";
-            }
+        if (openIds.length === 0) return "ignored";
+        const id = openIds[openIds.length - 1];
+        const instance = instances[id];
+        if (instance && typeof instance.navigate === "function") {
+            instance.navigate(direction);
+            return "ok";
         }
         return "ignored";
     }
@@ -103,13 +114,28 @@ Scope {
         next[id] = instance;
         instances = next;
         const error = callOpen(id, instance, requests[id].payloadJson);
-        if (error === "") return;
+        if (error === "") return true;
         const errors = Object.assign({}, openErrors);
         errors[id] = error;
         openErrors = errors;
         Qt.callLater(() => {
             if (host.instances[id] === instance) host.drop(id);
         });
+        return false;
+    }
+
+    function focusReason(request) {
+        return request && request.anchored ? Qt.MouseFocusReason : Qt.ShortcutFocusReason;
+    }
+
+    function focusOpen(id, request) {
+        if (PluginLogic.hasOwn(focusers, id)) focusers[id](focusReason(request));
+    }
+
+    function rememberFocuser(id, focus) {
+        const next = Object.assign({}, focusers);
+        next[id] = focus;
+        focusers = next;
     }
 
     function drop(id) {
@@ -117,6 +143,9 @@ Scope {
         const nextInstances = Object.assign({}, instances);
         delete nextInstances[id];
         instances = nextInstances;
+        const nextFocusers = Object.assign({}, focusers);
+        delete nextFocusers[id];
+        focusers = nextFocusers;
         const nextErrors = Object.assign({}, openErrors);
         delete nextErrors[id];
         openErrors = nextErrors;
@@ -152,7 +181,10 @@ Scope {
                     pluginId: entry.modelData
                     kind: host.kind
                     request: entry.request
-                    onBuilt: instance => host.built(entry.modelData, instance)
+                    onBuilt: instance => {
+                        host.rememberFocuser(entry.modelData, reason => focusInitial(reason));
+                        if (host.built(entry.modelData, instance)) focusInitial(host.focusReason(entry.request));
+                    }
                     onDismissed: Qt.callLater(() => host.drop(entry.modelData))
                 }
             }
@@ -163,7 +195,10 @@ Scope {
                     pluginId: entry.modelData
                     kind: host.kind
                     request: entry.request
-                    onBuilt: instance => host.built(entry.modelData, instance)
+                    onBuilt: instance => {
+                        host.rememberFocuser(entry.modelData, reason => focusInitial(reason));
+                        if (host.built(entry.modelData, instance)) focusInitial(host.focusReason(entry.request));
+                    }
                     onDismissed: Qt.callLater(() => host.drop(entry.modelData))
                 }
             }
@@ -201,7 +236,12 @@ Scope {
                         screen: win.screen
                         closeOnUnload: true
                         anchors.fill: parent
-                        onBuilt: instance => host.built(entry.modelData, instance)
+                        focus: true
+                        Keys.onEscapePressed: host.drop(entry.modelData)
+                        onBuilt: instance => {
+                            host.rememberFocuser(entry.modelData, reason => slot.focusInitial(reason));
+                            if (host.built(entry.modelData, instance)) slot.focusInitial(host.focusReason(entry.request));
+                        }
                         onBuildFailed: key => Qt.callLater(() => host.drop(entry.modelData))
                     }
                 }

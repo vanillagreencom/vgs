@@ -245,7 +245,20 @@ Singleton {
     // window. An instance without a screen uses the focused monitor.
     function origin(ctx, anchor) {
         if (anchor === undefined || anchor === null) return ctx.screen ? { anchor: null, screen: ctx.screen } : null;
-        return { anchor: anchor, screen: ctx.screen };
+        const window = anchor.Window.window;
+        let focused = window !== null ? window.activeFocusItem : null;
+        for (let at = anchor; at !== null && at !== undefined; at = at.parent) {
+            if (at.initialFocus !== undefined && at.initialFocus !== null) {
+                focused = at.initialFocus;
+                break;
+            }
+        }
+        return {
+            anchor: anchor,
+            screen: ctx.screen,
+            returnFocus: focused,
+            returnFocusWasVisual: focused !== null && focused.visualFocus === true
+        };
     }
 
     // run: a detached process from an argument list. No shell parses it.

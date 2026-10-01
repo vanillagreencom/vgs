@@ -5,11 +5,12 @@ import qs.Core
 
 // The passive layer surfaces: one per screen for every registration in
 // Layers, each drawing one copy of the plugin's component. The surface
-// covers the part of its screen other layers do not reserve, sits on the
+// covers the part of its screen other layers do not reserve and sits on the
 // overlay layer and never takes keyboard focus, so it cannot steal input
 // from the focused application. Pointer input reaches it only where its
 // content says: the whole surface while the content's `inputAll` is true,
-// otherwise the union of its `inputItems`, and nowhere without any. The
+// otherwise the union of its
+// `inputItems`, and nowhere without any. The
 // core assigns the content its `screen` after creation; a content without
 // that property is not built, logged, and maps no surface. A screen that
 // goes takes its surfaces with it.

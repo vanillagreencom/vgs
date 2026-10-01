@@ -692,8 +692,8 @@ Scope {
             if (item === null || item.examples === undefined) return "absent";
             const names = [];
             for (const line of uiModule.text().split("\n")) {
-                const m = /^(\w+) 1\.0 \S+$/.exec(line);
-                if (m !== null && m[1] !== "BarWidget" && m[1] !== "PointerCursor") names.push(m[1]);
+                const m = /^(\w+) 1\.0 (\S+)$/.exec(line);
+                if (m !== null && m[1] !== "BarWidget" && m[1] !== "PointerCursor" && !m[2].endsWith(".js")) names.push(m[1]);
             }
             if (names.length < 20) return "qmldir-read-broken=" + names.length;
             const seen = {};
@@ -704,6 +704,50 @@ Scope {
                 }
             return root.json(names.filter(name => !seen[name]));
         }
+        // Focus examples that the Gallery promises. Most controls must draw
+        // through focusPreview, while composite controls use their own
+        // selected item or modal setting as the focus contract.
+        function galleryFocusMissingAt(copyName: string, hostKey: string, id: string): string {
+                const item = copyName === "" ? root.instance(hostKey, id) : root.popupCopies[copyName];
+                if (item === null || item === undefined || item.examples === undefined) return "absent";
+                const required = [
+                    "Button primary", "Button secondary", "Button tertiary", "Button ghost", "Button danger",
+                    "IconButton", "ToggleButton", "BarItem", "Switch", "Checkbox", "Radio",
+                    "SegmentedControl", "Select", "TextField", "Slider", "TitleButton",
+                    "Tabs", "Disclosure", "Dialog accept action", "CardCarousel", "KeyCaps", "KeyNav list"
+                ];
+                const previewRequired = {
+                    "Button primary": true, "Button secondary": true, "Button tertiary": true, "Button ghost": true, "Button danger": true,
+                    "IconButton": true, "ToggleButton": true, "BarItem": true, "Switch": true, "Checkbox": true, "Radio": true,
+                    "SegmentedControl": true, "Select": true, "TextField": true, "Slider": true, "TitleButton": true
+                };
+                const found = {};
+                for (const child of root.descendants(item.examples)) {
+                    try {
+                        if (child.focusExample === undefined || child.focusExample === "") continue;
+                        found[String(child.focusExample)] = child;
+                    } catch (e) {}
+                }
+                const missing = [];
+                for (const name of required) {
+                    const child = found[name];
+                    if (child === undefined) {
+                        missing.push(name + ":absent");
+                        continue;
+                    }
+                    if (previewRequired[name] === true && child.focusPreview !== true) missing.push(name + ":focusPreview");
+                    else if (name === "Dialog accept action" && child.modal !== false) missing.push(name + ":modal");
+                    else if (name === "CardCarousel" && child.tabSteps !== false) missing.push(name + ":tabSteps");
+                    else if (name === "KeyNav list" && child.activeFocusOnTab !== true) missing.push(name + ":tabStop");
+                }
+                return root.json(missing);
+        }
+        function galleryFocusMissing(hostKey: string, id: string): string {
+                return galleryFocusMissingAt("", hostKey, id);
+        }
+        function galleryFocusMissingCopy(name: string): string {
+                return galleryFocusMissingAt(name, "", "");
+        }
         // Examples drawn past the gallery's right edge, so a row that does
         // not wrap to the panel names itself; an empty list is the pass.
         function galleryOverflow(hostKey: string, id: string): string {
@@ -712,6 +756,7 @@ Scope {
             const out = [];
             for (const child of root.descendants(item.examples)) {
                 if (!child.visible || child.width === undefined || child.width === 0) continue;
+                if (root.typeName(child) === "QQuickItem") continue;
                 const right = child.mapToItem(item, child.width, 0).x;
                 if (right > item.width + 1) out.push(String(child).split("(")[0] + ":" + Math.round(right));
             }
@@ -1318,6 +1363,65 @@ Scope {
             while (at.parent !== null) at = at.parent;
             return at.activeFocus;
         }
+        // The focused descendant of an instance as [type, text or label,
+        // visualFocus, ringShown, inView], or no-focus / absent.
+        function focused(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const focused = root.descendants(item).filter(child => child.activeFocus);
+            if (focused.length === 0) return "no-focus";
+            const target = focused[focused.length - 1];
+            const label = () => {
+                for (let at = target; at !== null && at !== item && at !== undefined; at = at.parent) {
+                    try {
+                        if (at.focusExample !== undefined && at.focusExample !== "") return String(at.focusExample);
+                    } catch (e) {}
+                }
+                if (target.text !== undefined && target.text !== "") return String(target.text);
+                if (target.label !== undefined && target.label !== "") return String(target.label);
+                try {
+                    if (target.Accessible !== undefined && target.Accessible.name !== "") return String(target.Accessible.name);
+                } catch (e) {}
+                return "";
+            };
+            const targetIsScrollAreaProxy = target.parent !== null && root.typeName(target.parent) === "ScrollArea";
+            const ringOwner = targetIsScrollAreaProxy ? target.parent : target;
+            const ringShown = root.descendants(ringOwner).some(child => root.typeName(child) === "FocusRing" && child.visible);
+            const window = target.Window.window;
+            let inView = window !== null && target.width > 0 && target.height > 0;
+            if (inView) {
+                const at = target.mapToItem(null, 0, 0);
+                inView = at.x >= 0 && at.y >= 0 && at.x + target.width <= window.width && at.y + target.height <= window.height;
+            }
+            for (let at = target.parent; inView && at !== null && at !== item; at = at.parent) {
+                if (at.contentY === undefined || at.contentX === undefined || at.clip !== true) continue;
+                const pos = target.mapToItem(at, 0, 0);
+                inView = pos.x >= 0 && pos.y >= 0 && pos.x + target.width <= at.width && pos.y + target.height <= at.height;
+            }
+            return root.json([targetIsScrollAreaProxy ? "ScrollArea" : root.typeName(target), label(), target.visualFocus === true || ringShown, ringShown, inView]);
+        }
+        function focusExample(hostKey: string, id: string, name: string): string {
+            return focusExampleAt("", hostKey, id, name);
+        }
+        function popupFocusExample(copyName: string, name: string): string {
+            return focusExampleAt(copyName, "", "", name);
+        }
+        function focusExampleAt(copyName: string, hostKey: string, id: string, name: string): string {
+            const item = copyName === "" ? root.instance(hostKey, id) : root.popupCopies[copyName];
+            if (item === null || item === undefined) return "absent";
+            const owner = root.descendants(item).find(child => {
+                try { return child.focusExample === name; } catch (e) { return false; }
+            });
+            if (owner === undefined) return "absent";
+            let target = owner;
+            const focusable = child => child !== undefined && child.forceActiveFocus !== undefined && child.visible !== false && child.enabled !== false && (child.activeFocusOnTab === true || child.focusPolicy === Qt.StrongFocus || child.focusPolicy === Qt.TabFocus);
+            if (!focusable(target)) {
+                target = root.descendants(owner).find(child => focusable(child));
+            }
+            if (target === undefined) return "no-focusable";
+            target.forceActiveFocus(Qt.TabFocusReason);
+            return "focused";
+        }
         // The launcher's rows as it draws them, in list order: each
         // LauncherRow delegate's kind, label and detail.
         function launcherRows(hostKey: string, id: string): string {
@@ -1390,6 +1494,22 @@ Scope {
             delete next[name];
             root.popupCopies = next;
             copy.destroy();
+            return "ok";
+        }
+        // Build a disposable panel host copy from FILE on the focused
+        // screen. Rows use this for host controls whose window activation
+        // must behave like a real unanchored summon.
+        function panelHostLoad(name: string, file: string, id: string): string {
+            if (name in root.popupCopies) return "loaded";
+            const screen = Compositor.focusedScreen();
+            if (screen === null) return "refused: screen=none";
+            const component = Qt.createComponent("file://" + file);
+            if (component.status !== Component.Ready) return root.answer("error: " + component.errorString().trim().replace(/\n/g, " "));
+            const made = component.createObject(root, { pluginId: id, screen: screen });
+            if (made === null) return "error: create";
+            const next = Object.assign({}, root.popupCopies);
+            next[name] = made;
+            root.popupCopies = next;
             return "ok";
         }
         // Build a disposable OverlaySurface copy with the real layer
@@ -1518,6 +1638,44 @@ Scope {
             root.runnerCopy.destroy();
             root.runnerCopy = null;
             return "ok";
+        }
+        // Count visible text nodes under items named `type` whose text
+        // contains NEEDLE. Rows use this for large drawn-text checks where
+        // the count is the contract and the full text would page.
+        function itemTextCount(hostKey: string, id: string, type: string, needle: string): int {
+            const item = root.instance(hostKey, id);
+            if (item === null) return 0;
+            const shown = child => {
+                for (let at = child; at !== null && at !== item; at = at.parent)
+                    if (at.visible === false) return false;
+                return true;
+            };
+            const texts = node => {
+                let count = node instanceof Text && shown(node) && node.text.indexOf(needle) !== -1 ? 1 : 0;
+                for (const child of Array.from(node.children || [])) count += texts(child);
+                return count;
+            };
+            const found = root.descendants(item).find(child => root.typeName(child) === type && shown(child));
+            return found === undefined ? 0 : texts(found);
+        }
+        // Count visible ImageText items under items named `type` that hold
+        // at least one image segment. The row separately controls paged IPC.
+        function itemImageTextCount(hostKey: string, id: string, type: string): int {
+            const item = root.instance(hostKey, id);
+            if (item === null) return 0;
+            const shown = child => {
+                for (let at = child; at !== null && at !== item; at = at.parent)
+                    if (at.visible === false) return false;
+                return true;
+            };
+            const hasImage = child => {
+                for (const segment of child.segments || [])
+                    if (segment.image !== undefined && segment.image !== "") return true;
+                return false;
+            };
+            const found = root.descendants(item).find(child => root.typeName(child) === type && shown(child));
+            if (found === undefined) return 0;
+            return root.descendants(found).filter(child => root.typeName(child) === "ImageText" && shown(child) && hasImage(child)).length;
         }
     }
 }

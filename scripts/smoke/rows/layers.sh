@@ -71,6 +71,10 @@ for point in "left $left_x $pad_y" "right $right_x $pad_y" "client $gap_x $pad_y
 done
 expect "pressing a passive layer leaves the keyboard on the client" "$client_focused" active_window
 
+client_keys_before="$(other_events '^key [0-9]+ released$')" || fail "the client key count is unreadable"
+type_keys z || fail "typing while the passive layer is mapped failed"
+expect_poll "a passive layer leaves typed keys on the client" "$((client_keys_before + 1))" other_events '^key [0-9]+ released$'
+
 expect "the content can take input on its whole surface" ok layered full 1
 layer_input_begin layer "$gap_x" "$pad_y" || { fail "the full-layer gap click failed"; exit 1; }
 expect_poll "inputAll catches press and release in the gap instead of the client" ok layer_input_result
