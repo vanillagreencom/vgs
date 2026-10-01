@@ -81,7 +81,7 @@ At most 16 requests await a reply. The next is refused `busy` and never written.
 
 The service reads desktop entries through Quickshell's `DesktopEntries`, the launcher's source, so VGS keeps one entry parser. The [Quickshell 0.3.1 DesktopEntry reference](https://quickshell.org/docs/v0.3.1/types/Quickshell/DesktopEntry/) defines `command` as the parsed Exec without terminal handling and `startupClass` as the class the application intends to use. A node parser in the daemon would be a second parser with its own field-code rules.
 
-`apps.launch` follows the launcher's rule in `vgs.launcher/Launcher.qml::launchApp`: a terminal entry runs through `xdg-terminal-exec`, and every other entry runs its command. `apps.open` and `apps.url` run `gio open`, the launcher's file action. All three go through `shell.run.detached`, which answers once the program is handed over.
+`apps.launch` follows the launcher's rule in `shell/plugins/vgs.launcher/Launcher.qml::launchApp`: a terminal entry runs through `xdg-terminal-exec`, and every other entry runs its command. `apps.open` and `apps.url` run `gio open`, the launcher's file action. All three go through `shell.run.detached`, which answers once the program is handed over.
 
 The read-back accepts a new mapped window whose class or initial class equals the entry's `startupClass` or id, ignoring case. A terminal entry's window carries the terminal's class, so any new window counts there. `gio open` names no class, so any new window counts. No window within `launchMs` is `unknown`, with a sentence saying the program may still be starting, run without a window, or have opened in an existing window. A web link opened as a tab is the common case.
 
