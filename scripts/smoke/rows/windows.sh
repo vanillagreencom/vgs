@@ -6,11 +6,12 @@
 # Escape it has the keyboard for, which the list page leaves to the window
 # host, and by none it does not. The rows here add what Settings alone
 # shows: the float comes from the Hyprland layer's `vgs:window` rule, which
-# disabled tiles a new window; float toggles tile and float it; typed keys
-# reach its search field and not the helper, then the helper and not the
-# field; and a close through Hyprland closes it. The themes panel, a panel
-# the host draws as a layer surface, is the control of the class, the
-# border and the move: it is no client, its edge draws no border and a
+# disabled tiles a new window; float toggles tile and float it while the
+# helper keeps the keyboard, so a focus dispatch alone returns it; typed
+# keys reach its search field and not the helper, then the helper and not
+# the field; and a close through Hyprland closes it. The themes panel, a
+# panel the host draws as a layer surface, is the control of the class,
+# the border and the move: it is no client, its edge draws no border and a
 # dispatch aimed at it moves nothing. The row enables the Settings plugin
 # and leaves it disabled, hyprland.lua as it found it and no window open.
 set -euo pipefail
@@ -38,16 +39,23 @@ restore_windows_lua || fail "hyprland.lua is put back after the rule control"
 expect "the nested instance reloads hyprland.lua after the rule control" ok hypr reload config-only
 
 # Float toggles, the keyboard and a close through Hyprland, beside the
-# toplevel helper.
+# toplevel helper. The pointer rests off every window: under Hyprland's
+# default follow_mouse a float toggle that tiles Settings under the pointer
+# hands it the keyboard, and Qt's Wayland client can drop a keyboard that
+# leaves a window and returns within one compositor batch, leaving Settings
+# with the keyboard and no focused item (docs/architecture/runtime-qml.md).
 expect "the IPC opens the Settings window for the keyboard rows" ok ipc shell summon window vgs.settings '{}'
 expect_poll "the Settings window is focused for the keyboard rows" "[\"$shell_class\", \"Settings\"]" active_window
+rest_pointer || fail "moving the pointer off the Settings window failed"
 if open_other "$sandbox/toplevel-windows.log"; then
   expect_poll "the new window takes the focus" '["smoke.other", "Other window"]' active_window
+  leaves_before="$(other_events '^keyboard leave$')"
   if address="$(window_address Settings)" && [[ $address == 0x* ]]; then
     expect "a float toggle aimed at the window answers ok" ok hypr dispatch "hl.dsp.window.float({ action = \"toggle\", window = \"address:$address\" })"
     expect_poll "the float toggle tiles the window" '[false]' window_of Settings floating
     expect "a second float toggle answers ok" ok hypr dispatch "hl.dsp.window.float({ action = \"toggle\", window = \"address:$address\" })"
     expect_poll "the second float toggle floats it again" '[true]' window_of Settings floating
+    expect "the other window keeps the keyboard through the float toggles" "$leaves_before" other_events '^keyboard leave$'
     other="$(other_address)"
     expect "a focus dispatch aimed at the Settings window answers ok" ok hypr dispatch "hl.dsp.focus({ window = \"address:$address\" })"
     expect_poll "the focus dispatch focused the Settings window" "[\"$shell_class\", \"Settings\"]" active_window
