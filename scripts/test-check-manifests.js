@@ -3,21 +3,21 @@
 // script adds beyond PluginLogic.js (duplicate id, missing entry point,
 // unreadable directory, unparseable manifest, a `tui` script that is
 // missing, a link, under a link, not a regular file or not executable), one
-// manifest the judge itself
-// refuses so a judge that passed everything would turn a row red, the icon
-// rule the judge reads from the shipped icon set, and the base listing: a directory without a manifest is not a plugin, an absent or
+// duplicate default shortcut key, one manifest the judge itself refuses so a
+// judge that passed everything would turn a row red, the icon rule the judge
+// reads from the shipped icon set, and the base listing: a directory without a manifest is not a plugin, an absent or
 // unreadable base exits 2. Each row asserts the printed verdict line and the
 // exit status. The check runs in a child node with an explicit environment.
 // The permission rows need a uid that permissions bind; under euid 0 the
 // suite reports status=not-measured and exits 77 instead of passing.
 "use strict";
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
 const CHECK = path.join(__dirname, "..", "bin", "lib", "check-manifests.js");
 const ENV = { PATH: process.env.PATH, LC_ALL: "C" };
+const SCRATCH = path.join(__dirname, "..", "tmp", "test-check-manifests");
 const good = { schemaVersion: 1, id: "acme.one", name: "One", version: "1.0.0", author: "acme", description: "d", kinds: ["service"], entryPoints: { service: "Service.qml" } };
 
 function plugin(dir, manifest, withEntry) {
@@ -27,10 +27,13 @@ function plugin(dir, manifest, withEntry) {
 }
 
 let failures = 0;
+let rowNumber = 0;
 // rows: name, build(tmp) -> argument list, want exit, a line stdout holds
 // (a string, or a function of tmp), a line it must not hold
 function row(name, build, wantStatus, wantLine, forbidLine) {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "check-manifests-"));
+    const tmp = path.join(SCRATCH, String(rowNumber++));
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.mkdirSync(tmp, { recursive: true });
     let proc;
     try {
         proc = spawnSync(process.execPath, [CHECK, ...build(tmp)], { encoding: "utf8", env: ENV });
@@ -50,6 +53,12 @@ row("valid plugin passes", tmp => { const d = path.join(tmp, "a"); plugin(d, goo
 row("missing entry point is refused and prints no ok line", tmp => { const d = path.join(tmp, "a"); plugin(d, good, false); return ["--", d]; }, 1, "entry point for service missing", "ok       acme.one");
 row("entry point directory is refused", tmp => { const d = path.join(tmp, "a"); plugin(d, good, false); fs.mkdirSync(path.join(d, "Service.qml")); return ["--", d]; }, 1, "entry point for service not a file", "ok       acme.one");
 row("duplicate id across directories is refused", tmp => { const a = path.join(tmp, "a"), b = path.join(tmp, "b"); plugin(a, good, true); plugin(b, good, true); return ["--", a, b]; }, 1, "already used by");
+row("duplicate first-party default key across manifests is refused", tmp => {
+    const a = path.join(tmp, "a"), b = path.join(tmp, "b");
+    plugin(a, Object.assign({}, good, { capabilities: ["shortcut"], hyprland: { binds: [{ shortcut: "open", key: "SUPER+CTRL+Y" }] } }), true);
+    plugin(b, Object.assign({}, good, { id: "acme.two", capabilities: ["shortcut"], hyprland: { binds: [{ shortcut: "toggle", key: "SUPER+CTRL+Y" }] } }), true);
+    return ["--", a, b];
+}, 1, "default key SUPER+CTRL+Y for acme.two:toggle already used by acme.one:open", "ok       acme.two");
 row("unparseable manifest is refused", tmp => { const d = path.join(tmp, "a"); plugin(d, "{not json", true); return ["--", d]; }, 1, "manifest does not parse");
 row("a manifest the judge refuses is refused with the judge's line", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({ requires: [] }, good), true); return ["--", d]; }, 1, "requires is refused: a plugin names no other plugin (D005)", "ok       acme.one");
 // The manifest's icon is judged against the shipped icon set, which the
@@ -88,6 +97,7 @@ if (process.getuid() !== 0) {
     row("an entry point that cannot be checked exits 2 and is not called missing", tmp => { const d = path.join(tmp, "a"); plugin(d, Object.assign({}, good, { entryPoints: { service: "locked/Service.qml" } }), false); fs.mkdirSync(path.join(d, "locked")); fs.writeFileSync(path.join(d, "locked", "Service.qml"), ""); fs.chmodSync(path.join(d, "locked"), 0o000); return ["--", d]; }, 2, tmp => "check-manifests: unreadable: " + path.join(tmp, "a", "locked", "Service.qml") + ": EACCES", "missing");
 }
 
+fs.rmSync(SCRATCH, { recursive: true, force: true });
 if (failures > 0) { console.log("test-check-manifests: failed=" + failures); process.exit(1); }
 // Under euid 0 the permission rows did not run: an unmeasured suite, not a pass.
 if (process.getuid() === 0) { console.log("test-check-manifests: status=not-measured reason=euid-0"); process.exit(77); }

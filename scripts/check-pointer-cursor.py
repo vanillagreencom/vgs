@@ -41,97 +41,19 @@ import sys
 # no bytecode cache beside it.
 sys.dont_write_bytecode = True
 from qml_source import Unreadable, blank_comments, source_texts
+from qml_controls import blocks, marker, takes_click, template_alias
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 DEFAULT_ROOTS = (os.path.join(REPO, "shell"), os.path.join(REPO, ".agents", "skills", "vgs-plugin", "templates"))
 OWNER = os.path.realpath(os.path.join(REPO, "shell", "Ui", "foundation", "PointerCursor.qml"))
 COMPONENT = "PointerCursor"
 
-# Qt Quick Templates types that take a click on their own item: AbstractButton
-# and every type the Qt 6 reference lists as inheriting it, and the slider
-# family, which takes a press to move its value. The qs.Ui controls extend
-# AbstractButton, Button, CheckBox, ItemDelegate, MenuItem, RadioButton,
-# Slider, Switch and TabButton.
-TEMPLATE_CONTROLS = frozenset((
-    "AbstractButton", "Button", "CheckBox", "CheckDelegate", "DelayButton", "ItemDelegate",
-    "MenuBarItem", "MenuItem", "RadioButton", "RadioDelegate", "RoundButton", "SwipeDelegate",
-    "Switch", "SwitchDelegate", "TabButton", "ToolButton", "Slider", "RangeSlider", "Dial",
-))
-TEMPLATES_ALIAS = re.compile(r"^\s*import\s+QtQuick\.Templates(?:\s+[\d.]+)?\s+as\s+(\w+)\s*$", re.M)
-# The type name an object declaration puts before its brace, qualified or not.
-TYPE_BEFORE = re.compile(r"(?:^|[^\w.$])((?:[A-Za-z_]\w*\.)*[A-Z]\w*)\s*$")
-NO_BUTTON = re.compile(r"\bacceptedButtons\s*:\s*Qt\.NoButton\b")
 LITERAL = re.compile(r"\bQt\.PointingHandCursor\b")
 EXEMPT = re.compile(r"^\s*//\s*pointer-cursor-exempt:\s*\S")
 
 
-class Block:
-    """One `{ }` block: an object declaration when `type` names it, else a
-    JavaScript or grouped-property block."""
-
-    def __init__(self, type_name, line, parent):
-        self.type = type_name
-        self.line = line
-        self.parent = parent
-        self.children = []
-        self.own = []
-
-    def own_text(self):
-        return "".join(self.own)
-
-
-def blocks(code):
-    """Every block of `code`, a QML text with comments and string contents
-    blanked, in source order."""
-    root = Block(None, 0, None)
-    found = []
-    current = root
-    line = 1
-    segment_start = 0
-    for i, ch in enumerate(code):
-        if ch == "\n":
-            line += 1
-        if ch == "{":
-            m = TYPE_BEFORE.search(code[segment_start:i])
-            type_name, at = (m.group(1), line - code[segment_start + m.start(1):i].count("\n")) if m else (None, line)
-            block = Block(type_name, at, current)
-            current.children.append(block)
-            found.append(block)
-            current = block
-            segment_start = i + 1
-        elif ch == "}":
-            if current.parent is not None:
-                current = current.parent
-            segment_start = i + 1
-        else:
-            if ch == ";":
-                segment_start = i + 1
-            current.own.append(ch)
-    return found
-
-
-def takes_click(block, alias):
-    if block.type == "MouseArea":
-        return NO_BUTTON.search(block.own_text()) is None
-    if block.type == "TapHandler":
-        return True
-    if alias is not None and block.type.startswith(alias + "."):
-        return block.type[len(alias) + 1:] in TEMPLATE_CONTROLS
-    return False
-
-
 def declares_cursor(block):
     return any(child.type == COMPONENT for child in block.children)
-
-
-def exempt(raw_lines, line):
-    """Whether the comment block directly above `line` holds a marker."""
-    above = line - 2
-    while above >= 0 and raw_lines[above].lstrip().startswith("//"):
-        if EXEMPT.match(raw_lines[above]):
-            return True
-        above -= 1
-    return False
 
 
 def check_tree(root, findings, counts):
@@ -145,8 +67,7 @@ def check_tree(root, findings, counts):
         if not path.endswith(".qml"):
             continue
         files += 1
-        m = TEMPLATES_ALIAS.search(code)
-        alias = m.group(1) if m else None
+        alias = template_alias(code)
         raw_lines = text.split("\n")
         for block in blocks(blank_comments(text, literals=False)):
             if block.type is None or not takes_click(block, alias):
@@ -155,7 +76,7 @@ def check_tree(root, findings, counts):
             holder = block.parent if block.type == "TapHandler" else block
             if declares_cursor(holder):
                 continue
-            if exempt(raw_lines, block.line):
+            if marker(raw_lines, block.line, EXEMPT):
                 counts["exempt"] += 1
                 continue
             where = "its parent declares" if block.type == "TapHandler" else "it declares"

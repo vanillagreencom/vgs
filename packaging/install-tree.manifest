@@ -120,6 +120,8 @@ f share/vgs/shell/Ui/feedback/CommandDisclosure.qml
 f share/vgs/shell/Ui/feedback/Dialog.qml
 f share/vgs/shell/Ui/feedback/EmptyState.qml
 f share/vgs/shell/Ui/feedback/Kbd.qml
+f share/vgs/shell/Ui/feedback/KeyCaps.qml
+f share/vgs/shell/Ui/feedback/KeyHints.qml
 f share/vgs/shell/Ui/feedback/ProgressBar.qml
 f share/vgs/shell/Ui/feedback/Spinner.qml
 f share/vgs/shell/Ui/feedback/Toast.qml
@@ -133,6 +135,8 @@ f share/vgs/shell/Ui/foundation/IconBounds.js
 f share/vgs/shell/Ui/foundation/ImagePool.qml
 f share/vgs/shell/Ui/foundation/ImageText.qml
 f share/vgs/shell/Ui/foundation/ImageTextLogic.js
+f share/vgs/shell/Ui/foundation/KeyNav.qml
+f share/vgs/shell/Ui/foundation/KeyNavLogic.js
 f share/vgs/shell/Ui/foundation/Label.qml
 f share/vgs/shell/Ui/foundation/PointerCursor.qml
 f share/vgs/shell/Ui/foundation/Scrim.qml
@@ -308,6 +312,8 @@ f share/vgs/shell/plugins/vgs.lock/manifest.json
 f share/vgs/shell/plugins/vgs.lock/pam/vgs-lock
 f share/vgs/shell/plugins/vgs.notifications/Anim.qml
 f share/vgs/shell/plugins/vgs.notifications/Appearance.js
+f share/vgs/shell/plugins/vgs.notifications/CardFace.qml
+f share/vgs/shell/plugins/vgs.notifications/CardScroll.qml
 f share/vgs/shell/plugins/vgs.notifications/CardSlot.qml
 f share/vgs/shell/plugins/vgs.notifications/ColorAnim.qml
 f share/vgs/shell/plugins/vgs.notifications/EdgeLight.qml
@@ -316,6 +322,7 @@ f share/vgs/shell/plugins/vgs.notifications/InboxHeader.qml
 f share/vgs/shell/plugins/vgs.notifications/MediaSlot.qml
 f share/vgs/shell/plugins/vgs.notifications/NotificationCard.qml
 f share/vgs/shell/plugins/vgs.notifications/NotificationLogic.js
+f share/vgs/shell/plugins/vgs.notifications/Panel.qml
 f share/vgs/shell/plugins/vgs.notifications/PillButton.qml
 f share/vgs/shell/plugins/vgs.notifications/Service.qml
 f share/vgs/shell/plugins/vgs.notifications/SlackPhotos.qml
@@ -354,7 +361,6 @@ f share/vgs/shell/plugins/vgs.themes/Browser.qml
 f share/vgs/shell/plugins/vgs.themes/BrowserLogic.js
 f share/vgs/shell/plugins/vgs.themes/DesktopPreview.qml
 f share/vgs/shell/plugins/vgs.themes/Files.js
-f share/vgs/shell/plugins/vgs.themes/KeyHints.qml
 f share/vgs/shell/plugins/vgs.themes/Service.qml
 f share/vgs/shell/plugins/vgs.themes/SetupLogic.js
 f share/vgs/shell/plugins/vgs.themes/ThemeCard.qml

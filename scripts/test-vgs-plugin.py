@@ -12,8 +12,9 @@ refuses (leaving no directory), a judge that exits above 1, an occupied target
 and a check on a directory with no manifest. `check` runs the pointer cursor
 rule on the plugin's tree: a plugin whose entry point holds a bare
 `MouseArea` fails with `cursor-missing` naming that file, and the same plugin
-with `PointerCursor` inside the area passes. Every child runs under an
-explicit environment."""
+with `PointerCursor` inside the area passes; the keyboard check fails a
+pointer-clean `MouseArea` with no key path and passes it once the parent owns
+one. Every child runs under an explicit environment."""
 import importlib.machinery
 import importlib.util
 import json
@@ -55,14 +56,15 @@ def template_table():
     return module.TEMPLATE_FOR
 
 
-# A service entry point whose MouseArea, on line 7, takes a click; CURSOR
+# A service entry point whose MouseArea, on line 7, takes a click. KEYPATH
+# fills the parent with a keyboard path when a row needs one, and CURSOR
 # fills in what the area holds besides its handler.
 CLICKER = """import QtQuick
 import qs.Ui
 
 Item {
     property var shell: null
-
+    KEYPATH
     MouseArea {
         anchors.fill: parent
         onClicked: console.log("clicked")
@@ -70,6 +72,8 @@ Item {
     }
 }
 """
+
+KEYPATH = """Keys.onReturnPressed: console.log("clicked")"""
 
 
 def pointer_cursor_rows(tmp):
@@ -81,12 +85,12 @@ def pointer_cursor_rows(tmp):
     if made.returncode != 0:
         report("new writes the pointer cursor fixture", False, f"exit={made.returncode}\n{made.stdout}{made.stderr}")
         return
-    for name, cursor, status, last in (
-        ("check fails a plugin with a bare MouseArea on cursor-missing", "", 1, "vgs-plugin: check failed=1"),
-        ("check passes the plugin once the MouseArea declares PointerCursor", "PointerCursor {}", 0, "vgs-plugin: check ok"),
+    for name, keypath, cursor, status, last in (
+        ("check fails a plugin with a bare MouseArea on cursor-missing", "", "", 1, "vgs-plugin: check failed=1"),
+        ("check passes the plugin once the MouseArea declares PointerCursor", KEYPATH, "PointerCursor {}", 0, "vgs-plugin: check ok"),
     ):
         with open(entry, "w", encoding="utf-8") as fh:
-            fh.write(CLICKER.replace("CURSOR", cursor))
+            fh.write(CLICKER.replace("KEYPATH", keypath).replace("CURSOR", cursor))
         checked = scaffold("check", target)
         lines = checked.stdout.rstrip().split("\n")
         missing = [l for l in lines if l.startswith("cursor-missing ")]
@@ -94,6 +98,32 @@ def pointer_cursor_rows(tmp):
             found = missing == [f"cursor-missing {entry}:7 MouseArea: it declares no PointerCursor and carries no exemption"]
         else:
             found = not missing and "check-pointer-cursor: ok files=1 clickable=1 exempt=0" in lines
+        report(name, checked.returncode == status and lines[-1] == last and found, f"exit={checked.returncode}\n{checked.stdout}{checked.stderr}")
+
+
+def keyboard_rows(tmp):
+    """The no-keypath row is the must-fail control of cmd_check's keyboard
+    step: without that step, the pointer-clean plugin passes and the row
+    turns red."""
+    made = scaffold("new", "acme.keyboard", "--kinds", "service", "--dir", tmp)
+    target = os.path.join(tmp, "acme.keyboard")
+    entry = os.path.join(target, "Service.qml")
+    if made.returncode != 0:
+        report("new writes the keyboard fixture", False, f"exit={made.returncode}\n{made.stdout}{made.stderr}")
+        return
+    for name, keypath, status, last in (
+        ("check fails a pointer-clean MouseArea with no keyboard path", "", 1, "vgs-plugin: check failed=1"),
+        ("check passes the pointer-clean MouseArea once its parent has a key path", KEYPATH, 0, "vgs-plugin: check ok"),
+    ):
+        with open(entry, "w", encoding="utf-8") as fh:
+            fh.write(CLICKER.replace("KEYPATH", keypath).replace("CURSOR", "PointerCursor {}"))
+        checked = scaffold("check", target)
+        lines = checked.stdout.rstrip().split("\n")
+        findings = [l for l in lines if l.startswith("keyboard-path-missing ")]
+        if status:
+            found = findings == [f"keyboard-path-missing {entry}:7 MouseArea: no Keys handler or focus path"]
+        else:
+            found = not findings and any(l.startswith("check-keyboard: ok files=1") for l in lines)
         report(name, checked.returncode == status and lines[-1] == last and found, f"exit={checked.returncode}\n{checked.stdout}{checked.stderr}")
 
 
@@ -135,7 +165,9 @@ def main():
     report("the template table covers exactly PluginLogic.KINDS", sorted(table) == sorted(kinds), f"table={sorted(table)} kinds={sorted(kinds)}")
     report("every template file in the table exists", all(os.path.isfile(os.path.join(os.path.dirname(SCAFFOLD), "..", "templates", t)) for t, _ in table.values()), str(table))
 
-    with tempfile.TemporaryDirectory() as tmp:
+    scratch_root = os.path.join(REPO, "tmp")
+    os.makedirs(scratch_root, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch_root) as tmp:
         made = scaffold("new", "acme.probe", "--kinds", "bar-widget,service", "--dir", tmp)
         target = os.path.join(tmp, "acme.probe")
         report("new writes a plugin of two kinds and its check passes", made.returncode == 0 and made.stdout.rstrip().endswith("vgs-plugin: check ok"), f"exit={made.returncode}\n{made.stdout}{made.stderr}")
@@ -178,6 +210,7 @@ def main():
         unchecked = scaffold("check", empty)
         report("check refuses a directory without a manifest", unchecked.returncode == 2 and first_line(unchecked.stdout) == f"vgs-plugin: refused: no-manifest={empty}", f"exit={unchecked.returncode}\n{unchecked.stdout}{unchecked.stderr}")
         pointer_cursor_rows(tmp)
+        keyboard_rows(tmp)
         user_command_rows(tmp)
 
     if failures:

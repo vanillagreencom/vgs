@@ -9,7 +9,8 @@
 // bin/vgsh-scan, so a directory with no manifest.json is not a plugin and a
 // directory the scan cannot read ends the run. With plugin directories it
 // checks those. Beside the judge's verdict it reads the files a manifest
-// names: every entry point must be a file, and every `tui` script a regular
+// names: every entry point must be a file, every first-party default key must
+// be unique across the checked manifests, and every `tui` script a regular
 // file with its owner's execute bit, reached through no symbolic link, since
 // bin/vgsh-scan follows links and would publish whatever one points at.
 // Prints one line per plugin. Exit 0 when every manifest is
@@ -93,6 +94,7 @@ function scriptDefect(dir, script) {
 
 let refused = 0;
 const seen = {};
+const defaultKeys = {};
 for (const { dir, text } of manifests()) {
     let raw;
     try {
@@ -107,6 +109,17 @@ for (const { dir, text } of manifests()) {
     if (seen[r.manifest.id]) { console.log("refused  " + dir + ": id " + r.manifest.id + " already used by " + seen[r.manifest.id]); refused += 1; continue; }
     seen[r.manifest.id] = dir;
     let missing = false;
+    for (const bind of (r.manifest.hyprland === undefined ? [] : r.manifest.hyprland.binds)) {
+        const prior = defaultKeys[bind.key];
+        const owner = r.manifest.id + ":" + bind.shortcut;
+        if (prior !== undefined) {
+            console.log("refused  " + dir + ": default key " + bind.key + " for " + owner + " already used by " + prior);
+            refused += 1;
+            missing = true;
+            continue;
+        }
+        defaultKeys[bind.key] = owner;
+    }
     for (const kind of r.manifest.kinds) {
         const entry = path.join(dir, r.manifest.entryPoints[kind]);
         try {
