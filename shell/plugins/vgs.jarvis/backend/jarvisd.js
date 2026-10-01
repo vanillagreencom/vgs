@@ -3,7 +3,8 @@
 // Stdin is the service's lease. EOF exits 0; a partial line or a refused
 // message exits 65. Task-store or confirmation-audit failure exits 74. Node below 22 or a
 // mute-store failure exits 78. Stdout carries v1 status/state
-// messages judged by JarvisProtocol; stderr carries keyed jarvis: failures.
+// messages and shell requests judged by JarvisProtocol; stderr carries keyed jarvis: failures.
+// A reply for a request that awaits none exits 65 like any refused message.
 // Startup validates coding-task records and publishes their durable producer.
 // Device discovery is read-only. Speech/indicator prerequisites keep capture
 // unconfigured. EOF closes the audio owner and waits for all child exits.
@@ -27,8 +28,12 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
 } else {
     const Audit = require("./Audit.js");
     const ToolRouter = require("./ToolRouter.js");
+    const ShellRequests = require("./ShellRequests.js");
+    const Desktop = require("./Desktop.js");
     const { load } = require(path.join(process.argv[3], "bin/lib/qml-library.js"));
+    const { onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
+    const Dispatch = load(path.join(process.argv[3], "shell/Core/Dispatch.js"));
     const Session = Protocol.Session;
     const { SessionRunner, unavailable } = require("./session-runner.js");
     const { Audio } = require("./Audio.js");
@@ -38,10 +43,23 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let ending = false;
     let seq = 0;
     let audit = null;
+    let requests = null;
+    let desktop = null;
+    const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
 
     function teardown() {
         runner.close();
+        if (desktop !== null) desktop.close();
+        if (requests !== null) requests.close();
         if (audit !== null) audit.close();
+    }
+
+    // hyprctl finds this session's socket from these alone.
+    function hyprctlEnvironment() {
+        const environment = { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" };
+        for (const name of ["XDG_RUNTIME_DIR", "HYPRLAND_INSTANCE_SIGNATURE"])
+            if (process.env[name] !== undefined) environment[name] = process.env[name];
+        return environment;
     }
 
     function intentIdentity(message) {
@@ -165,6 +183,11 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     }
                     continue;
                 }
+                if (message.type === "reply") {
+                    intentIdentity(message);
+                    requests.reply(message);
+                    continue;
+                }
                 if (message.type === "shown") {
                     intentIdentity(message);
                     const hold = runner.state.approval;
@@ -198,6 +221,10 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         result: value => runner.ports.brain.outcome(value) });
                     // Executor owners register only after their real probes.
                     Object.assign(runner.ports, router.ports);
+                    requests = ShellRequests.create({ Protocol, clock, write: fields =>
+                        write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
+                    desktop = Desktop.install({ router, Dispatch, request: requests.send, clock,
+                        environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) });
                 }
                 if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,

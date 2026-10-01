@@ -144,6 +144,44 @@ Item {
             tone: "danger", icon: "mic" });
     }
 
+    // One reply per daemon request, from the capability that owns the act.
+    // The reply carries the shell's own answer; the daemon reads every
+    // effect back from Hyprland itself.
+    function serve(message) {
+        const args = message.args;
+        let answer = "ok";
+        let data = null;
+        const compositor = message.kind.startsWith("compositor.") && message.kind !== "compositor.reveal";
+        if (!compositor && ["compositor.reveal", "run.detached", "toast", "desktop.list", "desktop.entry"].indexOf(message.kind) === -1)
+            throw new Error("jarvis: request=unserved kind=" + message.kind);
+        try {
+            if (compositor) answer = shell.compositor[message.kind.slice("compositor.".length)].apply(null, args);
+            else if (message.kind === "compositor.reveal") answer = shell.compositor.reveal([args[0]], false);
+            else if (message.kind === "run.detached") answer = shell.run.detached(args);
+            else if (message.kind === "toast") shell.toasts.show({ title: args[0], message: args[1], tone: "info", icon: "mic" });
+            else if (message.kind === "desktop.list") data = Protocol.desktopEntries(DesktopEntries.applications.values.map(entryRecord));
+            else {
+                const entry = DesktopEntries.byId(args[0]);
+                data = entry === null ? null : Protocol.desktopEntry(entryRecord(entry), true);
+                if (data === null) answer = "refused: desktop=unknown";
+            }
+        } catch (error) {
+            // A capability refuses by throwing, as toasts do past their ceiling.
+            answer = String(error.message);
+            data = null;
+        }
+        const wire = JSON.stringify({ v: 1, type: "reply", gen: message.gen, revision: message.revision,
+            id: message.id, kind: message.kind, answer: Protocol.answer(answer), data: answer === "ok" ? data : null });
+        Protocol.accept(wire, "shell");
+        child.write(wire + "\n");
+    }
+
+    // The launcher's inputs: Quickshell's parsed Exec and terminal flag.
+    function entryRecord(entry) {
+        return { id: entry.id, name: entry.name, startupClass: entry.startupClass, noDisplay: entry.noDisplay,
+            command: Array.from(entry.command), terminal: entry.runInTerminal };
+    }
+
     function broken(reason) {
         cause = reason;
         console.warn(reason);
@@ -170,6 +208,10 @@ Item {
                         const report = shell.status.set("audio", { tone: "ok", text: "Device list ready" });
                         if (report !== "ok") throw new Error("jarvis: " + report);
                     }
+                    continue;
+                }
+                if (message.type === "request") {
+                    serve(message);
                     continue;
                 }
                 if (message.type === "audio-fault") {
@@ -250,6 +292,7 @@ Item {
             PATH: Quickshell.env("PATH"), HOME: Quickshell.env("HOME"),
             XDG_CONFIG_HOME: Quickshell.env("XDG_CONFIG_HOME"), XDG_STATE_HOME: Quickshell.env("XDG_STATE_HOME"),
             XDG_DATA_HOME: Quickshell.env("XDG_DATA_HOME"), XDG_RUNTIME_DIR: Quickshell.env("XDG_RUNTIME_DIR"),
+            HYPRLAND_INSTANCE_SIGNATURE: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"),
             LANG: "C.UTF-8"
         })
         stdout: SplitParser { splitMarker: ""; onRead: data => root.receive(data) }

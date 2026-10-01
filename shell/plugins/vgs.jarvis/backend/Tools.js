@@ -19,6 +19,9 @@ const strings = { type: "array", minItems: 1, items: text };
 const url = { type: "string", format: "uri", pattern: "^https?://" };
 const desktop = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_.-]*$(?![\\s\\S])" };
 const windowId = { type: "string", pattern: "^0[xX][0-9a-fA-F]+$(?![\\s\\S])" };
+// A regular workspace by id, the form a read-back can match exactly.
+const workspaceId = { type: "integer", minimum: 1, maximum: 2147483647 };
+const specialName = { type: "string", pattern: "^[A-Za-z0-9_-]+$(?![\\s\\S])" };
 const reference = { type: "string", pattern: "^@e[1-9][0-9]*$(?![\\s\\S])" };
 const objectValue = { type: "object" };
 
@@ -27,18 +30,22 @@ const objectValue = { type: "object" };
 const TABLE = {
     "help": { sentence: "Read help for {topic}", effect: "read", executor: "guidance", command: null, schema: { topic: oneOf(["windows", "apps", "input", "clipboard", "media", "notify", "files", "shell", "vision", "browser"]) } },
     "windows.list": { sentence: "List windows", effect: "read", executor: "windows", command: "hyprctl", schema: {} },
-    "windows.focus": { sentence: "Focus window {window}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId } },
-    "windows.reveal": { sentence: "Reveal window {window}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId } },
-    "windows.move": { sentence: "Move window {window} to {x}, {y}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, x: integer, y: integer } },
-    "windows.resize": { sentence: "Resize window {window} to {width} by {height}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, width: positive, height: positive } },
-    "windows.close": { sentence: "Close window {window}", effect: "persistent", executor: "compositor", command: null, schema: { window: windowId } },
-    "windows.fullscreen": { sentence: "{action} {mode} for window {window}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, mode: oneOf(["fullscreen", "maximized"]), action: oneOf(["set", "unset", "toggle"]) } },
-    "windows.float": { sentence: "{action} floating for window {window}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, action: oneOf(["set", "unset", "toggle"]) } },
-    "windows.monitor": { sentence: "Focus monitor {monitor}", effect: "reversible", executor: "compositor", command: null, schema: { monitor: text } },
+    "windows.focus": { sentence: "Focus window {window}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { window: windowId } },
+    "windows.reveal": { sentence: "Reveal window {window}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { window: windowId } },
+    "windows.move": { sentence: "Move window {window} to {x}, {y}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { window: windowId, x: integer, y: integer } },
+    "windows.resize": { sentence: "Resize window {window} to {width} by {height}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { window: windowId, width: positive, height: positive } },
+    "windows.close": { sentence: "Close window {window}", effect: "persistent", executor: "compositor", command: "hyprctl", schema: { window: windowId } },
+    "windows.fullscreen": { sentence: "{action} {mode} for window {window}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { window: windowId, mode: oneOf(["fullscreen", "maximized"]), action: oneOf(["set", "unset", "toggle"]) } },
+    "windows.float": { sentence: "{action} floating for window {window}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { window: windowId, action: oneOf(["set", "unset", "toggle"]) } },
+    "windows.workspace": { sentence: "Move window {window} to workspace {workspace}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { window: windowId, workspace: workspaceId } },
+    "workspaces.list": { sentence: "List workspaces", effect: "read", executor: "windows", command: "hyprctl", schema: {} },
+    "workspaces.focus": { sentence: "Show workspace {workspace}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { workspace: workspaceId } },
+    "workspaces.special": { sentence: "Toggle special workspace {name}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { name: specialName } },
+    "windows.monitor": { sentence: "Focus monitor {monitor}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { monitor: text } },
     "apps.list": { sentence: "List applications", effect: "read", executor: "apps", command: null, schema: {} },
-    "apps.launch": { sentence: "Launch application {desktop}", effect: "reversible", executor: "apps", command: null, schema: { desktop: desktop } },
-    "apps.open": { sentence: "Open {path}", effect: "reversible", executor: "apps", command: null, schema: { path: absolute }, paths: [["path", "read"]] },
-    "apps.url": { sentence: "Open {url}", effect: "reversible", executor: "apps", command: null, schema: { url: url } },
+    "apps.launch": { sentence: "Launch application {desktop}", effect: "reversible", executor: "apps", command: "hyprctl", schema: { desktop: desktop } },
+    "apps.open": { sentence: "Open {path}", effect: "reversible", executor: "apps", command: "gio", schema: { path: absolute }, paths: [["path", "read"]] },
+    "apps.url": { sentence: "Open {url}", effect: "reversible", executor: "apps", command: "gio", schema: { url: url } },
     "input.text": { sentence: "Type this exact text:\n{text}", effect: "input", executor: "input", command: "wtype", schema: { text: text }, input: "text" },
     "input.key": { sentence: "Press {chord}", effect: "input", executor: "input", command: "wtype", schema: { chord: text }, input: "key" },
     "input.click": { sentence: "Click {button} at {x}, {y}", effect: "input", executor: "input", command: "wlrctl", schema: { x: integer, y: integer, button: oneOf(["left", "right", "middle"]) }, input: "pointer" },

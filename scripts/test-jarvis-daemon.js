@@ -10,6 +10,7 @@ const { once } = require("node:events");
 const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const { instrument } = require("./fixtures/jarvis/scripted.js");
 const { standins } = require("./fixtures/jarvis/audio.js");
+const desktopFixture = require("./fixtures/jarvis/desktop.js");
 const tree = path.resolve(__dirname, "..");
 const daemon = path.join(tree, "shell/plugins/vgs.jarvis/backend/jarvisd.js");
 const source = fs.readFileSync(daemon, "utf8");
@@ -115,6 +116,40 @@ async function inside() {
         { directories: { ...hello.directories, state: path.join(process.env.JARVIS_TEST_ROOT, "other") } }])
         await run(daemon, [JSON.stringify(hello) + "\n", JSON.stringify({ ...hello, ...changed }) + "\n"],
             65, "jarvis: protocol=identity", states([false]));
+    // The request wire's reply side: a reply answers only a request this
+    // daemon sent, and only after hello.
+    const answer = { v: 1, type: "reply", gen: 0, revision: hello.revision, id: 1, kind: "toast", answer: "ok", data: null };
+    await run(daemon, [JSON.stringify(answer) + "\n"], 65, "jarvis: protocol=identity");
+    const unknownReply = file => run(file, [JSON.stringify(hello) + "\n", JSON.stringify(answer) + "\n"],
+        65, "jarvis: protocol=reply-unknown", states([false]));
+    await unknownReply(daemon);
+    // The Hyprland probe after hello reaches hyprctl with this session's
+    // signature and runtime directory and nothing else of the daemon's.
+    const desk = desktopFixture.desktopWorld(process.env.XDG_RUNTIME_DIR, []);
+    async function probe(file) {
+        desk.reset();
+        const child = cp.spawn("node", [file, "--tree", tree], { env: {
+            PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+            HYPRLAND_INSTANCE_SIGNATURE: "fixture-signature"
+        }, stdio: ["pipe", "ignore", "pipe"] });
+        let err = "";
+        child.stderr.on("data", data => { err += data; });
+        const closed = once(child, "close");
+        const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
+        try {
+            child.stdin.write(JSON.stringify(hello) + "\n");
+            for (let wait = 0; desk.hyprctlCalls().length === 0; wait++) {
+                assert.ok(wait < 300, "the daemon probes Hyprland after hello");
+                await new Promise(resolve => setTimeout(resolve, 10)); // Polls the stand-in's log.
+            }
+            child.stdin.end();
+            assert.deepEqual(await closed, [0, null], err);
+            assert.deepEqual(desk.hyprctlCalls().map(call => [call.argv, call.env]), [[["--batch", "j/clients;j/activewindow;j/monitors"],
+                ["HYPRLAND_INSTANCE_SIGNATURE", "LANG", "PATH", "XDG_RUNTIME_DIR"]]]);
+            cases++;
+        } finally { clearTimeout(timeout); if (child.exitCode === null) child.kill("SIGKILL"); }
+    }
+    await probe(daemon);
 
     const root = path.join(process.env.JARVIS_TEST_ROOT, "daemon-copies");
     fs.mkdirSync(root);
@@ -138,13 +173,16 @@ async function inside() {
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"), path.join(copyDir, "Session.js"));
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/session-runner.js"), path.join(copyDir, "backend/session-runner.js"));
         for (const filename of ["Tasks.js", "task-event", "Audio.js", "audio-child.py",
-            "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js"])
+            "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "ShellRequests.js", "Desktop.js"])
             fs.copyFileSync(path.join(path.dirname(daemon), filename), path.join(copyDir, "backend", filename));
         const copy = path.join(copyDir, "backend/jarvisd.js");
         fs.writeFileSync(copy, source.replace(needle, replacement));
         await assert.rejects(() => check(copy), assert.AssertionError, name + " must turn red");
         controls++;
     }
+    await control("reply-wire", "requests.reply(message);", "void message;", unknownReply);
+    await control("hyprctl-environment", 'const environment = { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" };',
+        'const environment = { ...process.env, LANG: "C.UTF-8" };', probe);
     await control("lease", 'if (tail !== "") refuse(65, "jarvis: protocol=unterminated-line");',
         'if (tail !== "") refuse(65, "jarvis: protocol=unterminated-line");\n        setInterval(() => {}, 1000);',
         file => run(file, [], 0));
@@ -211,7 +249,8 @@ async function inside() {
         for (const relative of ["JarvisProtocol.js", "Session.js", "backend/session-runner.js",
             "backend/jarvisd.js", "backend/Tasks.js", "backend/task-event",
             "backend/Audio.js", "backend/audio-child.py", "backend/ToolRouter.js",
-            "backend/Audit.js", "backend/Redact.js", "backend/Tools.js", "backend/Policy.js"])
+            "backend/Audit.js", "backend/Redact.js", "backend/Tools.js", "backend/Policy.js",
+            "backend/ShellRequests.js", "backend/Desktop.js"])
             fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis", relative), path.join(directory, relative));
         return path.join(directory, "backend/jarvisd.js");
     }
@@ -470,6 +509,7 @@ async function main() {
         if (process.argv[2] !== "--fresh") freshSuite(tree, "daemon", root);
         const launcher = path.join(tree, "scripts/lib/jarvis-env.sh");
         standins(path.join(root, "standins"));
+        desktopFixture.standins(path.join(root, "standins"));
         const result = cp.spawnSync("/bin/bash", [launcher, path.join(root, "standins"), "--", "node", __filename, "--inside"],
             { env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
                 encoding: "utf8", timeout: 30000 });
