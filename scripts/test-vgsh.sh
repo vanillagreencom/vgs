@@ -33,6 +33,9 @@ trap 'cleanup_started_pids; rm -rf -- "${tmp:?}"' EXIT
 # environment, the first line of the lock file as it reads it while it
 # runs and its arguments in STUB_RECORD. STUB_SHELL_HOLD keeps that
 # process, the shell the runner waits on, alive for restart rows.
+# STUB_LOCK_EMPTY empties the lock file while that shell still lives, so the
+# file names the shell only while it is alive: too briefly to be read, or
+# read alive.
 cat >"$tmp/qs" <<'EOF2'
 #!/usr/bin/env bash
 if [[ ${1:-} == --version ]]; then
@@ -44,6 +47,7 @@ if [[ ${1:-} != ipc && ${1:-} != log ]]; then
   lock_line=""
   [[ -r ${XDG_RUNTIME_DIR:?}/vgsh.lock ]] && IFS= read -r lock_line <"$XDG_RUNTIME_DIR/vgsh.lock"
   printf 'pid=%s runner=%s disable=%s no_popup=%s lock=%s args=%s\n' "$$" "${VGSH_RUNNER_PID:-unset}" "${QS_DISABLE_FILE_WATCHER:-unset}" "${QS_NO_RELOAD_POPUP:-unset}" "${lock_line:-empty}" "$*" >"${STUB_RECORD:?}"
+  [[ -n ${STUB_LOCK_EMPTY:-} ]] && : >"$XDG_RUNTIME_DIR/vgsh.lock"
   [[ -n ${STUB_SHELL_HOLD:-} ]] && exec sleep "$STUB_SHELL_HOLD"
   exit 0
 fi
@@ -634,14 +638,14 @@ if [[ ! -d /proc/$old_pid ]]; then ok "a failed relaunch reports that the old sh
 # refuses start=exited once that run wrote the lock file and nothing holds
 # the lock, well inside its 30 s bound, naming the last pid the file named,
 # `none` when it named one too briefly to be read. exited_verdict LABEL BIN
-# HOLD sets exited_got to the exit, the key, the pid's state and whether
-# restart ended within 5 s; it runs in the suite's own shell, since its
-# fixture records the pids the suite stops.
-exited_verdict() { # LABEL BIN HOLD
+# HOLD [ENV...] sets exited_got to the exit, the key, the pid's state and
+# whether restart ended within 5 s; it runs in the suite's own shell, since
+# its fixture records the pids the suite stops.
+exited_verdict() { # LABEL BIN HOLD [ENV...]
   local rt="$tmp/rt-restart-exited-$1" start_us took_ms pid_state
   start_fake_shell "restart $1 exited fixture starts a shell" "$rt" "$rt/record-old"
   start_us="${EPOCHREALTIME//[!0-9]/}"
-  RESTART_BIN="$2" run_restart_capture "$rt" "$rt/record-new" "$rt/dispatch" false STUB_SHELL_HOLD="$3" STUB_GUARDED=false
+  RESTART_BIN="$2" run_restart_capture "$rt" "$rt/record-new" "$rt/dispatch" false STUB_SHELL_HOLD="$3" STUB_GUARDED=false "${@:4}"
   took_ms=$(( (${EPOCHREALTIME//[!0-9]/} - start_us) / 1000 ))
   wait "$fake_runner" 2>/dev/null || true
   pid_state=unread
@@ -658,12 +662,20 @@ if [[ $got =~ ^exit=1\ out=\[\]\ key=vgsh:\ refused:\ start=exited\ pid=(dead|no
 exited_want="exit=1 out=[] key=vgsh: refused: start=exited pid=dead prompt=yes"
 exited_verdict unguarded "$repo/bin/vgsh" 0.6; got="$exited_got"
 if [[ $got == "$exited_want" ]]; then ok "restart refuses a run whose shell never answers guarded, naming its dead pid"; else fail "exited restart unguarded: $got"; fi
-# Controls: a copy that never reads the run's end waits out its bound,
+# A run whose shell empties the lock file while it lives: the file never
+# names a dead pid, so only the lock freeing reads that run's end. The shell
+# lives 0.6 s past emptying the file, so a pid restart reads from it is
+# alive when restart looks for it.
+unnamed_want='^exit=1 out=\[\] key=vgsh: refused: start=exited pid=(dead|none) prompt=yes$'
+exited_verdict unnamed "$repo/bin/vgsh" 0.6 STUB_LOCK_EMPTY=1; got="$exited_got"
+if [[ $got =~ $unnamed_want ]]; then ok "restart refuses a run whose lock file stopped naming its shell, once the lock frees: $got"; else fail "exited restart unnamed: $got"; fi
+# Controls: a copy that never reads the run's end through the lock, run on
+# the unnamed run, which leaves it no dead pid to read, waits out its bound,
 # shortened to 3 s here; a copy that refuses while the lock is still held
 # refuses a run whose shell answers guarded on the third call.
 if exited_copy="$(pre_copy '&& flock -n "$lock" true; then' '&& false; then' 'for _ in $(seq 1 300); do' 'for _ in $(seq 1 30); do')"; then
-  exited_verdict unread "$exited_copy" 0.6; got="$exited_got"
-  if [[ $got != "$exited_want" ]]; then ok "control: a restart that never reads the run's end fails the row: $got"; else fail "control: the unread-end copy still holds"; fi
+  exited_verdict unread "$exited_copy" 0.6 STUB_LOCK_EMPTY=1; got="$exited_got"
+  if [[ ! $got =~ $unnamed_want ]]; then ok "control: a restart that never reads the run's end fails the row: $got"; else fail "control: the unread-end copy still holds"; fi
 else
   fail "the unread-end control could not edit its copy"
 fi
