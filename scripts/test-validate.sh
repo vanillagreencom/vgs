@@ -354,7 +354,7 @@ cases=(
   "keyboard-source|scripts/smoke/keyboard/keyboard.c|all|$keyboard_plan"
   "keyboard-protocol|scripts/smoke/keyboard/virtual-keyboard-unstable-v1.xml|all|$keyboard_plan"
   "device-fakes-harness|scripts/smoke/devices.sh|all|$keyboard_plan"
-  "device-fakes-fixture|scripts/smoke/fixtures/devices/stand-in.py|all|$fixture_plan"$'\nscripts/measure-shader.sh'
+  "device-fakes-fixture|scripts/smoke/fixtures/devices/stand-in.py|all|python3 scripts/test-displays-brightness.py"$'\n'"$fixture_plan"$'\nscripts/measure-shader.sh'
   "docs|docs/architecture/overview.md|offline|$repo_plan"$'\ndoc_limits_check'
   "runtime-doc|docs/architecture/runtime.md|offline|$readme_plan"$'\ndoc_limits_check'
   "docs-html|docs/guide.html|offline|$repo_plan"$'\ndoc_limits_check'

@@ -176,6 +176,7 @@ rows=(
   "cli|notifications Slack emoji helper|node scripts/test-notifications-slack-emoji.js|shell/plugins/vgs.notifications/slack-emoji.js shell/plugins/vgs.notifications/slack-photos.js shell/plugins/vgs.notifications/slack-cache.js"
   "cli|notifications Slack token probe|scripts/test-notifications-token-status.sh|shell/plugins/vgs.notifications/token-status.sh"
   "cli|updates check helper|scripts/test-updates-check.sh|shell/plugins/vgs.updates/bin/check shell/plugins/vgs.updates/NormalizeCheck.js shell/plugins/vgs.updates/UpdatesLogic.js bin/lib/qml-library.js"
+  "cli|displays brightness helper|python3 scripts/test-displays-brightness.py|shell/plugins/vgs.displays/helper/* scripts/smoke/fixtures/devices/hid-fake.py scripts/smoke/fixtures/devices/hid-world.json scripts/smoke/fixtures/devices/stand-in.py"
   "cli|updates pipeline controls|scripts/test-updates-pipeline.sh|scripts/vgsh-rows.sh shell/plugins/vgs.updates/tui/* shell/plugins/vgs.updates/bin/facts shell/plugins/vgs.updates/UpdatesLogic.js bin/lib/tui.sh bin/lib/qml-library.js"
   "cli|automations engine|node scripts/test-automations-engine.js|shell/plugins/vgs.automations/* bin/vgsh bin/vgsh-plugin-judge bin/vgsh-scan bin/lib/* shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js config/shell.json"
   "cli|Jarvis daemon|node scripts/test-jarvis-daemon.js|shell/plugins/vgs.jarvis/* bin/lib/qml-library.js scripts/lib/jarvis-env.sh scripts/fixtures/jarvis/*"
