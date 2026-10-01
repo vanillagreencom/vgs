@@ -10,7 +10,6 @@ const Check = require("./fixtures/schema-check.js");
 const excerpt = require("./fixtures/jarvis-brain/openai-chat.schema.json");
 const fixtures = require("./fixtures/jarvis-brain/openai-chat-scripts.json");
 const http = require("node:http");
-const sockets = require("node:net");
 const cp = require("node:child_process");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const file = path.join(backend, "OpenAIChat.js");
@@ -42,13 +41,28 @@ function encode(frame, label) {
     return "data: " + JSON.stringify(chunk) + "\n\n";
 }
 const delta = (value, finish = null) => ({ delta: value, finish_reason: finish });
+function calls(count) {
+    return Array.from({ length: count }, (_, index) => delta({ tool_calls: [{ index, id: "call_" + index,
+        type: "function", function: { name: "windows_focus", arguments: "{}" } }] }));
+}
+// Text frames whose stream, terminator included, ends 64 bytes under limit.
+function atTotal(limit) {
+    const frames = Array(8).fill(delta({ content: "y".repeat(1000000) }));
+    const tail = [delta({}, "stop"), "[DONE]"];
+    const used = [...frames, ...tail].reduce((sum, frame) => sum + Buffer.byteLength(encode(frame, "total-at-limit")), 0);
+    const filler = limit - 64 - used - Buffer.byteLength(encode(delta({ content: "" }), "total-at-limit"));
+    return [...frames, delta({ content: "z".repeat(filler) }), ...tail];
+}
 const scripts = { ...fixtures.scripts,
     "line-limit": { frames: [delta({ content: "x".repeat(1024 * 1024) }), delta({}, "stop"), "[DONE]"] },
     "total-limit": { frames: [...Array(9).fill(delta({ content: "y".repeat(1000000) })), delta({}, "stop"), "[DONE]"] },
-    "tool-call-limit": { frames: [...Array.from({ length: 17 }, (_, index) => delta({ tool_calls: [{ index, id: "call_" + index,
-        type: "function", function: { name: "windows_focus", arguments: "{}" } }] })), delta({}, "tool_calls"), "[DONE]"] }
+    "tool-call-limit": { frames: [...calls(17), delta({}, "tool_calls"), "[DONE]"] },
+    "tool-call-sixteen": { frames: [...calls(16), delta({}, "tool_calls"), "[DONE]"] },
+    "total-at-limit": { frames: atTotal(8 * 1024 * 1024) }
 };
 // [script, raw frame, keyed cause]: frames a broken server could send.
+const raw = choice => "data: " + JSON.stringify({ ...BASE, choices: [choice] }) + "\n\n";
+const fragment = value => raw({ index: 0, delta: { tool_calls: [value] }, finish_reason: null });
 const malformed = [
     ["not-json", "data: {\"choices\":\n\n", "chunk-json"],
     ["not-object", "data: null\n\n", "chunk-shape"],
@@ -59,6 +73,16 @@ const malformed = [
     ["finish-type", "data: " + JSON.stringify({ ...BASE, choices: [{ index: 0, delta: {}, finish_reason: 1 }] }) + "\n\n", "chunk-shape"],
     ["fragment-index", "data: " + JSON.stringify({ ...BASE, choices: [{ index: 0, delta: { tool_calls: [{ index: -1, id: "c", function: { name: "windows_focus" } }] }, finish_reason: null }] }) + "\n\n", "chunk-shape"],
     ["fragment-type", "data: " + JSON.stringify({ ...BASE, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c", type: "custom", function: { name: "windows_focus" } }] }, finish_reason: null }] }) + "\n\n", "chunk-shape"],
+    ["choice-object", raw(null), "chunk-shape"],
+    ["delta-object", raw({ index: 0, delta: "x", finish_reason: null }), "chunk-shape"],
+    ["refusal-type", raw({ index: 0, delta: { refusal: 5 }, finish_reason: null }), "chunk-shape"],
+    ["fragments-array", raw({ index: 0, delta: { tool_calls: {} }, finish_reason: null }), "chunk-shape"],
+    ["fragment-object", fragment(null), "chunk-shape"],
+    ["fragment-index-type", fragment({ index: "0", id: "c", function: { name: "windows_focus" } }), "chunk-shape"],
+    ["fragment-id", fragment({ index: 0, id: 5, function: { name: "windows_focus" } }), "chunk-shape"],
+    ["function-object", fragment({ index: 0, id: "c", function: "windows_focus" }), "chunk-shape"],
+    ["function-name", fragment({ index: 0, id: "c", function: { name: 5 } }), "chunk-shape"],
+    ["function-arguments", fragment({ index: 0, id: "c", function: { name: "windows_focus", arguments: 5 } }), "chunk-shape"],
     ["finish-unknown", "data: " + JSON.stringify({ ...BASE, choices: [{ index: 0, delta: {}, finish_reason: "paused" }] }) + "\n\ndata: [DONE]\n\n", "chunk-shape"],
     ["event-type", "event: delta\ndata: " + JSON.stringify({ ...BASE, choices: [{ index: 0, delta: { content: "x" }, finish_reason: null }] }) + "\n\n", "chunk-shape"]
 ];
@@ -72,16 +96,6 @@ world(async () => {
     const ip = cp.spawnSync(path.join(process.env.JARVIS_TEST_ROOT, "bootstrap/ip"),
         ["addr", "add", "192.0.2.1/32", "dev", "lo"], { env: { PATH: process.env.PATH }, encoding: "utf8" });
     assert.equal(ip.status, 0, ip.stderr);
-    const clients = [];
-    const originalConnect = sockets.Socket.prototype.connect;
-    // Observe the real socket creator; the transport under test is unchanged.
-    sockets.Socket.prototype.connect = function (...args) {
-        // A destroyed socket no longer reports its port; keep it from connect.
-        const client = { socket: this, port: null };
-        clients.push(client);
-        this.once("connect", () => { client.port = this.localPort; });
-        return Reflect.apply(originalConnect, this, args);
-    };
     const records = [];
     const faults = [];
     const counters = new Map();
@@ -95,7 +109,7 @@ world(async () => {
     function server(host) {
         return http.createServer(async (request, response) => {
             const record = { host, url: request.url, headers: request.headers, body: null, socket: request.socket,
-                peer: request.socket.remotePort, closed: closing(request.socket) };
+                closed: closing(request.socket) };
             records.push(record);
             try {
                 const chunks = [];
@@ -113,10 +127,7 @@ world(async () => {
                 const script = scripts[name];
                 if (script === undefined) throw new Error("script " + name);
                 record.script = name;
-                const extensions = record.extensions ?? {};
-                const body = { ...record.body };
-                for (const key of Object.keys(extensions)) delete body[key];
-                const problems = Check.errors(excerpt, "CreateChatCompletionRequest", body);
+                const problems = Check.errors(excerpt, "CreateChatCompletionRequest", record.body);
                 if (problems.length) throw new Error("request " + problems.join("; "));
                 if (script.stall) return;
                 if (script.status !== undefined) {
@@ -132,7 +143,10 @@ world(async () => {
                     response.write(bytes.subarray(0, cut));
                     response.write(bytes.subarray(cut));
                 }
-                if (!script.hold) response.end();
+                if (script.reset) {
+                    await new Promise(resolve => response.write("", resolve));
+                    request.socket.destroy();
+                } else if (!script.hold) response.end();
             } catch (error) {
                 faults.push(error.message);
                 response.destroy();
@@ -192,6 +206,32 @@ world(async () => {
     const last = () => records.at(-1);
     const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489", "hex");
 
+    const TOOL_EVENTS = [
+        { kind: "tool-call", id: "call_focus", tool: "windows.focus", arguments: { window: "0x1f" } },
+        { kind: "tool-call", id: "call_read", tool: "files.read", arguments: { path: "/home/user/notes" } },
+        { kind: "done", reason: "tool-calls" }];
+    // Gemini's compatible endpoint ends a tool-call turn with stop.
+    async function toolCallsStop(kit) {
+        const { brain } = open(kit, { base: first + "/tool-calls-stop" });
+        assert.deepEqual(await drain(brain.send(user(kit))), { error: null, events: TOOL_EVENTS });
+    }
+    // Each ceiling admits its bound, so a tightened ceiling fails here.
+    async function bounds(kit) {
+        const sixteen = open(kit, { base: first + "/tool-call-sixteen" });
+        const { events } = await drain(sixteen.brain.send(user(kit)));
+        assert.deepEqual([events.length, events.at(-1)], [17, { kind: "done", reason: "tool-calls" }], "16 calls");
+        const total = open(kit, { base: first + "/total-at-limit" });
+        assert.deepEqual((await drain(total.brain.send(user(kit)))).events.at(-1), { kind: "done", reason: "stop" }, "a reply 64 bytes under 8 MiB");
+        const local = open(kit, { id: "ollama" });
+        const count = records.length;
+        const near = Math.floor((20 * 1024 * 1024 - 4096) / 4) * 3;
+        let turn = null;
+        assert.doesNotThrow(() => { turn = local.brain.send({ kind: "user", items: [speech(kit)],
+            images: [{ type: "image/png", item: kit.Policy.item(Buffer.alloc(near), ["screen"]) }] }); }, "a request under 20 MiB");
+        assert.equal((await drain(turn)).error, null);
+        assert.equal(records.length, count + 1);
+        assert.ok(Number(last().headers["content-length"]) > 20 * 1024 * 1024 - 8192, "the request is within 8 KiB of the bound");
+    }
     async function textTurns(kit) {
         const { brain } = open(kit, { base: first + "/text" });
         const turn = brain.send(user(kit));
@@ -211,10 +251,7 @@ world(async () => {
 
     async function toolTurns(kit) {
         const { brain } = open(kit, { base: first + "/tool-calls,after-tools" });
-        assert.deepEqual(await drain(brain.send(user(kit))), { error: null, events: [
-            { kind: "tool-call", id: "call_focus", tool: "windows.focus", arguments: { window: "0x1f" } },
-            { kind: "tool-call", id: "call_read", tool: "files.read", arguments: { path: "/home/user/notes" } },
-            { kind: "done", reason: "tool-calls" }] });
+        assert.deepEqual(await drain(brain.send(user(kit))), { error: null, events: TOOL_EVENTS });
         const count = records.length;
         assert.throws(() => brain.send(user(kit)), { message: "jarvis: brain=tool-results-pending" });
         for (const results of [[], [{ id: "call_focus", item: speech(kit) }],
@@ -251,7 +288,7 @@ world(async () => {
         ["tool-call-duplicate-id", "brain=tool-call-id"], ["tool-call-unknown", "brain=tool-call-name"],
         ["tool-call-array", "brain=tool-call-arguments"], ["tool-call-limit", "brain=tool-call-limit"],
         ["tool-calls-without-call", "brain=finish reason=tool-calls-without-call"],
-        ["stop-with-tool-calls", "brain=finish reason=stop-with-tool-calls"], ["finish-length", "brain=finish reason=length"],
+        ["finish-length", "brain=finish reason=length"], ["reset", "brain=stream-failed"], ["http-502", "brain=http status=502"],
         ["finish-content-filter", "brain=finish reason=content-filter"], ["finish-function-call", "brain=finish reason=function-call"],
         ["finish-missing", "brain=finish-missing"], ["chunk-after-finish", "brain=chunk-order"], ["refusal", "brain=refusal"],
         ["stream-error", "brain=stream-error"], ["truncated", "brain=stream-truncated"], ["not-sse", "brain=content-type"],
@@ -289,11 +326,14 @@ world(async () => {
         assert.ok(handed.length === 1 && handed[0].every(byte => byte === 0), "close zeroes the looked-up key");
         assert.throws(() => brain.send(user(kit)), { message: "jarvis: brain=closed" });
         const count = records.length;
+        const looked = lookups();
         const elsewhere = kit.Secrets.ownReference("fixture", "test", second);
-        const bound = open(kit, { base: first + "/text", voice: second, key: { secrets: store, reference: elsewhere } });
-        const { error } = await drain(bound.brain.send(user(kit)));
-        assert.equal(error.message, "jarvis: net=key-origin", "a key bound to another origin is refused");
-        assert.equal(records.length, count, "neither origin receives the refused request");
+        assert.throws(() => open(kit, { base: first + "/text", voice: second, key: { secrets: store, reference: elsewhere } }),
+            { message: "jarvis: net=key-origin" }, "a key bound to another origin is refused");
+        assert.throws(() => open(kit, { base: remote + "/text", key: { secrets: store, reference: kit.Secrets.ownReference("fixture", "test", remote) } }),
+            { message: "jarvis: net=key-plaintext" }, "a key on a plaintext remote base is refused");
+        assert.equal(lookups(), looked, "a key that could never be sent is not looked up");
+        assert.equal(records.length, count, "neither origin receives a request");
         assert.throws(() => open(kit, { id: "openai" }), { message: "jarvis: brain=no-key" });
     }
 
@@ -319,8 +359,14 @@ world(async () => {
         assert.deepEqual(seen.at(-1), ["speech", "file"]);
         assert.throws(() => conversation.brain.send(user(kit, speech(kit, "Later"))), { message: "jarvis: brain=history-release" },
             "a reply that carries a granted label needs that grant");
-        const only = open(kit, { base: remote + "/text" });
-        assert.throws(() => only.brain.send(user(kit, file)), { message: "jarvis: brain=release-empty" });
+        const only = open(kit, { base: remote + "/text,text" });
+        const empty = only.brain.send(user(kit, file));
+        assert.deepEqual(empty.release, { withheld: [], needed: ["file"] }, "an empty request still reports its grant");
+        const before = records.length;
+        await assert.rejects(() => empty.events.next(), { message: "jarvis: brain=release-empty" });
+        assert.equal(records.length, before, "an empty request is not sent");
+        const asked = await drain(only.brain.send(user(kit, file), [{ recipients: only.recipients, labels: ["file"] }]));
+        assert.equal(asked.error, null, "the granted turn sends");
         const never = open(kit, { base: remote + "/text", profile: "trusted", cloudVision: "never" });
         const screen = never.brain.send(user(kit, speech(kit), kit.Policy.item("PRIVATE screen text", ["screen"])));
         assert.deepEqual(screen.release, { withheld: ["screen"], needed: [] });
@@ -384,17 +430,19 @@ world(async () => {
             assert.deepEqual([options.url, options.key.origin, options.key.header, options.key.prefix, options.key.value],
                 [url, origin, "authorization", "Bearer ", KEY], id);
             const body = JSON.parse(item.content);
-            for (const key of ["model", "messages", "stream", "tools"]) delete extensions[key];
             const { model, messages, stream, tools, ...rest } = body;
             assert.deepEqual(rest, extensions, id + " no-store fields");
             pinned("CreateChatCompletionRequest", { model, messages, stream, tools }, id);
         }
     }
 
-    function holding(kit, base) {
+    // leak plants a harness defect: the real request never sees the driver's
+    // abort or close, so only its server-side close observation can fail.
+    function holding(kit, base, leak = false) {
         const answers = [];
         const wrap = door => ({ request: async (item, options, grants) => {
-            const answer = await door.request(item, options, grants);
+            const answer = leak ? relay(await door.request(item, { ...options, signal: undefined }, grants), options.signal)
+                : await door.request(item, options, grants);
             if (answer.kind === "response") {
                 const record = { closed: false };
                 answers.push(record);
@@ -405,15 +453,23 @@ world(async () => {
         } });
         return { ...open(kit, { base, wrap }), answers };
     }
-    const clientOf = record => clients.find(client => client.port === record.peer).socket;
-    async function cancelHeld(kit) {
-        const { brain, answers } = holding(kit, first + "/hold,text");
+    function relay(answer, signal) {
+        const reader = answer.response.body.getReader();
+        const body = new ReadableStream({ start(source) {
+            signal.addEventListener("abort", () => source.error(new Error("aborted")), { once: true });
+        }, async pull(source) {
+            const { done, value } = await reader.read();
+            if (done) source.close(); else source.enqueue(value);
+        } });
+        return { kind: "response", response: new Response(body, { headers: answer.response.headers }), close() {} };
+    }
+    async function cancelHeld(kit, leak = false) {
+        const { brain, answers } = holding(kit, first + "/hold,text", leak);
         const turn = brain.send(user(kit));
         assert.deepEqual(await turn.events.next(), { value: { kind: "text", text: "Thinking" }, done: false });
         const record = last();
         await within(brain.cancel(), "cancel acknowledgement");
-        assert.equal(answers[0].closed, true, "the acknowledgement follows the stream's close");
-        assert.equal(clientOf(record).destroyed, true, "the acknowledgement follows the socket's close");
+        assert.equal(answers[0].closed, true, "cancel closes the net response");
         await within(record.closed, "the server sees the stream close");
         await assert.rejects(() => turn.events.next(), { message: "jarvis: brain=cancelled" });
         assert.deepEqual(await turn.events.next(), { value: undefined, done: true });
@@ -484,6 +540,25 @@ world(async () => {
         assert.equal(ended, true, "the acknowledgement follows the stream's end");
         await next;
     }
+    // Text a single read buffered must not reach the caller after cancel or
+    // close is acknowledged.
+    async function cancelBuffered(kit) {
+        const wrap = () => ({ request: async (item, options) => {
+            const body = new ReadableStream({ start(source) {
+                source.enqueue(Buffer.from(["one", "two", "three"].map(text => encode(delta({ content: text }), "buffered")).join("")));
+                options.signal.addEventListener("abort", () => source.error(new Error("aborted")), { once: true });
+            } });
+            return { kind: "response", response: new Response(body, { headers: { "content-type": "text/event-stream" } }), close() {} };
+        } });
+        for (const stop of ["cancel", "close"]) {
+            const { brain } = open(kit, { base: first + "/text", wrap });
+            const turn = brain.send(user(kit));
+            assert.deepEqual(await turn.events.next(), { value: { kind: "text", text: "one" }, done: false });
+            if (stop === "cancel") await within(brain.cancel(), "cancel acknowledgement");
+            else brain.close();
+            await assert.rejects(() => turn.events.next(), { message: "jarvis: brain=cancelled" }, stop);
+        }
+    }
     async function cancelUnstarted(kit) {
         let requests = 0;
         const wrap = door => ({ request: (...args) => { requests++; return door.request(...args); } });
@@ -516,6 +591,10 @@ world(async () => {
             assert.throws(() => brain.start({ instructions: "Fixture guidance.", tools }),
                 { message: tools.length > 64 ? "jarvis: brain=tools" : "jarvis: brain=tool-name" });
         assert.throws(() => brain.start({ instructions: null, tools: [] }), { message: "jarvis: brain=instructions" });
+        assert.doesNotThrow(() => brain.start({ instructions: "Fixture guidance.",
+            tools: Array.from({ length: 64 }, (_, index) => ({ id: "tool.n" + index, description: "", parameters: {} })) }), "64 tools");
+        assert.doesNotThrow(() => brain.start({ instructions: "Fixture guidance.",
+            tools: [{ id: "x".repeat(64), description: "", parameters: {} }] }), "a 64-character name");
         const fresh = kit.Brain.create({ provider: kit.Providers.select("custom", first), model: "m",
             net: { request() { assert.fail("no request"); } }, recipients: open(kit, { base: first }).recipients, key: null });
         assert.throws(() => fresh.send(user(kit)), { message: "jarvis: brain=not-started" });
@@ -534,10 +613,13 @@ world(async () => {
 
     try {
         const kit = kitFrom(backend);
-        for (const scenario of [textTurns, toolTurns, failedTurnKeepsHistory, keys, release, images, localRows, cloudRows,
-            cancelHeld, cancelBeforeHeaders, cancelRace, cancelOrder, breakLoop, cancelUnstarted, closeHeld, starts, noTools]) await scenario(kit);
+        for (const scenario of [textTurns, toolTurns, toolCallsStop, bounds, failedTurnKeepsHistory, keys, release, images, localRows, cloudRows,
+            cancelHeld, cancelBeforeHeaders, cancelRace, cancelOrder, cancelBuffered, breakLoop, cancelUnstarted, closeHeld, starts, noTools]) await scenario(kit);
         for (const [script] of refusals) await refusal(script)(kit);
         assert.deepEqual(faults, [], "every request matched the pinned schema");
+        // The server-side close observation is an instrument: a connection
+        // the harness leaks open must turn it red.
+        await assert.rejects(() => cancelHeld(kit, true), { message: "the server sees the stream close within 5 s" });
 
         let controls = 0;
         async function control(name, needle, replacement, check, target = file) {
@@ -556,7 +638,7 @@ world(async () => {
             ["tool-call-object", 'if (!plain(parsed)) fail("tool-call-arguments");', "", refusal("tool-call-array")],
             ["tool-call-limit", 'if (calls.length === TOOL_CALLS) fail("tool-call-limit");', "", refusal("tool-call-limit")],
             ["tool-id-mapping", "tool: names.get(call.name)", "tool: call.name", toolTurns],
-            ["stop-with-calls", 'if (count !== 0) fail("finish reason=stop-with-tool-calls");', "", refusal("stop-with-tool-calls")],
+            ["stop-with-calls", 'case "stop": return count === 0 ? "stop" : "tool-calls";', 'case "stop": return "stop";', toolCallsStop],
             ["tools-without-call", 'if (count === 0) fail("finish reason=tool-calls-without-call");', "", refusal("tool-calls-without-call")],
             ["finish-length", 'case "length": return fail("finish reason=length");', 'case "length": return "stop";', refusal("finish-length")],
             ["finish-filter", 'case "content_filter": return fail("finish reason=content-filter");', 'case "content_filter": return "stop";', refusal("finish-content-filter")],
@@ -582,7 +664,27 @@ world(async () => {
             ["status-table", '429: "rate-limited"', '429: "provider-error"', refusal("http-429")],
             ["error-body", "await response.body?.cancel();", 'const detail = await response.text(); if (detail) fail("http " + detail);', refusal("http-401")],
             ["history", 'history.push(entry, { role: "assistant"', 'void ({ role: "assistant"', textTurns],
-            ["read-after-cancel", 'if (controller.signal.aborted) fail("cancelled");\n                    if (read.done)', "if (read.done)", cancelRace],
+            ["commit-on-done", "commit = () => history.push(", "commit = () => {}; history.push(", cancelRace],
+            ["cancel-wins", "                state = { kind: \"cancelled\" };\n                wake();", "                wake();", cancelBuffered],
+            ["stream-failed", 'fail(controller.signal.aborted ? "cancelled" : "stream-failed")', 'fail("cancelled")', refusal("reset")],
+            ["status-fallback", '(STATUS[response.status] ?? "http")', "(STATUS[response.status])", refusal("http-502")],
+            ["calls-bound-low", "calls.length === TOOL_CALLS", "calls.length === TOOL_CALLS - 1", bounds],
+            ["tools-bound-low", "value.tools.length > TOOLS", "value.tools.length >= TOOLS", starts],
+            ["name-bound-low", "{1,64}", "{1,63}", starts],
+            ["request-bound-low", "REQUEST_BYTES = 20 * 1024 * 1024", "REQUEST_BYTES = 2 * 1024 * 1024", bounds],
+            ["response-bound-low", "total: 8 * 1024 * 1024", "total: 2 * 1024 * 1024", bounds],
+            ["key-early", "if (key !== null) Net.assertKeyTarget(provider.base, key.reference.origin);", "", keys],
+            ["choices-array", "!Array.isArray(value.choices) ||", "", refusal("malformed-no-choices")],
+            ["choice-object", "!plain(choice) ||", "", refusal("malformed-choice-object")],
+            ["delta-object", "|| !plain(choice.delta)", "", refusal("malformed-delta-object")],
+            ["refusal-type", "|| (refusal !== null && !optionalString(refusal))", "", refusal("malformed-refusal-type")],
+            ["fragments-array", "!Array.isArray(fragments) ||", "", refusal("malformed-fragments-array")],
+            ["fragment-object", "fragment => plain(fragment)", "fragment => true", refusal("malformed-fragment-object")],
+            ["fragment-index-type", "Number.isSafeInteger(fragment.index) &&", "", refusal("malformed-fragment-index-type")],
+            ["fragment-id", "&& optionalString(fragment.id)", "", refusal("malformed-fragment-id")],
+            ["function-object", "(plain(fragment.function)", "(true", refusal("malformed-function-object")],
+            ["function-name", "optionalString(fragment.function.name) &&", "", refusal("malformed-function-name")],
+            ["function-arguments", "&& optionalString(fragment.function.arguments)", "", refusal("malformed-function-arguments")],
             ["no-key", 'if (key === null && provider.key === "required") fail("no-key");', "", keys],
             ["key-first-need", "let secret = null;", "let secret = key === null ? null : key.secrets.lookup(key.reference);", keys],
             ["key-zero", "if (secret !== null) secret.fill(0);", "", keys],
@@ -591,7 +693,7 @@ world(async () => {
             ["release-marker", "            return decision;\n        }", "            return decision.kind === \"send\" ? decision : { ...decision, content: item.content };\n        }", release],
             ["release-labels", "sent.flatMap(item => item.labels)", "entries.flatMap(entry => (entry.items ?? []).flatMap(item => item.labels))", release],
             ["history-release", 'if (released(entry.item).kind !== "send") fail("history-release");', "released(entry.item);", release],
-            ["release-empty", 'if (labels.length === 0) fail("release-empty");', "", release],
+            ["release-empty", 'if (request.item === null) fail("release-empty");', "", release],
             ["images-unsupported", 'if (images.length !== 0 && !provider.images) fail("images-unsupported");', "", images],
             ["image-type", '!IMAGE_TYPES.includes(image.type)', "false", images],
             ["image-bytes", '!(image.item.content instanceof Uint8Array)', "false", images],
@@ -605,9 +707,9 @@ world(async () => {
             ["tools-bound", 'if (value.tools.length > TOOLS) fail("tools");', "", starts],
             ["busy", 'if (active !== null) fail("busy");', "", cancelUnstarted],
             ["empty-tools", "context.tools.length === 0 ? {} : ", "false ? {} : ", noTools],
-            ["cancel-ack", "            return finished;\n        } };", "            return Promise.resolve();\n        } };", cancelOrder],
-            ["cancel-abort", "            controller.abort();\n            if (!started) {", "            if (!started) {", cancelHeld],
-            ["unstarted-cancel", "                started = true;\n                result =", "                result =", cancelUnstarted],
+            ["cancel-ack", "            return finished.then(release);", "            return Promise.resolve().then(release);", cancelOrder],
+            ["cancel-abort", "            controller.abort();\n            switch (state.kind) {", "            switch (state.kind) {", cancelHeld],
+            ["unstarted-cancel", "                state = { kind: \"cancelled\" };\n                ended();", "                ended();", cancelUnstarted],
             ["close-cancels", "if (active !== null) active.cancel();", "", closeHeld],
             ["return-cancels", "await current.cancel();", "", breakLoop]
         ];
@@ -616,7 +718,6 @@ world(async () => {
             + " requests=" + records.length + " controls=" + controls);
     } finally {
         for (const door of doors) door.close();
-        sockets.Socket.prototype.connect = originalConnect;
         for (const record of records) record.socket.destroy();
         await Promise.all(listeners.map(({ instance }) => new Promise(resolve => instance.close(resolve))));
     }

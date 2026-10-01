@@ -73,7 +73,8 @@ function select(id, customBaseUrl = "") {
         let target;
         try { target = Net.endpoint(customBaseUrl); } catch { fail("custom-base"); }
         const url = new URL(target.url);
-        if (target.websocket || url.search !== "") fail("custom-base");
+        // A bare "?" leaves search empty but still starts a query.
+        if (target.websocket || url.search !== "" || url.href.endsWith("?")) fail("custom-base");
         base = url.href.replace(/\/$/, "");
     }
     const result = deepFreeze(structuredClone({ id, ...row, base }));

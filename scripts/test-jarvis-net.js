@@ -183,12 +183,23 @@ world(async () => {
         assert.equal(records.at(-1).headers.authorization, "Bearer synthetic-key");
         assert.equal(records.at(-1).body, "fixture speech");
         assert.ok(connections.includes("127.0.0.1"), "observer saw a real socket");
+        // The same rule refuses a request's key and, before any lookup,
+        // a key the brain driver could never send.
         const refuseKey = (net, policy) => {
             const { door } = owner(net, policy);
+            assert.throws(() => net.assertKeyTarget(second + "/v1", key.origin), { message: "jarvis: net=key-origin" });
             return assert.rejects(() => consume(door, speech, { url: second + "/echo", key }),
                 { message: "jarvis: net=key-origin" });
         };
+        const refusePlaintext = async (net, policy) => {
+            const { door } = owner(net, policy, remote, null);
+            assert.throws(() => net.assertKeyTarget(remote + "/v1", remote), { message: "jarvis: net=key-plaintext" });
+            await assert.rejects(() => consume(door, speech, { url: remote, key: { ...key, origin: remote } }),
+                { message: "jarvis: net=key-plaintext" });
+        };
+        assert.equal(Net.assertKeyTarget(first + "/v1", key.origin), undefined, "a key may travel to its own origin");
         await refuseKey(Net, Policy);
+        await refusePlaintext(Net, Policy);
         await consume(door, speech, { url: second + "/echo" });
         assert.equal(records.at(-1).headers.authorization, undefined, "the second origin has no borrowed key");
         await consume(door, Policy.item("", ["speech"]), { url: first + "/echo", method: "GET" });
@@ -372,7 +383,7 @@ world(async () => {
                 storedLocalKey(path.dirname(target));
             }, "Secrets.js");
         controls++;
-        await control("key-origin", "key.origin !== target.origin", "false", refuseKey);
+        await control("key-origin", 'typeof origin !== "string" || origin !== target.origin', "false", refuseKey);
         for (const [name, needle, bad] of [
             ["key-header", '!["authorization", "x-api-key", "xi-api-key"].includes(key.header)', { ...key, header: "host" }],
             ["key-empty", 'key.value === ""', { ...key, value: "" }],
@@ -448,10 +459,7 @@ world(async () => {
         await control("localhost-dns", 'if (url.hostname === "localhost") url.hostname = "127.0.0.1";',
             'if (false) url.hostname = "127.0.0.1";',
             async net => assert.equal(net.endpoint(localhost).url, first + "/"));
-        await control("plaintext-key", '!target.loopback && !target.origin.startsWith("https:")', "false",
-            async (net, policy) => { const { door } = owner(net, policy, remote, null);
-                await assert.rejects(() => consume(door, speech, { url: remote, key: { ...key, origin: remote } }),
-                    { message: "jarvis: net=key-plaintext" }); });
+        await control("plaintext-key", '!target.loopback && !target.origin.startsWith("https:")', "false", refusePlaintext);
         await control("closed-owner", 'if (closed) throw new Error("jarvis: net=closed");\n        const target',
             'if (false) throw new Error("jarvis: net=closed");\n        const target',
             async (net, policy) => { const { door } = owner(net, policy); door.close();

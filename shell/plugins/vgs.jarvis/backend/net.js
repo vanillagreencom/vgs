@@ -28,6 +28,18 @@ function endpoint(value) {
 // credential headers enter through the origin-bound key record below.
 const METADATA = new Set(["accept", "content-type", "anthropic-version", "anthropic-beta", "openai-beta"]);
 
+// The one rule for where a key may travel: its stored origin, over HTTPS
+// unless the target is loopback.
+function keyTarget(target, origin) {
+    if (typeof origin !== "string" || origin !== target.origin) throw new Error("jarvis: net=key-origin");
+    if (!target.loopback && !target.origin.startsWith("https:")) throw new Error("jarvis: net=key-plaintext");
+}
+
+/** Refuse, before any lookup, a key that requests to url could never carry. */
+function assertKeyTarget(url, origin) {
+    keyTarget(endpoint(url), origin);
+}
+
 function headers(target, values, key) {
     const result = new Headers();
     if (values !== undefined) {
@@ -37,9 +49,8 @@ function headers(target, values, key) {
         }
     }
     if (key !== undefined) {
-        if (!key || typeof key.origin !== "string" || key.origin !== target.origin)
-            throw new Error("jarvis: net=key-origin");
-        if (!target.loopback && !target.origin.startsWith("https:")) throw new Error("jarvis: net=key-plaintext");
+        if (!key) throw new Error("jarvis: net=key-origin");
+        keyTarget(target, key.origin);
         if (!["authorization", "x-api-key", "xi-api-key"].includes(key.header)
                 || typeof key.value !== "string" || key.value === "" || /[\r\n]/.test(key.value)
                 || typeof key.prefix !== "string" || /[\r\n]/.test(key.prefix))
@@ -151,4 +162,4 @@ function create(selected) {
     } });
 }
 
-module.exports = { endpoint, create };
+module.exports = { endpoint, assertKeyTarget, create };

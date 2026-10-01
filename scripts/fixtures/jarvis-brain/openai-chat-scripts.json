@@ -1,8 +1,8 @@
 {
  "source": "openai-chat.schema.json: openai/openai-openapi 9f25f93610b782cd518d6470ccfafc614d28b079 (info.version 2.3.0), POST /chat/completions, its 200 text/event-stream contract and its error statuses",
  "date": "2026-09-30",
- "kind": "Synthetic scripts written against the pinned excerpt, not recordings. Every script in this file has this source and date.",
- "format": "frames: {delta, finish_reason} is one chunk with one choice; {usage} is a chunk with no choice; {error} is the documented mid-stream failure frame; \"[DONE]\" is the terminator. status and body: an HTTP error reply with an ErrorResponse. hold: keep the stream open after the frames. stall: never answer.",
+ "kind": "Synthetic scripts written against the pinned excerpt, not recordings. Every script in this file has this source and date. http-502 stands for a status outside the documented list, such as a gateway sends; reset stands for a server that dies mid-reply.",
+ "format": "frames: {delta, finish_reason} is one chunk with one choice; {usage} is a chunk with no choice; {error} is the documented mid-stream failure frame; \"[DONE]\" is the terminator. status and body: an HTTP error reply with an ErrorResponse. hold: keep the stream open after the frames. reset: destroy the connection after the frames. stall: never answer.",
  "scripts": {
   "text": {
    "frames": [
@@ -459,59 +459,6 @@
     "[DONE]"
    ]
   },
-  "stop-with-tool-calls": {
-   "frames": [
-    {
-     "delta": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [
-       {
-        "index": 0,
-        "id": "call_focus",
-        "type": "function",
-        "function": {
-         "name": "windows_focus",
-         "arguments": ""
-        }
-       }
-      ]
-     },
-     "finish_reason": null
-    },
-    {
-     "delta": {
-      "tool_calls": [
-       {
-        "index": 0,
-        "function": {
-         "arguments": "{\"window\":"
-        }
-       }
-      ]
-     },
-     "finish_reason": null
-    },
-    {
-     "delta": {
-      "tool_calls": [
-       {
-        "index": 0,
-        "function": {
-         "arguments": " \"0x1f\"}"
-        }
-       }
-      ]
-     },
-     "finish_reason": null
-    },
-    {
-     "delta": {},
-     "finish_reason": "stop"
-    },
-    "[DONE]"
-   ]
-  },
   "finish-length": {
    "frames": [
     {
@@ -739,6 +686,98 @@
   },
   "http-503": {
    "status": 503,
+   "body": {
+    "error": {
+     "message": "provider-private-detail",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "provider_code"
+    }
+   }
+  },
+  "tool-calls-stop": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_focus",
+        "type": "function",
+        "function": {
+         "name": "windows_focus",
+         "arguments": ""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": "{\"window\":"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": " \"0x1f\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 1,
+        "id": "call_read",
+        "type": "function",
+        "function": {
+         "name": "files_read",
+         "arguments": "{\"path\":\"/home/user/notes\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "stop"
+    },
+    "[DONE]"
+   ]
+  },
+  "reset": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": "Partial"
+     },
+     "finish_reason": null
+    }
+   ],
+   "reset": true
+  },
+  "http-502": {
+   "status": 502,
    "body": {
     "error": {
      "message": "provider-private-detail",

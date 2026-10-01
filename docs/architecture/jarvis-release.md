@@ -35,6 +35,7 @@ Changing a provider, account or policy creates a new recipient set. Old grants f
 | API | Meaning |
 |---|---|
 | `net.endpoint(url)` | Parses HTTP, HTTPS, WS or WSS without credentials or fragments. Returns the canonical handshake origin and loopback classification. |
+| `net.assertKeyTarget(url, origin)` | Applies the request path's key rule without a request: it refuses a key stored for `origin` that requests to `url` could never carry. The brain driver calls it before any keyring lookup. |
 | `net.create(recipients)` | Accepts only a set issued by `Policy.recipients`. Holds the lifetime of HTTP requests and WebSocket channels. |
 | `owner.request(item, options, grants?)` | Options are `{url, method?, headers?, key?, signal?}`. It returns a native Response in `{kind:"response", response, close}` or the non-send release answer. The default method is POST. GET and HEAD require empty content. The adapter calls `close` after consuming or cancelling the response. |
 | `owner.websocket(item, options, grants?)` | Options are `{url, headers?, key?}`. The item covers connection metadata. This operation sends no application frame. It returns `{kind:"channel", events, readyState, send, close}` or the non-send release answer. |

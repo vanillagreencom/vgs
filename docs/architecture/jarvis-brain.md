@@ -15,15 +15,15 @@ Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis
 
 | API | Meaning |
 |---|---|
-| `create({provider, model, net, recipients, key})` | `provider` is a `Providers.select` row. `net` is the session's `net.create` owner for `recipients`. `key` is `null` or `{secrets, reference}`, a `Secrets` store and the account's key reference. A cloud row refuses `null` with `brain=no-key`. |
+| `create({provider, model, net, recipients, key})` | `provider` is a `Providers.select` row. `net` is the session's `net.create` owner for `recipients`. `key` is `null` or `{secrets, reference}`, a `Secrets` store and the account's key reference. A cloud row refuses `null` with `brain=no-key`. A key that requests to the row's base could never carry, by `net.assertKeyTarget`, refuses here before any keyring lookup. |
 | `start({instructions, tools})` | Begins a new history. `instructions` is the shipped guidance text, sent as the system message. A tool is `{id, description, parameters}`. A tool id's dots become underscores on the wire, because `FunctionObject.name` allows letters, digits, underscores and dashes only. A name outside that set, or two ids with one wire name, refuse. |
 | `send(turn, grants?)` | Renders the whole request at once and returns `{release: {withheld, needed}, events}`. Nothing leaves until the caller iterates `events`. A caller can ask for a grant and call `events.return()` instead. |
 | turn | `{kind: "user", items, images?}`, with Policy items and images `{type, item}` of type PNG or JPEG; or `{kind: "tool-results", results: [{id, item}]}`, answering every pending call once. |
 | `events` | Yields `{kind: "text", text}` as the stream arrives, then each assembled `{kind: "tool-call", id, tool, arguments}`, then one `{kind: "done", reason}` with reason `stop` or `tool-calls`. Every other ending throws a keyed error. |
-| `cancel()` | Aborts the live request. It resolves after the request's stream has ended and the net owner's response is closed. The iterator then throws `brain=cancelled`. An unstarted turn is cancelled without a request. |
+| `cancel()` | Aborts the live request. It resolves after the request's stream has ended and the net owner's response is closed. The next read then throws `brain=cancelled`; text queued before the acknowledgement never reaches the caller. An unstarted turn is cancelled without a request. |
 | `close()` | Cancels the live request, zeroes the looked-up key and refuses further use. |
 
-A turn and its reply enter history together on `done`. A failed or cancelled turn changes no history. One request runs at a time; a second `send` or `start` refuses `brain=busy`.
+A turn and its reply enter history together when the caller reads `done`. A failed or cancelled turn changes no history. A turn stays live until its caller reads `done` or the error, or cancels it. One turn is live at a time; a second `send` or `start` refuses `brain=busy`.
 
 The key is looked up through `Secrets.lookup` at the first request and kept for the conversation. Net receives it as the [origin-bound key](jarvis-release.md#transport-contract) with the bearer scheme the pinned schema names. The header copies JavaScript makes cannot be zeroed; they are unreachable after each request. The key never enters argv, a log, status or an error.
 
@@ -31,7 +31,7 @@ The key is looked up through `Secrets.lookup` at the first request and kept for 
 
 Every history item passes `Policy.release` against the conversation's recipient set on every request. An asked or withheld item travels as its marker. An image becomes a text part with its marker. `release.needed` and `release.withheld` name the labels the session and approval owners act on.
 
-The request item that reaches net carries only the labels of content the request includes. A reply carries the labels of the content its request sent. Grants only grow within a conversation, so a reply stays sendable; a later request without its grant refuses `brain=history-release`. A request that includes no released content refuses `brain=release-empty`.
+The request item that reaches net carries only the labels of content the request includes. A reply carries the labels of the content its request sent. Grants only grow within a conversation, so a reply stays sendable; a later request without its grant refuses `brain=history-release`. A request that includes no released content still returns its release report, so the approval owner can ask for the grant. Iterating it refuses `brain=release-empty` without a request.
 
 ## Stream
 
@@ -40,7 +40,7 @@ The driver posts `{model, messages, stream: true, tools?}` plus the row's no-sto
 - A reply other than 200 fails with the status's key from the operation's documented error statuses, or `http`, and the status code. The driver cancels the body unread, because provider error text can echo content or credentials. A 200 reply must be `text/event-stream`.
 - `chunkOf` is the one narrowing door for a data frame. A frame with an `error` field is the documented mid-stream failure. Fields the driver does not read, such as usage, pass unread.
 - Tool-call fragments are assembled by index. The first fragment of a call carries its id and name; later fragments extend its arguments. A gap, a nameless start, a conflicting id or name, a repeated id, an unknown name or arguments that are not a JSON object fail the turn. No call is yielded until the stream completes, so a lost chunk never yields a partial call.
-- `finish_reason` must be `stop` without calls or `tool_calls` with calls. `length`, `content_filter` and `function_call` fail with their reason. A choice after the finish, a non-empty refusal, a stream that ends without `data: [DONE]` and `[DONE]` without a finish all fail.
+- `finish_reason` `stop` ends a turn without calls; `tool_calls`, or `stop` with assembled calls, ends a tool-call turn. Gemini's compatible endpoint ends tool-call turns with `stop`, as [niki914/zafiro#256](https://github.com/niki914/zafiro/issues/256) shows against that endpoint; Google's page does not state the finish reason. Assembly has already refused a lost chunk, so the calls decide the ending for every row. `tool_calls` without a call, `length`, `content_filter` and `function_call` fail with their reason. A choice after the finish, a non-empty refusal, a stream that ends without `data: [DONE]` and `[DONE]` without a finish all fail.
 
 ## Bounds
 
@@ -78,8 +78,9 @@ Each row's base URL, image input and retention come from its vendor's page, fetc
 ## Evidence
 
 - `scripts/test-jarvis-brain-openai.js` runs in the [Jarvis test world](validation-jarvis.md). Loopback servers replay `scripts/fixtures/jarvis-brain/openai-chat-scripts.json`. Each frame is validated against the pinned excerpt before it is sent, and each request body is validated when it arrives. The excerpt names its source commit, file hash and the rules that cut it from OpenAI's published OpenAPI document.
-- It covers streamed text, a tool call split across chunks, the tool result round trip, history, images and their refusals, release markers and grants, the fixture key reaching only its origin, every documented error status without its body, every finish reason, malformed frames, the stream and request bounds, and the local rows on their default ports in the private network.
-- Cancellation is read at the loopback server: the server sees the connection close, and the acknowledgement follows the stream's end. Stand-in bodies fix two orders a socket cannot: a read that resolves in the same turn as cancel, and a stream that ends a timer after its abort.
+- It covers streamed text, a tool call split across chunks, the tool result round trip, history, images and their refusals, release markers and grants, the fixture key reaching only its origin, every documented error status without its body, a status outside that list, a mid-stream reset, every finish reason, malformed frames, the stream and request bounds, and the local rows on their default ports in the private network.
+- Cancellation is read at the loopback server: the server sees the connection close. A harness defect that keeps the real request open while the driver acknowledges must turn that observation red. Stand-in bodies fix orders a socket cannot: a read that resolves in the same turn as cancel, a stream that ends a timer after its abort, and text one read buffered before cancel or close.
+- Each bound has an accepted row at the bound and a refused row past it, so raising or lowering a ceiling fails.
 - Cloud origins cannot be served on loopback, so their requests reach a recording net stand-in. It pins each documented URL, the bearer key and the no-store fields.
 - Its disposable mutants remove each rule, including the plan's control: a dropped tool-call chunk must not yield a call.
 - `scripts/test-jarvis-sse.js` runs every row whole and byte by byte, with controls for terminators, the first-line byte order mark, decoding and each bound. `scripts/test-jarvis-providers.js` pins the rows and the custom base URL judge. `scripts/test-schema-check.js` pins the checker's keyword table and refuses a keyword it does not implement.

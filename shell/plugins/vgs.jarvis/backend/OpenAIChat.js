@@ -5,6 +5,7 @@
 "use strict";
 const Policy = require("./Policy.js");
 const Providers = require("./Providers.js");
+const Net = require("./net.js");
 const Sse = require("./Sse.js");
 
 // The pinned OpenAPI document's ApiKeyAuth scheme is HTTP bearer.
@@ -99,9 +100,9 @@ function assembler(names) {
 // The finish_reason values of the pinned stream chunk.
 function outcome(finish, count) {
     switch (finish) {
-    case "stop":
-        if (count !== 0) fail("finish reason=stop-with-tool-calls");
-        return "stop";
+    // Gemini's compatible endpoint ends a tool-call turn with stop. Assembly
+    // has already refused a lost chunk, so the calls decide the ending.
+    case "stop": return count === 0 ? "stop" : "tool-calls";
     case "tool_calls":
         if (count === 0) fail("finish reason=tool-calls-without-call");
         return "tool-calls";
@@ -131,6 +132,9 @@ function create({ provider, model, net, recipients, key }) {
     Providers.assertRow(provider);
     Policy.assertRecipients(recipients);
     if (key === null && provider.key === "required") fail("no-key");
+    // net judges the key at every request; refusing here keeps a key that
+    // could never be sent out of the keyring and out of memory.
+    if (key !== null) Net.assertKeyTarget(provider.base, key.reference.origin);
     let secret = null;
     let context = null;
     let history = [];
@@ -247,12 +251,13 @@ function create({ provider, model, net, recipients, key }) {
             default: throw new Error("jarvis: brain=history-role");
             }
         }
+        // With nothing released the request would carry only markers. Its
+        // release report still reaches the caller; iterating refuses.
         const labels = [...new Set(sent.flatMap(item => item.labels))];
-        if (labels.length === 0) fail("release-empty");
         const body = JSON.stringify({ model, messages, stream: true,
             ...(context.tools.length === 0 ? {} : { tools: context.tools }), ...provider.noStore });
         if (Buffer.byteLength(body) > REQUEST_BYTES) fail("request-limit");
-        return { item: Policy.item(body, labels), sent,
+        return { item: labels.length === 0 ? null : Policy.item(body, labels), sent,
             release: Object.freeze({ withheld: Object.freeze([...withheld]), needed: Object.freeze([...needed]) }) };
     }
 
@@ -262,8 +267,9 @@ function create({ provider, model, net, recipients, key }) {
      * iterated, so a caller may ask for a grant first and return() instead.
      * events yields {kind:"text", text} as it streams, then each assembled
      * {kind:"tool-call", id, tool, arguments} and one {kind:"done", reason}.
-     * Every other ending throws a keyed error; cancellation throws
-     * brain=cancelled. The turn and its reply enter history only on done.
+     * Every other ending throws a keyed error. The turn stays live until its
+     * caller reads done or the error, or cancels it. The turn and its reply
+     * enter history when the caller reads done.
      */
     function send(turn, grants = []) {
         usable();
@@ -272,30 +278,39 @@ function create({ provider, model, net, recipients, key }) {
         const request = render([...history, entry], grants);
         const controller = new AbortController();
         const queue = [];
-        let result = { kind: "pending" };
+        // unstarted, streaming, complete (done is queued), failed (the error
+        // is unread), cancelled (the next read throws), ended.
+        let state = { kind: "unstarted" };
+        let commit = null;
         let wake = () => {};
-        let started = false;
         let ended;
         const finished = new Promise(resolve => { ended = resolve; });
+        function release() {
+            if (active === current) active = null;
+        }
         const current = { cancel() {
             controller.abort();
-            if (!started) {
-                started = true;
-                result = { kind: "failed", error: new Error("jarvis: brain=cancelled") };
-                active = null;
+            switch (state.kind) {
+            case "unstarted":
+                state = { kind: "cancelled" };
                 ended();
+                break;
+            case "streaming": case "complete": case "failed":
+                // The next read throws, so nothing queued before the
+                // acknowledgement reaches the caller.
+                state = { kind: "cancelled" };
+                wake();
+                break;
+            case "cancelled": case "ended": break;
+            default: throw new Error("jarvis: brain=turn-state");
             }
-            return finished;
+            return finished.then(release);
         } };
-
-        function settle(value) {
-            if (result.kind === "pending") result = value;
-            wake();
-        }
 
         async function stream() {
             let answer = null;
             try {
+                if (request.item === null) fail("release-empty");
                 const options = { url: provider.base + "/chat/completions", signal: controller.signal,
                     headers: { "content-type": "application/json", accept: "text/event-stream" } };
                 if (key !== null) {
@@ -319,21 +334,19 @@ function create({ provider, model, net, recipients, key }) {
                 for (;;) {
                     let read;
                     try { read = await body.read(); } catch { fail(controller.signal.aborted ? "cancelled" : "stream-failed"); }
-                    // A read can resolve just before a cancel; nothing it holds
-                    // may reach the caller or history after the acknowledgement.
-                    if (controller.signal.aborted) fail("cancelled");
                     if (read.done) fail("stream-truncated");
                     for (const event of parser.push(read.value)) {
                         if (event.event !== "message") fail("chunk-shape");
                         if (event.data === "[DONE]") {
                             const reason = outcome(finish, calls.count);
                             const assembled = calls.complete();
-                            history.push(entry, { role: "assistant", item: Policy.summary(text, request.sent), text,
+                            commit = () => history.push(entry, { role: "assistant", item: Policy.summary(text, request.sent), text,
                                 calls: assembled.map(call => ({ id: call.id, name: call.name, arguments: call.arguments })) });
                             for (const call of assembled)
                                 queue.push({ kind: "tool-call", id: call.id, tool: call.tool, arguments: call.parsed });
                             queue.push({ kind: "done", reason });
-                            settle({ kind: "done" });
+                            if (state.kind === "streaming") state = { kind: "complete" };
+                            wake();
                             return;
                         }
                         const chunk = chunkOf(event.data);
@@ -349,10 +362,11 @@ function create({ provider, model, net, recipients, key }) {
                     }
                 }
             } catch (error) {
-                settle({ kind: "failed", error: controller.signal.aborted ? new Error("jarvis: brain=cancelled") : error });
+                if (state.kind === "streaming")
+                    state = controller.signal.aborted ? { kind: "cancelled" } : { kind: "failed", error };
+                wake();
             } finally {
                 if (answer !== null && answer.kind === "response") answer.close();
-                if (active === current) active = null;
                 ended();
             }
         }
@@ -360,17 +374,36 @@ function create({ provider, model, net, recipients, key }) {
         const events = {
             [Symbol.asyncIterator]() { return this; },
             async next() {
-                if (!started) {
-                    started = true;
+                if (state.kind === "unstarted") {
+                    state = { kind: "streaming" };
                     stream();
                 }
                 for (;;) {
-                    if (queue.length !== 0) return { value: queue.shift(), done: false };
-                    if (result.kind === "done") return { value: undefined, done: true };
-                    if (result.kind === "failed") {
-                        const error = result.error;
-                        result = { kind: "done" };
-                        throw error;
+                    switch (state.kind) {
+                    case "cancelled":
+                        state = { kind: "ended" };
+                        release();
+                        throw new Error("jarvis: brain=cancelled");
+                    case "ended": return { value: undefined, done: true };
+                    case "streaming": case "complete": case "failed":
+                        if (queue.length !== 0) {
+                            const value = queue.shift();
+                            if (value.kind === "done") {
+                                commit();
+                                state = { kind: "ended" };
+                                release();
+                            }
+                            return { value, done: false };
+                        }
+                        if (state.kind === "failed") {
+                            const error = state.error;
+                            state = { kind: "ended" };
+                            release();
+                            throw error;
+                        }
+                        if (state.kind === "complete") throw new Error("jarvis: brain=turn-state");
+                        break;
+                    default: throw new Error("jarvis: brain=turn-state");
                     }
                     await new Promise(resolve => { wake = resolve; });
                 }
