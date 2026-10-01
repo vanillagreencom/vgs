@@ -5,7 +5,9 @@
 // mute-store failure exits 78. Stdout carries v1 status/state
 // messages and shell requests judged by JarvisProtocol; stderr carries keyed jarvis: failures.
 // A reply for a request that awaits none exits 65 like any refused message.
-// Startup validates coding-task records and publishes their durable producer.
+// Startup validates coding-task records and publishes their durable producer,
+// then TaskRunner observes them; tasks outlive this process and EOF stops
+// only that observation. A task-stop intent answers with task-answer.
 // Device discovery is read-only. Speech/indicator prerequisites keep capture
 // unconfigured. EOF closes the audio owner and waits for all child exits.
 "use strict";
@@ -30,6 +32,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const ToolRouter = require("./ToolRouter.js");
     const ShellRequests = require("./ShellRequests.js");
     const Desktop = require("./Desktop.js");
+    const TaskRunner = require("./TaskRunner.js");
     const { load } = require(path.join(process.argv[3], "bin/lib/qml-library.js"));
     const { onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
@@ -47,12 +50,40 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let requests = null;
     let desktop = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
+    let tasks = null;
+    // Requests awaiting the service's reply, by id; one resolver each.
+    const replies = new Map();
+    let nextRequest = 0;
 
     function teardown() {
         runner.close();
         if (desktop !== null) desktop.close();
         if (requests !== null) requests.close();
         if (audit !== null) audit.close();
+        if (tasks !== null) tasks.close();
+        for (const resolve of replies.values()) resolve("refused: daemon=ending");
+        replies.clear();
+    }
+
+    function fatal(error) {
+        ending = true;
+        teardown();
+        void audio.close("protocol");
+        refuse(error.message.startsWith("jarvis: tasks=") || error.message.startsWith("jarvis: task=")
+            || error.message.startsWith("jarvis: audit=") ? 74
+            : error.message.startsWith("jarvis: mute=") ? 78 : 65, error.message);
+    }
+
+    // Ask the service for a shell-side call; resolves with its reply text.
+    function request(fields) {
+        if (ending || context === null) return Promise.resolve("refused: daemon=ending");
+        if (replies.size >= Protocol.MAX_PENDING_REQUESTS)
+            return Promise.resolve("refused: request=" + fields.kind + " reason=busy");
+        const id = ++nextRequest;
+        return new Promise(resolve => {
+            replies.set(id, resolve);
+            write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, id, ...fields });
+        });
     }
 
     // hyprctl finds this session's socket from these alone.
@@ -168,6 +199,28 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             tail = framed.tail;
             for (const line of framed.lines) {
                 const message = Protocol.accept(line, "shell");
+                if (message.type === "intent" && message.intent === "task-stop") {
+                    intentIdentity(message);
+                    const task = message.task;
+                    void tasks.stop(task).then(answer => {
+                        if (!ending) write({ v: 1, type: "task-answer", gen: runner.state.gen,
+                            revision: context.revision, task, answer });
+                    });
+                    continue;
+                }
+                if (message.type === "tui-state") {
+                    intentIdentity(message);
+                    tasks.tuiState(message.running);
+                    continue;
+                }
+                if (message.type === "reply") {
+                    intentIdentity(message);
+                    const resolve = replies.get(message.id);
+                    if (resolve === undefined) throw new Error("jarvis: protocol=reply-identity");
+                    replies.delete(message.id);
+                    resolve(message.answer);
+                    continue;
+                }
                 if (message.type === "intent") {
                     intentIdentity(message);
                     // Key edges are ordered input, not asynchronous completions.
@@ -199,8 +252,9 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         || JSON.stringify(message.directories) !== JSON.stringify(context.directories)))
                     throw new Error("jarvis: protocol=identity");
                 const first = context === null;
+                let engine = null;
                 if (first) {
-                    const engine = Tasks.publish(message.directories.data, __dirname);
+                    engine = Tasks.publish(message.directories.data, __dirname);
                     // A crash between an exit record and prune can leave an
                     // extra ended task. Recovery uses the same locked writer.
                     const recovered = cp.spawnSync(process.execPath,
@@ -226,6 +280,18 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
                     desktop = Desktop.install({ router, Dispatch, Launch, request: requests.send, clock,
                         environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) });
+                    // The task executor needs an agent profile and a release port
+                    // for the conversation's recipients. Neither exists yet, so
+                    // TaskRunner only observes and stops recorded tasks.
+                    tasks = TaskRunner.create({ directories: context.directories, engine, backend: __dirname,
+                        settings: () => context.settings,
+                        display: { run: args => request({ kind: "tui.run", name: "task", args }) },
+                        count: count => {
+                            if (!ending) write({ v: 1, type: "tasks", gen: runner.state.gen,
+                                revision: context.revision, count });
+                        },
+                        failed: fatal,
+                        clock: { now: Date.now, set: (fn, ms) => setTimeout(fn, ms).unref(), clear: timer => clearTimeout(timer) } });
                 }
                 if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,
@@ -237,13 +303,10 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                 if (first) void audio.discover().catch(error => {
                     if (!ending) audio.fault(error.message);
                 });
+                if (first) void tasks.observe();
             }
         } catch (error) {
-            ending = true;
-            teardown();
-            void audio.close("protocol");
-            refuse(error.message.startsWith("jarvis: tasks=") || error.message.startsWith("jarvis: audit=") ? 74
-                : error.message.startsWith("jarvis: mute=") ? 78 : 65, error.message);
+            fatal(error);
         }
     }
     process.stdout.on("drain", () => { if (!ending) process.stdin.resume(); });

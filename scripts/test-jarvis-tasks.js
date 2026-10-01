@@ -20,7 +20,7 @@ function inside() {
     const store = new Tasks.Store(state, () => now++);
     const create = id => store.create(id, data, engine);
     const append = (id, kind, payload = {}) => store.append(id, kind, payload);
-    const started = { pid: 123, pgid: 123, startTime: "456" };
+    const started = { pid: 123, pgid: 123, sid: 120, startTime: "456" };
     const cases = [
         ["question-stop", [["started", started], ["wait", { kind: "question" }], ["turn-ended", {}]],
             "alive", "turn-ended", "question", "none", "waiting"],
@@ -46,7 +46,13 @@ function inside() {
             "alive", "working", "idle", "none", "waiting"],
         ["resumed", [["started", started], ["wait", { kind: "question" }], ["wait", { kind: "none" }], ["working", {}]],
             "alive", "working", "none", "none", "working"],
-        ["starting", [], "starting", "working", "none", "none", "starting"]
+        ["starting", [], "starting", "working", "none", "none", "starting"],
+        ["stopped", [["started", started], ["stopped", {}]],
+            "stopped", "working", "none", "none", "stopped"],
+        // The launcher's exit lands after the controller's empty read; stopped holds.
+        ["stopped-then-exit", [["started", started], ["stopped", {}], ["exited", { code: 130 }], ["lost", {}],
+            ["alive", {}], ["started", started], ["wait", { kind: "question" }]],
+            "stopped", "working", "question", "none", "stopped"]
     ];
     for (const [id, events, processKind, turn, wait, outcome, stateKind] of cases) {
         create(id);
@@ -93,6 +99,11 @@ function inside() {
             logic => assert.equal(new logic.Store(state).read("bad-exit").state, "failed")]
     ];
     for (const row of factChecks) control(...row);
+    assert.equal(store.read("stopped-then-exit").endedAt, store.read("stopped-then-exit").events[1].at);
+    control("stopped-absorbing", 'if (facts.process.kind === "stopped" && ["started", "alive", "exited", "lost"].includes(event.kind)) return;',
+        "", logic => assert.equal(new logic.Store(state).read("stopped-then-exit").process.kind, "stopped"));
+    control("stopped-state", 'if (facts.process.kind === "stopped") return "stopped";', "",
+        logic => assert.equal(new logic.Store(state).read("stopped").state, "stopped"));
 
     // Reach the retained event ceiling without running a process per record.
     create("full");
@@ -126,7 +137,7 @@ function inside() {
             { accepted: false, id: "capped", noisy: true, reason: "event-count" });
         const restarted = new logic.Store(stateRoot);
         const record = restarted.read("capped");
-        assert.deepEqual(record.process, kind === "exited" ? { kind: "exited", code: 0 } : { kind: "lost" });
+        assert.deepEqual(record.process, kind === "exited" ? { kind: "exited", code: 0 } : { kind });
         assert.equal(record.endedAt, 5000);
         assert.equal(record.state, "noisy");
         assert.equal(record.noisy, true);
@@ -152,11 +163,13 @@ function inside() {
         assert.equal(restarted.read("second").process.kind, kind);
         assert.equal(restarted.read("second").events.length, 2000);
     }
-    for (const kind of ["exited", "lost"]) {
+    for (const kind of ["exited", "lost", "stopped"]) {
         cappedTerminal(Tasks, kind);
         control("capped-" + kind, 'reason === "event-count" && terminalKind(kind)', "false && terminalKind(kind)",
             logic => cappedTerminal(logic, kind));
     }
+    control("stopped-terminal", 'return kind === "exited" || kind === "lost" || kind === "stopped";',
+        'return kind === "exited" || kind === "lost";', logic => cappedTerminal(logic, "stopped"));
     control("terminal-replay", "if (terminal !== null) apply(terminal);", "if (false) apply(terminal);",
         logic => cappedTerminal(logic, "exited"));
     control("terminal-prune", "if (terminal === event) this.prune();", "if (false) this.prune();",
@@ -204,6 +217,9 @@ function inside() {
         ["bad-wait", "wait", { kind: "maybe" }, "wait"],
         ["bad-outcome", "outcome", { kind: "success" }, "outcome"],
         ["bad-pid", "started", { ...started, pid: 0 }, "started"],
+        ["bad-sid", "started", { ...started, sid: 0 }, "started"],
+        ["no-sid", "started", { pid: 123, pgid: 123, startTime: "456" }, "started"],
+        ["extra-stopped", "stopped", { code: 0 }, "empty-event"],
         ["bad-exit", "exited", { code: null }, "exit-code"],
         ["bad-failure", "turn-failed", { kind: "" }, "failure-kind"],
         ["extra-empty", "turn-ended", { kind: "question" }, "empty-event"]

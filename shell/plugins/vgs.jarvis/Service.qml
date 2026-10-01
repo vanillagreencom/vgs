@@ -19,6 +19,8 @@ Item {
     property var requests: null
     readonly property bool locked: lockObservation()
     readonly property var effectiveKeys: shell === null ? null : shell.shortcut.keys
+    // The daemon judges one floating task at a time from this run state.
+    readonly property bool taskTuiRunning: shell !== null && shell.tui.state.task.running
     readonly property string daemon: String(Qt.resolvedUrl("backend/jarvisd.js")).replace(/^file:\/\//, "")
     // Quickshell builds its desktop entry index on first use and fills it
     // after that; reading it here starts the scan before a list request.
@@ -34,12 +36,16 @@ Item {
             // The bar widget's click and `vgsh ipc call vgs.jarvis invoke
             // mute` reach the Mute key's intent.
             shell.ipc.handle("mute", () => { intent("mute"); return "ok"; });
+            // The console's Stop button and `vgsh ipc call vgs.jarvis
+            // stop-task <id>` stop one coding task. The Stop key does not.
+            shell.ipc.handle("stop-task", task => stopTask(task));
             start();
         }
         else hello();
     }
     onLockedChanged: hello()
     onEffectiveKeysChanged: hello()
+    onTaskTuiRunningChanged: sendTuiState()
 
     function lockObservation() {
         return shell === null || shell.session === undefined || shell.session.locked !== false;
@@ -67,6 +73,8 @@ Item {
         if (audioReport !== "ok") throw new Error("jarvis: " + audioReport);
         const quiet = shell.status.set("level", { capture: 0, playback: 0 });
         if (quiet !== "ok") throw new Error("jarvis: " + quiet);
+        const idle = shell.status.set("tasks", 0);
+        if (idle !== "ok") throw new Error("jarvis: " + idle);
         child.completion = null;
         child.stdinEnabled = true;
         publish("info", "Starting");
@@ -122,13 +130,51 @@ Item {
     }
 
     function sendIntent(name) {
+        send({ type: "intent", intent: name });
+    }
+
+    function send(fields) {
         try {
-            const wire = JSON.stringify({ v: 1, type: "intent",
+            const wire = JSON.stringify(Object.assign({ v: 1,
                 gen: sessionState === null ? 0 : sessionState.gen,
-                revision: shell.manifest.__revision, intent: name });
+                revision: shell.manifest.__revision }, fields));
             Protocol.accept(wire, "shell");
             child.write(wire + "\n");
         } catch (error) { broken(error.message); }
+    }
+
+    function stopTask(task) {
+        if (shell === null || lifetime.kind !== "ready" || cause !== "" || !child.running)
+            return "refused: jarvis=not-ready";
+        const fields = { type: "intent", intent: "task-stop", task: String(task) };
+        // An id typed at the IPC is the caller's error, not a broken daemon.
+        try {
+            Protocol.accept(JSON.stringify(Object.assign({ v: 1, gen: 0, revision: shell.manifest.__revision }, fields)), "shell");
+        } catch (error) { return "refused: " + error.message; }
+        send(fields);
+        return "ok";
+    }
+
+    function sendTuiState() {
+        if (shell === null || lifetime.kind !== "ready" || cause !== "" || !child.running) return;
+        send({ type: "tui-state", name: "task", running: taskTuiRunning });
+    }
+
+    function answerRequest(message) {
+        // The protocol admits only the task TUI. `done` reports a run that
+        // ended before its record said running, such as a failed launch.
+        const answer = String(shell.tui.run(message.name, message.args, () => {
+            if (lifetime.kind === "ready" && cause === "" && child.running)
+                send({ type: "tui-state", name: "task", running: false });
+        }));
+        send({ type: "reply", id: message.id, answer: answer.slice(0, 200) });
+    }
+
+    function taskAnswer(message) {
+        if (message.answer === "stopped") return;
+        console.warn("jarvis: task-stop=" + message.answer + " task=" + message.task);
+        shell.toasts.show({ title: "Coding task not stopped",
+            message: "Task " + message.task + ": " + message.answer, tone: "danger", icon: "mic" });
     }
 
     function deliverMute() {
@@ -239,6 +285,19 @@ Item {
                     if (report !== "ok") throw new Error("jarvis: " + report);
                     continue;
                 }
+                if (message.type === "request") {
+                    answerRequest(message);
+                    continue;
+                }
+                if (message.type === "tasks") {
+                    const reply = shell.status.set("tasks", message.count);
+                    if (reply !== "ok") throw new Error("jarvis: " + reply);
+                    continue;
+                }
+                if (message.type === "task-answer") {
+                    taskAnswer(message);
+                    continue;
+                }
                 if (message.type === "level") {
                     if (sessionState !== null && message.gen === sessionState.gen) {
                         const reply = shell.status.set("level", message.level);
@@ -262,6 +321,7 @@ Item {
                 lifetime = { kind: "ready", pendingMute: lifetime.pendingMute };
                 helloDeadline.stop();
                 publish("info", message.daemon === "locked" ? "Locked; no capture" : "Ready; no capture");
+                sendTuiState();
             }
         } catch (error) { broken(error.message); }
     }

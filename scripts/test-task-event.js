@@ -21,7 +21,7 @@ function prefixInside(source) {
     const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8" };
     const events = [
         ["create", { goal: "Installed prefix fixture", cwd: path.join(root, "home"), agent: "fixture", account: "" }],
-        ["started", { pid: 123, pgid: 123, startTime: "456" }],
+        ["started", { pid: 123, pgid: 123, sid: 120, startTime: "456" }],
         ["wait", { kind: "question" }],
         ["turn-ended", {}],
         ["exited", { code: 0 }]
@@ -79,8 +79,17 @@ async function inside() {
     assert.equal(store.read("one").engine, engine);
     run(engine, "multiline", "create", JSON.stringify({ ...goal, goal: "Fixture goal\nSecond line\t語" }));
     assert.equal(new Tasks.Store(state).read("multiline").goal, "Fixture goal\nSecond line\t語");
-    assert.deepEqual(JSON.parse(run(engine, "one", "started", '{"pid":123,"pgid":123,"startTime":"456"}').stdout),
+    assert.deepEqual(JSON.parse(run(engine, "one", "started", '{"pid":123,"pgid":123,"sid":120,"startTime":"456"}').stdout),
         { accepted: true, id: "one", seq: 1 });
+    assert.deepEqual(store.read("one").identity, { pid: 123, pgid: 123, sid: 120, startTime: "456" });
+    assert.match(run(engine, "one", "started", '{"pid":123,"pgid":123,"startTime":"456"}', 74).stderr, /tasks=started/);
+    // A separate store: the retention cases below count this store's ended tasks.
+    const haltState = path.join(root, "state/halt");
+    run(engine, "halt", "create", JSON.stringify(goal), 0, haltState);
+    for (const [kind, data] of [["started", '{"pid":124,"pgid":124,"sid":120,"startTime":"457"}'], ["stopped", ""],
+        ["exited", '{"code":130}']]) run(engine, "halt", kind, data, 0, haltState);
+    assert.equal(new Tasks.Store(haltState).read("halt").state, "stopped");
+    assert.match(run(engine, "halt", "stopped", '{"code":0}', 74, haltState).stderr, /tasks=empty-event/);
     run(engine, "one", "wait", '{"kind":"question"}');
     run(engine, "one", "turn-ended");
     assert.equal(new Tasks.Store(state).read("one").wait.kind, "question");
@@ -182,7 +191,7 @@ async function inside() {
         assert.equal(restarted.read("second").events.length, 2000);
         assert.equal(restarted.read("active").endedAt, null);
     }
-    for (const kind of ["exited", "lost"]) {
+    for (const kind of ["exited", "lost", "stopped"]) {
         cappedTerminal(engine, kind);
         control("capped-forward-" + kind, "store.append(id, kind, data, oversized)",
             'store.append(id, "working", {}, oversized)', file => cappedTerminal(file, kind));

@@ -8,7 +8,7 @@ const { load } = require("../bin/lib/qml-library.js");
 const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const file = path.join(__dirname, "../shell/plugins/vgs.jarvis/JarvisProtocol.js");
 const Protocol = load(file);
-const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "" }, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
@@ -21,8 +21,11 @@ const status = { v: 1, type: "status", gen: 0, revision: hello.revision, daemon:
 const state = { v: 1, type: "state", gen: 0, revision: hello.revision, seq: 1,
     state: JSON.parse(JSON.stringify(Protocol.Session.initial())), phase: "down" };
 const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(file), "manifest.json"), "utf8"));
-assert.deepEqual(manifest.settings, { mode: "hold", microphone: "", speaker: "", brain: "" });
+assert.deepEqual(manifest.settings, { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" });
 assert.deepEqual(manifest.schema.mode.options, ["hold", "toggle"]);
+assert.deepEqual(manifest.schema.taskTerminal.options, ["auto", "tmux", "floating"]);
+assert.deepEqual(manifest.tui.task, { script: "tui/task.sh", title: "Jarvis coding task", presentation: "plain" });
+assert.deepEqual(manifest.status.tasks.type, "count");
 assert.deepEqual(manifest.hyprland.binds, [
     { shortcut: "talk", key: "SUPER+code:108", hold: true },
     { shortcut: "mute", key: "SUPER+SHIFT+code:108" },
@@ -40,6 +43,13 @@ const entry = { id: "org.example.App", name: "Example", startupClass: "example" 
 const listReply = { ...reply, kind: "desktop.list", data: { entries: [entry], complete: true } };
 const entryReply = { ...reply, kind: "desktop.launch", data: { ...entry, terminal: false } };
 assert.equal(manifest.capabilities.includes("compositor") && manifest.capabilities.includes("run"), true);
+const taskStop = { ...intent, intent: "task-stop", task: "0f7c6a2e-5d1b-4c3a-9e8f-1a2b3c4d5e6f" };
+const tuiState = { v: 1, type: "tui-state", gen: 0, revision: hello.revision, name: "task", running: true };
+const taskReply = { ...reply, kind: "tui.run", answer: "refused: tui=task reason=busy" };
+const taskRequest = { v: 1, type: "request", gen: 0, revision: hello.revision, id: 1, kind: "tui.run",
+    args: ["/run/user/1000/vgs/jarvis/tasks/" + taskStop.task + ".json"] };
+const tasks = { v: 1, type: "tasks", gen: 0, revision: hello.revision, count: 2 };
+const taskAnswer = { v: 1, type: "task-answer", gen: 0, revision: hello.revision, task: taskStop.task, answer: "stop-incomplete" };
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const cases = [
     ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
@@ -103,7 +113,7 @@ const cases = [
     ["request-id", changed(request, { id: 0 }), "daemon", "request-id"],
     ["request-id-fraction", changed(request, { id: 1.5 }), "daemon", "request-id"],
     ["request-kind", changed(request, { kind: "compositor.moveCursor" }), "daemon", "request-kind"],
-    ["request-kind-tui", changed(request, { kind: "tui.run" }), "daemon", "request-kind"],
+    ["request-tui-invalid", changed(request, { kind: "tui.run" }), "daemon", "request-args"],
     ["request-kind-proto", changed(request, { kind: "__proto__" }), "daemon", "request-kind"],
     ["request-count", changed(request, { args: ["0xa1", 1] }), "daemon", "request-args"],
     ["request-type", changed(request, { args: ["0xa1", "1", 2] }), "daemon", "request-args"],
@@ -133,7 +143,26 @@ const cases = [
     ["reply-entry-id", changed(listReply, { data: { entries: [{ ...entry, id: "" }], complete: true } }), "shell", "entry"],
     ["reply-entry-name", changed(listReply, { data: { entries: [{ ...entry, name: "a\nb" }], complete: true } }), "shell", "entry"],
     ["reply-entry-duplicate", changed(listReply, { data: { entries: [entry, entry], complete: true } }), "shell", "entry-duplicate"],
-    ["reply-entry-terminal", changed(entryReply, { data: { ...entryReply.data, terminal: "no" } }), "shell", "entry"]
+    ["reply-entry-terminal", changed(entryReply, { data: { ...entryReply.data, terminal: "no" } }), "shell", "entry"],
+    ["task-terminal", changed(hello, { settings: { ...hello.settings, taskTerminal: "kitty" } }), "shell", "task-terminal"],
+    ["missing-task-terminal", changed(hello, { settings: { mode: "hold", microphone: "", speaker: "", brain: "" } }), "shell", "shape-settings"],
+    ["task-stop-shape", changed(taskStop, { task: undefined }), "shell", "shape-task-stop"],
+    ["task-stop-id", changed(taskStop, { task: "../home" }), "shell", "task-id"],
+    ["tui-state-direction", JSON.stringify(tuiState), "daemon", "direction-tui-state"],
+    ["tui-state-shape", changed(tuiState, { code: 0 }), "shell", "shape-tui-state"],
+    ["tui-state-name", changed(tuiState, { name: "accounts" }), "shell", "tui-name"],
+    ["tui-state-running", changed(tuiState, { running: "yes" }), "shell", "tui-running"],
+    ["task-request-name", changed(taskRequest, { name: "accounts" }), "daemon", "shape-request"],
+    ["task-request-args", changed(taskRequest, { args: [taskRequest.args[0], "--other"] }), "daemon", "request-args"],
+    ["task-request-spec", changed(taskRequest, { args: ["tasks/one.json"] }), "daemon", "request-args"],
+    ["tasks-direction", JSON.stringify(tasks), "shell", "direction-tasks"],
+    ["tasks-shape", changed(tasks, { live: 1 }), "daemon", "shape-tasks"],
+    ["task-count", changed(tasks, { count: -1 }), "daemon", "task-count"],
+    ["task-count-fraction", changed(tasks, { count: 0.5 }), "daemon", "task-count"],
+    ["task-answer-direction", JSON.stringify(taskAnswer), "shell", "direction-task-answer"],
+    ["task-answer-shape", changed(taskAnswer, { reason: "" }), "daemon", "shape-task-answer"],
+    ["task-answer-task", changed(taskAnswer, { task: "" }), "daemon", "answer-task-id"],
+    ["task-answer-value", changed(taskAnswer, { answer: "Stopped!" }), "daemon", "task-answer"]
 ];
 function rejected(logic, row) {
     assert.throws(() => logic.accept(row[1], row[2]), { message: "jarvis: protocol=" + row[3] }, row[0]);
@@ -155,8 +184,14 @@ for (const message of [confirm, { ...confirm, source: "button" }, cancel, shown]
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, mode: "toggle" },
     keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
-for (const message of [devices, level, audioFault])
+for (const message of [devices, level, audioFault, taskRequest, tasks, taskAnswer, { ...tasks, count: 0 }])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
+for (const message of [taskStop, tuiState, { ...tuiState, running: false }, taskReply, { ...taskReply, answer: "ok" },
+    { ...taskReply, answer: "x".repeat(300) }])
+    assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
+for (const taskTerminal of ["auto", "tmux", "floating"])
+    assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, taskTerminal } }), "shell").settings.taskTerminal, taskTerminal);
+assert.equal(Protocol.MAX_PENDING_REQUESTS, 16);
 for (const value of [0, 1])
     assert.equal(Protocol.accept(changed(level, { level: { capture: value, playback: value } }), "daemon").level.capture, value);
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, microphone: "missing.mic" } }), "shell").settings.microphone, "missing.mic");
@@ -166,7 +201,8 @@ for (const message of [request, { ...request, kind: "run.detached", args: ["gio"
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
 for (const kind of Object.keys(Protocol.REQUESTS)) {
     const rule = Protocol.REQUESTS[kind].args;
-    const args = rule === "argv" ? ["program"] : rule.map(type => type === "text" ? "value" : 1);
+    const args = rule === "argv" ? ["program"] : rule === "task-spec" ? ["/private/task.json"]
+        : rule.map(type => type === "text" ? "value" : 1);
     assert.equal(Protocol.accept(changed(request, { kind, args }), "daemon").kind, kind);
 }
 for (const message of [reply, listReply, entryReply, { ...reply, answer: "refused: dispatcher=moveWindow argument=1" },
@@ -194,7 +230,7 @@ assert.equal(Protocol.desktopEntry(shellEntry("tool"), true).terminal, false);
 // nothing else. Expected kinds are written by hand.
 const acting = ["compositor.focusWorkspace", "compositor.focusWindow", "compositor.moveWindowToWorkspace",
     "compositor.toggleSpecialWorkspace", "compositor.closeWindow", "compositor.fullscreenWindow", "compositor.floatWindow",
-    "compositor.moveWindow", "compositor.resizeWindow", "compositor.focusMonitor", "compositor.reveal", "run.detached", "desktop.launch"];
+    "compositor.moveWindow", "compositor.resizeWindow", "compositor.focusMonitor", "compositor.reveal", "run.detached", "desktop.launch", "tui.run"];
 function lockedRows(logic) {
     assert.deepEqual(Object.keys(logic.REQUESTS).sort(), [...acting, "toast", "desktop.list"].sort(), "the request kinds");
     for (const kind of Object.keys(logic.REQUESTS)) {
@@ -271,8 +307,8 @@ try {
         ["hello-direction", 'if (direction !== "shell") fail("direction-hello");', 'if (false) fail("direction-hello");', "hello-direction"],
         ["status-direction", 'if (direction !== "daemon") fail("direction-status");', 'if (false) fail("direction-status");', "status-direction"],
         ["shape", 'fail("shape-" + name);', ';', "hello-shape"],
-        ["settings-name", 'keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");',
-            'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");', "extra-setting"],
+        ["settings-name", 'keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");',
+            'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");', "extra-setting"],
         ["brain-type", 'typeof message.settings.brain !== "string"', 'false', "brain-setting"],
         ["directory", 'if (!directory(message.directories[name])) fail("directory-" + name);', 'if (false) fail("directory-" + name);', "directory"],
         ["lock", 'if (typeof message.locked !== "boolean") fail("lock");', 'if (false) fail("lock");', "lock"],
@@ -297,16 +333,30 @@ try {
         ["entries-bound", 'message.data.entries.length > ENTRIES_MAX', 'false', "reply-entries-size"],
         ["entry-fields", 'if (!printable(value.id, 1, FIELD_MAX) || !printable(value.name, 0, FIELD_MAX)', 'if (false', "reply-entry-name"],
         ["entry-terminal", 'if (withTerminal && typeof value.terminal !== "boolean") fail("entry");', ';', "reply-entry-terminal"],
-        ["entry-duplicate", 'if (Object.prototype.hasOwnProperty.call(seen, entry.id)) fail("entry-duplicate");', ';', "reply-entry-duplicate"]
+        ["entry-duplicate", 'if (Object.prototype.hasOwnProperty.call(seen, entry.id)) fail("entry-duplicate");', ';', "reply-entry-duplicate"],
+        ["task-terminal", 'if (TASK_TERMINALS.indexOf(message.settings.taskTerminal) === -1) fail("task-terminal");',
+            'if (false) fail("task-terminal");', "task-terminal"],
+        ["task-stop-id", 'if (!taskId(message.task)) fail("task-id");', 'if (false) fail("task-id");', "task-stop-id"],
+        ["task-id-rule", "/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value)", "true", "task-stop-id"],
+        ["tui-state-direction", 'if (direction !== "shell") fail("direction-tui-state");', 'if (false) fail("direction-tui-state");', "tui-state-direction"],
+        ["tui-state-name", 'if (message.name !== "task") fail("tui-name");', 'if (false) fail("tui-name");', "tui-state-name"],
+        ["tui-state-running", 'if (typeof message.running !== "boolean") fail("tui-running");', 'if (false) fail("tui-running");', "tui-state-running"],
+        ["task-request-count", 'args.length === 1 && directory(args[0])', 'directory(args[0])', "task-request-args"],
+        ["task-request-spec", 'args.length === 1 && directory(args[0])', 'args.length === 1', "task-request-spec"],
+        ["tasks-direction", 'if (direction !== "daemon") fail("direction-tasks");', 'if (false) fail("direction-tasks");', "tasks-direction"],
+        ["task-count", 'if (!Number.isSafeInteger(message.count) || message.count < 0) fail("task-count");', 'if (false) fail("task-count");', "task-count"],
+        ["task-answer-direction", 'if (direction !== "daemon") fail("direction-task-answer");', 'if (false) fail("direction-task-answer");', "task-answer-direction"],
+        ["task-answer-task", 'if (!taskId(message.task)) fail("answer-task-id");', 'if (false) fail("answer-task-id");', "task-answer-task"],
+        ["task-answer-value", 'fail("task-answer");', ';', "task-answer-value"]
     ];
     for (const [name, needle, replacement, example, matches] of guards)
         control(name, needle, replacement, logic => rejected(logic, cases.find(row => row[0] === example)), matches);
-    control("unsupported-echo", 'keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");',
-        'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");',
+    control("unsupported-echo", 'keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");',
+        'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");',
         logic => {
             for (const row of cases.filter(row => row[0].startsWith("echo-setting-"))) rejected(logic, row);
         });
-    for (const kind of ["compositor.reveal", "run.detached", "desktop.launch"]) {
+    for (const kind of ["compositor.reveal", "run.detached", "desktop.launch", "tui.run"]) {
         const line = source.split("\n").find(row => row.includes('"' + kind + '": {'));
         control("locked-" + kind, line, line.replace("acts: true", "acts: false"), lockedRows);
     }

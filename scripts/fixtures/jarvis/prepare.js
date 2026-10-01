@@ -30,7 +30,8 @@ function freshSuite(tree, suite, root) {
         "scripts/fixtures/jarvis/audio-tool.py", "scripts/fixtures/jarvis/desktop.js",
         "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Commons/DesktopLaunch.js"])
         fs.copyFileSync(path.join(tree, file), path.join(clone, file));
-    for (const name of ["ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "ShellRequests.js", "Desktop.js"])
+    for (const name of ["ShellRequests.js", "Desktop.js", "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "TaskRunner.js",
+        "AgentProfiles.js", "task-run.py"])
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend", name),
             path.join(clone, "shell/plugins/vgs.jarvis/backend", name));
     const file = path.join(clone, relative);

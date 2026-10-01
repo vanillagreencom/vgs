@@ -1,5 +1,5 @@
 // Coding-task records, not process control. task-event owns the writer lock.
-// J53 supplies process observations; profiles supply normalized hook events.
+// TaskRunner.js and task-run.py supply process facts; profiles supply hook events.
 // D072 defines the four independent facts. No process is probed or signalled.
 "use strict";
 const fs = require("node:fs");
@@ -84,8 +84,8 @@ function atomic(file, value) {
 function eventData(kind, data) {
     switch (kind) {
     case "started":
-        if (!shape(data, ["pid", "pgid", "startTime"]) || !Number.isSafeInteger(data.pid) || data.pid < 1
-            || !Number.isSafeInteger(data.pgid) || data.pgid < 1
+        if (!shape(data, ["pid", "pgid", "sid", "startTime"]) || !Number.isSafeInteger(data.pid) || data.pid < 1
+            || !Number.isSafeInteger(data.pgid) || data.pgid < 1 || !Number.isSafeInteger(data.sid) || data.sid < 1
             || typeof data.startTime !== "string" || !/^[0-9]+$/.test(data.startTime)) fail("started");
         break;
     case "exited":
@@ -102,6 +102,7 @@ function eventData(kind, data) {
         break;
     case "alive":
     case "lost":
+    case "stopped":
     case "working":
     case "turn-ended":
         if (!shape(data, [])) fail("empty-event");
@@ -120,7 +121,7 @@ function eventRecord(record, seq) {
 }
 
 function terminalKind(kind) {
-    return kind === "exited" || kind === "lost";
+    return kind === "exited" || kind === "lost" || kind === "stopped";
 }
 
 function metadata(record, id) {
@@ -136,6 +137,7 @@ function metadata(record, id) {
 // Returned state is a view. Only raw facts and task metadata reach disk.
 function stateOf(facts, noisy) {
     if (noisy) return "noisy";
+    if (facts.process.kind === "stopped") return "stopped";
     if (facts.process.kind === "lost") return "lost";
     if (facts.turn.kind === "turn-failed") return "failed";
     if (facts.outcome.kind === "reported-failed") return "reported-failed";
@@ -156,6 +158,9 @@ function derive(events, noisy = false, terminal = null) {
     let endedAt = null;
     let identity = null;
     function apply(event) {
+        // The controller writes stopped only after the group read empty. The
+        // launcher's own exit record can land after it and changes nothing.
+        if (facts.process.kind === "stopped" && ["started", "alive", "exited", "lost"].includes(event.kind)) return;
         switch (event.kind) {
         case "started":
             identity = { ...event.data };
@@ -165,6 +170,7 @@ function derive(events, noisy = false, terminal = null) {
         case "alive": facts.process = { kind: "alive" }; endedAt = null; break;
         case "exited": facts.process = { kind: "exited", code: event.data.code }; endedAt = event.at; break;
         case "lost": facts.process = { kind: "lost" }; endedAt = event.at; break;
+        case "stopped": facts.process = { kind: "stopped" }; endedAt = event.at; break;
         case "working": facts.turn = { kind: "working" }; break;
         case "turn-ended":
             if (facts.turn.kind !== "turn-failed") facts.turn = { kind: "turn-ended" };
@@ -325,4 +331,4 @@ class Store {
     }
 }
 
-module.exports = { Store, publish, derive };
+module.exports = { Store, publish, derive, terminalKind };

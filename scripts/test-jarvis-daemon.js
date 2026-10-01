@@ -14,7 +14,7 @@ const desktopFixture = require("./fixtures/jarvis/desktop.js");
 const tree = path.resolve(__dirname, "..");
 const daemon = path.join(tree, "shell/plugins/vgs.jarvis/backend/jarvisd.js");
 const source = fs.readFileSync(daemon, "utf8");
-const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "" }, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
@@ -59,7 +59,7 @@ async function inside() {
             lines.push(reply(locked, seq === 0 ? 0 : 1));
             lines.push({ v: 1, type: "state", gen: 1, revision: hello.revision,
                 seq: ++seq, state: {
-                    gen: 1, nextOp: 1, stale: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "" },
+                    gen: 1, nextOp: 1, stale: 0, settings: hello.settings,
                     gate: { kind: "down", reason: locked ? "locked" : "unconfigured" },
                     mute: { kind: "off" }, capture: { kind: "closed" }, turn: { kind: "none" }, brain: { kind: "closed" },
                     playback: { kind: "idle" }, action: { kind: "none" }, approval: { kind: "none" }, fault: { kind: "none" },
@@ -173,7 +173,8 @@ async function inside() {
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"), path.join(copyDir, "Session.js"));
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/session-runner.js"), path.join(copyDir, "backend/session-runner.js"));
         for (const filename of ["Tasks.js", "task-event", "Audio.js", "audio-child.py",
-            "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "ShellRequests.js", "Desktop.js"])
+            "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "ShellRequests.js", "Desktop.js",
+            "TaskRunner.js", "AgentProfiles.js", "task-run.py"])
             fs.copyFileSync(path.join(path.dirname(daemon), filename), path.join(copyDir, "backend", filename));
         const copy = path.join(copyDir, "backend/jarvisd.js");
         fs.writeFileSync(copy, source.replace(needle, replacement));
@@ -225,8 +226,8 @@ async function inside() {
     taskStore.create("retention-extra", taskGoal, engine);
     fs.writeFileSync(path.join(taskStore.root, "retention-extra/events/0001.json"),
         '{"v":1,"seq":1,"at":0,"kind":"lost","data":{}}', { mode: 0o600 });
-    const recoveryGuard = "if (first) {\n                    const engine = Tasks.publish";
-    const skipRecovery = "if (false) {\n                    const engine = Tasks.publish";
+    const recoveryGuard = "if (first) {\n                    engine = Tasks.publish";
+    const skipRecovery = "if (false) {\n                    engine = Tasks.publish";
     await control("startup-retention", recoveryGuard, skipRecovery, async file => {
         await run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false]));
         assert.equal(taskStore.list().length, 50);
@@ -250,7 +251,8 @@ async function inside() {
             "backend/jarvisd.js", "backend/Tasks.js", "backend/task-event",
             "backend/Audio.js", "backend/audio-child.py", "backend/ToolRouter.js",
             "backend/Audit.js", "backend/Redact.js", "backend/Tools.js", "backend/Policy.js",
-            "backend/ShellRequests.js", "backend/Desktop.js"])
+            "backend/ShellRequests.js", "backend/Desktop.js",
+            "backend/TaskRunner.js", "backend/AgentProfiles.js", "backend/task-run.py"])
             fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis", relative), path.join(directory, relative));
         return path.join(directory, "backend/jarvisd.js");
     }
@@ -285,7 +287,7 @@ async function inside() {
         try {
             send({ ...hello, settings: { ...hello.settings, mode } });
             await wait(m => m.state.gate.kind !== "down" || m.state.gate.reason === "unconfigured");
-            await check({ send: name => send(intent(name)), wait, last, messages });
+            await check({ send: name => send(intent(name)), raw: send, wait, last, messages });
             child.stdin.end();
             const [code, signal] = await closed;
             assert.equal(signal, null, "EOF releases the real child");
@@ -501,6 +503,73 @@ async function inside() {
         'if (process.stdout.writableLength + Buffer.byteLength(wire + "\\n") > Protocol.MAX_LINE_BYTES)',
         'if (false && process.stdout.writableLength + Buffer.byteLength(wire + "\\n") > Protocol.MAX_LINE_BYTES)',
         blockedReader);
+
+    // Task control end to end: a record and a real task-run.py group made
+    // here, no profile row. Startup observation writes lost for a group that
+    // is gone; a task-stop intent stops a live group and answers stopped.
+    const taskEnv = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8" };
+    const producer = (id, kind, data) => {
+        const result = cp.spawnSync("node", [engine, "--state", hello.directories.state, id, kind],
+            { env: taskEnv, input: JSON.stringify(data), encoding: "utf8", timeout: 10000 });
+        assert.equal(result.status, 0, result.stderr);
+    };
+    let taskCount = 0;
+    async function taskGroup() {
+        const id = "control-" + (++taskCount);
+        producer(id, "create", { goal: "Daemon fixture", cwd: process.env.HOME, agent: "fixture", account: "" });
+        const spec = path.join(root, id + ".json");
+        fs.writeFileSync(spec, JSON.stringify({ v: 1, id, state: hello.directories.state, engine,
+            cwd: process.env.HOME, argv: ["sleep", "30"], env: taskEnv }), { mode: 0o600 });
+        // A terminal runs the launcher in a session of its own.
+        const launcher = cp.spawn("python3", [path.join(path.dirname(daemon), "task-run.py"), "--spec", spec],
+            { env: taskEnv, stdio: "ignore", detached: true });
+        const closed = once(launcher, "close");
+        for (let attempts = 0; taskStore.read(id).process.kind !== "alive"; attempts++) {
+            assert.ok(attempts < 500, "task-run records started");
+            await new Promise(resolve => setTimeout(resolve, 10)); // Bounded: exec and the producer's lock.
+        }
+        return { id, pgid: taskStore.read(id).identity.pgid, closed, launcher };
+    }
+    const until = async (label, predicate) => {
+        for (let attempts = 0; !predicate(); attempts++) {
+            assert.ok(attempts < 400, label);
+            await new Promise(resolve => setTimeout(resolve, 10)); // Bounded: the daemon's own child writes.
+        }
+    };
+    async function goneGroup() {
+        const id = "control-" + (++taskCount);
+        const gone = cp.spawn("true", [], { detached: true, stdio: "ignore" });
+        const stat = fs.readFileSync("/proc/" + gone.pid + "/stat", "utf8").split(") ")[1].split(" ");
+        await once(gone, "exit");
+        producer(id, "create", { goal: "Daemon fixture", cwd: process.env.HOME, agent: "fixture", account: "" });
+        producer(id, "started", { pid: gone.pid, pgid: Number(stat[2]), sid: Number(stat[3]), startTime: stat[19] });
+        return id;
+    }
+    const startupLost = async file => {
+        const id = await goneGroup();
+        await conversation(file, async () => {
+            await until("startup observation writes lost", () => taskStore.read(id).process.kind === "lost");
+        });
+    };
+    await startupLost(daemon);
+    await control("startup-observation", "if (first) void tasks.observe();", "if (false) void tasks.observe();", startupLost);
+    const stopIntent = async file => {
+        const task = await taskGroup();
+        try {
+            await conversation(file, async w => {
+                await until("the live task is counted", () => w.messages.some(m => m.type === "tasks" && m.count === 1));
+                w.raw({ v: 1, type: "intent", gen: 1, revision: hello.revision, intent: "task-stop", task: task.id });
+                await until("task-answer", () => w.messages.some(m => m.type === "task-answer"));
+                assert.deepEqual(w.messages.filter(m => m.type === "task-answer").map(m => [m.task, m.answer]), [[task.id, "stopped"]]);
+                assert.throws(() => process.kill(-task.pgid, 0), { code: "ESRCH" });
+                assert.equal(taskStore.read(task.id).state, "stopped");
+                await until("the count returns to zero", () => w.messages.filter(m => m.type === "tasks").at(-1).count === 0);
+            });
+            await task.closed;
+        } finally { if (task.launcher.exitCode === null) process.kill(-task.pgid, "SIGKILL"); }
+    };
+    await stopIntent(daemon);
+    await control("task-stop-intent", "void tasks.stop(task).then(answer => {", "void Promise.resolve(\"stopped\").then(answer => {", stopIntent);
     console.log("test-jarvis-daemon: ok cases=" + cases + " controls=" + controls);
 }
 

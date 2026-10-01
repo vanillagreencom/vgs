@@ -1,9 +1,11 @@
 .pragma library
 .import "Session.js" as Session
 
-// Shell produces hello, intent, shown and reply. Voice confirmation is daemon-internal.
-// Daemon produces status/state/devices/level/audio-fault/request. A line excludes its LF.
+// Shell produces hello, intent, shown, tui-state and reply. Voice confirmation
+// is daemon-internal. Daemon produces status/state/devices/level/audio-fault,
+// request, tasks and task-answer. A line excludes its LF.
 var MAX_LINE_BYTES = 256 * 1024;
+var TASK_TERMINALS = ["auto", "tmux", "floating"];
 
 // Requests the daemon sends and the service answers, one reply each. `args`
 // lists each argument's type, or "argv" for a command; `data` names the
@@ -25,7 +27,8 @@ var REQUESTS = {
     "run.detached": { args: "argv", data: "none", acts: true },
     "desktop.launch": { args: ["text"], data: "entry", acts: true },
     "toast": { args: ["text", "text"], data: "none", acts: false },
-    "desktop.list": { args: [], data: "entries", acts: false }
+    "desktop.list": { args: [], data: "entries", acts: false },
+    "tui.run": { args: "task-spec", data: "none", acts: true }
 };
 // Requests awaiting a reply, the plan's bound. The daemon refuses the next.
 var MAX_PENDING_REQUESTS = 16;
@@ -95,6 +98,8 @@ function argv(value) {
 
 function requestArgs(kind, args) {
     var rule = REQUESTS[kind].args;
+    if (rule === "task-spec")
+        return Array.isArray(args) && args.length === 1 && directory(args[0]);
     if (rule === "argv") return argv(args);
     if (!Array.isArray(args) || args.length !== rule.length) return false;
     for (var i = 0; i < rule.length; i++)
@@ -173,6 +178,11 @@ function replyData(message) {
     }
 }
 
+// Tasks.js's task id rule, judged again on the wire before any record read.
+function taskId(value) {
+    return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value);
+}
+
 function approvalId(value) {
     return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
@@ -192,9 +202,10 @@ function accept(line, direction) {
     case "hello":
         if (direction !== "shell") fail("direction-hello");
         keys(message, ["v", "type", "gen", "settings", "directories", "revision", "locked", "keys"], "hello");
-        keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");
+        keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");
         if (typeof message.settings.brain !== "string") fail("shape-settings");
         if (message.settings.mode !== "hold" && message.settings.mode !== "toggle") fail("mode");
+        if (TASK_TERMINALS.indexOf(message.settings.taskTerminal) === -1) fail("task-terminal");
         for (var setting of ["microphone", "speaker"])
             if (typeof message.settings[setting] !== "string"
                     || !/^[^\x00-\x1f\x7f]{0,200}$/.test(message.settings[setting])) fail("device-setting");
@@ -221,6 +232,9 @@ function accept(line, direction) {
         } else if (message.intent === "cancel") {
             keys(message, fields.concat(["id"]), "cancel");
             if (!approvalId(message.id)) fail("approval-id");
+        } else if (message.intent === "task-stop") {
+            keys(message, fields.concat(["task"]), "task-stop");
+            if (!taskId(message.task)) fail("task-id");
         } else {
             keys(message, fields, "intent");
             if (["talk-down", "talk-up", "mute", "stop"].indexOf(message.intent) === -1) fail("intent");
@@ -247,6 +261,23 @@ function accept(line, direction) {
             fail("request-kind");
         if (!printable(message.answer, 1, ANSWER_MAX)) fail("reply-answer");
         replyData(message);
+        break;
+    case "tui-state":
+        if (direction !== "shell") fail("direction-tui-state");
+        keys(message, ["v", "type", "gen", "revision", "name", "running"], "tui-state");
+        if (message.name !== "task") fail("tui-name");
+        if (typeof message.running !== "boolean") fail("tui-running");
+        break;
+    case "tasks":
+        if (direction !== "daemon") fail("direction-tasks");
+        keys(message, ["v", "type", "gen", "revision", "count"], "tasks");
+        if (!Number.isSafeInteger(message.count) || message.count < 0) fail("task-count");
+        break;
+    case "task-answer":
+        if (direction !== "daemon") fail("direction-task-answer");
+        keys(message, ["v", "type", "gen", "revision", "task", "answer"], "task-answer");
+        if (!taskId(message.task)) fail("answer-task-id");
+        if (typeof message.answer !== "string" || !/^[a-z][a-z-]{0,39}$/.test(message.answer)) fail("task-answer");
         break;
     case "status":
         if (direction !== "daemon") fail("direction-status");

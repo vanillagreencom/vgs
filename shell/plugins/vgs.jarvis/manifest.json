@@ -11,7 +11,7 @@
   "entryPoints": { "bar-widget": "Widget.qml", "service": "Service.qml" },
   "capabilities": ["compositor", "ipc", "run", "session", "status", "toasts", "tui", "shortcut"],
   "defaultSection": "right",
-  "settings": { "mode": "hold", "microphone": "", "speaker": "", "brain": "" },
+  "settings": { "mode": "hold", "microphone": "", "speaker": "", "brain": "", "taskTerminal": "auto" },
   "schema": {
     "mode": { "type": "enum", "label": "Talk mode", "group": "Listening",
       "options": ["hold", "toggle"],
@@ -20,7 +20,10 @@
     "speaker": { "type": "string", "label": "Speaker", "group": "Audio", "optionsFrom": "speakers",
       "description": "Half duplex: Jarvis closes its microphone while speech plays. Talk interrupts speech." },
     "brain": { "type": "string", "label": "Brain account", "group": "Brain", "optionsFrom": "brains",
-      "description": "Found accounts are not proof of inference access. An unavailable saved selection is retained." }
+      "description": "Found accounts are not proof of inference access. An unavailable saved selection is retained." },
+    "taskTerminal": { "type": "enum", "label": "Task terminal", "group": "Tasks",
+      "options": ["auto", "tmux", "floating"],
+      "description": "Where a coding task's terminal opens. Auto uses tmux when it is installed, which runs several tasks at once; the floating terminal shows one task at a time." }
   },
   "hyprland": {
     "binds": [
@@ -48,7 +51,8 @@
     { "command": "ss", "packages": { "pacman": "iproute2", "apt": "iproute2", "dnf": "iproute" }, "optional": true, "purpose": "Finds local model-server ports without making an inference request" },
     { "command": "gio", "packages": { "pacman": "glib2", "apt": "libglib2.0-bin", "dnf": "glib2" }, "optional": true, "purpose": "Opens a file or web link for Jarvis with its default application" },
     { "command": "claude", "packages": {}, "optional": true, "purpose": "Checks Claude Code login hints in each account directory" },
-    { "command": "codex", "packages": {}, "optional": true, "purpose": "Checks Codex login hints in each account directory" }
+    { "command": "codex", "packages": {}, "optional": true, "purpose": "Checks Codex login hints in each account directory" },
+    { "command": "tmux", "packages": { "pacman": "tmux", "apt": "tmux", "dnf": "tmux" }, "optional": true, "purpose": "Runs several coding tasks at once, each in its own session" }
   ],
   "status": {
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },
@@ -61,7 +65,8 @@
     "localRuntime": { "type": "state", "label": "Local voice", "hint": "Setup downloads models and verifies the selected runtime without opening audio devices.",
       "action": { "label": "Set up local voice", "tui": "setup-local" } },
     "accounts": { "type": "presenceList", "label": "Accounts", "hint": "Login hints are not inference proof. Accounts offers explicit API or local verification, which may cost money." },
-    "brains": { "type": "choices", "label": "Brain accounts", "hidden": true }
+    "brains": { "type": "choices", "label": "Brain accounts", "hidden": true },
+    "tasks": { "type": "count", "label": "Coding tasks", "hint": "Coding tasks whose agent is starting or running." }
   },
   "tui": {
     "add-key": { "script": "tui/add-key.sh", "title": "Add Jarvis key",
@@ -69,6 +74,7 @@
     "setup-local": { "script": "tui/setup-local.sh", "title": "Set up Jarvis local voice",
       "entry": { "label": "Set up local voice", "icon": "mic", "group": "Jarvis" } },
     "accounts": { "script": "tui/accounts.sh", "title": "Jarvis accounts",
-      "entry": { "label": "Accounts", "icon": "users", "group": "Jarvis" } }
+      "entry": { "label": "Accounts", "icon": "users", "group": "Jarvis" } },
+    "task": { "script": "tui/task.sh", "title": "Jarvis coding task", "presentation": "plain" }
   }
 }
