@@ -23,7 +23,7 @@ world(() => {
         ["windows.workspace", { window, workspace: 2 }, "reversible"],
         ["workspaces.list", {}, "read"], ["workspaces.focus", { workspace: 1 }, "reversible"],
         ["workspaces.special", { name: "magic_1-x" }, "reversible"],
-        ["apps.list", {}, "read"], ["apps.launch", { desktop: "org.example.App.desktop" }, "reversible"],
+        ["apps.list", {}, "read"], ["apps.list", { query: "fire" }, "read"], ["apps.launch", { desktop: "org.example.App.desktop" }, "reversible"],
         ["apps.open", { path: target }, "reversible"],
         ["apps.url", { url: "https://example.test/" }, "reversible"],
         ["input.text", { text: "-literal" }, "input", null, "text"],

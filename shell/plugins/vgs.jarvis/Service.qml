@@ -18,6 +18,9 @@ Item {
     readonly property bool locked: lockObservation()
     readonly property var effectiveKeys: shell === null ? null : shell.shortcut.keys
     readonly property string daemon: String(Qt.resolvedUrl("backend/jarvisd.js")).replace(/^file:\/\//, "")
+    // Quickshell builds its desktop entry index on first use and fills it
+    // after that; reading it here starts the scan before a list request.
+    readonly property int desktopEntryCount: DesktopEntries.applications.values.length
 
     onShellChanged: {
         if (shell === null) return;

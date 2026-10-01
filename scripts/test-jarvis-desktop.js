@@ -91,6 +91,7 @@ world(async () => {
         ["windows", "windows.list", {}, null, "completed", /^2 windows\n0xa1 workspace="1" monitor=FIX-1 class="fixture\.app" title="Target" floating\n0xb2 .*title="Other" focused$/],
         ["workspaces", "workspaces.list", {}, null, "completed", /^2 workspaces\nworkspace id=1 name="1" monitor=FIX-1 windows=2 shown focused\nworkspace id=2 name="2" monitor=FIX-2 windows=0 shown$/],
         ["apps", "apps.list", {}, null, "completed", /^2 applications\nfixture\.editor name="Editor"\nfixture\.tool name="Tool"$/],
+        ["apps-query", "apps.list", { query: "TOOL" }, null, "completed", /^1 applications\nfixture\.tool name="Tool"$/],
         ["launch", "apps.launch", { desktop: "fixture.editor.desktop" }, d => { d.launches["fixture-editor"] = { mode: "window", class: "fixture.editor" }; },
             "completed", /Started "Editor".*class="fixture\.editor"/,
             d => assert.deepEqual(d.requests.at(-1), { kind: "run.detached", args: ["fixture-editor", "--new"] })],
@@ -219,6 +220,7 @@ world(async () => {
     await control("terminal-argv", "argv = entry.terminal ? [\"xdg-terminal-exec\"].concat(entry.command) : entry.command;",
         "argv = entry.command;", red(["launch-terminal"]));
     await control("new-window", "state.clients.filter(c => c.mapped && !old.has(lower(c.address)))", "state.clients.filter(c => c.mapped)", red(["open-windowless"]));
+    await control("apps-query", ".toLowerCase().includes(query))", ".length > 0)", red(["apps-query"]));
     await control("probe-first", "router.register(\"wire\", desktop.records.wire);",
         "for (const id of [\"wire\", \"windows\", \"compositor\", \"apps\"]) router.register(id, desktop.records[id]);", registration);
     await control("close-reads", "if (closed) { reject(new Error(\"closed\")); return; }", "", closing);

@@ -42,7 +42,7 @@ const TABLE = {
     "workspaces.focus": { sentence: "Show workspace {workspace}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { workspace: workspaceId } },
     "workspaces.special": { sentence: "Toggle special workspace {name}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { name: specialName } },
     "windows.monitor": { sentence: "Focus monitor {monitor}", effect: "reversible", executor: "compositor", command: "hyprctl", schema: { monitor: text } },
-    "apps.list": { sentence: "List applications", effect: "read", executor: "apps", command: null, schema: {} },
+    "apps.list": { sentence: "List applications, optionally matching {query}", effect: "read", executor: "apps", command: null, schema: { query: text }, optional: ["query"] },
     "apps.launch": { sentence: "Launch application {desktop}", effect: "reversible", executor: "apps", command: "hyprctl", schema: { desktop: desktop } },
     "apps.open": { sentence: "Open {path}", effect: "reversible", executor: "apps", command: "gio", schema: { path: absolute }, paths: [["path", "read"]] },
     "apps.url": { sentence: "Open {url}", effect: "reversible", executor: "apps", command: "gio", schema: { url: url } },

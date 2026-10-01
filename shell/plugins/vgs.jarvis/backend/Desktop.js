@@ -255,7 +255,11 @@ function create({ Dispatch, request, environment, clock, bounds = BOUNDS, comman
     async function apps(call) {
         if (call.id === "apps.list") {
             const data = await ask("desktop.list", []);
-            const lines = data.entries.map(e => e.id + " name=" + JSON.stringify(e.name));
+            // A query keeps a desktop with hundreds of entries under the
+            // router's result bound: it matches the id or name, ignoring case.
+            const query = (call.args.query || "").toLowerCase();
+            const lines = data.entries.filter(e => (e.id + "\n" + e.name).toLowerCase().includes(query))
+                .map(e => e.id + " name=" + JSON.stringify(e.name));
             return { outcome: "completed", content: [lines.length + " applications" + (data.complete ? "" : " (list cut)")].concat(lines).join("\n") };
         }
         const before = await state();
