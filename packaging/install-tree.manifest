@@ -60,6 +60,7 @@ f share/vgs/shell/Core/HyprlandState.js
 f share/vgs/shell/Core/HyprlandState.qml
 f share/vgs/shell/Core/IdleRegistry.qml
 f share/vgs/shell/Core/IpcRegistry.qml
+f share/vgs/shell/Core/KeyCapture.qml
 f share/vgs/shell/Core/Layers.qml
 f share/vgs/shell/Core/Lifetime.js
 f share/vgs/shell/Core/MonitorLogic.js
@@ -108,6 +109,7 @@ f share/vgs/shell/Ui/controls/PathField.qml
 f share/vgs/shell/Ui/controls/Radio.qml
 f share/vgs/shell/Ui/controls/SegmentedControl.qml
 f share/vgs/shell/Ui/controls/Select.qml
+f share/vgs/shell/Ui/controls/ShortcutField.qml
 f share/vgs/shell/Ui/controls/Slider.qml
 f share/vgs/shell/Ui/controls/Switch.qml
 f share/vgs/shell/Ui/controls/TextArea.qml
