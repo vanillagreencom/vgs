@@ -6,15 +6,19 @@
 # marker, reach the field instead of the bind. Each capture stores the
 # string the field's text entry stores when the same keys are typed into
 # it, the submap is left once it commits, and the field names the user
-# bind holding SUPER+SPACE. The control starts a tree whose key capture
-# owner sends no enter: Hyprland stays in its default map, the user bind
-# takes SUPER+SPACE, its marker appears and the stored key stays. Every
-# key goes to the nested instance alone, through wtype on its seat, and
-# the harness hyprland.lua is restored at the end of rows/key-passthrough.sh.
+# bind holding SUPER+SPACE. A captured SUPER+T names the Themes plugin,
+# whose shortcut asks for the same key, and the field's Unbind button,
+# clicked, stores null. The control starts a tree whose key capture owner
+# sends no enter: Hyprland stays in its default map, the user bind takes
+# SUPER+SPACE, its marker appears and the stored key stays. Every key goes
+# to the nested instance alone, through wtype on its seat, and the row
+# puts the harness hyprland.lua back at its end.
 # No latency is measured; each reading polls every 200 ms for up to 5 s.
 set -euo pipefail
 
 kc_hypr_lua="$home/.config/hypr/hyprland.lua"
+# The click helper's monitor size, as rows/bar.sh reads it.
+read -r mon_w mon_h < <(hypr -j monitors | py_reply 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"])')
 kc_marker() { [[ -f $1 ]] && echo 1 || echo 0; }
 kc_open() {
   expect "$1: enabling Settings is allowed" ok ipc shell setPluginEnabled vgs.settings true
@@ -49,7 +53,7 @@ kc_typed() {
   expect_poll "$label: the field holds the keyboard again" true key_field focus
 }
 
-cp -p -- "$kc_hypr_lua" "$sandbox/key-capture-hyprland.lua"
+hypr_lua_save key-capture
 {
   printf '%s\n' 'hl.config({ input = { resolve_binds_by_sym = true } })'
   printf '%s\n' "hl.bind(\"SUPER + SPACE\", hl.dsp.exec_cmd(\"touch $sandbox/key-capture-space\"), { description = \"Smoke capture space\" })"
@@ -76,10 +80,18 @@ kc_capture "CTRL+ALT+T" CTRL+ALT+T "$sandbox/key-capture-t" -M ctrl -M alt -k t 
 kc_typed "CTRL+ALT+T typed" "ctrl+alt+t" CTRL+ALT+T
 kc_capture "F5" F5 "$sandbox/key-capture-f5" -k F5
 kc_typed "F5 typed" "F5" F5
+
+expect "enabling Themes, whose shortcut asks for SUPER+T, is allowed" ok ipc shell setPluginEnabled vgs.themes true
+kc_capture "SUPER+T" SUPER+T "$sandbox/key-capture-none" -M logo -k t -m logo
+expect_poll "the field names the Themes shortcut asking for SUPER+T" '"Also bound to Themes (themes)."' key_field conflict
+kc_reveal_unbind() { local at; at="$(ipc smoke revealText window vgs.settings IconButton Unbind)" || return; [[ $at != absent ]] && echo shown || echo absent; }
+expect "the Unbind button is scrolled into view" shown kc_reveal_unbind
+click_in window:Settings window vgs.settings IconButton Unbind || fail "the click on the field's Unbind button failed"
+expect_poll "the Unbind button stores null for the shortcut" null settings_key
 key_reset "key capture end"
 
 # The control: no enter request. The user bind takes the keys.
-if copy_tree key-capture-no-enter && edit_tree key-capture-no-enter shell/Core/KeyCapture.qml '        Compositor.passthrough("enter");' '        {}'; then
+if copy_tree key-capture-no-enter && edit_tree key-capture-no-enter shell/Core/KeyCapture.qml 'const answer = Compositor.passthrough("enter", reply => root.entered(at, reply));' 'const answer = "ok";'; then
   stop_shell
   start_shell "$sandbox/tree-key-capture-no-enter" "$sandbox/key-capture-no-enter.log" || fail "the no-enter control shell starts"
   kc_open "control no-enter"
@@ -96,3 +108,5 @@ if copy_tree key-capture-no-enter && edit_tree key-capture-no-enter shell/Core/K
   stop_shell
   start_shell "$repo" "$sandbox/key-capture-restart.log" || fail "the shell starts again after the key capture control"
 fi
+hypr_lua_restore key-capture || fail "key capture puts the harness hyprland.lua back"
+expect "the nested instance reloads the harness hyprland.lua" ok hypr reload config-only

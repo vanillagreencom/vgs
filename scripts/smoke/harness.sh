@@ -1733,6 +1733,12 @@ settings_page_close() {
   expect "disabling Settings after $1's steps is allowed" ok ipc shell setPluginEnabled vgs.settings false
   expect_poll "the Settings service is gone after $1's steps" False record_exists vgs.settings
 }
+# hypr_lua_save NAME: the nested hyprland.lua copied to
+# $sandbox/hyprland-NAME.lua before a row appends its own lines;
+# hypr_lua_restore NAME: that copy put back by rename, so the row leaves
+# the file as it found it. The caller reloads the nested instance.
+hypr_lua_save() { cp -p -- "$home/.config/hypr/hyprland.lua" "$sandbox/hyprland-$1.lua"; }
+hypr_lua_restore() { cp -- "$sandbox/hyprland-$1.lua" "$home/.config/hypr/hyprland.lua.next" && mv -T -- "$home/.config/hypr/hyprland.lua.next" "$home/.config/hypr/hyprland.lua"; }
 # The key capture rows' readings, rows/key-capture.sh and
 # rows/key-passthrough.sh. key_submap: the nested instance's current
 # submap, `default` for none; a failed read fails. settings_key: the

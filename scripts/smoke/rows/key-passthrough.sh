@@ -1,20 +1,23 @@
-# Key capture pass-through, D086, after rows/key-capture.sh, whose harness
-# binds and Settings window it keeps. Every way a capture ends leaves the
-# nested Hyprland's vgs:passthrough submap, read through `hyprctl submap`
-# of the nested instance alone: a commit, Escape (the submap's own bind),
-# a focus loss to a toplevel helper that maps over the window, the window's
-# close, the 10 s timeout (still held at 5 s, gone by 14 s, polled every
-# 200 ms) and a SIGKILL of the shell, whose window then closes. Each path
-# has a control: a tree copy with that exit removed holds the submap past
-# the same reading, and the row resets it by hand. The commit control drops
-# the owner's leave on commit, the Escape control binds Escape to a no-op,
-# the focus control drops the field's focus-loss cancel, the close control
+# Key capture pass-through, D086, after rows/key-capture.sh, whose shell
+# and Settings plugin it keeps. Every way a capture ends leaves the nested
+# Hyprland's vgs:passthrough submap, read through `hyprctl submap` of the
+# nested instance alone: a commit, Escape (the submap's own bind), a focus
+# loss to a toplevel helper that maps over the window, the window's close,
+# a `hyprctl reload` of the nested instance, the 10 s timeout (still held
+# at 5 s, gone by 14 s, polled every 200 ms, and named on the field) and a
+# SIGKILL of the shell, whose window then closes. Each path has a control:
+# a tree copy with that exit removed holds the submap a second after the
+# same exit, and the row resets it by hand. The commit control drops the
+# owner's leave on commit, the Escape control binds Escape to a no-op, the
+# focus control drops the field's focus-loss cancel, the close control
 # drops every leave but commit and cancel and the layer's window close
-# hook, the timeout control drops the timer's leave, and the SIGKILL
-# control drops the close hook. Keys go to the nested seat alone.
+# hook, the reload control drops the layer's leave as it loads, the timeout
+# control drops the timer's leave, and the SIGKILL control drops the close
+# hook. The row appends `input:resolve_binds_by_sym` to the nested
+# hyprland.lua, so wtype's Escape reaches the submap's bind, and puts the
+# file back at its end. Keys go to the nested seat alone.
 set -euo pipefail
 
-kp_hypr_lua="$home/.config/hypr/hyprland.lua"
 kp_settings_open() { [[ $(ipc smoke instanceGeometry window vgs.settings) != absent ]] && echo open || echo closed; }
 
 # ARM LABEL: the Settings window on its own page, its Keys row's field
@@ -35,13 +38,13 @@ kp_held() {
   expect "$1: resetting the submap for cleanup is allowed" ok hypr dispatch 'hl.dsp.submap("reset")'
   expect_poll "$1: the cleanup reset reaches the default map" default key_submap
 }
-# A commit of the key in effect, SUPER+M, which leaves the layer's text
-# as it was: a key that changes it reloads Hyprland, and the layer's run
-# leaves the submap too.
+# A commit of the key in effect, SUPER+M, which writes nothing, so no
+# layer write reloads Hyprland and only the owner's leave can end it.
 kp_commit() {
   kp_arm "$1"
   type_keys -M logo -k m -m logo || fail "$1: typing SUPER+M failed"
-  expect_poll "$1: the captured key is stored" '"SUPER+M"' settings_key
+  expect_poll "$1: the commit ends the capture" false key_field capturing
+  expect "$1: the key in effect is not written" absent settings_key
 }
 kp_escape() {
   kp_arm "$1"
@@ -71,6 +74,10 @@ kp_timeout() {
   sleep 5 # the 10 s timer has not fired yet.
   expect "$1: the submap is held 5 s into the capture" vgs:passthrough key_submap
 }
+kp_reload() {
+  kp_arm "$1"
+  expect "$1: the nested instance reloads" ok hypr reload config-only
+}
 kp_kill() {
   kp_arm "$1"
   kp_killed="$shell_qs_pid"
@@ -84,10 +91,15 @@ kp_control_start() {
   expect_poll "$2: the Settings service is built" True record_exists vgs.settings
 }
 
-# The nominal paths, on the shell rows/key-capture.sh left.
+hypr_lua_save key-passthrough
+printf '%s\n' 'hl.config({ input = { resolve_binds_by_sym = true } })' >>"$home/.config/hypr/hyprland.lua"
+expect "the nested instance reloads with keysym binds" ok hypr reload config-only
+expect "enabling Settings for the pass-through rows is allowed" ok ipc shell setPluginEnabled vgs.settings true
+expect_poll "the Settings service is built for the pass-through rows" True record_exists vgs.settings
+
+# The nominal paths.
 kp_commit "commit"
 expect_poll "commit: the commit leaves the submap" default key_submap
-key_reset "commit"
 
 kp_escape "Escape"
 expect_poll "Escape: Hyprland's Escape bind leaves the submap" default key_submap
@@ -101,21 +113,25 @@ kp_focus_done "focus loss"
 kp_close "close"
 expect_poll "close: the window's close leaves the submap" default key_submap
 
+kp_reload "reload"
+expect_poll "reload: the layer's run leaves the submap" default key_submap
+expect_poll "reload: the field sees the capture end" false key_field capturing
+
 kp_timeout "timeout"
 for _ in $(seq 1 45); do [[ $(key_submap) == default ]] && break; sleep 0.2; done
 expect "timeout: the timer leaves the submap by 14 s" default key_submap
 expect_poll "timeout: the field sees the capture end" false key_field capturing
+expect_poll "timeout: the field says listening stopped" '"Listening stopped after 10 s. Press Return or click the field to listen again."' key_field notice
 
 kp_kill "SIGKILL"
 expect_poll "SIGKILL: the window close hook leaves the submap" default key_submap
 adopt_shell "$kp_killed" || fail "SIGKILL: the runner starts the shell again"
 
 # The controls, each a tree copy without that exit.
-if copy_tree kp-commit && edit_tree kp-commit shell/Core/KeyCapture.qml 'reason !== "compositor") Compositor.passthrough("leave");' 'reason !== "compositor" && reason !== "commit") Compositor.passthrough("leave");'; then
+if copy_tree kp-commit && edit_tree kp-commit shell/Core/KeyCapture.qml '&& reason !== "timeout") leave();' '&& reason !== "timeout" && reason !== "commit") leave();'; then
   kp_control_start kp-commit "control commit"
   kp_commit "control commit"
   kp_held "control commit"
-  key_reset "control commit"
 fi
 if copy_tree kp-escape && edit_tree kp-escape shell/Core/HyprlandLayer.js '", hl.dsp.submap(\"reset\"), { description = \"" + p.description' '", hl.dsp.exec_cmd(\"true\"), { description = \"" + p.description'; then
   kp_control_start kp-escape "control Escape"
@@ -128,19 +144,24 @@ if copy_tree kp-focus && edit_tree kp-focus shell/Ui/controls/ShortcutField.qml 
   kp_held "control focus loss"
   kp_focus_done "control focus loss"
 fi
-if copy_tree kp-close && edit_tree kp-close shell/Core/KeyCapture.qml 'reason !== "compositor") Compositor.passthrough("leave");' '(reason === "commit" || reason === "cancel")) Compositor.passthrough("leave");' \
-  && edit_tree kp-close shell/Core/HyprlandLayer.js 'then passthrough.leave() end",' 'then local _ = passthrough end",'; then
+if copy_tree kp-close && edit_tree kp-close shell/Core/KeyCapture.qml '&& reason !== "compositor" && reason !== "timeout") leave();' '&& (reason === "commit" || reason === "cancel")) leave();' \
+  && edit_tree kp-close shell/Core/HyprlandLayer.js 'then passthrough." + p.verbs.leave + "() end",' 'then local _ = passthrough end",'; then
   kp_control_start kp-close "control close"
   kp_close "control close"
   kp_held "control close"
 fi
-if copy_tree kp-timeout && edit_tree kp-timeout shell/Core/HyprlandLayer.js $'        "        passthrough.timer:set_enabled(false)",\n        "        passthrough.leave()",' $'        "        passthrough.timer:set_enabled(false)",'; then
+if copy_tree kp-reload && edit_tree kp-reload shell/Core/HyprlandLayer.js $'        "    passthrough." + p.verbs.leave + "()",\n        "end"' $'        "end"'; then
+  kp_control_start kp-reload "control reload"
+  kp_reload "control reload"
+  kp_held "control reload"
+fi
+if copy_tree kp-timeout && edit_tree kp-timeout shell/Core/HyprlandLayer.js $'        "        passthrough.timer:set_enabled(false)",\n        "        passthrough." + p.verbs.leave + "()",' $'        "        passthrough.timer:set_enabled(false)",'; then
   kp_control_start kp-timeout "control timeout"
   kp_timeout "control timeout"
   sleep 9 # past the 10 s timer, as the nominal reading waits.
   kp_held "control timeout"
 fi
-if copy_tree kp-kill && edit_tree kp-kill shell/Core/HyprlandLayer.js 'then passthrough.leave() end",' 'then local _ = passthrough end",'; then
+if copy_tree kp-kill && edit_tree kp-kill shell/Core/HyprlandLayer.js 'then passthrough." + p.verbs.leave + "() end",' 'then local _ = passthrough end",'; then
   kp_control_start kp-kill "control SIGKILL"
   kp_kill "control SIGKILL"
   kp_held "control SIGKILL"
@@ -148,7 +169,7 @@ if copy_tree kp-kill && edit_tree kp-kill shell/Core/HyprlandLayer.js 'then pass
 fi
 
 stop_shell
-cp -- "$sandbox/key-capture-hyprland.lua" "$kp_hypr_lua.next" && mv -T -- "$kp_hypr_lua.next" "$kp_hypr_lua" || fail "key passthrough restores the harness hyprland.lua"
+hypr_lua_restore key-passthrough || fail "key passthrough puts the harness hyprland.lua back"
 start_shell "$repo" "$sandbox/key-passthrough-final.log" || fail "key passthrough leaves a live shell for the rows after it"
 expect "the nested instance reloads the harness hyprland.lua" ok hypr reload config-only
 expect "disabling the Settings plugin after the key rows is allowed" ok ipc shell setPluginEnabled vgs.settings false

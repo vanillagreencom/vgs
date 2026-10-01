@@ -502,7 +502,7 @@ Scope {
                 return field.typing ? "typing" : "not-typing";
             }
             return root.json({ key: field.key, capturing: field.capturing, typing: field.typing, caps: field.caps,
-                conflict: field.conflict, notice: field.notice, focus: box.activeFocus, visualFocus: box.visualFocus });
+                conflict: field.conflict, notice: field.notice, hint: field.hint, focus: box.activeFocus, visualFocus: box.visualFocus });
         }
         if (name === "applyField" || name === "holdField") {
             const a = JSON.parse(arg);

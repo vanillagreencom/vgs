@@ -17,7 +17,6 @@ failed_submap_control() { ( hypr() { return 23; }; current_submap ) >/dev/null 2
 view_selected_name() { ipc smoke readDescendant overlay vgs.themes ThemeView selectedName | tr -d '"'; }
 card_at() { ipc smoke readDescendant overlay vgs.themes ThemeView shownCards | py_reply 'import json,sys; print(json.load(sys.stdin)[int(sys.argv[1])]["name"])' "$1"; }
 
-restore_hypr_lua() { cp -- "$sandbox/overlay-capture-hyprland.lua" "$hypr_lua.next" && mv -T -- "$hypr_lua.next" "$hypr_lua"; }
 append_capture_binds() {
   local marker="$1" focus="${2:-focus}"
   {
@@ -166,7 +165,7 @@ start_capture_tree() {
   expect "the overlay capture control shell is guarded" true ipc shell guarded
   expect "enabling vgs.themes for the overlay capture control is allowed" ok ipc shell setPluginEnabled vgs.themes true
   expect_poll "the overlay capture control service registers shortcuts" '["vgs.themes:panel", "vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
-  restore_hypr_lua || fail "the overlay capture control restores harness hyprland.lua before appending binds"
+  hypr_lua_restore overlay-capture || fail "the overlay capture control restores harness hyprland.lua before appending binds"
   append_capture_binds "$3"
 }
 
@@ -260,7 +259,7 @@ control_on_demand_typing() {
 }
 
 hypr_lua="$home/.config/hypr/hyprland.lua"
-cp -p -- "$hypr_lua" "$sandbox/overlay-capture-hyprland.lua"
+hypr_lua_save overlay-capture
 stop_shell
 start_shell "$repo" "$sandbox/overlay-capture-qs.log" || fail "the overlay capture row starts the normal shell"
 expect "enabling vgs.themes for overlay capture is allowed" ok ipc shell setPluginEnabled vgs.themes true
@@ -272,7 +271,7 @@ stop_shell
 start_shell "$repo" "$sandbox/overlay-capture-restart.log" || fail "the normal shell restarts after the overlay capture nominal row"
 expect "enabling vgs.themes for focus row is allowed" ok ipc shell setPluginEnabled vgs.themes true
 expect_poll "the focus row service registers shortcuts" '["vgs.themes:panel", "vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
-restore_hypr_lua || fail "the focus row restores harness hyprland.lua before appending binds"
+hypr_lua_restore overlay-capture || fail "the focus row restores harness hyprland.lua before appending binds"
 append_capture_binds "$sandbox/overlay-capture-focus-marker"
 capture_focus_row "overlay capture"
 control_open_dispatch
@@ -280,5 +279,5 @@ control_closed_hook
 control_launcher_close_hook
 control_on_demand_typing
 stop_shell
-restore_hypr_lua || fail "overlay capture restores the harness hyprland.lua"
+hypr_lua_restore overlay-capture || fail "overlay capture restores the harness hyprland.lua"
 start_shell "$repo" "$sandbox/overlay-capture-final.log" || fail "overlay capture leaves a live shell for smoke teardown"
