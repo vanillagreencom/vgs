@@ -65,6 +65,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [runtime-devices.md](runtime-devices.md): read before a plugin reads Quickshell's `Bluetooth`, `Networking` or `Pipewire`.
 - [displays.md](displays.md): read before touching `vgs.displays` or its brightness helper, a display's identity or output mapping, or a brightness access state.
 - [validation-smoke-faults.md](validation-smoke-faults.md): read before touching a sandbox fault the smoke excuses, a mode a row holds on the nested output, or `scripts/smoke/verdict.sh`.
+- [validation-smoke-shots.md](validation-smoke-shots.md): read before touching `scripts/sandbox-shots.sh`, a scene it takes, `scripts/smoke/shot.sh` or the held mode a shot reads.
 - [validation-latency.md](validation-latency.md): read before touching a latency the smoke reads or its budget.
 - [readme-images.md](readme-images.md): read before touching a plugin README's screenshot, `docs/images/plugins/`, `scripts/readme-shots.sh` or its check.
 - [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS; it links each channel's file.
