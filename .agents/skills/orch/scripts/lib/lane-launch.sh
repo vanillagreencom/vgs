@@ -784,9 +784,8 @@ launch_choice_phrase_present() { # PHRASE TEXT
 
 # The flags of a launch on HARNESS with that harness's own MODEL and EFFORT
 # words taken out, left in LAUNCH_CHOICE_KEPT, a provider word the model is
-# split across (launch_choice_provider_spelling) going with the model. With
-# `--permissions`, permission words are taken out too. What is left stays in
-# its original order.
+# split across (launch_choice_provider_spelling) going with the model. What is
+# left stays in its original order.
 #
 # The inverse of launch_choice_write over the same row, and the reason it
 # exists: a caller hands its flags on to a launch it did not write, and those
@@ -810,21 +809,16 @@ launch_choice_phrase_present() { # PHRASE TEXT
 # word, and keeping them is the corruption this exists to stop. The caller
 # refuses rather than guessing.
 LAUNCH_CHOICE_KEPT=()
-launch_choice_strip() { # HARNESS [--permissions] FLAG...
-  local row attach permission_specs word words tok drop i n strip_permissions=0
+launch_choice_strip() { # HARNESS FLAG...
+  local row attach word words tok drop i n
   local -a spellings=() rest=()
   LAUNCH_CHOICE_KEPT=()
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 1
-  IFS='|' read -r _ _ _ _ attach permission_specs _ _ <<<"$row"
+  IFS='|' read -r _ _ _ _ attach _ _ _ <<<"$row"
   words="$(launch_choice_model_spellings "$1") $(launch_choice_provider_spelling "$1")"
   read -r -a spellings <<<"$words $(launch_choice_effort_spellings "$1")"
-  [[ "$permission_specs" != - ]] || permission_specs=""
   shift
-  if [[ "${1:-}" == --permissions ]]; then
-    strip_permissions=1
-    shift
-  fi
   rest=("$@")
   n=${#rest[@]}
   i=0
@@ -855,10 +849,6 @@ launch_choice_strip() { # HARNESS [--permissions] FLAG...
           break
         fi
       done
-    fi
-    if (( drop == 0 && strip_permissions == 1 )); then
-      launch_choice_permission_match "$permission_specs" "$tok" "${rest[i+1]:-}"
-      drop=$LAUNCH_CHOICE_PERMISSION_SPAN
     fi
     if (( drop == 0 )); then
       LAUNCH_CHOICE_KEPT+=("$tok")

@@ -1,0 +1,85 @@
+# Repository wiring and consumer refresh
+
+## Repo-side wiring
+
+GitHub rulesets enforce review requirements. The organization ruleset holds pull-request approval, stale-approval dismissal, thread resolution, Copilot review, deletion and force-push rules. Each repository keeps its required-checks ruleset and merge-queue ruleset. It keeps no classic branch protection.
+
+Required contexts match `REVIEW_GATE_STANDARD_CONTEXTS` and exclude the retired gate context. Bind each context to its reporting app. Enable Copilot approvals and let them count toward merge requirements. Leave the approval path list blank so every changed file can qualify.
+
+The organization's overseer app may approve a head after the managing workflow's internal review passes and its approval wait expires. Its emergency merge bypasses only the required-checks and merge-queue rulesets. Approval and thread resolution still apply. These operations belong to the managing workflow, not this package.
+
+`validate-standard.sh` reports rule sources, approval requirements, stale-approval dismissal, required contexts, merge-queue checks, app installation and secret placement. Its `standard-bypass-actors` row judges bypass actors per ruleset: a queue-only ruleset admits `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, a checks-only ruleset admits `REVIEW_GATE_STANDARD_CHECKS_BYPASS`, and any other ruleset admits none. The owner holds the ruleset split. Merge routing follows the github skill’s `pr-merge --help` § Merge route.
+
+## Settings
+
+Declare values in the `[env]` table of `kendex.settings.toml`. The standard loader reads process values, `.env.local`, `.kendex/settings.toml`, then the committed file. `REVIEW_GATE_SETTINGS_FILE` selects an explicit file. `/dev/null` selects no file and keeps only process values and caller defaults.
+
+| Key | Meaning | Default |
+| --- | --- | --- |
+| `REVIEW_GATE_STANDARD_APP` | Organization app slug read by the full standard report and environment provisioning. | None; unset or empty refuses. |
+| `REVIEW_GATE_STANDARD_ENVIRONMENT` | App-secret environment read by both scripts. | None; unset or empty refuses. |
+| `REVIEW_GATE_STANDARD_SECRETS` | Secret names separated by `;`, never their values. Names use uppercase letters, digits and underscores and start with a letter or underscore. Provisioning reads each value from the environment variable of the same name and re-writes it on every run, including when the secret name is present. A rotation needs one owner run. | None; unset or empty refuses. |
+| `REVIEW_GATE_STANDARD_CONTEXTS` | Required contexts separated by `;`, compared by the full standard report. | None; an unset list fails the required-contexts row. |
+| `REVIEW_GATE_STANDARD_QUEUE_BYPASS`, `REVIEW_GATE_STANDARD_CHECKS_BYPASS` | Actors admitted by a queue-only and a checks-only ruleset, as `TYPE:ID:MODE`. Both standard scripts refuse malformed entries with `standard-bypass-invalid`. | Empty admits none. |
+| `PR_REVIEW_WAIT_SECS` | Watcher quiet period before an absent approval needs attention. | The watcher's `--help` states the default. |
+
+`validate-standard.sh --environment-only` reads the environment and secret keys only. Consumer adoption supplies these values from the refresh template, so it needs no consumer assignment.
+
+## Trusted removal for an existing consumer
+
+A consumer with the retired gate package needs a one-time trusted removal PR before automatic refresh can update it. Its default-branch adopter needs a template the new package deletes. The automatic job preserves those default-branch scripts and never executes the refreshed adopter under its app token. It never performs retirement.
+
+1. After the catalog removal merges, the consumer's owning lane refreshes the packages and runs the reviewed new adopter from the consumer root:
+
+   ```bash
+   kendex refresh
+   .agents/skills/review-gate/scripts/adopt-refresh.sh --retire-writer
+   kendex verify --scope project
+   git add -A
+   ```
+
+2. Commit the package update, retired workflow deletion and inventory removal in a normal PR. It takes the surviving CI checks, a final-head Copilot approval and resolved review threads. It does not use the automatic render-only route. An edited, symlinked or unrecorded workflow stops adoption and needs an owner decision.
+3. With those checks met, the repository's overseer sends the owner one line that the removal PR is ready to arm. The owner removes `Review gate` from that repository's required-checks ruleset and binds its other contexts to GitHub Actions (`integration_id` 15368). The target layout is [review-gate-platform.md § Target](https://github.com/vanillagreencom/kendex/blob/main/docs/plans/review-gate-platform.md#target).
+4. After the owner replies done, arm the removal PR. The required-check transition precedes writer removal, or later PRs wait for a status no workflow posts. Once the removal PR merges, automatic refresh starts from the fully migrated default branch.
+
+## Automatic consumer refresh
+
+After trusted removal, the shipped `templates/kendex-refresh.yml` checks for updates every 30 minutes. A manual run uses the same path. Each run installs the latest released kendex through `scripts/install-latest.sh`. That script resolves the release tag and its installer commit at run time. Each run updates `kendex/refresh` and keeps one open pull request. The class controls publication and auto-merge per [SKILL.md § Scripts](../SKILL.md#scripts). Required CI checks and the merge queue still control merging. A current consumer opens no pull request.
+
+Provision the `kendex` environment before adoption. It must contain `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` and allow deployments from the default branch only. The organization owner uses `scripts/provision-environment.sh --org ORG` from their own machine. `scripts/adopt-refresh.sh` reads the existing environment through `validate-standard.sh --environment-only`. It checks the environment and secret names the refresh template it installs reads, whatever the consumer's `REVIEW_GATE_STANDARD_*` settings say, so refresh adoption needs none of those keys. A missing environment, secret or branch policy stops adoption with the failed check and provisioning remedy.
+
+Run from the consumer root after installing the skill:
+
+```bash
+.agents/skills/review-gate/scripts/adopt-refresh.sh
+kendex verify --scope project
+git add -A
+```
+
+Commit the workflow and inventory with the installed skill. Without `--retire-writer`, adoption keeps a recorded retired gate workflow and its inventory entry and prints one `refresh-warning=legacy-writer` line. Retirement belongs to the trusted removal route above. That route removes an unedited retired copy, proved by the committed adoption hash. An edited, symlinked or unrecorded retired copy needs an owner decision and stops adoption without changing the files.
+
+Refresh workflow adoption in `scripts/adopt-refresh.sh` compares exact bytes with `skills/review-gate/templates/kendex-refresh.yml` in kendex's default-branch ancestry. It fetches that history from `https://github.com/vanillagreencom/kendex.git` as data only. Both the replacement template and any existing workflow must match shipped bytes. Consumer history and adoption records supply no replacement permission.
+
+| Existing `.github/workflows/kendex-refresh.yml` | Refresh result |
+|---|---|
+| Absent, or equal to a shipped template | Write the selected shipped template and its adoption record. A missing, matching or stale record does not change acceptance. |
+| Equal to no shipped template | Stop with `refresh-error=workflow-edited value=PATH` before writer adoption. Preserve the workflow and inventory. |
+| Symlink | Stop with `refresh-error=workflow-symlink value=PATH`. Leave its target unchanged. |
+| Bytes changed during writer adoption | Stop with `refresh-error=workflow-changed value=PATH` before refresh replacement or inventory writes. Preserve the new bytes. |
+
+An unshipped replacement stops with `refresh-error=template-edited value=PATH`. A replacement changed during writer adoption stops with `refresh-error=template-changed value=PATH`. A Git history or blob read failure stops with `refresh-error=read value=workflow-history` before adoption. It does not classify the workflow as edited. `tests/adopt-refresh.test.sh` checks historical acceptance, edit preservation, read refusal and concurrent changes. `tests/refresh-consumer.test.sh` checks that refused workflow or render edits cause no publication. A held render edit prints `refresh-error=render-edited value=COUNT`, followed by its held records. COUNT is the distinct item count, not the harness-row count.
+
+When orch is present after refresh, the refresh pull request adds Settings only for refused or deprecated `ORCH_OVERSEER_PREFERENCE` entries. The release-installed parser runs read-only with only `PATH` and `HOME` in its environment. The preserved default-branch runner validates its stdout as data. A failed extraction stops publication and auto-merge. Each row names the entry and `harness:model:effort` as the replacement form. A setting joins this report by exposing its existing parse the same way. An absent orch or a clean parse leaves the body unchanged. `tests/refresh-consumer.test.sh` checks committed settings, private overrides, first installations and credential isolation.
+
+Commit the workflow copies and inventory with the installed skill. Adoption records each byte-identical copy's template path and SHA-256 hash. `kendex refresh` updates the template and its expected hash. Adoption then rewrites the refresh copy and records it. Verification and the shared change classifier compare the copy with the declared package template. Verification rejects a registered copy that differs from its template.
+
+Schedule and manual refresh work in a consumer with the app installation and environment above. Instant refresh also needs organization dispatch wiring. The catalog's `.github/workflows/kendex-dispatch.yml` signals every non-archived consumer repository visible to its app installation after a push to `main`. Adoption and dispatch exclude `vanillagreencom/kendex`, whose build-bound lock workflow owns its refresh under [D007](https://github.com/vanillagreencom/kendex/blob/main/docs/decisions/D007-lock-record-on-main.md). It attempts all destinations and fails the run if any dispatch fails.
+
+Only the default-branch workflow can use the private key. It checks out the default branch before minting a repository-scoped app token. It rebuilds the rolling branch from that checkout and asks the shared classifier to measure the full diff before pushing. It preserves the default-branch review scripts in a detached worktree before refreshing. Those scripts prove that each rolling pull request has class `render` before they file, reply to or resolve an automatic review thread. Findings on other classes remain unchanged.
+
+The last two steps request an Issues-write token scoped only to `vanillagreencom/kendex`, then use it to file findings and resolve their threads. Each automatic review thread on a render-proven pull request has one of two outcomes:
+
+- `kendex report` routes the finding's one package to `vanillagreencom/kendex` with a package label: the workflow files the finding there for upstream confirmation, replies with the issue, and resolves the thread. GitHub-to-Linear sync sends the reports to KEN Triage. The report carries the review evidence, rendered path, consumer run and that package label. Its stable title fingerprint finds an existing open issue on later runs.
+- Every other finding is not filed, and the error line gives the reason: no single package claims the path (the lock, the inventory, a Copilot `.github/agents/*.agent.md` render), `kendex report` does not route the package to `vanillagreencom/kendex`, or the token or Issues access is missing. Review text about content kendex has not claimed is never published.
+
+A not-filed thread stays open, the thread-resolution rule holds the merge, and the run fails with an error naming the thread. Report the finding where it belongs and resolve the thread by hand: a resolved not-filed thread no longer fails the run. A reporter failure holds only its own pull request and also fails the run. If the token lacks Issues access, the Actions summary supplies filing links for routed findings only. A later run with the token files the finding and resolves the thread. A pull request the classifier cannot measure keeps its findings unanswered, and the run adds a warning with the cause.
