@@ -367,7 +367,7 @@ FocusScope {
                 width: parent.width
                 visible: page.row !== null && page.row.binds.length > 0
                 title: "Keys"
-                description: "Written to shell.json; an empty key unbinds it"
+                description: "Select a key and press the new combo; written to shell.json"
 
                 Repeater {
                     model: ScriptModel {
@@ -380,6 +380,8 @@ FocusScope {
                         pluginId: page.row.id
                         bind: modelData
                         editable: page.editable
+                        capture: page.panel.capture
+                        plugins: page.panel.plugins
                         onApplyKey: key => { if (page !== null && page.row !== null) page.panel.writeKey(pluginId, modelData.shortcut, key); }
                     }
                 }

@@ -94,6 +94,25 @@ var DISPATCHERS = {
 // every one above. Capabilities.qml builds the provider from this list.
 var PLUGIN_DISPATCHERS = Object.keys(DISPATCHERS);
 
+// ---------------------------------------------------- key pass-through
+
+// The key capture pass-through's two requests, which the core's key capture
+// owner sends and no plugin may: each calls the function of that name the
+// Hyprland layer defines (HyprlandLayer.keyPassthroughLines), so `enter`
+// fails loudly where the layer is not loaded and `leave` resets only the
+// pass-through submap. The shell writes its layer in Lua alone, so a
+// classic session, which loads no layer, is refused.
+var PASSTHROUGH_VERBS = ["enter", "leave"];
+
+// { ok: true, request } or { ok: false, error } with a keyed line.
+function passthroughRequest(verb, usingLua) {
+    if (PASSTHROUGH_VERBS.indexOf(verb) === -1)
+        return { ok: false, error: "refused: passthrough=" + JSON.stringify(verb) + " unknown" };
+    if (usingLua !== true)
+        return { ok: false, error: "refused: passthrough=" + verb + " session=classic" };
+    return { ok: true, request: "hl.__vgs_key_passthrough." + verb };
+}
+
 // ------------------------------------------------------------- reveal
 
 // Bringing a window into view (Compositor.reveal) for a caller that names

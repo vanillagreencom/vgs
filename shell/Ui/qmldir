@@ -26,6 +26,7 @@ TimeChipList 1.0 controls/TimeChipList.qml
 TimeField 1.0 controls/TimeField.qml
 DateField 1.0 controls/DateField.qml
 PathField 1.0 controls/PathField.qml
+ShortcutField 1.0 controls/ShortcutField.qml
 Field 1.0 controls/Field.qml
 FormRow 1.0 controls/FormRow.qml
 Spinner 1.0 feedback/Spinner.qml

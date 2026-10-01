@@ -481,6 +481,29 @@ Scope {
             row.applyKey("key" in a ? a.key : undefined);
             return "applied";
         }
+        if (name === "keyField" || name === "focusKeyField" || name === "typeKeyField") {
+            // A drawn Keys row's ShortcutField: `keyField` reads it,
+            // `focusKeyField` gives it the keyboard focus as a Tab does, and
+            // `typeKeyField` opens its text entry as its keyboard button
+            // does.
+            const a = JSON.parse(arg);
+            const row = descendants(item).find(child => child.pluginId === a.id && child.bind !== undefined && child.bind.shortcut === a.shortcut && typeof child.applyKey === "function");
+            if (row === undefined) return "absent";
+            const field = descendants(row).find(child => typeName(child) === "ShortcutField");
+            if (field === undefined) return "no-field";
+            const box = descendants(field).find(child => typeName(child) === "QQuickAbstractButton");
+            if (box === undefined) return "no-box";
+            if (name === "focusKeyField") {
+                field.forceActiveFocus(Qt.TabFocusReason);
+                return box.activeFocus ? "focused" : "unfocused";
+            }
+            if (name === "typeKeyField") {
+                field.startTyping();
+                return field.typing ? "typing" : "not-typing";
+            }
+            return root.json({ key: field.key, capturing: field.capturing, typing: field.typing, caps: field.caps,
+                conflict: field.conflict, notice: field.notice, focus: box.activeFocus, visualFocus: box.visualFocus });
+        }
         if (name === "applyField" || name === "holdField") {
             const a = JSON.parse(arg);
             const field = fieldOf(item, a.id, a.key);

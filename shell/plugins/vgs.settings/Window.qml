@@ -36,6 +36,8 @@ FocusScope {
     readonly property var plugins: shell === null ? [] : shell.manager.plugins
     readonly property string title: shell === null ? "" : shell.manifest.name
     readonly property var screen: shell === null ? null : shell.screens.current
+    // The key capture a Keys row's field asks to press a combo.
+    readonly property var capture: shell === null ? null : shell.shortcut.capture
     // The last refusal or failure the manager answered, by stepKey: a call
     // for a plugin, shown on its page, and a status step (D061), shown under
     // its line, each until a later call there succeeds.

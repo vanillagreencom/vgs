@@ -59,7 +59,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [runtime-qml-focus.md](runtime-qml-focus.md): read before touching keyboard focus in QML, a focus scope, or a row that hands a window the keyboard.
 - [runtime-hyprland.md](runtime-hyprland.md): read before touching a dispatch, `Compositor` or `Dispatch.js`, or relying on what Hyprland does.
 - [runtime-hyprland-nested.md](runtime-hyprland-nested.md): read before touching the nested sandbox's outputs, `scripts/smoke/shot.sh` or a fault that names the nested window.
-- [runtime-hyprland-capture.md](runtime-hyprland-capture.md): read before touching the overlay keyboard capture, its submap or `scripts/smoke/rows/overlay-capture.sh`.
+- [runtime-hyprland-capture.md](runtime-hyprland-capture.md): read before touching the overlay keyboard capture, the key capture pass-through, their submaps or `scripts/smoke/rows/overlay-capture.sh`, `key-capture.sh` and `key-passthrough.sh`.
 - [runtime-hyprland-input.md](runtime-hyprland-input.md): read before relying on a Hyprland input option, a device, a bind reading or `switchxkblayout`.
 - [runtime-hyprland-monitors.md](runtime-hyprland-monitors.md): read before relying on an `hl.monitor` field, rule matching, the `monitors -j` reply or a monitor event.
 - [runtime-pointer.md](runtime-pointer.md): read before touching a pointer handler, a cursor, a hover reading or a popup.

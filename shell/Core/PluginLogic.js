@@ -1154,6 +1154,122 @@ function hyprlandKey(text) {
     return { ok: true, key: ordered.concat([name]).join("+") };
 }
 
+// The key capture control's key table: a Qt 6 `Qt::Key` value
+// (qnamespace.h) and the keysym name hyprlandKey writes for it. A keypad
+// digit, a Qt digit with `Qt.KeypadModifier`, is `KP_<digit>`. A key
+// outside the table, such as a shifted symbol Qt reports by its glyph, is
+// unnamed, and the user types it into the text entry instead.
+var CAPTURE_KEY_NAMES = (function () {
+    var names = {
+        0x20: "SPACE", 0x27: "APOSTROPHE", 0x2c: "COMMA", 0x2d: "MINUS", 0x2e: "PERIOD", 0x2f: "SLASH",
+        0x3b: "SEMICOLON", 0x3d: "EQUAL", 0x5b: "BRACKETLEFT", 0x5c: "BACKSLASH", 0x5d: "BRACKETRIGHT", 0x60: "GRAVE",
+        0x01000001: "TAB", 0x01000002: "TAB", 0x01000003: "BACKSPACE", 0x01000004: "RETURN", 0x01000005: "KP_ENTER",
+        0x01000006: "INSERT", 0x01000007: "DELETE", 0x01000008: "PAUSE", 0x01000009: "PRINT", 0x0100000a: "SYS_REQ",
+        0x01000010: "HOME", 0x01000011: "END", 0x01000012: "LEFT", 0x01000013: "UP", 0x01000014: "RIGHT", 0x01000015: "DOWN",
+        0x01000016: "PAGE_UP", 0x01000017: "PAGE_DOWN", 0x01000055: "MENU",
+        0x01000070: "XF86AUDIOLOWERVOLUME", 0x01000071: "XF86AUDIOMUTE", 0x01000072: "XF86AUDIORAISEVOLUME",
+        0x01000080: "XF86AUDIOPLAY", 0x01000081: "XF86AUDIOSTOP", 0x01000082: "XF86AUDIOPREV", 0x01000083: "XF86AUDIONEXT",
+        0x010000b2: "XF86MONBRIGHTNESSUP", 0x010000b3: "XF86MONBRIGHTNESSDOWN"
+    };
+    var code;
+    for (code = 0x30; code <= 0x39; code++) names[code] = String.fromCharCode(code);
+    for (code = 0x41; code <= 0x5a; code++) names[code] = String.fromCharCode(code);
+    for (code = 1; code <= 35; code++) names[0x01000030 + code - 1] = "F" + code;
+    return names;
+})();
+// The keys that only modify, by Qt value: Shift, Control, Meta, Alt, the
+// two Super keys, AltGr and the three locks, each with the modifier its
+// press holds, "" for none.
+var CAPTURE_MODIFIER_KEYS = {
+    0x01000020: "SHIFT", 0x01000021: "CTRL", 0x01000022: "SUPER", 0x01000023: "ALT",
+    0x01000053: "SUPER", 0x01000054: "SUPER", 0x01001103: "", 0x01000024: "", 0x01000025: "", 0x01000026: ""
+};
+// Each of HYPRLAND_MODIFIERS as a `Qt::KeyboardModifier` flag. Qt reports
+// the Super key as the Meta modifier on Linux.
+var CAPTURE_MODIFIER_FLAGS = { SUPER: 0x10000000, CTRL: 0x04000000, ALT: 0x08000000, SHIFT: 0x02000000 };
+var CAPTURE_KEYPAD_FLAG = 0x20000000;
+
+// What one key press the key capture control receives names, from a QML
+// KeyEvent's `key` and `modifiers`: { kind: "key", key } with the key
+// hyprlandKey writes, so a captured combo is the string the text entry
+// stores for the same keys; { kind: "held", modifiers } while only
+// modifiers are down, in HYPRLAND_MODIFIERS order; or { kind: "unnamed" }
+// for a key outside CAPTURE_KEY_NAMES.
+function capturedKey(key, modifiers) {
+    var held = HYPRLAND_MODIFIERS.filter(function (mod) {
+        return (modifiers & CAPTURE_MODIFIER_FLAGS[mod]) !== 0 || CAPTURE_MODIFIER_KEYS[key] === mod;
+    });
+    if (hasOwn(CAPTURE_MODIFIER_KEYS, key))
+        return { kind: "held", modifiers: held };
+    if (!hasOwn(CAPTURE_KEY_NAMES, key))
+        return { kind: "unnamed" };
+    var name = CAPTURE_KEY_NAMES[key];
+    if ((modifiers & CAPTURE_KEYPAD_FLAG) !== 0 && /^[0-9]$/.test(name))
+        name = "KP_" + name;
+    return { kind: "key", key: hyprlandKey(held.concat([name]).join("+")).key };
+}
+
+// Hyprland's modifier mask bits for HYPRLAND_MODIFIERS, as `hyprctl -j
+// binds` reports them: SUPER alone reads 64 and SUPER+SHIFT 65 in
+// scripts/smoke/rows/manager.sh.
+var BIND_MODMASK = { SUPER: 64, CTRL: 4, ALT: 8, SHIFT: 1 };
+
+// The default-map binds a `hyprctl -j binds` reply TEXT lists that the
+// Hyprland layer did not write for SECTIONS, as { ok: true, binds: [{ key,
+// description }] } with each key as hyprlandKey writes it, or { ok: false,
+// error } with a keyed line. A layer bind is known by its description, the
+// shortcut's global. A bind with a modifier outside HYPRLAND_MODIFIERS, and
+// one whose key hyprlandKey refuses, such as a mouse bind or a `code:` bind
+// Hyprland reports with no key name, are left out: no key the shell writes
+// names them.
+function userBinds(text, sections) {
+    var parsed;
+    try {
+        parsed = JSON.parse(text);
+    } catch (e) {
+        return { ok: false, error: "refused: binds=unparsed" };
+    }
+    if (!Array.isArray(parsed))
+        return { ok: false, error: "refused: binds=shape want=list" };
+    var layer = Object.create(null);
+    HyprlandLayer.resolveBinds(sections).sections.forEach(function (row) {
+        row.binds.forEach(function (entry) {
+            if (entry.kind !== "bound") return;
+            layer[entry.global] = true;
+            layer[HyprlandLayer.releaseShortcutName(entry.global)] = true;
+        });
+    });
+    var known = HYPRLAND_MODIFIERS.reduce(function (mask, mod) { return mask | BIND_MODMASK[mod]; }, 0);
+    var out = [];
+    parsed.forEach(function (bind) {
+        if (!isPlainObject(bind) || (bind.submap !== "" && bind.submap !== "default")) return;
+        if (typeof bind.modmask !== "number" || (bind.modmask & ~known) !== 0) return;
+        if (typeof bind.key !== "string" || layer[bind.description] === true) return;
+        var mods = HYPRLAND_MODIFIERS.filter(function (mod) { return (bind.modmask & BIND_MODMASK[mod]) !== 0; });
+        var key = hyprlandKey(mods.concat([bind.key]).join("+"));
+        if (key.ok) out.push({ key: key.key, description: typeof bind.description === "string" ? bind.description : "" });
+    });
+    return { ok: true, binds: out };
+}
+
+// Who else holds KEY, the key a capture or the text entry gives shortcut
+// SHORTCUT of plugin ID: { plugins: [{ id, shortcut }], user: [description] },
+// the plugins from the keys resolveBinds puts in effect for SECTIONS and
+// the user's binds from userBinds' BINDS. A hint: nothing refuses the key.
+function keyConflicts(key, sections, binds, id, shortcut) {
+    var parsed = hyprlandKey(key);
+    var keys = HyprlandLayer.resolveBinds(sections).keys;
+    var plugins = [];
+    Object.keys(keys).sort().forEach(function (other) {
+        Object.keys(keys[other]).forEach(function (name) {
+            if (keys[other][name] === parsed.key && !(other === id && name === shortcut))
+                plugins.push({ id: other, shortcut: name });
+        });
+    });
+    var user = binds.filter(function (bind) { return bind.key === parsed.key; }).map(function (bind) { return bind.description; });
+    return { plugins: plugins, user: user };
+}
+
 // The first defect of a plugins row's `keys`, or "": an object whose names
 // are shortcut names and whose values are keys hyprlandKey accepts, or null
 // for a shortcut the user unbinds. A name the plugin binds nothing under is

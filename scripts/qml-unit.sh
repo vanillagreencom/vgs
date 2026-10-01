@@ -19,8 +19,12 @@
 # shipped accept; a stand-in Quickshell module supplies the Singleton and
 # Scope types and a PopupWindow that positions nothing, and a stand-in
 # Quickshell.Io a FileView the test finishes by hand, since the real
-# modules' plugins do not load outside the shell. Nothing under the
-# repository is written.
+# modules' plugins do not load outside the shell. qs/Core holds the shipped
+# core files the tests drive beside stand-in Registry, Capabilities and
+# Compositor singletons, the last recording the key capture's requests, and
+# a stand-in Quickshell.Hyprland supplies GlobalShortcut and a Hyprland
+# singleton whose events a test emits. Nothing under the repository is
+# written.
 #
 # A test file fails on any warning or error it logs, console.warn and
 # console.error included, unless a declaration in that file expects it:
@@ -97,13 +101,14 @@ done
 cp -- "$tests/stand-ins/ThemeSource.qml" "$imports/qs/Commons/ThemeSource.qml"
 cp -- "$tests/stand-ins/Time.qml" "$imports/qs/Commons/Time.qml"
 printf 'module qs.Commons\nsingleton Theme 1.0 Theme.qml\ninternal ThemeSource ThemeSource.qml\nsingleton Time 1.0 Time.qml\nInset 1.0 Inset.js\nSettingValues 1.0 SettingValues.js\nSessionLockState 1.0 SessionLockState.js\nClearingInset 1.0 ClearingInset.qml\nWatchedFile 1.0 WatchedFile.qml\n' >"$imports/qs/Commons/qmldir"
-for file in TuiRecords.qml SessionLock.qml ShortcutRegistry.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
+for file in TuiRecords.qml SessionLock.qml ShortcutRegistry.qml KeyCapture.qml PluginLogic.js PackageManagers.js HyprlandLayer.js; do
   [[ -f $core/$file ]] || { printf 'qml-unit: refused: missing=%s\n' "$core/$file" >&2; exit 2; }
   ln -s -- "$core/$file" "$imports/qs/Core/$file"
 done
 cp -- "$tests/stand-ins/ShortcutRegistryInputs.qml" "$imports/qs/Core/Registry.qml"
 cp -- "$tests/stand-ins/ShortcutCapabilities.qml" "$imports/qs/Core/Capabilities.qml"
-printf 'module qs.Core\nTuiRecords 1.0 TuiRecords.qml\nSessionLock 1.0 SessionLock.qml\nShortcutRegistry 1.0 ShortcutRegistry.qml\nsingleton Registry 1.0 Registry.qml\nsingleton Capabilities 1.0 Capabilities.qml\nPluginLogic 1.0 PluginLogic.js\nPackageManagers 1.0 PackageManagers.js\nHyprlandLayer 1.0 HyprlandLayer.js\n' >"$imports/qs/Core/qmldir"
+cp -- "$tests/stand-ins/KeyCaptureCompositor.qml" "$imports/qs/Core/Compositor.qml"
+printf 'module qs.Core\nTuiRecords 1.0 TuiRecords.qml\nSessionLock 1.0 SessionLock.qml\nShortcutRegistry 1.0 ShortcutRegistry.qml\nKeyCapture 1.0 KeyCapture.qml\nsingleton Registry 1.0 Registry.qml\nsingleton Capabilities 1.0 Capabilities.qml\nsingleton Compositor 1.0 Compositor.qml\nPluginLogic 1.0 PluginLogic.js\nPackageManagers 1.0 PackageManagers.js\nHyprlandLayer 1.0 HyprlandLayer.js\n' >"$imports/qs/Core/qmldir"
 cp -- "$tests/stand-ins/UnitTheme.qml" "$imports/qs/Unit/UnitTheme.qml"
 # Where the module under test is, for the test that reads its qmldir.
 printf '.pragma library\nvar UI_DIR = %s;\n' "$(python3 -c 'import json, sys; print(json.dumps("file://" + sys.argv[1]))' "$ui")" >"$imports/qs/Unit/UnitPaths.js"
@@ -114,7 +119,8 @@ done
 printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nScope 1.0 Scope.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\n' >"$imports/Quickshell/qmldir"
 mkdir -p -- "$imports/Quickshell/Hyprland"
 cp -- "$tests/stand-ins/GlobalShortcut.qml" "$imports/Quickshell/Hyprland/GlobalShortcut.qml"
-printf 'module Quickshell.Hyprland\nGlobalShortcut 1.0 GlobalShortcut.qml\n' >"$imports/Quickshell/Hyprland/qmldir"
+cp -- "$tests/stand-ins/Hyprland.qml" "$imports/Quickshell/Hyprland/Hyprland.qml"
+printf 'module Quickshell.Hyprland\nGlobalShortcut 1.0 GlobalShortcut.qml\nsingleton Hyprland 1.0 Hyprland.qml\n' >"$imports/Quickshell/Hyprland/qmldir"
 for file in FileView.qml Process.qml StdioCollector.qml ProcessRegistry.qml FileViewError.qml; do
   cp -- "$tests/stand-ins/$file" "$imports/Quickshell/Io/$file"
 done

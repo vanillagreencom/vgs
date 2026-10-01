@@ -53,6 +53,46 @@ const LOCK_SECTION = [
     "hl.config({ misc = { allow_session_lock_restore = true } })"
 ];
 
+// The key capture pass-through, byte for byte: its submap's one bind is
+// Escape, so every other key reaches the shell window that entered it;
+// Hyprland leaves it on Escape, on that window's close, after the 10 s
+// timer and when the layer runs again. `enter` refuses unless a shell
+// window has the focus, and `leave` resets this submap alone.
+// scripts/smoke/rows/key-passthrough.sh reads each exit back from the
+// nested Hyprland v0.56.2.
+const PASSTHROUGH_SECTION = [
+    "-- Key capture pass-through: a vgs window that captures a key combo takes every key but Escape.",
+    "do",
+    "    local passthrough = { submap = \"vgs:passthrough\", class = \"org.vgs.shell\" }",
+    "    hl.__vgs_key_passthrough = passthrough",
+    "    hl.define_submap(passthrough.submap, function()",
+    "        hl.bind(\"Escape\", hl.dsp.submap(\"reset\"), { description = \"vgs:passthrough-cancel\" })",
+    "    end)",
+    "    function passthrough.leave()",
+    "        if hl.get_current_submap() == passthrough.submap then hl.dispatch(hl.dsp.submap(\"reset\")) end",
+    "    end",
+    "    function passthrough.enter()",
+    "        local window = hl.get_active_window()",
+    "        if window == nil or window.class ~= passthrough.class then error(\"vgs:passthrough: the focused window is not a vgs window\") end",
+    "        passthrough.window = window.address",
+    "        hl.dispatch(hl.dsp.submap(passthrough.submap))",
+    "    end",
+    "    passthrough.timer = hl.timer(function()",
+    "        passthrough.timer:set_enabled(false)",
+    "        passthrough.leave()",
+    "    end, { timeout = 10000, type = \"repeat\" })",
+    "    passthrough.timer:set_enabled(false)",
+    "    hl.on(\"keybinds.submap\", function(name)",
+    "        passthrough.timer:set_enabled(name == passthrough.submap)",
+    "        if name ~= passthrough.submap then passthrough.window = nil end",
+    "    end)",
+    "    hl.on(\"window.close\", function(window)",
+    "        if window ~= nil and window.address == passthrough.window then passthrough.leave() end",
+    "    end)",
+    "    passthrough.leave()",
+    "end"
+];
+
 function captureSection(pluginLines) {
     return [
         "-- Overlay keyboard capture: full-screen vgs overlays own keys through a submap.",
@@ -320,7 +360,8 @@ function verify(logic, layer, shellText) {
     assert.ok(bareLines.indexOf("-- Theme appearance: corner radius.") < bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off."), "radius is before motion");
     assert.ok(bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off.") < bareLines.indexOf(TUI_SECTION[0]), "theme appearance is before floating TUIs");
     assert.ok(bareLines.indexOf(TUI_SECTION[0]) < bareLines.indexOf(APP_SECTION[0]), "floating TUIs are before application windows");
-    same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, "", ...captureSection([]), "", ...LOCK_SECTION, ""], "a layer with no plugin section ends with the floating TUIs window rules, the application window rule, overlay capture, then the session lock's restore");
+    same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, "", ...captureSection([]), "", ...PASSTHROUGH_SECTION, "", ...LOCK_SECTION, ""], "a layer with no plugin section ends with the floating TUIs window rules, the application window rule, overlay capture, the key capture pass-through, then the session lock's restore");
+    same(layer.KEY_PASSTHROUGH, { submap: "vgs:passthrough", cancel: "Escape", description: "vgs:passthrough-cancel", timeoutMs: 10000 }, "the key capture pass-through names its submap, cancel key, bind description and timeout");
     // The monitor rules: one section after the session lock's restore and
     // before every plugin section, none without a rule, one comment for a
     // document the judge refused, and no render before the document is read.
@@ -445,6 +486,8 @@ function verify(logic, layer, shellText) {
             "    hl.bind(\"SUPER + SPACE\", hl.dsp.global(\"acme.keys:toggle\"), { description = \"acme.keys:toggle\" })",
             "    hl.bind(\"SUPER + N\", hl.dsp.global(\"vgs.notes:inbox\"), { description = \"vgs.notes:inbox\" })",
         ]),
+        "",
+        ...PASSTHROUGH_SECTION,
         "",
         ...LOCK_SECTION,
         "",
@@ -803,13 +846,13 @@ const CONTROLS = [
     [layerFile, "smooth motion preset", "    smooth: {\n        curves: {", "    silky: {\n        curves: {"],
     [layerFile, "appearance defaults", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: false };", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: true };"],
     [layerFile, "appearance owner sorted", "}).sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });", "});"],
-    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));"],
-    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));"],
+    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));"],
+    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));"],
     [layerFile, "floating TUI class escapes each dot", ".join(\"\\\\\\\\.\")", ".join(\".\")"],
     [layerFile, "floating TUI class anchored", "return \"\\\"^\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"$\\\"\";", "return \"\\\"\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"\\\"\";"],
-    [layerFile, "application window rule written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));"],
-    [layerFile, "application window rule after the TUIs", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));"],
-    [layerFile, "session lock restore written", "overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "overlayCaptureLines(plan), monitorLines(monitors));"],
+    [layerFile, "application window rule written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));"],
+    [layerFile, "application window rule after the TUIs", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));"],
+    [layerFile, "session lock restore written", "keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));", "keyPassthroughLines(), monitorLines(monitors));"],
     [layerFile, "monitor rules written", "sessionLockLines(), monitorLines(monitors));", "sessionLockLines());"],
     [layerFile, "monitor rules after the session lock", "[\"\"], sessionLockLines(), monitorLines(monitors));", "monitorLines(monitors), [\"\"], sessionLockLines());"],
     [layerFile, "monitor rules before the plugin sections", "text: lines.join(\"\\n\") + \"\\n\",", "text: lines.filter(function (line) { return line.indexOf(\"hl.monitor(\") !== 0 && line !== MONITORS_HEADER; }).concat(monitorLines(monitors)).join(\"\\n\") + \"\\n\","],
@@ -818,6 +861,17 @@ const CONTROLS = [
     [layerFile, "a refusal's comment is printable", "\"-- Monitors: monitors.json is not applied: \" + commentText(monitors.refused)", "\"-- Monitors: monitors.json is not applied: \" + monitors.refused"],
     [layerFile, "an unread document holds the render back", "if (document === null) return null;", "if (document === null) return { lines: [] };"],
     [layerFile, "a refused document is not rendered", "if (document.rules === null) return { refused: document.error };", "if (document.rules === null) return { lines: [] };"],
+    [layerFile, "key pass-through written", "[\"\"], keyPassthroughLines(), [\"\"], sessionLockLines()", "[\"\"], sessionLockLines()"],
+    [layerFile, "key pass-through before the lock restore", "overlayCaptureLines(plan), [\"\"], keyPassthroughLines(), [\"\"], sessionLockLines(), monitorLines(monitors));", "overlayCaptureLines(plan), [\"\"], sessionLockLines(), [\"\"], keyPassthroughLines(), monitorLines(monitors));"],
+    [layerFile, "key pass-through cancels on Escape", "hl.dsp.submap(\\\"reset\\\"), { description = ", "hl.dsp.exec_cmd(\\\"true\\\"), { description = "],
+    [layerFile, "key pass-through leaves only its submap", "        \"        if hl.get_current_submap() == passthrough.submap then hl.dispatch(hl.dsp.submap(\\\"reset\\\")) end\",", "        \"        hl.dispatch(hl.dsp.submap(\\\"reset\\\"))\","],
+    [layerFile, "key pass-through enters only from a shell window", "if window == nil or window.class ~= passthrough.class then error(", "if window == nil then error("],
+    [layerFile, "key pass-through records the entering window", "        \"        passthrough.window = window.address\",", ""],
+    [layerFile, "key pass-through times out", "        \"        passthrough.timer:set_enabled(name == passthrough.submap)\",", "        \"        passthrough.timer:set_enabled(false)\","],
+    [layerFile, "key pass-through timer stops as it fires", "        \"        passthrough.timer:set_enabled(false)\",\n        \"        passthrough.leave()\",", "        \"        passthrough.leave()\","],
+    [layerFile, "key pass-through leaves on its window's close", "if window ~= nil and window.address == passthrough.window then passthrough.leave() end", "local _ = window"],
+    [layerFile, "key pass-through leaves when the layer runs", "        \"    passthrough.leave()\",\n        \"end\"", "        \"end\""],
+    [layerFile, "key pass-through timeout", "timeoutMs: 10000 };", "timeoutMs: 60000 };"],
     [layerFile, "session lock restore allowed", "misc = { allow_session_lock_restore = true }", "misc = { allow_session_lock_restore = false }"],
     [layerFile, "application window class is the shell's app-id", "match = { class = \" + classLiteral(APP_WINDOW.appId) + \" }", "match = { class = \" + classLiteral(\"org.quickshell\") + \" }"],
     [shellFile, "shell.qml sets the shell's app-id", "//@ pragma AppId org.vgs.shell\n", ""],

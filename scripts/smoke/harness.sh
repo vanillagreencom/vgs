@@ -1733,6 +1733,21 @@ settings_page_close() {
   expect "disabling Settings after $1's steps is allowed" ok ipc shell setPluginEnabled vgs.settings false
   expect_poll "the Settings service is gone after $1's steps" False record_exists vgs.settings
 }
+# The key capture rows' readings, rows/key-capture.sh and
+# rows/key-passthrough.sh. key_submap: the nested instance's current
+# submap, `default` for none; a failed read fails. settings_key: the
+# key the user file gives the Settings shortcut, as JSON, or `absent`.
+# key_field PROPERTY: one property of that shortcut's drawn ShortcutField
+# (the probe's keyField), as JSON. key_reset LABEL: the Keys row's reset
+# applied and the user file's key gone.
+key_field_arg='{"id":"vgs.settings","shortcut":"toggle"}'
+key_submap() { local out; out="$(hypr submap)" || return; [[ -n $out ]] && printf '%s\n' "$out" | tail -n 1 || printf 'default\n'; }
+settings_key() { python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1])).get("plugins", []) if r["id"] == "vgs.settings"]; k=rows[0].get("keys", {}) if rows else {}; print(json.dumps(k["toggle"]) if "toggle" in k else "absent")' "$home/.config/vgs/shell.json"; }
+key_field() { ipc smoke invokeInstance window vgs.settings keyField "$key_field_arg" | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)[sys.argv[1]]))' "$1"; }
+key_reset() {
+  expect "$1: the reset button's key is applied" applied ipc smoke invokeInstance window vgs.settings applyKey "$key_field_arg"
+  expect_poll "$1: the user file holds no key for the shortcut" absent settings_key
+}
 # offered_actions ID: each status entry of plugin ID with an action as
 # [key, label, offered], from the manager row the Settings window draws.
 # status_rows ID: plugin ID's status rows, as the Settings instance of

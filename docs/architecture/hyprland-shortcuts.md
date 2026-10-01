@@ -1,6 +1,6 @@
 # Hyprland shortcuts
 
-Covers: shell/Core/ShortcutRegistry.qml, shell/Core/PluginLogic.js, shell/Core/HyprlandLayer.js, scripts/test-hyprland-layer.js, scripts/qml-tests/tst_shortcutregistry.qml
+Covers: shell/Core/ShortcutRegistry.qml, shell/Core/KeyCapture.qml, shell/Core/PluginLogic.js, shell/Core/HyprlandLayer.js, scripts/test-hyprland-layer.js, scripts/test-key-capture.js, scripts/qml-tests/tst_shortcutregistry.qml, scripts/qml-tests/tst_keycapture.qml
 
 Key normalization and effective key reads share the generated [Hyprland layer](hyprland.md). [D059](../decisions/D059-keycodes-and-effective-shortcut-keys.md) records this boundary.
 
@@ -33,3 +33,13 @@ Only a down received by that registration with an available effective key starts
 The release bind ignores the live modifier mask but does not consume client input. Plain Right Alt therefore reaches the focused client without starting a hold. This API does not authenticate physical input: a Wayland virtual keyboard can activate it.
 
 `scripts/qml-tests/tst_shortcutregistry.qml` drives the shipped owner and its lifetime with controls in `scripts/test-qml-unit.sh`. `scripts/smoke/rows/hold-shortcuts.sh` sends physical keycodes on US, AltGr and swapped Right Alt layouts. It checks both modifier-release orders, plain-key client delivery, repeated input, early disposal and disable. Its controls drop modifier-independent release and virtual-keyboard delivery. [validation-smoke.md](validation-smoke.md) defines the shell-processed marker that orders negative reads and the healthy delayed controls.
+
+## Key capture
+
+[D086](../decisions/D086-key-capture-passthrough-submap.md) records the choice; [hyprland.md](hyprland.md) holds the pass-through section the layer writes.
+
+`shell.shortcut.capture` is the one key capture, owned by `KeyCapture.qml` for every instance. `begin(item)` makes ITEM the holder, ending an earlier holder's capture, and sends the pass-through `enter`; `end(item, reason)` ends the holder's capture and sends `leave`. The owner also ends it when the holder is destroyed and when the instance that began it is torn down. It reads Hyprland's `submap` event: `passthrough` turns true once Hyprland reports the submap, and a change away from it ends the capture without a request, since Hyprland left it itself. `holder` and `passthrough` are bindable.
+
+`keyFor(key, modifiers)` is `PluginLogic.capturedKey`: a Qt key event names a key as `hyprlandKey` writes it, a modifier pressed alone names the held modifiers, and a key outside its table is unnamed, for the text entry. `conflicts(key, id, shortcut)` is `PluginLogic.keyConflicts` over the keys `resolveBinds` puts in effect and the user's default-map binds from `hyprctl -j binds`, which the owner reads at the first question, at each `begin` and after each `configreloaded` event; a bind the layer wrote is the plugin's, not the user's, and a `code:` bind, which Hyprland lists with no key name, is left out.
+
+`scripts/test-key-capture.js` pins the key table, the bind reader and the conflict judge with controls. `scripts/qml-tests/tst_keycapture.qml` drives the owner against a recording `Compositor` stand-in, with mutations in `scripts/test-qml-unit.sh`.

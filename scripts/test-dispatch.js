@@ -214,6 +214,30 @@ function verifySwitch(lib, report) {
 }
 failures += verifySwitch(ctx, true);
 
+// The key capture pass-through's two core requests: each names the Hyprland
+// layer's function of that verb (HyprlandLayer.keyPassthroughLines), and a
+// classic session, which loads no layer, or another verb is refused.
+function verifyPassthrough(lib, report) {
+    let bad = 0;
+    const row = (name, got, want) => {
+        if (JSON.stringify(got) !== JSON.stringify(want)) bad += 1;
+        if (report) check(name, got, want);
+    };
+    // rows: [name, verb, usingLua, want]
+    const rows = [
+        ["enter in a Lua session", "enter", true, { ok: true, request: "hl.__vgs_key_passthrough.enter" }],
+        ["leave in a Lua session", "leave", true, { ok: true, request: "hl.__vgs_key_passthrough.leave" }],
+        ["enter in a classic session", "enter", false, { ok: false, error: "refused: passthrough=enter session=classic" }],
+        ["leave in a classic session", "leave", false, { ok: false, error: "refused: passthrough=leave session=classic" }],
+        ["an unknown verb", "reset", true, { ok: false, error: "refused: passthrough=\"reset\" unknown" }],
+        ["a verb that carries Lua", "leave()", true, { ok: false, error: "refused: passthrough=\"leave()\" unknown" }]
+    ];
+    for (const [name, verb, usingLua, want] of rows) row("pass-through: " + name, lib.passthroughRequest(verb, usingLua), want);
+    row("pass-through requests are no plugin dispatcher", lib.PLUGIN_DISPATCHERS.some(name => /passthrough/i.test(name)), false);
+    return bad;
+}
+failures += verifyPassthrough(ctx, true);
+
 // Each control removes one reveal rule from a copy of Dispatch.js and keeps
 // the text around it; verifyReveal must fail on every copy.
 const fs = require("fs");
@@ -298,6 +322,20 @@ try {
         try { bad = verifySwitch(require("../bin/lib/qml-library.js").load(mutant), false); }
         catch (e) { bad = 1; }
         check("control " + name + " fails the switch rows", bad > 0, true);
+    }
+    const passthroughControls = [
+        ["the verb is judged", "if (PASSTHROUGH_VERBS.indexOf(verb) === -1)", "if (false)"],
+        ["a classic session is refused", "if (usingLua !== true)", "if (false)"],
+        ["the request names the layer's function", "request: \"hl.__vgs_key_passthrough.\" + verb", "request: \"hl.dsp.submap(\\\"reset\\\")\""]
+    ];
+    for (const [name, needle, replacement] of passthroughControls) {
+        if (source.split(needle).length !== 2) { failures += 1; console.log("  FAIL  control " + name + ": the text to replace must occur once"); continue; }
+        const mutant = path.join(scratch, "Dispatch.js");
+        fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        let bad;
+        try { bad = verifyPassthrough(require("../bin/lib/qml-library.js").load(mutant), false); }
+        catch (e) { bad = 1; }
+        check("control " + name + " fails the pass-through rows", bad > 0, true);
     }
     for (const [name, needle, replacement] of revealControls) {
         if (source.split(needle).length !== 2) { failures += 1; console.log("  FAIL  control " + name + ": the text to replace must occur once"); continue; }

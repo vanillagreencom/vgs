@@ -6,9 +6,13 @@ import "HyprlandLayer.js" as Layer
 
 // Owns shortcut registrations across plugin instances. Each registration
 // belongs to its instance lifetime and releases its native object with it.
+// Key capture, the Settings key field's press-the-key entry, is the
+// `capture` member, which KeyCapture owns.
 Scope {
     id: root
     property var shortcuts: ({})
+
+    KeyCapture { id: capture }
 
     Component.onCompleted: {
         const capture = Layer.OVERLAY_CAPTURE;
@@ -20,7 +24,8 @@ Scope {
         // REVISIT(D059): A compositor readback API could include later user overrides.
         return {
             get keys() { return Layer.shortcutKeys(Registry.hyprlandSections, ctx.id); },
-            register: (name, description, onPressed, onReleased) => root.registerShortcut(ctx, name, description, onPressed, onReleased)
+            register: (name, description, onPressed, onReleased) => root.registerShortcut(ctx, name, description, onPressed, onReleased),
+            capture: capture.provider(ctx)
         };
     }
 

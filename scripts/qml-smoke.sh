@@ -238,6 +238,10 @@ smoke_row notices-control
 smoke_row hidpi
 smoke_row start-order
 smoke_row overlay-capture
+# After overlay-capture, which restores the harness hyprland.lua: the key
+# capture rows append their own binds and restore it again.
+smoke_row key-capture
+smoke_row key-passthrough
 # After every row that opens a TUI: the stand-in terminal ran no plugin
 # script but a fixture's.
 smoke_row tui-guard

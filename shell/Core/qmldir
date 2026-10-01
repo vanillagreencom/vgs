@@ -10,6 +10,7 @@ singleton Notices 1.0 Notices.qml
 singleton Layers 1.0 Layers.qml
 singleton PluginStatus 1.0 PluginStatus.qml
 ShortcutRegistry 1.0 ShortcutRegistry.qml
+KeyCapture 1.0 KeyCapture.qml
 IdleRegistry 1.0 IdleRegistry.qml
 IpcRegistry 1.0 IpcRegistry.qml
 NotificationHub 1.0 NotificationHub.qml

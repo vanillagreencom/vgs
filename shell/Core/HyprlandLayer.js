@@ -172,6 +172,16 @@ var OVERLAY_CAPTURE = {
     shortcuts: { left: "overlay-left", right: "overlay-right", up: "overlay-up", down: "overlay-down" }
 };
 
+// The key capture pass-through: while the Settings key field captures a
+// combo, the shell asks Hyprland through Dispatch.js to enter `submap`,
+// whose one bind is `cancel`, so every other key, a combo a default-map bind
+// holds included, reaches the focused shell window. Hyprland leaves it on
+// its own on `cancel`, when the window that entered it closes, a killed
+// shell's included, after `timeoutMs` and whenever the layer runs again; the
+// shell leaves it on commit and teardown. `timeoutMs` bounds how long a
+// wedged shell holds every bind: long enough to find and press a chord.
+var KEY_PASSTHROUGH = { submap: "vgs:passthrough", cancel: "Escape", description: "vgs:passthrough-cancel", timeoutMs: 10000 };
+
 function overlayCaptureDirections() {
     return ["left", "right", "up", "down"];
 }
@@ -506,6 +516,48 @@ function monitorLines(monitors) {
     return ["", MONITORS_HEADER].concat(monitors.lines);
 }
 
+// The key capture pass-through's submap, KEY_PASSTHROUGH. Its two functions
+// on `hl.__vgs_key_passthrough` are what Dispatch.js asks for: `enter`
+// refuses unless a shell window has the focus and records that window, and
+// `leave` resets only this submap. One repeating timer, armed while the
+// submap is current and disarmed as it fires, is the timeout; the window
+// close hook covers a shell that dies with its window mapped.
+function keyPassthroughLines() {
+    var p = KEY_PASSTHROUGH;
+    return [
+        "-- Key capture pass-through: a vgs window that captures a key combo takes every key but " + p.cancel + ".",
+        "do",
+        "    local passthrough = { submap = \"" + p.submap + "\", class = \"" + APP_WINDOW.appId + "\" }",
+        "    hl.__vgs_key_passthrough = passthrough",
+        "    hl.define_submap(passthrough.submap, function()",
+        "        hl.bind(\"" + p.cancel + "\", hl.dsp.submap(\"reset\"), { description = \"" + p.description + "\" })",
+        "    end)",
+        "    function passthrough.leave()",
+        "        if hl.get_current_submap() == passthrough.submap then hl.dispatch(hl.dsp.submap(\"reset\")) end",
+        "    end",
+        "    function passthrough.enter()",
+        "        local window = hl.get_active_window()",
+        "        if window == nil or window.class ~= passthrough.class then error(\"" + p.submap + ": the focused window is not a vgs window\") end",
+        "        passthrough.window = window.address",
+        "        hl.dispatch(hl.dsp.submap(passthrough.submap))",
+        "    end",
+        "    passthrough.timer = hl.timer(function()",
+        "        passthrough.timer:set_enabled(false)",
+        "        passthrough.leave()",
+        "    end, { timeout = " + p.timeoutMs + ", type = \"repeat\" })",
+        "    passthrough.timer:set_enabled(false)",
+        "    hl.on(\"keybinds.submap\", function(name)",
+        "        passthrough.timer:set_enabled(name == passthrough.submap)",
+        "        if name ~= passthrough.submap then passthrough.window = nil end",
+        "    end)",
+        "    hl.on(\"window.close\", function(window)",
+        "        if window ~= nil and window.address == passthrough.window then passthrough.leave() end",
+        "    end)",
+        "    passthrough.leave()",
+        "end"
+    ];
+}
+
 // A layer rule as data: its namespace and effects, which two plugins
 // declaring the same rule share.
 function ruleKey(rule) {
@@ -676,16 +728,17 @@ function optionLines(section, held, touchpads, touchpadFailure, out) {
 // wrote, the same namespace and effects, is written once. THEME gives the
 // theme's colours and Hyprland tokens. The fixed theme-appearance groups are
 // written after the header, in order, when their switch is on. The floating
-// TUIs' window rules follow them, then the shell's application window rule
-// and the session lock's restore, before any plugin section, whatever the
-// sections. A section whose plugins row sets options is followed by its
-// options section, optionLines; an option two sections set goes to the
-// first by id. TOUCHPADS is the touchpad names Hyprland lists, or null
-// while unread. MONITORS gives the monitor rules' section, monitorLines,
-// written after the session lock's restore. The result also lists each option written, as { id,
-// setting, path, value }, each one skipped as a conflict, { id, setting,
-// path, heldBy }, or refused, { id, setting, path, error }, and `binds`,
-// the description of every bind written in the default submap.
+// TUIs' window rules follow them, then the shell's application window
+// rule, the overlay capture, the key capture pass-through and the session
+// lock's restore, before any plugin section, whatever the sections. A
+// section whose plugins row sets options is followed by its options
+// section, optionLines; an option two sections set goes to the first by
+// id. TOUCHPADS is the touchpad names Hyprland lists, or null while unread.
+// MONITORS gives the monitor rules' section, monitorLines, written after
+// the session lock's restore. The result also lists each option written,
+// as { id, setting, path, value }, each one skipped as a conflict, { id,
+// setting, path, heldBy }, or refused, { id, setting, path, error }, and
+// `binds`, the description of every bind written in the default submap.
 function render(sections, theme, themeName, highestScale, touchpads, touchpadFailure, monitors) {
     var plan = resolveBinds(sections);
     var switches = groupSwitches(sections);
@@ -705,7 +758,7 @@ function render(sections, theme, themeName, highestScale, touchpads, touchpadFai
     lines.push("");
     if (switches.groups.motion.enabled) lines = lines.concat(motionLines(theme));
     else lines.push(disabledGroupLine("motion", switches.groups.motion.setting));
-    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan), [""], sessionLockLines(), monitorLines(monitors));
+    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan), [""], keyPassthroughLines(), [""], sessionLockLines(), monitorLines(monitors));
     var written = Object.create(null);
     var options = { written: [], conflicts: [], refusals: [] };
     var optionsHeld = Object.create(null);

@@ -38,7 +38,17 @@ Singleton {
     // Send one dispatcher Dispatch.js knows. Returns `ok` once the request
     // is accepted, or the keyed refusal; the reply is judged when it lands.
     function send(name, args) {
-        const r = Dispatch.request(name, args, Hyprland.usingLua);
+        return enqueue(Dispatch.request(name, args, Hyprland.usingLua));
+    }
+
+    // Enter or leave the key capture pass-through submap, `enter` or
+    // `leave` (Dispatch.passthroughRequest); KeyCapture.qml is the one
+    // caller. Answers as `send` does.
+    function passthrough(verb) {
+        return enqueue(Dispatch.passthroughRequest(verb, Hyprland.usingLua));
+    }
+
+    function enqueue(r) {
         if (!r.ok) {
             console.error("compositor: " + r.error);
             return r.error;
@@ -198,6 +208,37 @@ Singleton {
         onRunningChanged: {
             if (running) return;
             root.stateRead(completion, stateOut.text);
+        }
+    }
+
+    // ------------------------------------------------------------- binds
+
+    // The callers waiting for the binds read in flight.
+    property var bindsWaiting: []
+
+    // Read Hyprland's binds, `hyprctl -j binds`, and hand `done` the reply
+    // text, or null when hyprctl did not exit 0; a call while a read runs
+    // waits for that read. KeyCapture.qml judges the text.
+    function readBinds(done) {
+        bindsWaiting = bindsWaiting.concat([done]);
+        if (bindsProc.running) return;
+        bindsProc.completion = null;
+        bindsProc.running = true;
+    }
+
+    Process {
+        id: bindsProc
+        property var completion: null
+        command: ["hyprctl", "-j", "binds"]
+        stdout: StdioCollector { id: bindsOut }
+        onExited: (code, status) => { completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            const waiting = root.bindsWaiting;
+            root.bindsWaiting = [];
+            const ok = completion !== null && completion.code === 0;
+            if (!ok) console.error("compositor: binds=unread exit=" + (completion === null ? "start-failed" : completion.code));
+            for (const done of waiting) done(ok ? bindsOut.text : null);
         }
     }
 
