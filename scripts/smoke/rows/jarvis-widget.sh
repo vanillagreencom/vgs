@@ -83,10 +83,9 @@ jarvis_widget_mute_while_listening() { # ASSERTION
   expect_poll "a click unmutes after the conversation" off jarvis_key_state mute
   jarvis_key_mode hold
 }
-# Disable Jarvis, put FILE's copy from before the row back with NEEDLE
-# replaced by REPLACEMENT once, and rescan.
+# With Jarvis disabled, put FILE's copy from before the row back with
+# NEEDLE replaced by REPLACEMENT once, and rescan.
 jarvis_widget_plant() { # FILE NEEDLE REPLACEMENT
-  jarvis_disable
   python3 - "$sandbox/jarvis-widget-before-$1" "$jarvis_widget_dir/$1" "$2" "$3" <<'PY'
 from pathlib import Path
 import sys
@@ -147,6 +146,7 @@ jarvis_widget_mute_while_listening jarvis_widget_closing
 expect_poll "the widget reads ready after the toggle case" "$jarvis_widget_ready" jarvis_widget
 
 # Keep the widget's button and its handler. Drop only the click's call.
+jarvis_disable
 jarvis_widget_plant Widget.qml 'onClicked: root.toggleMute()' 'onClicked: {}'
 jarvis_enable
 expect_poll "the click control draws the ready widget" "$jarvis_widget_ready" jarvis_widget
