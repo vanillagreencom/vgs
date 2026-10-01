@@ -8,7 +8,7 @@ The service owns metadata-only key and [account discovery](jarvis-accounts.md) r
 
 The [voice text contract](jarvis-voice.md) defines the shipped guidance and speech-text APIs for future engines. These modules do not start an engine or change the service's current behavior.
 
-[Jarvis audit](jarvis-audit.md) defines redaction and pre-action persistence. [Action routing and approval](jarvis-approval.md) defines the installed serial router, action grants and reducer confirmation judge. The daemon audits refused confirmations and privacy cleanup. Production registers no executor and offers no tool.
+[Jarvis audit](jarvis-audit.md) defines redaction and pre-action persistence. [Action routing and approval](jarvis-approval.md) defines the installed serial router, action grants and reducer confirmation judge. The daemon audits refused confirmations and privacy cleanup. It registers the [desktop executors](jarvis-desktop-tools.md) after their Hyprland probe. No brain calls them yet.
 
 The installed [release policy and transport](jarvis-release.md) define the outbound interface for adapters. The daemon does not create that transport yet.
 
@@ -54,7 +54,7 @@ The core supports the [passive layer input contract](layers.md), refined by [D05
 - The daemon exits when stdin closes. No systemd unit or detached process keeps it alive. It uses the shared library loader from the real VGS tree, passed as argv, because its published plugin snapshot contains no core files.
 - A successful hello does not replenish the restart allowance. Five restarts use exponential delays, then the service publishes a problem and raises one toast. The hello deadline bounds a child that starts but sends no answer. These are recovery rules, not measured latency budgets.
 - The daemon's normal exit 78 is permanent configuration failure. The service publishes its cause without a restart. Node below the plugin floor and privacy-record failures take this path. VGS's package floor remains Node 18; only Jarvis requires Node 22.
-- Node below the plugin floor refuses before reading hello. The manifest names the daemon, audio, key-flow, task-record, sandbox and local-setup commands. D035 supplies the system package notice; the user-started local setup installs only private Python and model files.
+- Node below the plugin floor refuses before reading hello. The manifest names the daemon, audio, key-flow, task-record, sandbox, local-setup and file-opening commands. D035 supplies the system package notice; the user-started local setup installs only private Python and model files.
 
 ## Wire
 

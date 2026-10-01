@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/Sandbox.js, scripts/test-jarvis-sandbox.js, scripts/fixtures/jarvis/forbidden.js, scripts/fixtures/jarvis/sandbox-child.py, scripts/fixtures/jarvis/sandbox-datagram.py
 
-[D074](../decisions/D074-jarvis-kernel-sandbox.md) refines [the action policy](jarvis-policy.md). The service still offers no tool. J49 supplies the shell adapter. [The router](jarvis-approval.md) owns approval and consumes [the pre-action audit](jarvis-audit.md).
+[D074](../decisions/D074-jarvis-kernel-sandbox.md) refines [the action policy](jarvis-policy.md). The daemon registers no shell executor. J49 supplies the shell adapter. [The router](jarvis-approval.md) owns approval and consumes [the pre-action audit](jarvis-audit.md).
 
 ## Kernel boundary
 

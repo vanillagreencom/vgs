@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API or local account when you request it. The installed daemon has no speech or conversation engine and performs no desktop actions.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API or local account when you request it. The installed daemon has no speech or conversation engine. It holds window, workspace and application tools, but nothing calls them yet.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -17,6 +17,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - A bar icon shows whether Jarvis is off, ready, listening, working, muted or has a problem.
 - A click on the bar icon toggles mute, as the Mute key does.
 - The child records refused action approvals and privacy cleanup.
+- Window, workspace and application tools read each change back from Hyprland before they report it done.
 - Settings opens Add key in a floating terminal with hidden key input.
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
 - Settings and the launcher open local voice setup in a floating terminal.
@@ -29,7 +30,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and a desktop Secret Service. Key presence needs busctl. Terminal flows need gum. Local setup needs uv, curl, Python and user namespaces. Its locked wheels target Linux x86_64. A CUDA tier also needs working CUDA libraries. The core's requirement notice offers installation of declared missing commands.
 
-The optional command sandbox needs bubblewrap and available user namespaces. This skeleton offers no shell tools.
+The optional command sandbox needs bubblewrap and available user namespaces. This skeleton offers no shell tools. Opening a file or web link needs gio.
 
 ## How it works
 

@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/backend/Tools.js, shell/plugins/vgs.jarvis/backend/Denied.js, scripts/test-jarvis-policy.js, scripts/test-jarvis-tools.js, scripts/test-jarvis-denied.js, scripts/fixtures/jarvis/policy.js
 
-[D070](../decisions/D070-jarvis-action-policy.md) records the action boundary. The [Jarvis plan § Policy](../plans/v2-jarvis-plan.md#37-policy-authority-effects-approval-audit) defines its authority. This code judges calls but executes none. The service and daemon still expose no tool, action request, account, capture or network connection.
+[D070](../decisions/D070-jarvis-action-policy.md) records the action boundary. The [Jarvis plan § Policy](../plans/v2-jarvis-plan.md#37-policy-authority-effects-approval-audit) defines its authority. This code judges calls but executes none. The daemon registers only the [desktop executors](jarvis-desktop-tools.md), and no brain calls them yet. It exposes no account, capture or network connection.
 
 ## Owners
 

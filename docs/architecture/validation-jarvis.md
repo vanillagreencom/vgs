@@ -14,6 +14,8 @@ The [audio lifetime suites](jarvis-audio.md#evidence) reuse this world with synt
 
 [Local setup controls](jarvis-setup.md#evidence) use explicit local installer, downloader and interpreter doubles. Their extra namespace-command double enters PATH only after J09 has created the real private world. Bootstrap tools never become installer fallbacks.
 
+The [desktop executor suite](jarvis-desktop-tools.md#evidence) uses this world with a stand-in `hyprctl` that answers two batch reads from a synthetic state file in the world's runtime directory and refuses every other argv, a dispatch included. Its fake shell side builds replies with the protocol's own builders. Its `cli` row selects on the executors, the request owner, the tool table, the protocol, the core's `Dispatch.js` and its fixtures. The request owner's suite needs no world and runs in `logic`.
+
 The [action router suite](jarvis-approval.md#evidence-and-comparison) uses this world with real scratch audit files and stand-in executors. Its injected clock exercises confirmation timing without a wait. Reducer copies and backend copies carry the independent defects; shipped APIs contain no fixture or confirmation backdoor.
 
 ## Ownership
