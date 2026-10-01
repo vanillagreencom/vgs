@@ -12,6 +12,7 @@ set -euo pipefail
 jd_dir="$repo/shell/plugins/vgs.jarvis"
 jd_backend="$jd_dir/backend/jarvisd.js"
 jd_desktop="$jd_dir/backend/Desktop.js"
+jd_service="$jd_dir/Service.qml"
 jd_driver="$sandbox/jarvis-desktop-driver"
 jd_gates="$sandbox/jarvis-desktop-gates"
 jd_standin="$sandbox/jarvis-world/standins/hyprctl"
@@ -20,6 +21,7 @@ jd_audit="$home/.local/state/vgs/jarvis/audit"
 mkdir -p -- "$jd_driver"
 cp -- "$jd_backend" "$sandbox/jarvis-desktop-backend-before"
 cp -- "$jd_desktop" "$sandbox/jarvis-desktop-desktop-before"
+cp -- "$jd_service" "$sandbox/jarvis-desktop-service-before"
 jd_audit_before=false
 [[ -e $jd_audit ]] && jd_audit_before=true
 expect "the desktop row starts with Jarvis disabled" absent ipc smoke jarvisProcess
@@ -93,9 +95,18 @@ jd_class_address() { # CLASS: the one mapped window of CLASS, or windows=<n>
 cs = [c["address"] for c in json.load(sys.stdin) if c["class"] == sys.argv[1] and c["mapped"]]
 print(cs[0] if len(cs) == 1 else "windows=%d" % len(cs))' "$1"
 }
+# The signature the service hands its child. J09 gives the daemon no
+# session identifier, so the stand-in pins the nested instance; this reads
+# the service's own hand-over from the launcher it started.
+jd_signature() {
+  local launcher
+  launcher="$(jarvis_launcher_pid <<<"$(ipc smoke jarvisProcess)")" || return 1
+  tr '\0' '\n' <"/proc/$launcher/environ" | sed -n 's/^HYPRLAND_INSTANCE_SIGNATURE=//p'
+}
 jd_launched_count() { hypr -j clients | py_reply 'import json,sys; print(sum(c["class"] == "smoke.jarvis-app" and c["mapped"] for c in json.load(sys.stdin)))'; }
 
 jarvis_enable
+expect "the service hands the daemon this session's Hyprland signature" "$signature" jd_signature
 if open_toplevel "$sandbox/jarvis-desktop-target.log" smoke.jarvis-desktop target; then
   jd_target_pid="$toplevel_pid"
   jd_target="$(toplevel_address "$jd_target_pid")"
@@ -142,12 +153,23 @@ if open_toplevel "$sandbox/jarvis-desktop-target.log" smoke.jarvis-desktop targe
     expect "the dropped focus left Hyprland unchanged" '["smoke.jarvis-desktop", "target"]' active_window
     jarvis_disable
     "$node_bin" "$source_repo/scripts/fixtures/jarvis/desktop-driver.js" --readback-defect "$jd_desktop"
+    python3 - "$jd_service" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]); s = p.read_text()
+line = '            HYPRLAND_INSTANCE_SIGNATURE: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"),\n'
+assert s.count(line) == 1
+p.write_text(s.replace(line, ""))
+PY
     jarvis_rescan
     jarvis_enable
     jd_control_count="$( (failures=0 row_class=behaviour; jd_dropped >"$sandbox/jarvis-desktop-control.log"; echo "$failures") )"
     expect "control: a read-back that never waits fails the dropped dispatch once" 1 printf '%s' "$jd_control_count"
+    jd_control_count="$( (failures=0 row_class=behaviour; expect "the service hands the daemon this session's Hyprland signature" "$signature" jd_signature >"$sandbox/jarvis-desktop-signature-control.log"; echo "$failures") )"
+    expect "control: a service that drops the signature fails its hand-over once" 1 printf '%s' "$jd_control_count"
     jarvis_disable
     cp -- "$sandbox/jarvis-desktop-desktop-before" "$jd_desktop"
+    cp -- "$sandbox/jarvis-desktop-service-before" "$jd_service"
     jarvis_rescan
     jarvis_enable
 

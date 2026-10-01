@@ -612,7 +612,7 @@ test_args=()
 
 # The audio daemon now consumes the action router's installed dependencies.
 # Each disposable selector loses one edge while the source remains known.
-for file in shell/plugins/vgs.jarvis/backend/{ToolRouter,Audit,Redact,Tools,Policy}.js bin/lib/qml-library.js; do
+for file in shell/plugins/vgs.jarvis/backend/{ToolRouter,Audit,Redact,Tools,Policy,ShellRequests,Desktop}.js bin/lib/qml-library.js bin/lib/judge-files.js shell/Commons/DesktopLaunch.js; do
   d="$tmp/plan-audio-edge-$(basename -- "$file")"; fresh "$d"
   mkdir -p -- "$d/$(dirname -- "$file")"
   printf 'changed\n' >"$d/$file"
