@@ -354,10 +354,6 @@ function verify(logic, layer, shellText) {
 
     const section = (id, binds, layerRules, version, appearance) => ({ id: id, version: version || "1.0.0", binds: binds, layerRules: layerRules, appearance: appearance || {}, options: [], unknownKeys: [] });
     const lines = out => out.text.split("\n");
-    same(Object.keys(layer.layerBindDescriptions([
-        section("vgs.notes", [{ shortcut: "talk", key: "SUPER+T", hold: true }, { shortcut: "open", key: "SUPER+SPACE" }], []),
-        section("acme.keys", [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "gone", key: null }], [])
-    ])).sort(), ["acme.keys:toggle", "vgs.notes:talk", "vgs.notes:talk.release"], "the layer's bind descriptions: each bound press and hold release, no skipped or unbound shortcut");
     const bare = layer.render([], theme, "vgs", 2);
     const bareLines = lines(bare);
     assert.ok(bareLines.indexOf("-- Theme vgs: window, group and group bar borders.") < bareLines.indexOf("-- Theme appearance: corner radius."), "borders are before radius");
@@ -546,7 +542,7 @@ function verify(logic, layer, shellText) {
     const optionSection = row => logic.hyprlandSection(optionConfig(row), optionManifest);
     const optionText = (sections, touchpads) => layer.render(sections, theme, "vgs", 1, touchpads);
     const optionsOut = optionText([optionSection({ sensitivity: 0.35, tap: false, layouts: "us,de" })], null);
-    const optionsTail = lines(optionsOut).slice(lines(optionsOut).indexOf(LOCK_SECTION[1]) + 1);
+    const optionsTail = lines(optionsOut).slice(lines(optionsOut).indexOf(PASSTHROUGH_SECTION[0]) + PASSTHROUGH_SECTION.length);
     same(optionsTail, [
         "",
         "-- acme.keys 1.0.0: input options its settings set",

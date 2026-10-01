@@ -14,7 +14,7 @@ Singleton {
     // it }, replaced whole on every change so bindings re-evaluate once.
     property var held: ({})
 
-    ShortcutRegistry { id: shortcuts }
+    ShortcutRegistry { id: shortcuts; bindsSource: hyprlandState }
     IdleRegistry { id: idleWatches }
     IpcRegistry { id: commands }
     NotificationHub { id: notifications; active: root.notificationsHeld }
@@ -25,7 +25,7 @@ Singleton {
     SystemSteps { id: systemSteps; active: root.systemHeld }
     HyprlandState {
         id: hyprlandState
-        active: root.holderIds("hyprland").length > 0
+        active: root.holderIds("hyprland").length > 0 || shortcuts.keyCapture.wantsBinds
     }
     BluetoothAgent { id: bluetoothAgent }
     MonitorState {

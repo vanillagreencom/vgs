@@ -11,8 +11,11 @@ import "HyprlandLayer.js" as Layer
 Scope {
     id: root
     property var shortcuts: ({})
+    // HyprlandState, whose foreign binds the key capture's hint reads.
+    property var bindsSource: null
+    readonly property alias keyCapture: capture
 
-    KeyCapture { id: capture }
+    KeyCapture { id: capture; bindsSource: root.bindsSource }
 
     Component.onCompleted: {
         const capture = Layer.OVERLAY_CAPTURE;

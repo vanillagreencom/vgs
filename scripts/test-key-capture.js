@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // Table-driven checks for key capture in shell/Core/PluginLogic.js:
 // capturedKey, which names the key press the Settings key field captures as
-// the key the text entry stores for the same keys; userBinds, which reads
-// the user's own binds from a `hyprctl -j binds` reply; and keyConflicts,
+// the key the text entry stores for the same keys; and keyConflicts,
 // which names who else holds a key for the field's hint. Every expected key
 // is written out by hand and also passes hyprlandKey unchanged, so a capture
 // stores what typing it stores. The controls at the end edit a copy of the
@@ -108,36 +107,20 @@ function suite(ctx, check) {
         { id: "acme.keys", binds: [{ shortcut: "open", key: "SUPER+SPACE" }, { shortcut: "gone", key: null }, { shortcut: "term", key: "CTRL+ALT+T" }] },
         { id: "vgs.launcher", binds: [{ shortcut: "toggle", key: "SUPER+SPACE", hold: true }, { shortcut: "files", key: "SUPER+F", hold: true }] }
     ];
-    const bind = (modmask, key, description, extra) => Object.assign({ submap: "", modmask: modmask, key: key, keycode: 0, description: description, mouse: false }, extra || {});
-    // userBinds rows: [name, reply, want]
-    const replies = [
-        ["a user bind, normalised", [bind(64, "Return", "Terminal")], { ok: true, binds: [{ key: "SUPER+RETURN", description: "Terminal" }] }],
-        ["the modifier mask in the written order", [bind(77, "t", "")], { ok: true, binds: [{ key: "SUPER+CTRL+ALT+SHIFT+T", description: "" }] }],
-        ["the layer's own binds are not the user's", [bind(64, "SPACE", "acme.keys:open"), bind(64, "F", "vgs.launcher:files"), bind(64, "F", "vgs.launcher:files.release", { release: true })], { ok: true, binds: [] }],
-        ["the default submap by name", [bind(8, "F4", "Close", { submap: "default" })], { ok: true, binds: [{ key: "ALT+F4", description: "Close" }] }],
-        ["a bind in another submap is left out", [bind(0, "Escape", "vgs:passthrough-cancel", { submap: "vgs:passthrough" })], { ok: true, binds: [] }],
-        ["a mouse bind is left out", [bind(64, "mouse:272", "Move", { mouse: true })], { ok: true, binds: [] }],
-        ["a keycode bind Hyprland lists without a key is left out", [bind(64, "", "Workspace 1")], { ok: true, binds: [] }],
-        ["a modifier the shell never writes is left out", [bind(64 | 2, "A", "Caps")], { ok: true, binds: [] }],
-        ["a key the judge refuses is left out", [bind(0, "a b", "Odd")], { ok: true, binds: [] }],
-        ["no binds", [], { ok: true, binds: [] }]
-    ];
-    for (const [name, reply, want] of replies) check("userBinds: " + name, ctx.userBinds(JSON.stringify(reply), sections), want);
-    check("userBinds: a reply that is no JSON", ctx.userBinds("ok", sections), { ok: false, error: "refused: binds=unparsed" });
-    check("userBinds: a reply that is no list", ctx.userBinds("{}", sections), { ok: false, error: "refused: binds=shape want=list" });
-
-    const user = [{ key: "CTRL+ALT+T", description: "Terminal" }, { key: "SUPER+SPACE", description: "" }];
+    // The keys something other than the layer binds, as HyprlandState.foreignBinds answers them.
+    const foreign = ["CTRL+ALT+T", "SUPER+SPACE"];
     // keyConflicts rows: [name, key, id, shortcut, want]
     const conflicts = [
-        ["a key two plugins and the user hold", "super+space", "acme.keys", "term", { plugins: [{ id: "acme.keys", shortcut: "open" }, { id: "vgs.launcher", shortcut: "toggle" }], user: [""] }],
-        ["the plugin the layer skips for the key is named too", "SUPER+SPACE", "acme.keys", "open", { plugins: [{ id: "vgs.launcher", shortcut: "toggle" }], user: [""] }],
-        ["a key another plugin holds", "SUPER+F", "acme.keys", "open", { plugins: [{ id: "vgs.launcher", shortcut: "files" }], user: [] }],
-        ["the shortcut's own key is no conflict", "CTRL+ALT+T", "acme.keys", "term", { plugins: [], user: ["Terminal"] }],
-        ["another shortcut of the same plugin is", "CTRL+ALT+T", "acme.keys", "open", { plugins: [{ id: "acme.keys", shortcut: "term" }], user: ["Terminal"] }],
-        ["a key nobody holds", "SUPER+F9", "acme.keys", "open", { plugins: [], user: [] }],
-        ["a malformed key names nobody", "SUPER+", "acme.keys", "open", { plugins: [], user: [] }]
+        ["a key two plugins and the user hold", "super+space", "acme.keys", "term", { plugins: [{ id: "acme.keys", shortcut: "open" }, { id: "vgs.launcher", shortcut: "toggle" }], user: true }],
+        ["the plugin the layer skips for the key is named too", "SUPER+SPACE", "acme.keys", "open", { plugins: [{ id: "vgs.launcher", shortcut: "toggle" }], user: true }],
+        ["a key another plugin holds", "SUPER+F", "acme.keys", "open", { plugins: [{ id: "vgs.launcher", shortcut: "files" }], user: false }],
+        ["the shortcut's own key is no conflict", "CTRL+ALT+T", "acme.keys", "term", { plugins: [], user: true }],
+        ["another shortcut of the same plugin is", "CTRL+ALT+T", "acme.keys", "open", { plugins: [{ id: "acme.keys", shortcut: "term" }], user: true }],
+        ["a key nobody holds", "SUPER+F9", "acme.keys", "open", { plugins: [], user: false }],
+        ["a malformed key names nobody", "SUPER+", "acme.keys", "open", { plugins: [], user: false }],
+        ["a key the user binds is read normalised", "ctrl+alt+t", "acme.other", "x", { plugins: [{ id: "acme.keys", shortcut: "term" }], user: true }]
     ];
-    for (const [name, key, id, shortcut, want] of conflicts) check("keyConflicts: " + name, ctx.keyConflicts(key, sections, user, id, shortcut), want);
+    for (const [name, key, id, shortcut, want] of conflicts) check("keyConflicts: " + name, ctx.keyConflicts(key, sections, foreign, id, shortcut), want);
 }
 
 suite(load(LOGIC), report);
@@ -161,17 +144,11 @@ const CONTROLS = [
     ["letters are in the table", "for (code = 0x41; code <= 0x5a; code++) names[code] = String.fromCharCode(code);", ""],
     ["function keys run to F35", "for (code = 1; code <= 35; code++) names[0x01000030 + code - 1] = \"F\" + code;", "for (code = 1; code <= 12; code++) names[0x01000030 + code - 1] = \"F\" + code;"],
     ["Space is named", "0x20: \"SPACE\", ", ""],
-    ["the reply is parsed", "return { ok: false, error: \"refused: binds=unparsed\" };", "return { ok: true, binds: [] };"],
-    ["the reply is a list", "if (!Array.isArray(parsed))\n        return", "if (false)\n        return"],
-    ["the layer's binds are not the user's", "var layer = HyprlandLayer.layerBindDescriptions(sections);", "var layer = Object.create(null);"],
-    ["only the default submap", " || (bind.submap !== \"\" && bind.submap !== \"default\")) return;", ") return;"],
-    ["no unknown modifier", " || (bind.modmask & ~known) !== 0) return;", ") return;"],
-    ["SUPER is mask 64", "var BIND_MODMASK = { SUPER: 64, CTRL: 4, ALT: 8, SHIFT: 1 };", "var BIND_MODMASK = { SUPER: 128, CTRL: 4, ALT: 8, SHIFT: 1 };"],
-    ["the user's keys are normalised", "if (key.ok) out.push({ key: key.key, ", "if (key.ok) out.push({ key: mods.concat([bind.key]).join(\"+\"), "],
     ["the shortcut itself is no conflict", " && !(section.id === id && bind.shortcut === shortcut)", ""],
+    ["the user's binds are read", "return { plugins: plugins, user: parsed.ok && foreign.indexOf(parsed.key) !== -1 };", "return { plugins: plugins, user: false };"],
+    ["the user's binds compare normalised keys", "foreign.indexOf(parsed.key) !== -1", "foreign.indexOf(key) !== -1"],
     ["a conflict compares normalised keys", "if (bind.key === parsed.key && !(section.id", "if (bind.key === key && !(section.id"],
     ["the plugins are named by id", "sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).forEach(", "sections.slice().reverse().forEach("],
-    ["the user's binds are named", "return bind.key === parsed.key; }).map(", "return false; }).map("]
 ];
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "key-capture-control-"));

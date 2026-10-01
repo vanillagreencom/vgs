@@ -26,8 +26,6 @@ Singleton {
     property string reply: ""
     property var queue: []
     property var completion: null
-    property var pendingDone: null
-    property string reply: ""
 
     // The screen a surface lands on when nothing chose one: the focused
     // monitor, or the first screen when Hyprland names none Quickshell
@@ -217,50 +215,6 @@ Singleton {
         onRunningChanged: {
             if (running) return;
             root.stateRead(completion, stateOut.text);
-        }
-    }
-
-    // ------------------------------------------------------------- binds
-
-    // The callers waiting for the binds read in flight, and whether one
-    // asked while it ran.
-    property var bindsWaiting: []
-    property bool bindsReread: false
-
-    // Read Hyprland's binds, `hyprctl -j binds`, and hand `done` the reply
-    // text, or null when hyprctl did not exit 0. A call while a read runs
-    // reads again once it ends, so every waiter's answer follows the state
-    // after its call, as a reveal's state read does. KeyCapture.qml judges
-    // the text.
-    function readBinds(done) {
-        bindsWaiting = bindsWaiting.concat([done]);
-        if (bindsProc.running) {
-            bindsReread = true;
-            return;
-        }
-        bindsProc.completion = null;
-        bindsProc.running = true;
-    }
-
-    Process {
-        id: bindsProc
-        property var completion: null
-        command: ["hyprctl", "-j", "binds"]
-        stdout: StdioCollector { id: bindsOut }
-        onExited: (code, status) => { completion = { code: code, status: status }; }
-        onRunningChanged: {
-            if (running) return;
-            if (root.bindsReread) {
-                root.bindsReread = false;
-                completion = null;
-                running = true;
-                return;
-            }
-            const waiting = root.bindsWaiting;
-            root.bindsWaiting = [];
-            const ok = completion !== null && completion.code === 0;
-            if (!ok) console.error("compositor: binds=unread exit=" + (completion === null ? "start-failed" : completion.code));
-            for (const done of waiting) done(ok ? bindsOut.text : null);
         }
     }
 

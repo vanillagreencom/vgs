@@ -43,12 +43,16 @@ Scope {
     property var ended: ({ item: null, reason: "" })
     // The holder's instance lifetime registration, released when it ends.
     property var release: null
-    // The user's own binds (Logic.userBinds) and the read's state:
-    // `unread`, `reading`, `read` or `failed`. The first conflict question
-    // starts the first read, and a question after a failed read asks once
-    // more; every begin and every Hyprland reload read again.
-    property var userBinds: []
-    property string bindsState: "unread"
+    // HyprlandState, the one reader of `hyprctl -j binds`: its
+    // `foreignKeys`, the keys something other than the layer binds, null
+    // while unread, its `bindsFailure`, and `readBinds()`. `wantsBinds`
+    // keeps its reads on while a control captures or an instance that asked
+    // a conflict question lives; it reads again after each Hyprland reload,
+    // and a question after a failed read asks once more.
+    property var bindsSource: null
+    property int askers: 0
+    readonly property bool capturing: holder !== null
+    readonly property bool wantsBinds: capturing || askers > 0
     // Plain state a conflict question writes while a binding reads it, so
     // the write notifies no binding.
     property var bindsRetry: ({ asked: false })
@@ -57,6 +61,7 @@ Scope {
 
     // The `capture` member of the `shortcut` capability for one instance.
     function provider(ctx) {
+        const asking = { started: false };
         return {
             get holder() { return root.holder; },
             get passthrough() { return root.phase === "passthrough"; },
@@ -66,8 +71,21 @@ Scope {
             begin: item => root.begin(ctx, item),
             end: (item, reason) => root.end(item, reason),
             keyFor: (key, modifiers) => Logic.capturedKey(key, modifiers),
-            conflicts: (key, id, shortcut) => root.conflicts(key, id, shortcut)
+            conflicts: (key, id, shortcut) => {
+                if (!asking.started) {
+                    asking.started = true;
+                    Qt.callLater(() => root.ask(ctx));
+                }
+                return root.conflicts(key, id, shortcut);
+            }
         };
+    }
+
+    // CTX's instance asked who holds a key: the binds stay read until it is
+    // torn down.
+    function ask(ctx) {
+        askers += 1;
+        ctx.onDispose(() => { root.askers -= 1; });
     }
 
     // ITEM takes the keyboard for a combo; a holder already capturing ends
@@ -84,7 +102,6 @@ Scope {
         began = Date.now();
         if (leaving > 0) phase = "waiting";
         else enter();
-        readBinds();
         return "ok";
     }
 
@@ -147,37 +164,24 @@ Scope {
     }
 
     // Who else holds KEY, for the field's hint: Logic.keyConflicts with
-    // `binds`, the user bind read's state, beside it.
+    // `binds`, the binds read's state, `unread`, `read` or `failed`, beside it.
     function conflicts(key, id, shortcut) {
-        if (bindsState === "unread" || (bindsState === "failed" && !bindsRetry.asked)) {
-            bindsRetry.asked = bindsState === "failed";
-            Qt.callLater(readBinds);
+        const source = bindsSource;
+        const state = source === null || (source.foreignKeys === null && source.bindsFailure === "") ? "unread" : source.bindsFailure !== "" ? "failed" : "read";
+        if (state === "failed" && !bindsRetry.asked) {
+            bindsRetry.asked = true;
+            Qt.callLater(() => source.readBinds());
+        } else if (state === "read") {
+            bindsRetry.asked = false;
         }
-        const found = Logic.keyConflicts(key, Registry.hyprlandSections, userBinds, id, shortcut);
-        return { plugins: found.plugins, user: found.user, binds: bindsState };
-    }
-
-    function readBinds() {
-        bindsState = "reading";
-        Compositor.readBinds(text => {
-            const read = text === null ? { ok: false, error: "refused: binds=unread" } : Logic.userBinds(text, Registry.hyprlandSections);
-            if (!read.ok) {
-                console.error("capture: " + read.error);
-                root.userBinds = [];
-                root.bindsState = "failed";
-                return;
-            }
-            root.userBinds = read.binds;
-            root.bindsState = "read";
-            root.bindsRetry.asked = false;
-        });
+        const found = Logic.keyConflicts(key, Registry.hyprlandSections, state === "read" ? source.foreignKeys : [], id, shortcut);
+        return { plugins: found.plugins, user: found.user, binds: state };
     }
 
     Connections {
         target: Hyprland
         function onRawEvent(event) {
             if (event.name === "submap") root.submapChanged(event.data);
-            else if (event.name === "configreloaded" && root.bindsState !== "unread") root.readBinds();
         }
     }
 }

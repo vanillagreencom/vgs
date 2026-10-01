@@ -28,7 +28,7 @@ A manifest's `hyprland.options` maps a setting of its `schema` to an option path
 
 ## The capability
 
-`hyprland` lends a plugin four members, each read bindable and each read a frozen copy of its own. `HyprlandState.qml` runs the reads while any plugin holds the capability, and stops them otherwise; `HyprlandState.js` judges every reply.
+`hyprland` lends a plugin four members, each read bindable and each read a frozen copy of its own. `HyprlandState.qml` runs the reads while any plugin holds the capability, a key capture runs or an instance that asked the key capture who else holds a key lives ([hyprland-shortcuts.md § Key capture](hyprland-shortcuts.md#key-capture)), and stops them otherwise; `HyprlandState.js` judges every reply.
 
 | Member | What it holds |
 |---|---|
@@ -37,7 +37,7 @@ A manifest's `hyprland.options` maps a setting of its `schema` to an option path
 | `foreignBinds` | The keys bound in the default submap by something other than the layer, normalised as `hyprland.binds` keys are, sorted. It is null until read and after a failed read. A bind whose description is one the layer wrote is the layer's. A keycode bind and a bind with a modifier outside SUPER, CTRL, ALT and SHIFT are left out, since no key names them; mouse keys that Hyprland prints as names, such as `MOUSE_DOWN`, are kept. |
 | `switchKeyboardLayout(target)` | Switches every keyboard: `next`, `prev`, or a layout index as a whole number or its decimal text. It runs `hyprctl switchxkblayout all <target>` as its own argument list, never through `hyprctl dispatch`, in the compositor's one queue, and answers `ok` once queued, `refused: dispatch-queue=full limit=32 request=[...]` when the queue is full, or `refused: layout=<target> want=next|prev|index`. Hyprland's reply is judged when it lands, as a dispatch's is. |
 
-A failed read is logged as `hyprland: <reason>` and returns that member to null. One unread `getoption` part marks that path overridden and logs the part error, while the other parts still update. The lending record's `hyprland.active` says whether the reads run.
+A failed read is logged as `hyprland: <reason>` and returns that member to null; a failed binds read also leaves its reason in `bindsFailure`, which the key capture reads and the next successful read clears, and `scripts/qml-tests/tst_hyprlandstate_binds.qml` pins it with mutations in `scripts/test-qml-unit.sh`. One unread `getoption` part marks that path overridden and logs the part error, while the other parts still update. The lending record's `hyprland.active` says whether the reads run.
 
 ## Invariants
 

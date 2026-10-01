@@ -17,7 +17,8 @@ import "PluginLogic.js" as Logic
 Scope {
     id: root
 
-    // Whether anything needs the reads: a plugin holds `hyprland`.
+    // Whether anything needs the reads: a plugin holds `hyprland`, or the
+    // key capture asked who else holds a key (KeyCapture.qml).
     property bool active: false
     // HyprlandLayer.qml binds these from its render: the options written,
     // option conflicts, and the descriptions of the binds written.
@@ -36,6 +37,8 @@ Scope {
     // unread or after a failed read.
     property var overriddenRows: null
     property var foreignKeys: null
+    // The last binds read's keyed failure, "" once one succeeds.
+    property string bindsFailure: ""
 
     onActiveChanged: {
         if (active) {
@@ -48,6 +51,7 @@ Scope {
         devicesFailure = "";
         overriddenRows = null;
         foreignKeys = null;
+        bindsFailure = "";
     }
 
     // The capability for one instance; it holds nothing to release.
@@ -158,9 +162,11 @@ Scope {
             const read = failure === "" ? State.foreignBinds(text, root.layerBinds) : { ok: false, error: failure };
             if (!read.ok) {
                 root.foreignKeys = null;
+                root.bindsFailure = read.error;
                 console.error("hyprland: " + read.error);
-            } else if (!root.same(read.keys, root.foreignKeys)) {
-                root.foreignKeys = read.keys;
+            } else {
+                root.bindsFailure = "";
+                if (!root.same(read.keys, root.foreignKeys)) root.foreignKeys = read.keys;
             }
         }
     }

@@ -2,13 +2,12 @@ pragma Singleton
 import QtQml
 
 // The Compositor calls KeyCapture makes, recorded: each pass-through verb
-// it sends, with the callback that takes its answer, and each binds read it
-// asks for. A test answers both by hand; `refuse`, when set, is the answer
-// a pass-through request gets at once, as a refused request does.
+// it sends, with the callback that takes its answer, which a test answers
+// by hand; `refuse`, when set, is the answer a pass-through request gets at
+// once, as a refused request does.
 QtObject {
     property var requests: []
     property var answers: []
-    property var bindsWaiting: []
     property string refuse: ""
 
     function passthrough(verb, done) {
@@ -31,20 +30,9 @@ QtObject {
             if (answers[i] !== null) answer(i, "ok");
     }
 
-    function readBinds(done) {
-        bindsWaiting = bindsWaiting.concat([done]);
-    }
-
-    function answerBinds(text) {
-        const waiting = bindsWaiting;
-        bindsWaiting = [];
-        for (const done of waiting) done(text);
-    }
-
     function reset() {
         requests = [];
         answers = [];
-        bindsWaiting = [];
         refuse = "";
     }
 }

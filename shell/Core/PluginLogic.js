@@ -1228,50 +1228,14 @@ function capturedKey(key, modifiers) {
     return { kind: "key", key: hyprlandKey(held.concat([names[key]]).join("+")).key };
 }
 
-// Hyprland's modifier mask bits for HYPRLAND_MODIFIERS, as `hyprctl -j
-// binds` reports them: SUPER alone reads 64 and SUPER+SHIFT 65 in
-// scripts/smoke/rows/manager.sh.
-var BIND_MODMASK = { SUPER: 64, CTRL: 4, ALT: 8, SHIFT: 1 };
-
-// The default-map binds a `hyprctl -j binds` reply TEXT lists that the
-// Hyprland layer did not write for SECTIONS, as { ok: true, binds: [{ key,
-// description }] } with each key as hyprlandKey writes it, or { ok: false,
-// error } with a keyed line. A layer bind is known by its description
-// (HyprlandLayer.layerBindDescriptions). A bind with a modifier outside
-// HYPRLAND_MODIFIERS, and one whose key hyprlandKey refuses, such as a
-// mouse bind or a `code:` bind Hyprland reports with no key name, are left
-// out: no key the shell writes names them.
-function userBinds(text, sections) {
-    var parsed;
-    try {
-        parsed = JSON.parse(text);
-    } catch (e) {
-        return { ok: false, error: "refused: binds=unparsed" };
-    }
-    if (!Array.isArray(parsed))
-        return { ok: false, error: "refused: binds=shape want=list" };
-    var layer = HyprlandLayer.layerBindDescriptions(sections);
-    var known = HYPRLAND_MODIFIERS.reduce(function (mask, mod) { return mask | BIND_MODMASK[mod]; }, 0);
-    var out = [];
-    parsed.forEach(function (bind) {
-        if (!isPlainObject(bind) || (bind.submap !== "" && bind.submap !== "default")) return;
-        if (typeof bind.modmask !== "number" || (bind.modmask & ~known) !== 0) return;
-        if (typeof bind.key !== "string" || layer[bind.description] === true) return;
-        var mods = HYPRLAND_MODIFIERS.filter(function (mod) { return (bind.modmask & BIND_MODMASK[mod]) !== 0; });
-        var key = hyprlandKey(mods.concat([bind.key]).join("+"));
-        if (key.ok) out.push({ key: key.key, description: typeof bind.description === "string" ? bind.description : "" });
-    });
-    return { ok: true, binds: out };
-}
-
 // Who else asks for KEY, the key a capture or the text entry gives
-// shortcut SHORTCUT of plugin ID: { plugins: [{ id, shortcut }], user:
-// [description] }, the plugins, by id, from the key each bind of SECTIONS
-// asks for, whether or not the layer's first-by-id rule
-// (HyprlandLayer.resolveBinds) gives it the key, so a key that would take
-// another plugin's bind names it; the user's binds from userBinds' BINDS.
-// A hint: nothing refuses the key.
-function keyConflicts(key, sections, binds, id, shortcut) {
+// shortcut SHORTCUT of plugin ID: { plugins: [{ id, shortcut }], user },
+// the plugins, by id, from the key each bind of SECTIONS asks for, whether
+// or not the layer's first-by-id rule (HyprlandLayer.resolveBinds) gives it
+// the key, so a key that would take another plugin's bind names it; and
+// whether FOREIGN, the keys something other than the layer binds
+// (HyprlandState.foreignBinds), holds it. A hint: nothing refuses the key.
+function keyConflicts(key, sections, foreign, id, shortcut) {
     var parsed = hyprlandKey(key);
     var plugins = [];
     sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).forEach(function (section) {
@@ -1280,8 +1244,7 @@ function keyConflicts(key, sections, binds, id, shortcut) {
                 plugins.push({ id: section.id, shortcut: bind.shortcut });
         });
     });
-    var user = binds.filter(function (bind) { return bind.key === parsed.key; }).map(function (bind) { return bind.description; });
-    return { plugins: plugins, user: user };
+    return { plugins: plugins, user: parsed.ok && foreign.indexOf(parsed.key) !== -1 };
 }
 
 // The first defect of a plugins row's `keys`, or "": an object whose names

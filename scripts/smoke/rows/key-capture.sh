@@ -74,7 +74,7 @@ expect "Tab presses reach the Keys row's field" true key_field focus
 expect "the field shows its focus ring for the Tab focus" true key_field visualFocus
 
 kc_capture "SUPER+SPACE" SUPER+SPACE "$sandbox/key-capture-space" -M logo -k space -m logo
-expect_poll "the field names the user bind holding SUPER+SPACE" '"Also bound to your Hyprland config (Smoke capture space)."' key_field conflict
+expect_poll "the field names the user bind holding SUPER+SPACE" '"Also bound to your Hyprland config."' key_field conflict
 kc_typed "SUPER+SPACE typed" "super+space" SUPER+SPACE
 kc_capture "CTRL+ALT+T" CTRL+ALT+T "$sandbox/key-capture-t" -M ctrl -M alt -k t -m alt -m ctrl
 kc_typed "CTRL+ALT+T typed" "ctrl+alt+t" CTRL+ALT+T

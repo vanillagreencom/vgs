@@ -8,10 +8,19 @@ import qs.Core
 // the pass-through requests it sends Compositor (a stand-in that records
 // them and takes their answers by hand), every end that leaves the submap,
 // the submap Hyprland reports, a failed enter, a timeout, and the user's
-// binds it reads for the conflict hint.
+// binds it reads from HyprlandState (a stand-in source here) for the
+// conflict hint.
 Item {
     id: root
-    ShortcutRegistry { id: registry }
+    // HyprlandState's binds members, set by hand.
+    QtObject {
+        id: source
+        property var foreignKeys: null
+        property string bindsFailure: ""
+        property int reads: 0
+        function readBinds() { reads += 1; }
+    }
+    ShortcutRegistry { id: registry; bindsSource: source }
     property var disposers: []
     property var capture: registry.provider(context("acme.keys")).capture
     property var other: registry.provider(context("acme.other")).capture
@@ -42,8 +51,10 @@ Item {
             root.capture.end(first, "cancel");
             root.capture.end(second, "cancel");
             Compositor.answerAll();
-            Compositor.answerBinds(JSON.stringify([]));
             Compositor.reset();
+            source.foreignKeys = null;
+            source.bindsFailure = "";
+            source.reads = 0;
         }
 
         function submap(name) { Hyprland.rawEvent({ name: "submap", data: name }); }
@@ -199,46 +210,46 @@ Item {
         }
 
         function test_conflicts_read_the_user_binds() {
-            const binds = JSON.stringify([
-                { submap: "", modmask: 64, key: "SPACE", description: "acme.keys:open", mouse: false },
-                { submap: "", modmask: 64, key: "space", description: "Menu", mouse: false }
-            ]);
-            root.capture.begin(first);
-            Compositor.answerBinds(binds);
-            compare(JSON.stringify(root.capture.conflicts("SUPER+SPACE", "acme.other", "x")), '{"plugins":[{"id":"acme.keys","shortcut":"open"}],"user":["Menu"],"binds":"read"}');
-            Hyprland.rawEvent({ name: "configreloaded", data: "" });
-            compare(Compositor.bindsWaiting.length, 1);
-            Compositor.answerBinds(JSON.stringify([]));
-            compare(JSON.stringify(root.capture.conflicts("SUPER+SPACE", "acme.other", "x").user), "[]");
+            source.foreignKeys = ["SUPER+SPACE"];
+            compare(JSON.stringify(root.capture.conflicts("super+space", "acme.other", "x")), '{"plugins":[{"id":"acme.keys","shortcut":"open"}],"user":true,"binds":"read"}');
+            source.foreignKeys = [];
+            compare(JSON.stringify(root.capture.conflicts("SUPER+SPACE", "acme.other", "x")), '{"plugins":[{"id":"acme.keys","shortcut":"open"}],"user":false,"binds":"read"}');
         }
 
-        function test_a_question_before_any_capture_reads_the_binds() {
-            const made = fresh.createObject(root);
-            const reader = made.provider(root.context("acme.fresh")).capture;
-            compare(reader.conflicts("SUPER+SPACE", "acme.other", "x").binds, "unread");
-            wait(0); // the read starts after the question returns, Qt.callLater.
-            compare(Compositor.bindsWaiting.length, 1);
-            Compositor.answerBinds(JSON.stringify([{ submap: "", modmask: 64, key: "SPACE", description: "Menu", mouse: false }]));
-            compare(JSON.stringify(reader.conflicts("SUPER+SPACE", "acme.other", "x")), '{"plugins":[{"id":"acme.keys","shortcut":"open"}],"user":["Menu"],"binds":"read"}');
+        function test_a_question_and_a_capture_want_the_binds() {
+            const made = fresh.createObject(root, { bindsSource: source });
+            compare(made.keyCapture.wantsBinds, false);
+            const asked = root.context("acme.fresh");
+            const asker = made.provider(asked).capture;
+            compare(asker.conflicts("SUPER+SPACE", "acme.other", "x").binds, "unread");
+            wait(0); // the want is recorded after the question returns, Qt.callLater.
+            compare(made.keyCapture.wantsBinds, true);
+            const pending = root.disposers;
+            root.disposers = [];
+            for (const dispose of pending) dispose();
+            compare(made.keyCapture.wantsBinds, false);
+            asker.begin(first);
+            compare(made.keyCapture.wantsBinds, true);
+            asker.end(first, "cancel");
+            compare(made.keyCapture.wantsBinds, false);
             made.destroy();
         }
 
-        // expected-log: capture: refused: binds=unread -- the failed read this case answers
-        // expected-log: capture: refused: binds=unparsed -- the reply that is no JSON this case answers
-        function test_a_failed_read_is_named_and_asked_again() {
-            const made = fresh.createObject(root);
-            const reader = made.provider(root.context("acme.fresh")).capture;
-            reader.conflicts("SUPER+SPACE", "acme.other", "x");
+        function test_a_failed_read_is_named_and_asked_again_once() {
+            source.bindsFailure = "refused: binds=unparsed";
+            compare(root.capture.conflicts("SUPER+SPACE", "acme.other", "x").binds, "failed");
             wait(0);
-            Compositor.answerBinds(null);
-            compare(reader.conflicts("SUPER+SPACE", "acme.other", "x").binds, "failed");
+            compare(source.reads, 1);
+            compare(root.capture.conflicts("SUPER+SPACE", "acme.other", "x").binds, "failed");
             wait(0);
-            compare(Compositor.bindsWaiting.length, 1);
-            Compositor.answerBinds("not json");
-            compare(reader.conflicts("SUPER+SPACE", "acme.other", "x").binds, "failed");
+            compare(source.reads, 1);
+            source.bindsFailure = "";
+            source.foreignKeys = [];
+            compare(root.capture.conflicts("SUPER+SPACE", "acme.other", "x").binds, "read");
+            source.bindsFailure = "refused: binds=unparsed";
+            root.capture.conflicts("SUPER+SPACE", "acme.other", "x");
             wait(0);
-            compare(Compositor.bindsWaiting.length, 0);
-            made.destroy();
+            compare(source.reads, 2);
         }
     }
 }

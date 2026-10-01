@@ -33,7 +33,7 @@ Field {
         if (capture === null || shown === "") return "";
         const found = capture.conflicts(shown, pluginId, String(bind.shortcut));
         const holders = found.plugins.map(p => nameOf(p.id) + " (" + p.shortcut + ")")
-            .concat(found.user.map(d => d === "" ? "your Hyprland config" : "your Hyprland config (" + d + ")"));
+            .concat(found.user ? ["your Hyprland config"] : []);
         const held = holders.length === 0 ? "" : "Also bound to " + holders.join(", ") + ".";
         const unread = found.binds === "failed" ? "Your Hyprland binds could not be read, so another bind may hold this key." : "";
         return [held, unread].filter(line => line !== "").join(" ");
