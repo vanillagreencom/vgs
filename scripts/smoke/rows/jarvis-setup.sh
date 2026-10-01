@@ -9,6 +9,7 @@ cp -- "$source_repo/scripts/smoke/fixtures/tui/vgs.jarvis/tui/setup-local.sh" "$
 terminal_stand_in
 terminal_ready "Jarvis local setup"
 jarvis_rescan
+jarvis_enable
 settings_page_open vgs.jarvis
 
 local_value() {
