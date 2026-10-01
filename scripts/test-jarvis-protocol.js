@@ -34,6 +34,12 @@ const devices = { v: 1, type: "devices", gen: 0, revision: hello.revision,
     microphones: [{ label: "Microphone", value: "fixture.mic" }], speakers: [] };
 const level = { v: 1, type: "level", gen: 0, revision: hello.revision, level: { capture: 0.5, playback: 0 } };
 const audioFault = { v: 1, type: "audio-fault", gen: 0, revision: hello.revision, reason: "discovery-exit" };
+const request = { v: 1, type: "request", gen: 0, revision: hello.revision, id: 1, kind: "compositor.moveWindow", args: ["0xa1", -10, 20] };
+const reply = { v: 1, type: "reply", gen: 0, revision: hello.revision, id: 1, kind: "compositor.moveWindow", answer: "ok", data: null };
+const entry = { id: "org.example.App", name: "Example", startupClass: "example" };
+const listReply = { ...reply, kind: "desktop.list", data: { entries: [entry], complete: true } };
+const entryReply = { ...reply, kind: "desktop.entry", data: { ...entry, command: ["example", "--new"], terminal: false } };
+assert.equal(manifest.capabilities.includes("compositor") && manifest.capabilities.includes("run"), true);
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const cases = [
     ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
@@ -91,7 +97,42 @@ const cases = [
     ["state-seq", changed(state, { seq: 0 }), "daemon", "sequence"],
     ["state-regions", changed(state, { state: {} }), "daemon", "state"],
     ["state-gen", changed(state, { gen: 1 }), "daemon", "state-generation"],
-    ["state-phase", changed(state, { phase: "listening" }), "daemon", "phase"]
+    ["state-phase", changed(state, { phase: "listening" }), "daemon", "phase"],
+    ["request-direction", JSON.stringify(request), "shell", "direction-request"],
+    ["request-shape", changed(request, { extra: 1 }), "daemon", "shape-request"],
+    ["request-id", changed(request, { id: 0 }), "daemon", "request-id"],
+    ["request-id-fraction", changed(request, { id: 1.5 }), "daemon", "request-id"],
+    ["request-kind", changed(request, { kind: "compositor.moveCursor" }), "daemon", "request-kind"],
+    ["request-kind-tui", changed(request, { kind: "tui.run" }), "daemon", "request-kind"],
+    ["request-kind-proto", changed(request, { kind: "__proto__" }), "daemon", "request-kind"],
+    ["request-count", changed(request, { args: ["0xa1", 1] }), "daemon", "request-args"],
+    ["request-type", changed(request, { args: ["0xa1", "1", 2] }), "daemon", "request-args"],
+    ["request-integer", changed(request, { args: ["0xa1", 1.5, 2] }), "daemon", "request-args"],
+    ["request-text-empty", changed(request, { kind: "compositor.focusWindow", args: [""] }), "daemon", "request-args"],
+    ["request-text-nul", changed(request, { kind: "toast", args: ["Title", "a\u0000b"] }), "daemon", "request-args"],
+    ["request-text-size", changed(request, { kind: "toast", args: ["Title", "x".repeat(4097)] }), "daemon", "request-args"],
+    ["request-argv-empty", changed(request, { kind: "run.detached", args: [] }), "daemon", "request-args"],
+    ["request-argv-size", changed(request, { kind: "run.detached", args: Array(65).fill("a") }), "daemon", "request-args"],
+    ["request-argv-word", changed(request, { kind: "run.detached", args: ["gio", ""] }), "daemon", "request-args"],
+    ["request-args-object", changed(request, { kind: "desktop.list", args: {} }), "daemon", "request-args"],
+    ["reply-direction", JSON.stringify(reply), "daemon", "direction-reply"],
+    ["reply-shape", changed(reply, { extra: 1 }), "shell", "shape-reply"],
+    ["reply-id", changed(reply, { id: -1 }), "shell", "request-id"],
+    ["reply-kind", changed(reply, { kind: "launch" }), "shell", "request-kind"],
+    ["reply-answer-empty", changed(reply, { answer: "" }), "shell", "reply-answer"],
+    ["reply-answer-line", changed(reply, { answer: "refused:\nsecond" }), "shell", "reply-answer"],
+    ["reply-answer-size", changed(reply, { answer: "x".repeat(301) }), "shell", "reply-answer"],
+    ["reply-data-none", changed(reply, { data: {} }), "shell", "reply-data"],
+    ["reply-data-refused", changed(entryReply, { answer: "refused: desktop=unknown" }), "shell", "reply-data"],
+    ["reply-entries-shape", changed(listReply, { data: { entries: [] } }), "shell", "shape-entries"],
+    ["reply-entries-list", changed(listReply, { data: { entries: {}, complete: true } }), "shell", "reply-data"],
+    ["reply-entries-size", changed(listReply, { data: { entries: Array(513).fill(entry), complete: false } }), "shell", "reply-data"],
+    ["reply-entry-shape", changed(listReply, { data: { entries: [{ ...entry, command: ["x"] }], complete: true } }), "shell", "shape-entry"],
+    ["reply-entry-id", changed(listReply, { data: { entries: [{ ...entry, id: "" }], complete: true } }), "shell", "entry"],
+    ["reply-entry-name", changed(listReply, { data: { entries: [{ ...entry, name: "a\nb" }], complete: true } }), "shell", "entry"],
+    ["reply-entry-duplicate", changed(listReply, { data: { entries: [entry, entry], complete: true } }), "shell", "entry-duplicate"],
+    ["reply-entry-command", changed(entryReply, { data: { ...entryReply.data, command: [] } }), "shell", "entry"],
+    ["reply-entry-terminal", changed(entryReply, { data: { ...entryReply.data, terminal: "no" } }), "shell", "entry"]
 ];
 function rejected(logic, row) {
     assert.throws(() => logic.accept(row[1], row[2]), { message: "jarvis: protocol=" + row[3] }, row[0]);
@@ -118,6 +159,40 @@ for (const message of [devices, level, audioFault])
 for (const value of [0, 1])
     assert.equal(Protocol.accept(changed(level, { level: { capture: value, playback: value } }), "daemon").level.capture, value);
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, microphone: "missing.mic" } }), "shell").settings.microphone, "missing.mic");
+for (const message of [request, { ...request, kind: "run.detached", args: ["gio", "open", "/path with space"] },
+    { ...request, kind: "toast", args: ["Title", "Line\nnext"] }, { ...request, kind: "desktop.list", args: [] },
+    { ...request, kind: "compositor.fullscreenWindow", args: ["fullscreen", "set"] }, { ...request, id: Number.MAX_SAFE_INTEGER }])
+    assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
+for (const kind of Object.keys(Protocol.REQUESTS)) {
+    const rule = Protocol.REQUESTS[kind].args;
+    const args = rule === "argv" ? ["program"] : rule.map(type => type === "text" ? "value" : 1);
+    assert.equal(Protocol.accept(changed(request, { kind, args }), "daemon").kind, kind);
+}
+for (const message of [reply, listReply, entryReply, { ...reply, answer: "refused: dispatcher=moveWindow argument=1" },
+    { ...entryReply, answer: "refused: desktop=unknown", data: null }, { ...listReply, data: { entries: [], complete: false } }])
+    assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
+// The service's builders produce what the judge accepts, from Quickshell's
+// DesktopEntry fields as Service.qml copies them.
+const shellEntry = (id, values = {}) => ({ id, name: "Name " + id, startupClass: "", noDisplay: false, command: [id], terminal: false, ...values });
+const built = Protocol.desktopEntries([shellEntry("zeta"), shellEntry("alpha", { name: "Tab\tname", startupClass: "Alpha" }),
+    shellEntry("hidden", { noDisplay: true }), shellEntry("bad\nid"), shellEntry("x".repeat(129))]);
+assert.equal(JSON.stringify(built), JSON.stringify({ entries: [{ id: "alpha", name: "Tab name", startupClass: "Alpha" },
+    { id: "zeta", name: "Name zeta", startupClass: "" }], complete: true }));
+assert.equal(Protocol.accept(changed(listReply, { data: built }), "shell").data.entries.length, 2);
+const many = Protocol.desktopEntries(Array.from({ length: 600 }, (_, n) => shellEntry("app" + String(n).padStart(3, "0"))));
+assert.equal(many.entries.length, 512);
+assert.equal(many.complete, false);
+const wide = Protocol.desktopEntries(Array.from({ length: 512 }, (_, n) => shellEntry(String(n).padStart(3, "0") + "é".repeat(120), { name: "語".repeat(128), startupClass: "語".repeat(128) })));
+assert.equal(wide.complete, false, "the byte bound cuts before the line limit");
+assert.ok(Protocol.bytes(changed(listReply, { data: wide })) < Protocol.MAX_LINE_BYTES);
+Protocol.accept(changed(listReply, { data: wide }), "shell");
+assert.equal(JSON.stringify(Protocol.desktopEntry(shellEntry("tool", { terminal: true, command: ["tool", "-x"] }), true)),
+    JSON.stringify({ id: "tool", name: "Name tool", startupClass: "", command: ["tool", "-x"], terminal: true }));
+assert.equal(Protocol.desktopEntry(shellEntry("empty", { command: [] }), true), null);
+assert.equal(Protocol.desktopEntry(shellEntry("hidden", { noDisplay: true }), true), null);
+assert.equal(Protocol.answer("refused: a\nb"), "refused: a b");
+assert.equal(Protocol.answer(""), "refused: answer=empty");
+assert.equal(Protocol.answer("x".repeat(400)).length, 300);
 for (const text of ["", "a", "é", "語", "😀", "\ud800"])
     assert.equal(Protocol.bytes(text), Buffer.byteLength(text), text);
 const wire = JSON.stringify(status);
@@ -194,7 +269,21 @@ try {
         ["state-seq", 'if (!Number.isSafeInteger(message.seq) || message.seq < 1) fail("sequence");', 'if (false) fail("sequence");', "state-seq"],
         ["state-regions", 'if (!Session.validate(message.state)) fail("state");', 'if (false) fail("state");', "state-regions"],
         ["state-gen", 'if (message.state.gen !== message.gen) fail("state-generation");', 'if (false) fail("state-generation");', "state-gen"],
-        ["state-phase", 'if (message.phase !== Session.phaseOf(message.state)) fail("phase");', 'if (false) fail("phase");', "state-phase"]
+        ["state-phase", 'if (message.phase !== Session.phaseOf(message.state)) fail("phase");', 'if (false) fail("phase");', "state-phase"],
+        ["request-direction", 'if (direction !== "daemon") fail("direction-request");', 'if (false) fail("direction-request");', "request-direction"],
+        ["reply-direction", 'if (direction !== "shell") fail("direction-reply");', 'if (false) fail("direction-reply");', "reply-direction"],
+        ["request-id", 'if (!Number.isSafeInteger(message.id) || message.id < 1) fail("request-id");', 'if (false) fail("request-id");', "request-id", 2],
+        ["request-kind", 'fail("request-kind");', ';', "request-kind", 2],
+        ["request-args", 'if (!requestArgs(message.kind, message.args)) fail("request-args");', 'if (false) fail("request-args");', "request-count"],
+        ["request-arg-type", 'if (rule[i] === "text" ? !text(args[i]) : !Number.isSafeInteger(args[i])) return false;', ';', "request-integer"],
+        ["request-text", 'value.length <= TEXT_MAX && value.indexOf("\\u0000") === -1', 'true', "request-text-size"],
+        ["request-argv", 'value.length >= 1 && value.length <= ARGV_MAX && value.every(text)', 'true', "request-argv-size"],
+        ["reply-answer", 'if (!printable(message.answer, 1, ANSWER_MAX)) fail("reply-answer");', 'if (false) fail("reply-answer");', "reply-answer-line"],
+        ["reply-data", 'if (message.data !== null) fail("reply-data");', ';', "reply-data-refused"],
+        ["entries-bound", 'message.data.entries.length > ENTRIES_MAX', 'false', "reply-entries-size"],
+        ["entry-fields", 'if (!printable(value.id, 1, FIELD_MAX) || !printable(value.name, 0, FIELD_MAX)', 'if (false', "reply-entry-name"],
+        ["entry-command", 'if (withCommand && (!argv(value.command) || typeof value.terminal !== "boolean")) fail("entry");', ';', "reply-entry-terminal"],
+        ["entry-duplicate", 'if (Object.prototype.hasOwnProperty.call(seen, entry.id)) fail("entry-duplicate");', ';', "reply-entry-duplicate"]
     ];
     for (const [name, needle, replacement, example, matches] of guards)
         control(name, needle, replacement, logic => rejected(logic, cases.find(row => row[0] === example)), matches);
@@ -203,6 +292,13 @@ try {
         logic => {
             for (const row of cases.filter(row => row[0].startsWith("echo-setting-"))) rejected(logic, row);
         });
+    control("entries-hidden", 'entry.noDisplay === true) return null;', 'false) return null;',
+        logic => assert.equal(logic.desktopEntries([shellEntry("hidden", { noDisplay: true })]).entries.length, 0));
+    control("entries-bytes", 'if (size > ENTRIES_BYTES) break;', ';',
+        logic => assert.equal(logic.desktopEntries(Array.from({ length: 512 }, (_, n) => shellEntry(String(n).padStart(3, "0") + "é".repeat(120),
+            { name: "語".repeat(128), startupClass: "語".repeat(128) }))).complete, false));
+    control("answer-line", 'var line = String(value).replace(/[\\x00-\\x1f\\x7f]/g, " ").slice(0, ANSWER_MAX);', 'var line = String(value);',
+        logic => assert.equal(logic.answer("refused: a\nb"), "refused: a b"));
     control("ceiling", 'if (bytes(line) > MAX_LINE_BYTES) fail("line-too-long");', 'if (false) fail("line-too-long");',
         logic => assert.throws(() => logic.feed("", "a".repeat(262145)), { message: "jarvis: protocol=line-too-long" }));
     control("utf8", "count += 4;", "count += 1;",

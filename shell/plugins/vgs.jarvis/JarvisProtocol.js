@@ -1,9 +1,39 @@
 .pragma library
 .import "Session.js" as Session
 
-// Shell produces hello, intent and shown. Voice confirmation is daemon-internal.
-// Daemon produces status/state/devices/level/audio-fault. A line excludes its LF.
+// Shell produces hello, intent, shown and reply. Voice confirmation is daemon-internal.
+// Daemon produces status/state/devices/level/audio-fault/request. A line excludes its LF.
 var MAX_LINE_BYTES = 256 * 1024;
+
+// Requests the daemon sends and the service answers, one reply each. `args`
+// lists each argument's type, or "argv" for a command; `data` names the
+// reply's data shape. Shell.compositor owns each dispatcher's argument rules.
+var REQUESTS = {
+    "compositor.focusWorkspace": { args: ["text"], data: "none" },
+    "compositor.focusWindow": { args: ["text"], data: "none" },
+    "compositor.moveWindowToWorkspace": { args: ["text", "text"], data: "none" },
+    "compositor.toggleSpecialWorkspace": { args: ["text"], data: "none" },
+    "compositor.closeWindow": { args: ["text"], data: "none" },
+    "compositor.fullscreenWindow": { args: ["text", "text"], data: "none" },
+    "compositor.floatWindow": { args: ["text", "text"], data: "none" },
+    "compositor.moveWindow": { args: ["text", "integer", "integer"], data: "none" },
+    "compositor.resizeWindow": { args: ["text", "integer", "integer"], data: "none" },
+    "compositor.focusMonitor": { args: ["text"], data: "none" },
+    "compositor.reveal": { args: ["text"], data: "none" },
+    "run.detached": { args: "argv", data: "none" },
+    "toast": { args: ["text", "text"], data: "none" },
+    "desktop.list": { args: [], data: "entries" },
+    "desktop.entry": { args: ["text"], data: "entry" }
+};
+// Requests awaiting a reply, the plan's bound. The daemon refuses the next.
+var MAX_PENDING_REQUESTS = 16;
+var TEXT_MAX = 4096;
+var ARGV_MAX = 64;
+var ANSWER_MAX = 300;
+var FIELD_MAX = 128;
+var ENTRIES_MAX = 512;
+// Desktop entries stop here, so a list reply stays far below MAX_LINE_BYTES.
+var ENTRIES_BYTES = 192 * 1024;
 
 function fail(reason) {
     throw new Error("jarvis: protocol=" + reason);
@@ -47,6 +77,92 @@ function feed(tail, chunk) {
 
 function directory(value) {
     return typeof value === "string" && value.length > 1 && value[0] === "/" && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function text(value) {
+    return typeof value === "string" && value.length >= 1 && value.length <= TEXT_MAX && value.indexOf("\u0000") === -1;
+}
+
+function printable(value, min, max) {
+    return typeof value === "string" && value.length >= min && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function argv(value) {
+    return Array.isArray(value) && value.length >= 1 && value.length <= ARGV_MAX && value.every(text);
+}
+
+function requestArgs(kind, args) {
+    var rule = REQUESTS[kind].args;
+    if (rule === "argv") return argv(args);
+    if (!Array.isArray(args) || args.length !== rule.length) return false;
+    for (var i = 0; i < rule.length; i++)
+        if (rule[i] === "text" ? !text(args[i]) : !Number.isSafeInteger(args[i])) return false;
+    return true;
+}
+
+// The wire form of one desktop entry the service read, or null when an
+// entry cannot cross: hidden, unnamed by a printable id, or with no command.
+// `command` and `terminal` are the launcher's inputs; list replies omit them.
+function desktopEntry(entry, withCommand) {
+    if (entry === null || typeof entry !== "object" || entry.noDisplay === true) return null;
+    if (!printable(entry.id, 1, FIELD_MAX)) return null;
+    var value = { id: entry.id, name: String(entry.name || "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, FIELD_MAX),
+        startupClass: String(entry.startupClass || "").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, FIELD_MAX) };
+    if (!withCommand) return value;
+    if (!argv(entry.command) || typeof entry.terminal !== "boolean") return null;
+    value.command = entry.command.slice();
+    value.terminal = entry.terminal;
+    return value;
+}
+
+// The list reply's data from every entry the service read: sorted by id,
+// bounded by ENTRIES_MAX and ENTRIES_BYTES; `complete` says none was cut.
+function desktopEntries(entries) {
+    var values = entries.map(function (entry) { return desktopEntry(entry, false); })
+        .filter(function (entry) { return entry !== null; })
+        .sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+    var kept = [];
+    var size = 0;
+    for (var i = 0; i < values.length && kept.length < ENTRIES_MAX; i++) {
+        size += bytes(JSON.stringify(values[i])) + 1;
+        if (size > ENTRIES_BYTES) break;
+        kept.push(values[i]);
+    }
+    return { entries: kept, complete: kept.length === values.length };
+}
+
+// A shell call's answer as the reply carries it: one printable line.
+function answer(value) {
+    var line = String(value).replace(/[\x00-\x1f\x7f]/g, " ").slice(0, ANSWER_MAX);
+    return line === "" ? "refused: answer=empty" : line;
+}
+
+function entryShape(value, withCommand) {
+    keys(value, withCommand ? ["id", "name", "startupClass", "command", "terminal"] : ["id", "name", "startupClass"], "entry");
+    if (!printable(value.id, 1, FIELD_MAX) || !printable(value.name, 0, FIELD_MAX)
+            || !printable(value.startupClass, 0, FIELD_MAX)) fail("entry");
+    if (withCommand && (!argv(value.command) || typeof value.terminal !== "boolean")) fail("entry");
+}
+
+function replyData(message) {
+    var shape = REQUESTS[message.kind].data;
+    if (shape === "none" || message.answer !== "ok") {
+        if (message.data !== null) fail("reply-data");
+        return;
+    }
+    if (shape === "entry") {
+        entryShape(message.data, true);
+        return;
+    }
+    keys(message.data, ["entries", "complete"], "entries");
+    if (!Array.isArray(message.data.entries) || message.data.entries.length > ENTRIES_MAX
+            || typeof message.data.complete !== "boolean") fail("reply-data");
+    var seen = {};
+    for (var entry of message.data.entries) {
+        entryShape(entry, false);
+        if (Object.prototype.hasOwnProperty.call(seen, entry.id)) fail("entry-duplicate");
+        Object.defineProperty(seen, entry.id, { value: true });
+    }
 }
 
 function approvalId(value) {
@@ -106,6 +222,23 @@ function accept(line, direction) {
         if (direction !== "shell") fail("direction-shown");
         keys(message, ["v", "type", "gen", "revision", "id"], "shown");
         if (!approvalId(message.id)) fail("approval-id");
+        break;
+    case "request":
+        if (direction !== "daemon") fail("direction-request");
+        keys(message, ["v", "type", "gen", "revision", "id", "kind", "args"], "request");
+        if (!Number.isSafeInteger(message.id) || message.id < 1) fail("request-id");
+        if (typeof message.kind !== "string" || !Object.prototype.hasOwnProperty.call(REQUESTS, message.kind))
+            fail("request-kind");
+        if (!requestArgs(message.kind, message.args)) fail("request-args");
+        break;
+    case "reply":
+        if (direction !== "shell") fail("direction-reply");
+        keys(message, ["v", "type", "gen", "revision", "id", "kind", "answer", "data"], "reply");
+        if (!Number.isSafeInteger(message.id) || message.id < 1) fail("request-id");
+        if (typeof message.kind !== "string" || !Object.prototype.hasOwnProperty.call(REQUESTS, message.kind))
+            fail("request-kind");
+        if (!printable(message.answer, 1, ANSWER_MAX)) fail("reply-answer");
+        replyData(message);
         break;
     case "status":
         if (direction !== "daemon") fail("direction-status");
