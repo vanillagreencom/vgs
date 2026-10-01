@@ -20,7 +20,9 @@
 # held ends the child after `agent off` and EOF and releases its hold. The
 # control is the third transcript, which answers the default-agent request
 # with a failure: the same lease reads refused with that reason and no
-# child is left. Every reading is expect_poll's: 25 reads 0.2 s apart.
+# child is left. Every poll is expect_poll's: 25 reads 0.2 s apart. The
+# rival's absence is rival_absent's: 10 reads 0.2 s apart, after its
+# enabled flag reads True.
 set -euo pipefail
 devices_ready bluetooth-agent || return 0
 pairing_dir="$home/.config/vgs/plugins/acme.pairing"
@@ -45,6 +47,18 @@ agent_holders() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(j
 agent_calls_since() { device_calls bluetoothctl | py_reply 'import json,sys; print(json.dumps([c for c in json.load(sys.stdin)[int(sys.argv[1]):] if isinstance(c, list)]))' "$1"; }
 agent_stdin_since() { device_calls bluetoothctl | py_reply 'import json,sys; print(json.dumps([c.get("stdin", "EOF") for c in json.load(sys.stdin)[int(sys.argv[1]):] if isinstance(c, dict)]))' "$1"; }
 agent_count() { device_calls bluetoothctl | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
+# A refused plugin gets no slot, so no build is tried and nothing is
+# logged: its refusal reads as an instance that stays missing. Every read
+# False prints `absent`; the first other reading is printed as it is.
+rival_absent() {
+  local reading
+  for _ in $(seq 1 10); do
+    reading="$(record_exists acme.pairing-rival)" || return
+    [[ $reading == False ]] || { echo "$reading"; return 0; }
+    sleep 0.2
+  done
+  echo absent
+}
 off='{"leases": [], "refusal": "", "requests": 0, "running": false, "state": "off"}'
 
 # bluetoothctl's own output: a line clear before each message, the prompt
@@ -88,10 +102,12 @@ device_transcript '[
 before="$(agent_count)" || { fail "bluetooth agent: the stand-in's calls are unreadable"; return 0; }
 expect "a second lease reads pending when begin returns" pending pairing begin "pair before disable"
 expect_poll "the second lease reads ready" '"ready"' pairing_read leaseState
+# The build, if it raced a lending snapshot that predates the hold, is
+# refused on the live hold and logs this; a settled snapshot logs nothing.
 expected_errors+=('plugins: acme\.pairing-rival refused: capability=bluetoothAgent held-by=acme\.pairing')
 expect "enabling the rival is allowed" ok ipc shell setPluginEnabled acme.pairing-rival true
-expect_log "the rival is refused while the fixture holds the agent" 1 'plugins: acme\.pairing-rival refused: capability=bluetoothAgent held-by=acme\.pairing'
-expect "the rival has no instance" False record_exists acme.pairing-rival
+expect_poll "the rival reads enabled" True plugin_enabled acme.pairing-rival
+expect "the rival is not built while the fixture holds the agent" absent rival_absent
 expect "disabling the fixture with its lease held is allowed" ok ipc shell setPluginEnabled acme.pairing false
 expect_poll "disable ends the child after agent off and EOF" '["                 default-agent", "                 agent off", "EOF"]' agent_stdin_since "$before"
 expect_poll "the lending record reads no child and no lease after disable" "$off" agent_lent
