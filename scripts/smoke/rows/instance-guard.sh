@@ -4,12 +4,15 @@
 set -euo pipefail
 spawn "$sandbox/bare.log" "${shell_env[@]}" qs -p "$repo/shell"
 bare_pid="$spawn_pid"
-instance_count() { "${shell_env[@]}" qs list -p "$repo/shell" -j 2>/dev/null | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
+# instance_count SHELL_DIR: how many instances qs lists for SHELL_DIR,
+# or `none` while none runs; count_reply is its reader of the listing.
+count_reply() { py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
+instance_count() { qs_list -p "$1" | count_reply; }
 bare_ipc() { "${shell_env[@]}" qs ipc --pid "$bare_pid" call "$@" 2>/dev/null | tail -n 1; }
 bare_guarded=""
 for _ in $(seq 1 100); do
   # Wait until the bare instance is registered, then address it by pid.
-  if instances="$(instance_count)" && [[ $instances == 2 ]] && bare_guarded="$(bare_ipc shell guarded)" && [[ $bare_guarded == true || $bare_guarded == false ]]; then break; fi
+  if instances="$(instance_count "$repo/shell")" && [[ $instances == 2 ]] && bare_guarded="$(bare_ipc shell guarded)" && [[ $bare_guarded == true || $bare_guarded == false ]]; then break; fi
   sleep 0.2
 done
 if [[ $bare_guarded == false ]]; then ok "a bare qs beside the runner refuses to draw"; else fail "bare qs guarded=$bare_guarded"; fi
@@ -24,6 +27,23 @@ if [[ "$(cat "$home/.config/vgs/shell.json")" == "$user_before" ]]; then ok "the
 expect "the runner's CLI still reaches the guarded instance beside a bare one" true ipc shell guarded
 expect "the runner's CLI reports the session unlocked" false ipc shell locked
 kill -TERM "$bare_pid" 2>/dev/null || true
+
+# Control: for a config no instance runs, qs list answers plain text, not
+# JSON. qs_list reads it as the word none; count_reply alone raises on the
+# same text, planted here as qs prints it. The raise is captured, not
+# printed, since the row's traceback gate counts printed tracebacks.
+idle_shell="$sandbox/idle-shell"
+mkdir -p -- "$idle_shell"
+: >"$idle_shell/shell.qml"
+expect "qs_list reads a config no instance runs as none" none instance_count "$idle_shell"
+printf 'No running instances for "%s/shell.qml"\nUse --all to list all instances.\n' "$idle_shell" >"$sandbox/idle-shell.reply"
+if raw_read="$(count_reply <"$sandbox/idle-shell.reply" 2>&1)"; then
+  fail "py_reply alone read qs's not-ready text: got $raw_read"
+elif [[ $raw_read == *JSONDecodeError* ]]; then
+  ok "py_reply alone raises on qs's not-ready text"
+else
+  fail "py_reply alone failed on qs's not-ready text without a JSONDecodeError"
+fi
 
 # A follow writes the theme and application files, so an unguarded
 # instance never follows. The runner applies a package and the package

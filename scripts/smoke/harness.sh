@@ -1057,6 +1057,22 @@ print("py_reply: the reply was: " + repr(sys.argv[1][:200]))
 PY
   return "$status"
 }
+# qs_list ARG...: `qs list ARG... -j` in the sandbox, its JSON reply, or
+# the word `none` when qs answers in plain text that no instance runs:
+# `No running instances for "<dir>/shell.qml"` with a hint line under -p,
+# `No running instances.` under --all, both with status 0. Returns qs's
+# status when qs fails. A reader pipes this into py_reply, which passes
+# the word through. Every row reads `qs list` through this:
+# scripts/check-smoke-readers.py refuses a row that runs `qs list` itself.
+qs_list() { # ARG...
+  local reply
+  reply="$("${shell_env[@]}" qs list "$@" -j 2>/dev/null)" || return
+  if [[ $reply == "No running instances"* ]]; then
+    echo none
+    return 0
+  fi
+  printf '%s\n' "$reply"
+}
 
 # The theme runner's jobs as [verb, name, waiters] rows, from the lending
 # record of the shell IPC_FN reaches (default ipc).
@@ -1183,7 +1199,8 @@ shell_answers() { # TREE LOG
   fi
   shell_qs_pid="$qs_pid"
   for _ in $(seq 1 50); do
-    if instance_id="$("${shell_env[@]}" qs list --all -j 2>/dev/null | python3 -c 'import json,sys; print([i for i in json.load(sys.stdin) if i["pid"]==int(sys.argv[1])][0]["id"])' "$shell_qs_pid" 2>/dev/null)"; then
+    if instance_id="$(qs_list --all | py_reply 'import json,sys; print(next((i["id"] for i in json.load(sys.stdin) if i["pid"] == int(sys.argv[1])), "unlisted"))' "$shell_qs_pid")" \
+      && [[ $instance_id != none && $instance_id != unlisted ]]; then
       instance_log="$rt_dir/quickshell/by-id/$instance_id/log.log"
       break
     fi

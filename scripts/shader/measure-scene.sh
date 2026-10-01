@@ -35,9 +35,11 @@ measure_scene() {
   done
   scene_cpu_some_pct="$(cpu_some_pct "$start_us" "$(cpu_some_us)" "$(( $(now_ms) - start_ms ))")"
   # Read the flushed instance log by the scene's own pid, not its stdout.
-  instance="$("${shell_env[@]}" qs list --all -j | python3 -c 'import json,sys; print(next(i["id"] for i in json.load(sys.stdin) if i["pid"] == int(sys.argv[1])))' "$scene_pid")" || {
-    echo "shader-cost: failed scene=$scene scale=$scale instance=absent"; cat -- "$stem.launch.log"; exit 1;
-  }
+  # The listing answers none or unlisted when no instance names the pid.
+  if ! instance="$(qs_list --all | py_reply 'import json,sys; print(next((i["id"] for i in json.load(sys.stdin) if i["pid"] == int(sys.argv[1])), "unlisted"))' "$scene_pid")" \
+    || [[ $instance == none || $instance == unlisted ]]; then
+    echo "shader-cost: failed scene=$scene scale=$scale instance=${instance:-unreadable}"; cat -- "$stem.launch.log"; exit 1;
+  fi
   cp -- "$rt_dir/quickshell/by-id/$instance/log.log" "$stem.log"
   printf '%s\n' "$result" >"$stem.json"
   kill -TERM "$scene_pid"

@@ -14,6 +14,9 @@ program in a row that parses JSON from its stdin is `py_reply`'s program:
   unowned-reader  the read is not inside the literal that opens py_reply's
                   program, `py_reply '...'` or `py_reply "$VAR"'...'`, or
                   no command precedes it.
+  raw-qs-list     the row runs `qs list` itself, not `qs_list`. qs answers
+                  that no instance runs in plain text, which `qs_list` in
+                  scripts/smoke/harness.sh reads as the word `none`.
 A read is `json.load(sys.stdin` or `json.loads(sys.stdin`, or any
 `sys.stdin` in a program literal that also parses JSON with `json.load`,
 `json.loads` or `raw_decode`. Its command is the nearest `py_reply` or
@@ -21,7 +24,8 @@ A read is `json.load(sys.stdin` or `json.loads(sys.stdin`, or any
 the read sits in the command's program exactly when the text between the
 two is the program's opening. A `sys.stdin` outside a literal, such as in
 a heredoc, is a read only in the direct form. A `sys.stdin` on a line whose
-text before it is a `#` comment is no read.
+text before it is a `#` comment is no read. A run of `qs list` is the words
+`qs list` apart from such a comment; the text `qs lists` is none.
 
 Usage: check-smoke-readers.py [DIR]
 DIR defaults to the repository's scripts/smoke/rows. Every finding is one
@@ -40,6 +44,7 @@ STDIN = re.compile(r"\bsys\.stdin\b")
 DIRECT = re.compile(r"json\.loads?\(\s*$")
 PARSES_JSON = re.compile(r"\bjson\.loads?\(|\braw_decode\(")
 COMMAND = re.compile(r"\b(py_reply|python3)\b")
+QS_LIST = re.compile(r"\bqs[ \t]+list\b")
 # The text between a command and a stdin use inside the literal that opens
 # its program: python3's `-c`, an optional quoted variable the literal
 # extends, then the literal's opening quote and no closing one.
@@ -60,6 +65,11 @@ def line_of(text, offset):
     return text.count("\n", 0, offset) + 1
 
 
+def in_comment(text, offset):
+    line_start = text.rfind("\n", 0, offset) + 1
+    return text[line_start:offset].lstrip().startswith("#")
+
+
 def check_file(path, findings):
     try:
         with open(path, encoding="utf-8") as source:
@@ -67,10 +77,13 @@ def check_file(path, findings):
     except (OSError, UnicodeDecodeError) as exc:
         raise Unreadable(path, getattr(exc, "strerror", None) or str(exc)) from exc
     readers = 0
+    for run in QS_LIST.finditer(text):
+        if not in_comment(text, run.start()):
+            findings.append(f"raw-qs-list {path}:{line_of(text, run.start())} the row runs qs list itself; read it through qs_list")
     for read in STDIN.finditer(text):
-        line_start = text.rfind("\n", 0, read.start()) + 1
-        if text[line_start:read.start()].lstrip().startswith("#"):
+        if in_comment(text, read.start()):
             continue
+        line_start = text.rfind("\n", 0, read.start()) + 1
         direct = DIRECT.search(text, line_start, read.start()) is not None
         command = None
         for command in COMMAND.finditer(text, 0, read.start()):
