@@ -16,6 +16,8 @@
 - Recording before exec means no agent runs without an identity a stop can verify. A failed record kills the held child.
 - The empty read is the only proof a stop finished. A killed leader stays a zombie member until its parent reaps it, so a stop that writes `stopped` right after SIGKILL can claim an end that has not happened.
 - The launcher, not the terminal, owns the exit record, so the tmux and floating displays give the same facts. It ignores the terminal's hangup signals long enough to record a closed window.
+- An observation is a read outside the writer lock, so `lost` carries the event count it read and the producer refuses it once a later event, an exit or a stop landed. A late observation cannot turn a finished task into a lost one.
+- A leader's exit does not end its group: background children can outlive it. A stop also admits an exited task whose group still holds members the identity rule accepts.
 - The core's floating TUI keeps one busy key per TUI name across all arguments. The executor refuses a second floating start before creating a record, and maps the core's `busy` reply in a race to a refusal and a `lost` record.
 
 **Deviations from the plan**:
