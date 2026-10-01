@@ -463,7 +463,7 @@ cases=(
   "jarvis-session-router|shell/plugins/vgs.jarvis/Session.js|cli|node scripts/test-jarvis-router.js"$'\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'scripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-owner|shell/plugins/vgs.jarvis/backend/session-runner.js|logic|node scripts/test-jarvis-session-runner.js"
   "jarvis-owner-router|shell/plugins/vgs.jarvis/backend/session-runner.js|cli|node scripts/test-jarvis-router.js"$'\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'scripts/test-install-tree.sh\n'"$readme_rows_trimmed"
-  "jarvis-tools-router|shell/plugins/vgs.jarvis/backend/Tools.js|cli|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-audit.js\nnode scripts/test-jarvis-router.js\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-audio-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-tools-router|shell/plugins/vgs.jarvis/backend/Tools.js|cli|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-audit.js\nnode scripts/test-jarvis-router.js\nnode scripts/test-jarvis-sandbox.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-audio-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-guidance-suite|scripts/test-jarvis-guidance.js|offline|$jarvis_guidance_plan"
   "jarvis-guidance-fixture|scripts/fixtures/jarvis-voice/guidance.json|offline|$jarvis_guidance_plan"
   "jarvis-speakable-suite|scripts/test-jarvis-speakable.js|offline|$jarvis_speakable_plan"
