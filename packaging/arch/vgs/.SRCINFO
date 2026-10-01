@@ -42,6 +42,7 @@ pkgbase = vgs
 	optdepends = cronie: crontab, which schedules automations where no systemd user manager answers
 	optdepends = systemd: before-suspend locking and Jarvis key presence without reading secrets
 	optdepends = iproute2: ss, for Jarvis local model-server discovery without inference
+	optdepends = tmux: several Jarvis coding tasks at once
 	optdepends = dbus: dbus-monitor, so the lock screen hears logind announce a suspend
 	conflicts = vgs-shell
 	conflicts = vgs-shell-git

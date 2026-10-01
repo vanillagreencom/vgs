@@ -51,6 +51,7 @@ optdepends=(
   'cronie: crontab, which schedules automations where no systemd user manager answers'
   'systemd: before-suspend locking and Jarvis key presence without reading secrets'
   'iproute2: ss, for Jarvis local model-server discovery without inference'
+  'tmux: several Jarvis coding tasks at once'
   'dbus: dbus-monitor, so the lock screen hears logind announce a suspend'
 )
 makedepends=('git')

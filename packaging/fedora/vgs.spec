@@ -41,6 +41,7 @@ Recommends:     uv
 Recommends:     glib2
 Recommends:     systemd
 Recommends:     iproute
+Recommends:     tmux
 Recommends:     ImageMagick
 Conflicts:      vgs-shell
 # end runtime dependencies
