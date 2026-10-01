@@ -30,7 +30,7 @@ The service treats a missing shell or lock value as locked. Each hello carries t
 
 ## Controls
 
-[jarvis-controls.md](jarvis-controls.md) defines the implemented keys, modes, persistent mute and wire. The stock daemon remains unconfigured. Only disposable test copies acquire scripted capture or playback.
+[jarvis-controls.md](jarvis-controls.md) defines the implemented keys, modes, persistent mute and wire. [jarvis-widget.md](jarvis-widget.md) defines the bar widget's states and its mute path. The stock daemon remains unconfigured. Only disposable test copies acquire scripted capture or playback.
 
 ## Session
 

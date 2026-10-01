@@ -18,7 +18,7 @@ The service waits for a complete effective key map before sending a snapshot. En
 
 ## Privacy mute
 
-The mute shortcut sends one intent. Session converts it to `mute-toggle`. From off, it ends conversation demand, cancels thinking, flushes playback and emits `mute-store(true)`. Mute stays muting until capture acknowledges close. A second mute press during that close does nothing. From on, the same intent emits `mute-store(false)` without restoring demand. Talk and stop cannot clear mute.
+The mute shortcut sends one intent. The [bar widget](jarvis-widget.md#mute-path) sends the same intent through the service's `mute` IPC handler. Session converts it to `mute-toggle`. From off, it ends conversation demand, cancels thinking, flushes playback and emits `mute-store(true)`. Mute stays muting until capture acknowledges close. A second mute press during that close does nothing. From on, the same intent emits `mute-store(false)` without restoring demand. Talk and stop cannot clear mute.
 
 Before the first current state or during retry, the service retains one pending mute request in its existing lifetime. Repeated presses keep that request. An unavailable daemon has no current toggle state, so the pending request means mute on, never unmute. The service waits for a state matching the current lock observation. It sends mute only if that state is off, using its observed generation. It waits for on before clearing the request. A retry retains the request and cannot toggle a restored mute off. Talk and Stop are not buffered.
 

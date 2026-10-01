@@ -219,6 +219,7 @@ smoke_row hyprland
 smoke_row hyprland-options
 smoke_row hold-shortcuts
 smoke_row jarvis-keys
+smoke_row jarvis-widget
 smoke_row instance-guard
 smoke_row diagnostics
 smoke_row supervise

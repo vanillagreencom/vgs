@@ -26,6 +26,9 @@ Item {
                 () => intent("talk-down"), () => intent("talk-up"));
             shell.shortcut.register("mute", "Mute Jarvis", () => intent("mute"));
             shell.shortcut.register("stop", "Stop Jarvis", () => intent("stop"));
+            // The bar widget's click and `vgsh ipc call vgs.jarvis invoke
+            // mute` reach the Mute key's intent.
+            shell.ipc.handle("mute", () => { intent("mute"); return "ok"; });
             start();
         }
         else hello();

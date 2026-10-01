@@ -14,6 +14,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - The child tracks session state without opening a microphone or a provider.
 - Talk mode selects hold or toggle behavior for future engines.
 - Mute persists across restarts and blocks talk input.
+- A bar icon shows whether Jarvis is off, ready, listening, working, muted or has a problem.
+- A click on the bar icon toggles mute, as the Mute key does.
 - Settings opens Add key in a floating terminal with hidden key input.
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
 - Settings and the launcher open local voice setup in a floating terminal.
@@ -35,6 +37,8 @@ The service sends its current configuration and lock observation to the child. T
 ## Settings
 
 Talk mode defaults to Hold. Toggle keeps conversation demand open until the next press. No mode captures audio until an engine and its indicator are available.
+
+Turn on Show in bar on the Jarvis page to put the Jarvis icon in the bar's right section. Its tooltip names the state and what a click does.
 
 The Keys section changes Talk, Mute and Stop. Talk defaults to Super with Right Alt. Mute defaults to Super with Shift and Right Alt. Stop defaults to Super with Alt and Period. Mute is separate from Talk mode.
 
