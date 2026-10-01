@@ -608,9 +608,9 @@ import sys
 p=Path(sys.argv[1])
 assert not p.is_symlink()
 s=p.read_text()
-needle="onEndedAtChanged: if (endedAt !== null) refresh()"
+needle="if (shell === null) return;"
 assert s.count(needle)==1
-changed=s.replace(needle, "onEndedAtChanged: {}")
+changed=s.replace(needle, needle + '\n        if (output !== "") return;')
 assert changed != s
 p.write_text(changed)
 PY
@@ -623,7 +623,7 @@ jarvis_account_refresh_control() {
    expect_poll "Accounts must refresh discovery after its terminal ends" matched jarvis_account_hint found >"$sandbox/jarvis-account-refresh-control.log"
    echo "$failures")
 }
-expect "removing Accounts end refresh breaks its consumer assertion" 1 jarvis_account_refresh_control
+expect "keeping stale Accounts discovery after its terminal ends breaks its assertion" 1 jarvis_account_refresh_control
 cp -- "$sandbox/jarvis-accounts-original" "$jarvis_accounts"
 printf 'signed-in\n' >"$sandbox/jarvis-world/account-mode"
 jarvis_rescan
