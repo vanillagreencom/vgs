@@ -2,7 +2,7 @@
 // The clipboard, media and notify executors (Desktop.js) and the daemon's
 // registration seam (Executors.js) through the real router, Session, Policy
 // and Audit in the J09 world, with the real PATH lookup of bin/lib. Every
-// desktop command is scripts/fixtures/jarvis/desktop-tool.js: no clipboard,
+// desktop command is scripts/fixtures/jarvis/desktop-tool.py: no clipboard,
 // audio server, backlight, notification daemon or device node is reached.
 // Each control edits a disposable copy of one backend file, one rule at a time.
 "use strict";
@@ -58,35 +58,35 @@ async function main() {
         const file = path.join(desktop, name);
         for (let i = 0; i < 1000 && !fs.existsSync(file); i++) await new Promise(resolve => setTimeout(resolve, 5));
         assert.ok(fs.existsSync(file), "stand-in never wrote " + name);
-        return Number(fs.readFileSync(file, "utf8"));
+        return JSON.parse(fs.readFileSync(file, "utf8"));
     }
     // The executor's own deadline, fired once the stand-in holds.
     const onHeld = name => ({ set(fn, ms) { assert.equal(ms, 10000); ready(name).then(fn); return name; }, clear() {} });
-    // The bound for a child the executor must already have ended. A broken
-    // copy reaches it instead of hanging; a working one never waits for it.
+    // Only controls get this bound: a copy that never ends its child reaches
+    // it in 2 s rather than the production 10 s. Passing cases keep the
+    // production deadline, so no assertion races a timer.
     const bounded = { set(fn, ms) { assert.equal(ms, 10000); return setTimeout(fn, 2000); }, clear: timer => clearTimeout(timer) };
 
     // The real seam, router, reducer and audit writer, as jarvisd builds them.
-    function make(folder, { profile = "standard", clock = bounded } = {}) {
+    function make(folder, { profile = "standard", clock } = {}) {
         const Router = require(path.join(folder, "ToolRouter.js"));
         const Executors = require(path.join(folder, "Executors.js"));
         const Audit = require(path.join(folder, "Audit.js"));
         const { SessionRunner, unavailable } = require(path.join(folder, "session-runner.js"));
         let transcript;
-        const results = [];
         const waiters = [];
         const directory = fs.mkdtempSync(path.join(world, "desktop-audit-"));
         const audit = Audit.create({ state: directory, now: () => Date.UTC(2026, 9, 1) });
         const ports = { ...unavailable(), mute: { store() {} },
             capture: { open: (e, done) => done(), close: (e, done) => done(), collect: (e, done) => { transcript = done; } },
             brain: { send() {}, cancel: (e, done) => done(), close() {},
-                outcome: value => { results.push(value); waiters.splice(0).forEach(resolve => resolve(value)); } } };
+                outcome: value => { waiters.splice(0).forEach(resolve => resolve(value)); } } };
         const runner = new SessionRunner(Session, ports, { now: () => 0, set: () => ({}), clear() {} }, () => {});
         const router = Router.create({ session: Session, state: () => runner.state, dispatch: e => runner.dispatch(e),
             context: () => ({ profile, locked: false, denied: null }), audit, result: value => ports.brain.outcome(value) });
         Object.assign(ports, router.ports);
         const registered = [];
-        const executors = Executors.register({ register(id, executor) { registered.push(id); router.register(id, executor); } },
+        Executors.register({ register(id, executor) { registered.push(id); router.register(id, executor); } },
             { find: commandFile, environment: ENVIRONMENT, clock });
         runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} });
         runner.dispatch({ type: "indicator", shown: true });
@@ -103,8 +103,8 @@ async function main() {
                 return { outcome: value.outcome, item: value.results[0].item };
             });
         }
-        function close() { runner.close(); executors.close(); audit.close(); }
-        return { router, runner, results, registered, executors, send, close };
+        function close() { runner.close(); audit.close(); }
+        return { router, runner, registered, send, close };
     }
     async function once(folder, modes, tool, args, options) {
         reset(modes);
@@ -152,6 +152,8 @@ async function main() {
                     assert.equal(call.stdin, stdin, tool + " stdin");
                     assert.deepEqual(call.env, EXPECTED_ENV[call.name], tool + " environment");
                     assert.equal(call.group, call.pid, tool + " leads its own process group");
+                    assert.equal(call.parent, process.pid, tool + ": setpriv execs the command itself");
+                    assert.equal(call.deathsig, 9, tool + " dies with its parent");
                     assert.notEqual(call.group, own);
                 }
             }
@@ -191,10 +193,10 @@ async function main() {
             assert.deepEqual(value, { outcome: "failed", item: {
                 content: '{"kind":"failed","command":"playerctl","code":1,"detail":"No players found"}', labels: ["desktop"] } });
         }],
-        ["ceiling", async folder => {
-            const value = await once(folder, { ...TEXT, "wl-paste --no-newline --type text": { flood: 70000, hold: true } }, "clipboard.read");
+        ["ceiling", async (folder, clock) => {
+            const value = await once(folder, { ...TEXT, "wl-paste --no-newline --type text": { flood: 70000, hold: true } }, "clipboard.read", {}, { clock });
             assert.equal(value.outcome, "completed", "a clipped read still answers");
-            assert.ok(value.item.content.startsWith("AAAA") && value.item.content.endsWith("[result clipped]"));
+            assert.ok(value.item.content.startsWith("AAAA") && value.item.content.endsWith("\n[result clipped]"));
             assert.equal(alive(calls()[1].pid), false, "the ceiling ends the child");
         }],
         ["timeout", async folder => {
@@ -204,46 +206,32 @@ async function main() {
             const read = await once(folder, { "wl-paste --list-types": { hold: true } }, "clipboard.read", {}, { clock: onHeld("wl-paste.held") });
             assert.deepEqual(read, { outcome: "failed", item: { content: '{"kind":"stopped","command":"wl-paste","reason":"timeout"}', labels: ["clipboard"] } });
         }],
-        ["wl-copy", async folder => {
-            const value = await once(folder, { "wl-copy": { server: true } }, "clipboard.write", { text: "kept" });
+        ["wl-copy", async (folder, clock) => {
+            const value = await once(folder, { "wl-copy": { server: true } }, "clipboard.write", { text: "kept" }, { clock });
             assert.deepEqual(value, { outcome: "completed", item: { content: DONE, labels: ["desktop"] } });
-            const server = await ready("wl-copy.server");
+            const { pid: server, deathsig } = await ready("wl-copy.server");
             servers.push(server);
             assert.equal(alive(server), true, "success leaves the server that keeps the selection");
+            assert.equal(deathsig, 0, "the parent-death signal does not cross wl-copy's fork");
             assert.equal(groupOf(server), calls()[0].pid, "the server shares wl-copy's process group");
         }],
         ["wl-copy-timeout", async folder => {
             const value = await once(folder, { "wl-copy": { server: true, hold: true } }, "clipboard.write", { text: "lost" }, { clock: onHeld("wl-copy.held") });
             assert.equal(value.outcome, "unknown");
-            const server = await ready("wl-copy.server");
+            const { pid: server } = await ready("wl-copy.server");
             servers.push(server);
             assert.equal(alive(calls()[0].pid), false);
             assert.equal(alive(server), false, "a timeout ends the forked server with its group");
         }],
-        ["cancel", async folder => {
+        ["cancel", async (folder, clock) => {
             reset({ playerctl: { hold: true } });
-            const w = make(folder);
+            const w = make(folder, { clock });
             try {
                 const answer = w.send("media.play");
-                const pid = await ready("playerctl.held");
+                const { pid } = await ready("playerctl.held");
                 w.runner.dispatch({ type: "stop" });
                 assert.deepEqual(await answer, { outcome: "unknown", item: { content: '{"kind":"stopped","command":"playerctl","reason":"cancelled"}', labels: ["desktop"] } });
                 assert.equal(alive(pid), false);
-            } finally { w.close(); }
-        }],
-        ["close", async folder => {
-            reset({ playerctl: { hold: true } });
-            // No deadline fires: only close can end this child.
-            const w = make(folder, { clock: { set(fn, ms) { assert.equal(ms, 10000); return null; }, clear() {} } });
-            try {
-                void w.send("media.play");
-                const pid = await ready("playerctl.held");
-                w.executors.close();
-                for (let i = 0; i < 400 && alive(pid); i++) await new Promise(resolve => setTimeout(resolve, 5));
-                assert.equal(alive(pid), false, "the seam's close ends a running child");
-                // Lets the ended child's close event run before reading results.
-                await new Promise(resolve => setTimeout(resolve, 100));
-                assert.equal(w.results.length, 0, "nothing answers after close");
             } finally { w.close(); }
         }],
         ["probe", async folder => {
@@ -284,7 +272,8 @@ async function main() {
         }]
     ]);
 
-    // file, control, the text kept, its replacement, the case it reddens.
+    // file, control, the text kept, its replacement, the case it reddens, and
+    // whether its broken copy needs the short bound to end a child.
     const CONTROLS = [
         [desktopFile, "argv", '"--no-newline", "--type", "text"', '"--type", "text"', "argv"],
         [desktopFile, "separator", '"--app-name=Jarvis", "--", args.title', '"--app-name=Jarvis", args.title', "argv"],
@@ -293,13 +282,13 @@ async function main() {
         [desktopFile, "password-hint", "if (types.includes(PASSWORD_HINT)) return", "if (false) return", "password-hint"],
         [desktopFile, "not-text", "if (!types.some(textOffer)) return", "if (false) return", "not-text"],
         [desktopFile, "empty-selection", 'if (emptySelection(offers)) return answer("completed", "");', 'if (false) return answer("completed", "");', "empty"],
-        [desktopFile, "ceiling", "limit: LIMIT,", "limit: Infinity,", "ceiling"],
+        [desktopFile, "ceiling", "limit: LIMIT,", "limit: Infinity,", "ceiling", true],
         [desktopFile, "deadline", "deadline: DEADLINE,", "deadline: DEADLINE + 1,", "timeout"],
         [desktopFile, "unknown-outcome", '=== "read" ? "failed" : "unknown"', '=== "read" ? "failed" : "failed"', "timeout"],
         [desktopFile, "own-group", "group: true,", "group: false,", "wl-copy-timeout"],
-        [desktopFile, "server-output", 'input: args.text, output: "ignore" })', "input: args.text })", "wl-copy"],
-        [desktopFile, "cancel", "cancel: call => { running.get(call)?.abort(); }", "cancel: call => { void call; }", "cancel"],
-        [desktopFile, "close", "for (const abort of running.values()) abort.abort();", "void running;", "close"],
+        [desktopFile, "server-output", 'input: args.text, output: "ignore" })', "input: args.text })", "wl-copy", true],
+        [desktopFile, "cancel", "cancel: call => { running.get(call)?.abort(); }", "cancel: call => { void call; }", "cancel", true],
+        [desktopFile, "parent-death", 'Child.run("setpriv", ["--pdeathsig", "KILL", "--", file, ...plan.args],', "Child.run(file, [...plan.args],", "argv"],
         [executorsFile, "probe-absent", "if (file !== null) commands.set(command, file);", "if (true) commands.set(command, file);", "probe"],
         [executorsFile, "zero-commands", "if (!rows.some(row => row.command === null || commands.has(row.command))) continue;", "if (false) continue;", "probe"],
         [toolsFile, "label-desktop", 'schema: {}, source: "clipboard" }', 'schema: {}, source: "desktop" }', "release-gate"],
@@ -307,8 +296,8 @@ async function main() {
     ];
     try {
         for (const [name, check] of cases) { await check(backend); console.log("case=" + name + " passed"); }
-        for (const [file, name, needle, replacement, row] of CONTROLS) {
-            await mutant(file, name, needle, replacement, (module, folder) => cases.get(row)(folder), "Executors.js");
+        for (const [file, name, needle, replacement, row, bound] of CONTROLS) {
+            await mutant(file, name, needle, replacement, (module, folder) => cases.get(row)(folder, bound ? bounded : undefined), "Executors.js");
             console.log("control=" + name + " detected");
         }
         console.log("test-jarvis-desktop-tools: ok cases=" + cases.size + " controls=" + CONTROLS.length);
@@ -317,6 +306,6 @@ async function main() {
 
 world(() => main().catch(error => { console.error(error); process.exitCode = 1; }), standins => {
     for (const command of COMMANDS)
-        fs.copyFileSync(path.join(tree, "scripts/fixtures/jarvis/desktop-tool.js"), path.join(standins, command));
+        fs.copyFileSync(path.join(tree, "scripts/fixtures/jarvis/desktop-tool.py"), path.join(standins, command));
     for (const command of COMMANDS) fs.chmodSync(path.join(standins, command), 0o755);
 });

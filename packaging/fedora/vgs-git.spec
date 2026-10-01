@@ -41,6 +41,10 @@ Recommends:     fzf
 Recommends:     bluez
 Recommends:     less
 Recommends:     libnotify
+Recommends:     wl-clipboard
+Recommends:     playerctl
+Recommends:     wireplumber
+Recommends:     brightnessctl
 Recommends:     cronie
 Recommends:     xdg-utils
 Recommends:     curl

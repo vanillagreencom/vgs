@@ -17,8 +17,9 @@
 # qmldir of their own, beside a stand-in ThemeSource that takes
 # a document from the UnitTheme singleton of the qs.Unit module and calls the
 # shipped accept; a stand-in Quickshell module supplies the Singleton and
-# Scope types and a PopupWindow that positions nothing, and a stand-in
-# Quickshell.Io a FileView the test finishes by hand, since the real
+# Scope types, a PopupWindow that positions nothing and a Quickshell
+# singleton whose env answers "env:NAME", and a stand-in
+# Quickshell.Io a FileView and Process the test finishes by hand, since the real
 # modules' plugins do not load outside the shell. qs/Core holds the shipped
 # core files the tests drive beside stand-in Registry, Capabilities and
 # Compositor singletons, the last recording the key capture's requests, and
@@ -113,19 +114,19 @@ cp -- "$tests/stand-ins/UnitTheme.qml" "$imports/qs/Unit/UnitTheme.qml"
 # Where the module under test is, for the test that reads its qmldir.
 printf '.pragma library\nvar UI_DIR = %s;\n' "$(python3 -c 'import json, sys; print(json.dumps("file://" + sys.argv[1]))' "$ui")" >"$imports/qs/Unit/UnitPaths.js"
 printf 'module qs.Unit\nsingleton UnitTheme 1.0 UnitTheme.qml\nUnitPaths 1.0 UnitPaths.js\n' >"$imports/qs/Unit/qmldir"
-for file in Singleton.qml Scope.qml PopupWindow.qml Edges.qml PopupAdjustment.qml; do
+for file in Singleton.qml Scope.qml PopupWindow.qml Edges.qml PopupAdjustment.qml Quickshell.qml; do
   cp -- "$tests/stand-ins/$file" "$imports/Quickshell/$file"
 done
-printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nScope 1.0 Scope.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\n' >"$imports/Quickshell/qmldir"
+printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nScope 1.0 Scope.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\nsingleton Quickshell 1.0 Quickshell.qml\n' >"$imports/Quickshell/qmldir"
 mkdir -p -- "$imports/Quickshell/Hyprland"
 cp -- "$tests/stand-ins/GlobalShortcut.qml" "$imports/Quickshell/Hyprland/GlobalShortcut.qml"
 cp -- "$tests/stand-ins/Hyprland.qml" "$imports/Quickshell/Hyprland/Hyprland.qml"
 printf 'module Quickshell.Hyprland\nGlobalShortcut 1.0 GlobalShortcut.qml\nsingleton Hyprland 1.0 Hyprland.qml\n' >"$imports/Quickshell/Hyprland/qmldir"
-for file in FileView.qml Process.qml StdioCollector.qml ProcessRegistry.qml FileViewError.qml; do
+for file in FileView.qml Process.qml StdioCollector.qml SplitParser.qml ProcessRegistry.qml FileViewError.qml; do
   cp -- "$tests/stand-ins/$file" "$imports/Quickshell/Io/$file"
 done
 cp -- "$tests/stand-ins/FolderListModel.qml" "$tests/stand-ins/FolderListRegistry.qml" "$imports/Qt/labs/folderlistmodel/"
-printf 'module Quickshell.Io\nFileView 1.0 FileView.qml\nProcess 1.0 Process.qml\nStdioCollector 1.0 StdioCollector.qml\nsingleton ProcessRegistry 1.0 ProcessRegistry.qml\nsingleton FileViewError 1.0 FileViewError.qml\n' >"$imports/Quickshell/Io/qmldir"
+printf 'module Quickshell.Io\nFileView 1.0 FileView.qml\nProcess 1.0 Process.qml\nStdioCollector 1.0 StdioCollector.qml\nSplitParser 1.0 SplitParser.qml\nsingleton ProcessRegistry 1.0 ProcessRegistry.qml\nsingleton FileViewError 1.0 FileViewError.qml\n' >"$imports/Quickshell/Io/qmldir"
 printf 'module Qt.labs.folderlistmodel\nFolderListModel 1.0 FolderListModel.qml\nsingleton FolderListRegistry 1.0 FolderListRegistry.qml\n' >"$imports/Qt/labs/folderlistmodel/qmldir"
 
 if [[ ${#files[@]} -eq 0 ]]; then

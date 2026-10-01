@@ -11,7 +11,11 @@ QtObject {
     property bool running: false
     property var stdout: null
     property var stderr: null
+    property var environment: ({})
+    property bool clearEnvironment: false
+    property bool stdinEnabled: false
 
+    signal started()
     signal exited(int code, int status)
 
     function finish(code, status, out, err) {

@@ -244,6 +244,7 @@ mutations=(
   "the Jarvis widget keeps one icon|../plugins/vgs.jarvis/Widget.qml|iconName: root.view.icon|iconName: \"mic\"|tst_jarvis_widget.qml"
   "the Jarvis widget draws working in the accent|../plugins/vgs.jarvis/Widget.qml|case \"info\": return Theme.badge.tone.info.foreground;|case \"info\": return Theme.badge.tone.accent.foreground;|tst_jarvis_widget.qml"
   "the Jarvis widget draws an unknown tone|../plugins/vgs.jarvis/Widget.qml|default: throw new Error(\"jarvis widget: tone \"|default: return Theme.bar.foreground; throw new Error(\"jarvis widget: tone \"|tst_jarvis_widget.qml"
+  "the Jarvis daemon loses the Wayland display|../plugins/vgs.jarvis/Service.qml|            WAYLAND_DISPLAY: Quickshell.env(\"WAYLAND_DISPLAY\"),||tst_jarvis_service.qml"
   "the body's room ignores the footer|layout/Pane.qml| - headerHeight - footerHeight - | - headerHeight - |tst_pane.qml"
   "an overlay pane takes the panel inset|layout/Pane.qml|case \"overlay\": return Theme.inset.overlay;|case \"overlay\": return Theme.surface.padding;|tst_pane.qml"
   "an overlay pane clears a corner it does not draw|layout/Pane.qml|case \"overlay\": return 0;|case \"overlay\": return Theme.surface.radius;|tst_pane.qml"

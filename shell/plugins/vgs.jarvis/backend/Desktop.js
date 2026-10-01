@@ -1,14 +1,17 @@
 // Executors for the Tools rows whose executor is clipboard, media or notify.
 // ARGV is the one map from a frozen call to the arguments and stdin of the
 // command its Tools row names. Each command runs as a bounded Child, without a
-// shell, in its own process group, with only the variables ENVIRONMENT lists.
+// shell, in its own process group, with only the variables ENVIRONMENT lists,
+// under setpriv's parent-death signal: a daemon killed outright takes its
+// running command with it. The kernel clears that signal across fork, so the
+// server wl-copy forks keeps the selection.
 // Policy, approval, audit and the result's release label stay with the router.
 "use strict";
 const Child = require("./Child.js");
 const Tools = require("./Tools.js");
 
-// The plan's command output bound (§ 3.11). The router still cuts a result to
-// its own tool-result bound and marks the cut.
+// The plan's command output bound (§ 3.11), above the router's own
+// tool-result bound.
 const LIMIT = 64 * 1024;
 // Recovery bounds for a compositor, bus or daemon that never answers, not
 // measured latency budgets. Session's limit outlasts the child's own end, so
@@ -24,7 +27,6 @@ const PASSWORD_HINT = "x-kde-passwordManagerHint";
 // wl-paste's words for a selection with no offer, compared with the first
 // line of its stderr (wl-clipboard 2.3.0 src/wl-paste.c). Not a failure.
 const EMPTY_SELECTION = ["Nothing is copied"];
-const CLIPPED = "\n[clipboard clipped]";
 
 // Variables each command reads, beside PATH and a fixed C.UTF-8 locale that
 // keeps a decimal point a point. No other daemon variable reaches a child.
@@ -84,18 +86,16 @@ const emptySelection = result => result.kind === "exited" && result.code !== 0
     && EMPTY_SELECTION.includes(result.stderr.split("\n")[0].trim());
 
 /**
- * Build the owner of Tools executor id: "clipboard", "media" or "notify".
- * commands maps each present command to the absolute file the probe found.
- * environment is the daemon's own; ENVIRONMENT picks from it per command.
- * Returns {executor, close}: executor is the record the router registers;
- * close ends every running child's process group, and nothing starts after.
+ * Build the router's executor record for Tools executor id: "clipboard",
+ * "media" or "notify". commands maps each present command to the absolute
+ * file the probe found. environment is the daemon's own; ENVIRONMENT picks
+ * from it per command. cancel(call) ends that call's process group.
  */
 function create(id, { commands, environment, clock }) {
     const rows = Object.keys(Tools.TABLE).filter(tool => Tools.TABLE[tool].executor === id);
     if (rows.length === 0 || !rows.every(tool => Object.hasOwn(ARGV, tool)))
         throw new Error("jarvis: desktop=executor id=" + id);
     const running = new Map();
-    let closed = false;
 
     function run(command, plan, signal) {
         const file = commands.get(command);
@@ -103,8 +103,8 @@ function create(id, { commands, environment, clock }) {
         const env = { LC_ALL: "C.UTF-8" };
         for (const name of ["PATH", ...ENVIRONMENT[command]])
             if (environment[name] !== undefined) env[name] = environment[name];
-        return Child.run(file, plan.args, { env, limit: LIMIT, deadline: DEADLINE, group: true,
-            input: plan.input, output: plan.output, signal, clock });
+        return Child.run("setpriv", ["--pdeathsig", "KILL", "--", file, ...plan.args], { env, limit: LIMIT,
+            deadline: DEADLINE, group: true, input: plan.input, output: plan.output, signal, clock });
     }
 
     async function perform(call, signal) {
@@ -122,13 +122,13 @@ function create(id, { commands, environment, clock }) {
         const result = await run(command, ARGV[call.id](call.args), signal);
         if (result.kind === "exited" && result.code === 0) return answer("completed", read ? result.stdout : { kind: "done" });
         if (read && emptySelection(result)) return answer("completed", "");
+        // The router cuts a long result to its own bound and marks the cut.
         if (read && result.kind === "stopped" && result.reason === "output-limit")
-            return answer("completed", result.stdout + CLIPPED);
+            return answer("completed", result.stdout);
         return failure(call, command, result);
     }
 
     function start(call, done) {
-        if (closed) throw new Error("jarvis: desktop=closed");
         if (!rows.includes(call.id) || running.has(call)) throw new Error("jarvis: desktop=call id=" + call.id);
         const abort = new AbortController();
         running.set(call, abort);
@@ -136,19 +136,12 @@ function create(id, { commands, environment, clock }) {
         // outcome without its text.
         perform(call, abort.signal).catch(() => answer("failed", "executor-failed")).then(value => {
             running.delete(call);
-            if (!closed) done(value);
+            done(value);
         });
     }
 
-    return Object.freeze({
-        executor: { commands: [...commands.keys()], timeoutMs: TIMEOUT, cancellable: true, start,
-            cancel: call => { running.get(call)?.abort(); } },
-        close() {
-            closed = true;
-            for (const abort of running.values()) abort.abort();
-            running.clear();
-        }
-    });
+    return { commands: [...commands.keys()], timeoutMs: TIMEOUT, cancellable: true, start,
+        cancel: call => { running.get(call)?.abort(); } };
 }
 
 module.exports = { create };

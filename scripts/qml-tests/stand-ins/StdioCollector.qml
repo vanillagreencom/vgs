@@ -5,4 +5,6 @@ import QtQuick
 // exited, so the core reads the same shape it reads in production.
 QtObject {
     property string text: ""
+
+    signal streamFinished()
 }

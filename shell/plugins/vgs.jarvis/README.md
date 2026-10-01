@@ -28,7 +28,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Jarvis watches its recorded coding tasks and shows how many are running in Settings.
 - Stopping a coding task interrupts its agent, escalates until every one of its processes has ended, and only then records it as stopped.
 - Desktop tools read and copy clipboard text, play, pause and skip media, set and mute the speaker volume, set screen brightness and show a notification.
-- A clipboard read refuses a copied password and anything that is not text.
+- A clipboard read refuses a copy that a password manager marks as secret, and anything that is not text.
 
 ## Requirements
 

@@ -57,7 +57,8 @@ const TABLE = {
     "media.next": { sentence: "Play the next media item", effect: "reversible", executor: "media", command: "playerctl", schema: {} },
     "media.volume": { sentence: "Set volume to {value}", effect: "reversible", executor: "media", command: "wpctl", schema: { value: { type: "number", minimum: 0, maximum: 1 } } },
     "media.mute": { sentence: "Set media mute to {muted}", effect: "reversible", executor: "media", command: "wpctl", schema: { muted: bool } },
-    "media.brightness": { sentence: "Set brightness to {value}", effect: "reversible", executor: "media", command: "brightnessctl", schema: { value: { type: "integer", minimum: 0, maximum: 100 } } },
+    // 1% is the floor: 0% darkens some panels completely.
+    "media.brightness": { sentence: "Set brightness to {value}", effect: "reversible", executor: "media", command: "brightnessctl", schema: { value: { type: "integer", minimum: 1, maximum: 100 } } },
     "notify.notification": { sentence: "Show notification {title}: {body}", effect: "reversible", executor: "notify", command: "notify-send", schema: { title: text, body: text } },
     "notify.toast": { sentence: "Show notice {title}: {body}", effect: "reversible", executor: "wire", command: null, schema: { title: text, body: text } },
     "files.list": { sentence: "List files in {path}", effect: "read", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "read"]] },

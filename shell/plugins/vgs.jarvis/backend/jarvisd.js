@@ -55,7 +55,6 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let requests = null;
     let desktop = null;
     let engine = null;
-    let executors = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
@@ -67,7 +66,6 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         if (engine !== null) engine.close();
         if (desktop !== null) desktop.close();
         if (requests !== null) requests.close();
-        if (executors !== null) executors.close();
         if (audit !== null) audit.close();
         if (tasks !== null) tasks.close();
     }
@@ -314,7 +312,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     runner.ports.playback = engine.playback(audio.playbackPort);
                     audio.captureSink = engine.captureSink;
                     audio.playbackSource = engine.playbackSource;
-                    executors = Executors.register(router, { find: commandFile, environment: process.env });
+                    Executors.register(router, { find: commandFile, environment: process.env });
                 }
                 if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,

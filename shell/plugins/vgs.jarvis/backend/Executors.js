@@ -15,11 +15,10 @@ const OWNERS = { clipboard: Desktop.create, media: Desktop.create, notify: Deskt
 /**
  * register(router, {find, environment, clock}) registers every OWNERS row it
  * can. find(command) answers the absolute file of an executable command on
- * the daemon's PATH, or null. Returns {close}, which ends every child the
- * registered executors still run; the router's own close does not.
+ * the daemon's PATH, or null. A running command ends through the router's
+ * cancel, which Session requests on stop, expiry and lease end.
  */
 function register(router, { find, environment, clock }) {
-    const owners = [];
     for (const [id, create] of Object.entries(OWNERS)) {
         const rows = Object.values(Tools.TABLE).filter(row => row.executor === id);
         const commands = new Map();
@@ -29,11 +28,8 @@ function register(router, { find, environment, clock }) {
             if (file !== null) commands.set(command, file);
         }
         if (!rows.some(row => row.command === null || commands.has(row.command))) continue;
-        const owner = create(id, { commands, environment, clock });
-        router.register(id, owner.executor);
-        owners.push(owner);
+        router.register(id, create(id, { commands, environment, clock }));
     }
-    return Object.freeze({ close() { for (const owner of owners) owner.close(); } });
 }
 
 module.exports = { register };

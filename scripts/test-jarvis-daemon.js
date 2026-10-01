@@ -566,6 +566,96 @@ async function inside() {
     controls++;
     console.log("test-jarvis-daemon: control=transcript-wire killed");
 
+    // The shipped executor seam inside the real daemon. A disposable copy
+    // changes only its brain port, which routes one media.play to the
+    // playerctl stand-in and records the routing and the result.
+    const desktop = path.join(process.env.JARVIS_TEST_ROOT, "desktop");
+    fs.mkdirSync(desktop, { recursive: true });
+    const answers = path.join(root, "desktop-answers.jsonl");
+    const brainPort = "Object.assign(runner.ports, router.ports);";
+    const routingBrain = "Object.assign(runner.ports, router.ports, { brain: { ...runner.ports.brain,\n"
+        + "    send: e => fs.appendFileSync(" + JSON.stringify(answers) + ", JSON.stringify({ routed: router.route("
+        + '{ kind: "tool-call", id: "fixture-media", tool: "media.play", arguments: {} }, { gen: e.gen, op: e.op }) }) + "\\n"),\n'
+        + "    outcome: value => fs.appendFileSync(" + JSON.stringify(answers) + ', JSON.stringify(value) + "\\n") } });';
+    function desktopDaemon(name, edits = [], routerEdits = []) {
+        const file = daemonCopy(name);
+        instrument(file, gates);
+        const routerFile = path.join(path.dirname(file), "ToolRouter.js");
+        let router = fs.readFileSync(routerFile, "utf8");
+        for (const [needle, value] of routerEdits) {
+            assert.equal(router.split(needle).length - 1, 1, name + " router edit match");
+            router = router.replace(needle, value);
+        }
+        fs.writeFileSync(routerFile, router);
+        let changed = fs.readFileSync(file, "utf8");
+        for (const [needle, value] of [[brainPort, routingBrain], ...edits]) {
+            assert.equal(changed.split(needle).length - 1, 1, name + " desktop instrumentation match");
+            changed = changed.replace(needle, value);
+        }
+        fs.writeFileSync(file, changed);
+        return file;
+    }
+    const lines = file => fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+    const alive = pid => {
+        try { process.kill(pid, 0); return true; }
+        catch (error) { if (error.code === "ESRCH") return false; throw error; }
+    };
+    // Bounded reads of files the daemon and the stand-in write.
+    async function until(predicate, what) {
+        for (let attempts = 0; attempts < 400; attempts++) {
+            if (predicate()) return;
+            await new Promise(resolve => setTimeout(resolve, 5));
+        }
+        assert.fail("desktop daemon: " + what);
+    }
+    const desktopTurn = (file, modes) => {
+        let held = null;
+        return conversation(file, async w => {
+            fs.writeFileSync(path.join(desktop, "modes.json"), JSON.stringify(modes));
+            fs.writeFileSync(path.join(desktop, "calls.jsonl"), "");
+            fs.rmSync(path.join(desktop, "playerctl.held"), { force: true });
+            fs.rmSync(answers, { force: true });
+            w.send("talk-down");
+            await w.wait(m => m.phase === "listening");
+            w.send("talk-up");
+            // The routed call can move the phase on to acting at once.
+            await w.wait(m => m.state.turn.kind === "thinking");
+            if (modes.playerctl?.hold) {
+                await until(() => fs.existsSync(path.join(desktop, "playerctl.held")), "the held stand-in never started");
+                held = JSON.parse(fs.readFileSync(path.join(desktop, "playerctl.held"), "utf8")).pid;
+            } else await until(() => lines(answers).length === 2, "no tool result reached the brain port");
+        }).then(() => held);
+    };
+    const routed = async file => {
+        await desktopTurn(file, {});
+        const written = lines(answers);
+        const route = written.find(line => line.routed !== undefined);
+        const result = written.find(line => line.kind === "tool-results");
+        assert.equal(route?.routed.kind, "proposed", JSON.stringify(written));
+        assert.equal(result.outcome, "completed");
+        assert.deepEqual(result.results[0].item, { content: '{"kind":"done"}', labels: ["desktop"] });
+        const [call, ...rest] = lines(path.join(desktop, "calls.jsonl"));
+        assert.deepEqual(rest, []);
+        assert.deepEqual([call.name, ...call.argv], ["playerctl", "play"]);
+        assert.equal(call.deathsig, 9);
+    };
+    await routed(desktopDaemon("desktop"));
+    const register = "Executors.register(router, { find: commandFile, environment: process.env });";
+    await assert.rejects(() => routed(desktopDaemon("desktop-unregistered", [[register, "void Executors;"]])),
+        assert.AssertionError, "a daemon that registers no executor must fail the routed call");
+    controls++;
+    console.log("test-jarvis-daemon: control=desktop-register killed");
+    const released = async file => {
+        const pid = await desktopTurn(file, { playerctl: { hold: true } });
+        assert.equal(alive(pid), false, "the daemon's end releases its running command");
+    };
+    await released(desktopDaemon("desktop-held"));
+    // Session's lease end cancels the running tool through the router.
+    await assert.rejects(() => released(desktopDaemon("desktop-uncancelled", [],
+        [["cancel() { if (pending !== null) pending.executor.cancel(pending.call); },", "cancel() {},"]])),
+    assert.AssertionError, "a daemon whose router drops the cancel must keep its command running");
+    controls++;
+    console.log("test-jarvis-daemon: control=desktop-cancel killed");
     async function blockedReader(file) {
         fs.writeFileSync(path.join(process.env.HOME, "audio-flood"), "");
         const child = cp.spawn("node", [file, "--tree", tree], {
@@ -761,6 +851,8 @@ async function main() {
         const launcher = path.join(tree, "scripts/lib/jarvis-env.sh");
         standins(path.join(root, "standins"));
         desktopFixture.standins(path.join(root, "standins"));
+        fs.copyFileSync(path.join(tree, "scripts/fixtures/jarvis/desktop-tool.py"), path.join(root, "standins/playerctl"));
+        fs.chmodSync(path.join(root, "standins/playerctl"), 0o700);
         const result = cp.spawnSync("/bin/bash", [launcher, path.join(root, "standins"), "--", "node", __filename, "--inside"],
             { env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
                 // Bounds a hung world, not a latency: the suite runs real children.
