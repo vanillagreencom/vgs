@@ -26,7 +26,8 @@ function sentence(call, scope) {
  * create({session, state, dispatch, context, audit, result}) owns the daemon's
  * action lifetime. state/dispatch belong to SessionRunner. context returns
  * current trusted profile, locked and denied facts, never model metadata.
- * result receives {gen, op, outcome, kind:"tool-results", results:[{id,item}]}.
+ * result receives {gen, op, outcome, final, kind:"tool-results", results:[{id,item}]};
+ * final is false only for a timeout whose actual completion is still to come.
  * A generation change clears grants. Each new turn starts with clean taint.
  */
 function create({ session, state, dispatch, context, audit, result }) {
@@ -55,21 +56,23 @@ function create({ session, state, dispatch, context, audit, result }) {
             decision, confirmed: value.confirmed ?? "none", outcome });
     }
 
-    function deliver(value, outcome, content, source = null) {
+    // final is false only while Session still holds a timed-out action, whose
+    // actual completion delivers again under the same call id.
+    function deliver(value, outcome, content, source = null, final = true) {
         const s = state();
         if (source !== null && s.gen === value.turn.gen && s.turn.kind === "thinking" && s.turn.op === value.turn.op)
             taint = Policy.observe(taint, source);
         const bytes = Buffer.from(content);
         const bounded = bytes.length <= RESULT_BYTES ? content
             : new TextDecoder().decode(bytes.subarray(0, RESULT_BYTES - 32), { stream: true }) + "\n[result clipped]";
-        result({ gen: value.turn.gen, op: value.turn.op, outcome, kind: "tool-results",
+        result({ gen: value.turn.gen, op: value.turn.op, outcome, final, kind: "tool-results",
             results: [{ id: value.request, item: Policy.item(bounded, [source ?? "desktop"]) }] });
     }
 
-    function refuse(value, reason) {
+    function refuse(value, reason, final = true) {
         const written = record(value, "refuse", "cancelled");
         const refusal = { kind: "refuse", reason: written.kind === "refuse" ? written.reason : reason };
-        deliver(value, "cancelled", JSON.stringify(refusal));
+        deliver(value, "cancelled", JSON.stringify(refusal), null, final);
         return refusal;
     }
 
@@ -197,14 +200,15 @@ function create({ session, state, dispatch, context, audit, result }) {
         const value = pending;
         if (value === null || value.turn.gen !== e.gen || value.turn.op !== e.target)
             throw new Error("jarvis: router=outcome-identity");
-        if (value.refusal !== undefined) refuse(value, value.refusal);
+        // Unknown timeout retains Session's serial slot until actual completion.
+        const final = state().action.kind === "none";
+        if (value.refusal !== undefined) refuse(value, value.refusal, final);
         else {
             const written = record(value, value.decision.kind, e.outcome);
             deliver(value, e.outcome, written.kind === "refuse" ? JSON.stringify(written)
-                : value.answer?.content ?? "tool-outcome:" + e.outcome, value.refined.source);
+                : value.answer?.content ?? "tool-outcome:" + e.outcome, value.refined.source, final);
         }
-        // Unknown timeout retains Session's serial slot until actual completion.
-        if (state().action.kind === "none") pending = null;
+        if (final) pending = null;
     }
 
     const ports = {

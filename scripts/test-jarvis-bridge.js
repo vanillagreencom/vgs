@@ -34,7 +34,7 @@ world(async () => {
     function bounded(promise, what) {
         let timer;
         const limit = new Promise((resolve, reject) => {
-            timer = setTimeout(() => reject(new assert.AssertionError({ message: what + " timeout" })), 5000);
+            timer = setTimeout(() => reject(new assert.AssertionError({ message: what + " timeout" })), 3000);
         });
         return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
     }
@@ -58,8 +58,10 @@ world(async () => {
                 if (waiters.length) waiters.shift()(value); else lines.push(value);
             }
         });
-        return () => lines.length ? Promise.resolve(lines.shift())
+        const next = () => lines.length ? Promise.resolve(lines.shift())
             : bounded(new Promise(resolve => waiters.push(resolve)), what);
+        next.queued = () => lines.length;
+        return next;
     }
 
     /** One daemon-side world: runner, router, audit and bridge from a backend folder. */
@@ -104,9 +106,11 @@ world(async () => {
             brain: options.network ? { kind: "network", provider: "fixture-cloud", account: "a", origin: "https://brain.example.test" }
                 : { kind: "local", provider: "fixture-local", account: "" },
             speech: [{ kind: "local", provider: "fixture-speech", account: "" }] });
-        const runtime = options.runtime ?? path.join(root, "run/vgs/jarvis");
+        // Directly under the world root: the socket path stays shorter than
+        // the session bus socket J09's length guard measures.
+        const runtime = options.runtime ?? path.join(process.env.JARVIS_TEST_ROOT, "r" + serial.toString(36));
         bridge = Bridge.create({ router, state: () => runner.state, audit, directory: runtime, clock: {
-            set: fn => { const timer = { fn }; helloTimers.add(timer); return timer; },
+            set: (fn, ms) => { const timer = { fn, ms }; helloTimers.add(timer); return timer; },
             clear: timer => helloTimers.delete(timer) } });
         owners.push(() => { bridge.close(); audit.close(); });
         const open = () => bridge.open({ gen: runner.state.gen, recipients });
@@ -121,23 +125,26 @@ world(async () => {
         w.shim = (contract = w.launch, { env, file } = {}) => {
             const child = cp.spawn(contract.command, file === undefined ? contract.args : [file], {
                 env: env ?? { PATH: process.env.PATH, ...contract.env }, stdio: ["pipe", "pipe", "pipe"] });
-            let stderr = "";
+            let stderr = "", stdout = "";
             child.stderr.on("data", chunk => { stderr += chunk; });
+            child.stdout.on("data", chunk => { stdout += chunk; });
             child.stdin.on("error", () => {});
             const exited = new Promise(resolve => child.on("close", (code, signal) => resolve({ code, signal, stderr })));
             owners.push(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
             return { child, next: lineReader(child.stdout, "shim line"),
                 send: message => child.stdin.write((typeof message === "string" ? message : JSON.stringify(message)) + "\n"),
-                end: () => child.stdin.end(), exited: () => bounded(exited, "shim exit") };
+                end: () => child.stdin.end(), exited: () => bounded(exited, "shim exit"), stdout: () => stdout };
         };
         /** A raw socket client: the daemon side of the shim's wire. */
-        w.raw = (contract = w.launch) => {
-            const socket = net.createConnection(contract.env.VGS_JARVIS_TOOLS_SOCKET);
+        w.raw = (contract = w.launch, { halfOpen = false } = {}) => {
+            // A half-open peer keeps its side open after the bridge ends its own.
+            const socket = net.createConnection({ path: contract.env.VGS_JARVIS_TOOLS_SOCKET, allowHalfOpen: halfOpen });
             socket.setEncoding("utf8");
             socket.on("error", () => {});
             const closed = new Promise(resolve => socket.on("close", resolve));
             owners.push(() => socket.destroy());
-            return { socket, next: lineReader(socket, "socket line"), write: text => socket.write(text),
+            const next = lineReader(socket, "socket line");
+            return { socket, next, queued: next.queued, write: text => socket.write(text),
                 closed: () => bounded(closed, "socket close"),
                 connected: () => bounded(new Promise(resolve => socket.once("connect", resolve)), "socket connect") };
         };
@@ -335,34 +342,63 @@ world(async () => {
             assert.equal((await c.next()).id, 62, "a notification is never answered");
             assert.equal(w.starts.length, 0);
         }],
-        ["bounds", async folder => {
+        ["bounds", async (folder, shim) => {
             const w = await make(folder);
-            // Line: accepted at 256 KiB including its newline, refused one byte past it.
+            const hello = token => JSON.stringify({ v: 1, type: "hello", token }) + "\n";
+            const token = w.launch.env.VGS_JARVIS_TOOLS_TOKEN;
+            // Line: accepted at 256 KiB including its newline. One byte past it
+            // after ready ends the connection without a line: stdout stays MCP.
             const padded = extra => {
                 const base = JSON.stringify({ jsonrpc: "2.0", id: "", method: "ping" });
                 return JSON.stringify({ jsonrpc: "2.0", id: "x".repeat(256 * 1024 - 1 - base.length + extra), method: "ping" }) + "\n";
             };
             assert.equal(Buffer.byteLength(padded(0)), 256 * 1024);
             const r = w.raw();
-            r.write(JSON.stringify({ v: 1, type: "hello", token: w.launch.env.VGS_JARVIS_TOOLS_TOKEN }) + "\n");
+            r.write(hello(token));
             assert.deepEqual(await r.next(), { v: 1, type: "ready" });
             r.write(padded(0));
             assert.equal((await r.next()).result !== undefined, true, "a line at the bound is answered");
             r.write(padded(1));
-            assert.deepEqual(await r.next(), { v: 1, type: "refused", reason: "line-size" });
             await r.closed();
-            // Connections: four may wait for their hello; a fifth is refused.
+            assert.equal(r.queued(), 0, "an MCP connection is ended without a bridge line");
+            const c = await w.ready({ file: shim });
+            c.send(ping(1));
+            await c.next();
+            c.child.stdin.write(padded(1));
+            assert.deepEqual(await c.exited(), { code: 69, signal: null, stderr: "mcp-shim: bridge=closed\n" });
+            const relayed = c.stdout().split("\n").filter(line => line !== "");
+            assert.equal(relayed.length, 2, "initialize and ping answers");
+            for (const line of relayed) assert.equal(JSON.parse(line).jsonrpc, "2.0", "the harness's stdout carries only MCP");
+            // A refused peer that keeps its side open and keeps writing is still closed.
+            const half = w.raw(w.launch, { halfOpen: true });
+            half.write(hello("f".repeat(64)));
+            assert.deepEqual(await half.next(), { v: 1, type: "refused", reason: "token" });
+            // Its writes fail once the bridge destroyed its side. Polled: the
+            // reset crosses the kernel, not this event loop.
+            let reset = false;
+            half.socket.on("error", () => { reset = true; });
+            for (let tries = 0; tries < 200 && !reset; tries++) {
+                half.write("x".repeat(4096));
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            assert.equal(reset, true, "a refused half-open peer is destroyed, not left reading");
+            // Connections: four half-open peers may wait for their hello; a fifth is refused.
             const waiting = [];
             for (let n = 0; n < 4; n++) {
-                waiting.push(w.raw());
+                waiting.push(w.raw(w.launch, { halfOpen: true }));
                 await waiting[n].connected();
                 await until(() => w.helloTimers.size === n + 1, "connection " + (n + 1) + " accepted");
             }
             const fifth = w.raw();
             assert.deepEqual(await fifth.next(), { v: 1, type: "refused", reason: "connections" });
-            // Hello deadline: each silent connection is refused when its timer fires.
+            // Hello deadline: 2 s each; a fired timer refuses and closes its peer.
+            assert.deepEqual([...w.helloTimers].map(timer => timer.ms), [2000, 2000, 2000, 2000]);
             for (const timer of [...w.helloTimers]) timer.fn();
-            for (const socket of waiting) assert.deepEqual(await socket.next(), { v: 1, type: "refused", reason: "hello-deadline" });
+            for (const socket of waiting)
+                assert.deepEqual(await socket.next(), { v: 1, type: "refused", reason: "hello-deadline" });
+            const after = w.raw();
+            after.write(hello(token));
+            assert.deepEqual(await after.next(), { v: 1, type: "ready" }, "refused peers free their slots");
             assert.equal(w.starts.length, 0);
         }],
         ["close", async (folder, shim) => {
@@ -421,8 +457,15 @@ world(async () => {
             const c = await stale.ready();
             c.send(ping(1));
             assert.deepEqual(result(await c.next(), "EmptyResult"), {}, "a stale socket is replaced");
-            const long = await make(folder, { open: false, runtime: path.join(process.env.JARVIS_TEST_ROOT, "r".repeat(120)) });
-            await assert.rejects(long.open(), { message: "jarvis: bridge=socket-path" });
+            // Socket path: 107 bytes accepted, 108 refused.
+            const name = 107 - Buffer.byteLength(path.join(process.env.JARVIS_TEST_ROOT, "tools.sock")) - 1;
+            assert.ok(name >= 1, "J09's socket guard leaves room for a 107-byte bridge socket");
+            const edge = await make(folder, { open: false, runtime: path.join(process.env.JARVIS_TEST_ROOT, "e".repeat(name)) });
+            const bound = await edge.open().catch(error => assert.fail("a 107-byte socket path is accepted: " + error.message));
+            assert.equal(Buffer.byteLength(bound.env.VGS_JARVIS_TOOLS_SOCKET), 107);
+            assert.equal(fs.lstatSync(bound.env.VGS_JARVIS_TOOLS_SOCKET).isSocket(), true);
+            const past = await make(folder, { open: false, runtime: path.join(process.env.JARVIS_TEST_ROOT, "e".repeat(name + 1)) });
+            await assert.rejects(past.open(), { message: "jarvis: bridge=socket-path" });
         }],
         ["dropped", async folder => {
             const w = await make(folder);
@@ -497,9 +540,17 @@ world(async () => {
             ["close-connections", "            connection.socket.destroy();\n", "", "close"],
             ["owner-closed", 'if (lifetime !== "open") fail("closed");', "", "close"],
             ["drop-closed", "if (entry.answered || entry.connection.closed) return true;", "if (entry.answered) return true;", "dropped"],
-            ["timeout-pending", 'if (!(value.outcome === "unknown" && state().action.kind === "running")) pending.delete(answer.id);',
-                "pending.delete(answer.id);", "timeout"]
+            ["final-delete", "if (value.final) pending.delete(answer.id);", "pending.delete(answer.id);", "timeout"],
+            ["hello-delay", "const HELLO_MS = 2000;", "const HELLO_MS = 2001;", "bounds"],
+            ["socket-path-edge", "Buffer.byteLength(socketPath) > SOCKET_PATH_BYTES", "Buffer.byteLength(socketPath) >= SOCKET_PATH_BYTES", "runtime"],
+            // The refusal before this fix: half-closed, still in the session's set.
+            ["refusal-closes", [["drop(connection);\n        connection.tail = \"\";", "connection.closed = true;"],
+                [', () => socket.destroy());\n        else', ');\n        else']], null, "bounds"],
+            ["mcp-refusal-silent", "else socket.end(() => socket.destroy());",
+                'else socket.end(JSON.stringify({ v: 1, type: "refused", reason }) + "\\n", () => socket.destroy());', "bounds"]
         ]) await control(bridgeFile, name, needle, replacement, row);
+        // The router alone marks a timeout not final; a final timeout loses the late completion.
+        await control(path.join(backend, "ToolRouter.js"), "router-final", 'outcome, final, kind: "tool-results",', 'outcome, final: true, kind: "tool-results",', "timeout");
         // The shared private-directory owner, reached through the bridge.
         await control(privateFile, "runtime-links", 'if (!fs.lstatSync(current).isDirectory()) fail("directory-type");',
             'if (!fs.statSync(current).isDirectory()) fail("directory-type");', "runtime");

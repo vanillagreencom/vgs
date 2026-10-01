@@ -89,12 +89,12 @@ function create({ router, state, audit, directory, clock = { set: setTimeout, cl
 
     function accept(current, socket) {
         if (session !== current) { socket.destroy(); return; }
-        const connection = { socket, phase: "hello", mcp: "new", tail: "", closed: false, timer: null };
+        const connection = { current, socket, phase: "hello", mcp: "new", tail: "", closed: false, timer: null };
         // A socket error is always followed by close, which drops the connection.
         socket.on("error", () => {});
         // A peer's end of input ends the connection; Node then ends this side.
-        socket.on("end", () => drop(current, connection));
-        socket.on("close", () => drop(current, connection));
+        socket.on("end", () => drop(connection));
+        socket.on("close", () => drop(connection));
         if (current.connections.size >= CONNECTIONS) { refuse(connection, "connections"); return; }
         current.connections.add(connection);
         connection.timer = clock.set(() => refuse(connection, "hello-deadline"), HELLO_MS);
@@ -103,22 +103,31 @@ function create({ router, state, audit, directory, clock = { set: setTimeout, cl
         socket.on("drain", () => { if (!connection.closed) socket.resume(); });
     }
 
-    /** End a connection with one refusal line. Nothing it sent is routed. */
+    /**
+     * End a connection: it leaves the session at once, buffers nothing more
+     * and is destroyed once its last write flushes, whether or not the peer
+     * closes its side. Nothing it sent is routed. Before ready the peer reads
+     * one refusal line; after it the shim relays to the harness's stdout,
+     * which carries only MCP, so the refusal is only logged.
+     */
     function refuse(connection, reason) {
         if (connection.closed) return;
-        connection.closed = true;
-        if (connection.timer !== null) clock.clear(connection.timer);
+        drop(connection);
+        connection.tail = "";
         log("refused reason=" + reason);
-        connection.socket.end(JSON.stringify({ v: 1, type: "refused", reason }) + "\n");
+        const socket = connection.socket;
+        if (connection.phase === "hello") socket.end(JSON.stringify({ v: 1, type: "refused", reason }) + "\n", () => socket.destroy());
+        else socket.end(() => socket.destroy());
     }
 
-    function drop(current, connection) {
+    function drop(connection) {
         connection.closed = true;
         if (connection.timer !== null) clock.clear(connection.timer);
-        current.connections.delete(connection);
+        connection.current.connections.delete(connection);
     }
 
     function read(current, connection, chunk) {
+        if (connection.closed) return;
         connection.tail += chunk;
         let end;
         while (!connection.closed && (end = connection.tail.indexOf("\n")) >= 0) {
@@ -195,14 +204,15 @@ function create({ router, state, audit, directory, clock = { set: setTimeout, cl
 
     /**
      * The router's result port asks here first. Returns whether the value
-     * answers a bridge call. A timed-out call stays pending while the router
-     * still holds its action, so the actual completion is also recognised.
+     * answers a bridge call. A value the router does not mark final (a
+     * timeout) keeps its entry, so the actual completion is also recognised.
      */
     function deliver(value) {
         const [answer] = value.results;
         const entry = pending.get(answer.id);
         if (entry === undefined) return false;
-        if (!(value.outcome === "unknown" && state().action.kind === "running")) pending.delete(answer.id);
+        // The router alone judges whether a later delivery for this id follows.
+        if (value.final) pending.delete(answer.id);
         if (entry.answered || entry.connection.closed) return true;
         entry.answered = true;
         const released = Policy.release(answer.item, entry.recipients);

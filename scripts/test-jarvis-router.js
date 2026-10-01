@@ -93,6 +93,7 @@ world(() => {
             assert.equal(w.runner.state.action.kind, "none");
             assert.equal(w.rows().at(-1).outcome, "completed");
             assert.equal(w.results.at(-1).results[0].id, "model-windows.list");
+            assert.equal(w.results.at(-1).final, true);
         }],
         ["refuse", implementation => {
             const w = make(implementation); w.lock(true);
@@ -101,6 +102,7 @@ world(() => {
             assert.equal(w.rows().at(-1).decision, "refuse");
             assert.equal(w.rows().at(-1).outcome, "cancelled");
             assert.deepEqual(w.refusal(), { kind: "refuse", reason: "session-locked" });
+            assert.equal(w.results.at(-1).final, true);
         }],
         ["hold", implementation => {
             const w = make(implementation); held(w);
@@ -417,9 +419,11 @@ world(() => {
             w.time(1000);
             w.dispatch({ type: "deadline", gen: w.runner.state.action.gen, op: w.runner.state.action.op });
             assert.equal(w.results.at(-1).outcome, "unknown");
+            assert.equal(w.results.at(-1).final, false, "a timeout's actual completion still follows");
             assert.equal(w.call("windows.list").reason, "busy");
             w.answers[0]({ outcome: "completed", content: "late result" });
             assert.equal(w.rows().at(-1).outcome, "completed");
+            assert.equal(w.results.at(-1).final, true, "the actual completion is the call's last delivery");
             assert.equal(w.call("windows.list").kind, "proposed");
             w.runner.close(); w.audit.close();
             const before = w.results.length;
@@ -468,6 +472,8 @@ world(() => {
             ["sentence", 'sentence(value.call, decision.scope)', '"model text"', "typed-sentence"],
             ["approval-size", "Buffer.byteLength(text) > RESULT_BYTES", "false", "approval-size"],
             ["result-size", "bytes.length <= RESULT_BYTES", "true", "result-size"],
+            ["final-timeout", 'const final = state().action.kind === "none";', "const final = true;", "timeout-and-cleanup"],
+            ["final-field", 'outcome, final, kind: "tool-results",', 'outcome, final: false, kind: "tool-results",', "allow"],
             ["unavailable-executor", 'if (value.executor === null) return refuse(value, "executor-unavailable");',
                 'if (false) return refuse(value, "executor-unavailable");', "unavailable-executor"],
             ["command-offer", "refined.command === null || executor.commands.includes(refined.command)",

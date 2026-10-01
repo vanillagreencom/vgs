@@ -29,7 +29,7 @@ The token appears only in that environment. The shim reads both values from its 
 
 ## Bridge wire
 
-The shim connects to `tools.sock` and writes one line, `{"v":1,"type":"hello","token":"..."}`. The bridge answers `{"v":1,"type":"ready"}` or one refusal line, `{"v":1,"type":"refused","reason":R}`, and ends the connection. After `ready`, each line in either direction is one MCP JSON-RPC message.
+The shim connects to `tools.sock` and writes one line, `{"v":1,"type":"hello","token":"..."}`. The bridge answers `{"v":1,"type":"ready"}` or one refusal line, `{"v":1,"type":"refused","reason":R}`, and ends the connection. After `ready`, each line in either direction is one MCP JSON-RPC message. A refusal after `ready` writes no line, since the shim relays to the harness's stdout, which carries only MCP: the bridge logs it and ends the connection.
 
 | Reason | Cause |
 |---|---|
@@ -39,7 +39,7 @@ The shim connects to `tools.sock` and writes one line, `{"v":1,"type":"hello","t
 | `connections` | The session already holds four connections |
 | `line-size` | A line passes 256 KiB |
 
-Each refusal logs `jarvis: bridge=refused reason=R` on stderr. A refused connection routes nothing, including lines queued behind its hello.
+Each refusal logs `jarvis: bridge=refused reason=R` on stderr. A refused connection leaves the session's count at once, buffers nothing more and is destroyed once its last write flushes, even when the peer keeps its own side open. It routes nothing, including lines queued behind its hello.
 
 | Shim exit | First stderr line |
 |---|---|
@@ -78,13 +78,13 @@ The sources are the specification pages above and the [2025-11-25 schema](https:
 - A held approval leaves the MCP request open until the router delivers. While a call holds the router's serial slot, another call answers the router's `busy` refusal.
 - Each result passes `Policy.release` against the session's recipient set. `ask` and `withhold` send the marker: no release-grant owner exists yet, so the bridge fails closed. `Audit.before` records the release before the bridge writes. A failed record answers `{"kind":"refuse","reason":"audit-write"}`.
 - The answer is `{content: [{type: "text", text}], isError}`. `isError` is false only for a completed outcome. Refusals, failed, unknown and cancelled outcomes set it.
-- A result for a closed connection is dropped without a release record. A call the router timed out stays pending while Session still holds its action, so its actual completion is dropped too and never reaches the brain.
+- A result for a closed connection is dropped without a release record. The router marks each result `final` unless it is a timeout whose actual completion follows; the bridge forgets a call only on its final result, so that completion is dropped too and never reaches the brain.
 
 ## Bounds
 
 | What | Ceiling | Past it |
 |---|---|---|
-| A wire line, newline included | 256 KiB, the plan's wire bound | `line-size`; the connection ends, since no id is readable |
+| A wire line, newline included | 256 KiB, the plan's wire bound | `line-size`; the connection ends, since no id is readable. After `ready` no refusal line is written |
 | Connections per session | 4: one harness connection, plus its restart while the old one drains | `connections` |
 | Time to the hello | 2 s; the shim writes it on connect | `hello-deadline` |
 | Pending calls | The router's serial slot: one live call, plus one timed-out call awaiting its actual completion | The router refuses `busy` |
@@ -103,8 +103,9 @@ The token protects the socket from processes that do not hold it. Another progra
 ## Evidence
 
 - `scripts/test-jarvis-bridge.js` runs the real Session reducer, SessionRunner, ToolRouter, Policy, Audit and ToolBridge on scratch files in [J09](validation-jarvis.md), and the real `mcp-shim` as a child with an explicit environment. The suite is the stub harness. Stand-in executors register through the router. Each message is checked against the pinned excerpt with `scripts/fixtures/schema-check.js`.
-- Its cases cover the lifecycle and offer, an allowed call proven by its pre-start audit record and executor start, a held approval in Session state, refusals as `isError`, refused hellos and tokens with nothing routed or audited, stale generations and turns, the release marker for a file result to a network recipient against plain text for a local set, protocol errors, every bound at and past its ceiling, close and reopen, the runtime directory and socket checks, dropped results and a timed-out call. A last check proves the real cases leave no socket, listener or child behind.
-- Disposable copies remove each rule: the token and hello checks, routing through the router, the brain's own results, the generation binding, release, its audit record, `isError`, the unknown tool, the socket type and path, each bound, one session, close, the private directory and its mode, the dropped and timed-out results, and three shim rules. Each turns its case red once.
+- Its cases cover the lifecycle and offer, an allowed call proven by its pre-start audit record and executor start, a held approval in Session state, refusals as `isError`, refused hellos and tokens with nothing routed or audited, stale generations and turns, the release marker for a file result to a network recipient against plain text for a local set, protocol errors, close and reopen, the runtime directory and socket checks, dropped results and a timed-out call. A last check proves the real cases leave no socket, listener or child behind.
+- Bounds: the line at 256 KiB and one byte past it, with the shim's stdout holding only JSON-RPC lines afterwards; four waiting connections and a refused fifth; the 2 s delay each hello timer requests, read from the injected clock, and the refusal when it fires; half-open peers that ignore their refusal, which are destroyed and free their slots for a valid hello; the socket path at 107 bytes accepted and 108 refused.
+- Disposable copies remove each rule: the token and hello checks, routing through the router, the brain's own results, the generation binding, release, its audit record, `isError`, the unknown tool, the socket type and path and its 107-byte edge, each bound and the hello delay, one session, close, closing a refused connection, the silent refusal after `ready`, the private directory and its mode, the dropped results, deletion only on `final`, a router that marks a timeout final, and three shim rules. Each turns its case red once.
 - `scripts/test-jarvis-mcp.js` runs the judge's table, every line and reply checked against the excerpt, with a control per rule. `scripts/test-jarvis-tools.js` holds the wire-name table and its controls. `scripts/test-jarvis-daemon.js` proves the real daemon's startup creates no `tools.sock`; a copy that opens a session turns it red.
 
 ## Omarchy comparison

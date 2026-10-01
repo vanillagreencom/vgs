@@ -1,5 +1,5 @@
-// The one owner of a private Jarvis directory: the audit store and the tool
-// bridge's runtime directory both acquire theirs here.
+// The private-directory helper the audit store and the tool bridge's runtime
+// directory share.
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
