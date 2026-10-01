@@ -47,8 +47,12 @@ function seed() {
 // Only an assertion failure proves that the instrument detected the defect.
 function mutant(file, name, needle, replacement, check, consumer = path.basename(file)) {
     const source = fs.readFileSync(file, "utf8");
-    assert.equal(source.split(needle).length - 1, 1, name + " mutation match");
-    const changed = source.replace(needle, replacement);
+    let changed = source;
+    const edits = Array.isArray(needle) ? needle : [[needle, replacement]];
+    for (const [match, value] of edits) {
+        assert.equal(changed.split(match).length - 1, 1, name + " mutation match");
+        changed = changed.replace(match, value);
+    }
     assert.notEqual(changed, source);
     const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "mutant-"));
     const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
@@ -76,6 +80,22 @@ function fsFault(method, replacement, check) {
     const original = fs[method];
     fs[method] = (...args) => replacement(original, ...args);
     try { check(); } finally { fs[method] = original; }
+}
+
+function qmlCopy(file, edits, check) {
+    let source = fs.readFileSync(file, "utf8");
+    for (const [needle, replacement, matches = 1] of edits) {
+        assert.equal(source.split(needle).length - 1, matches, "QML mutation match");
+        const changed = source.split(needle).join(replacement);
+        assert.notEqual(source, changed);
+        source = changed;
+    }
+    const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "qml-mutant-"));
+    const copy = path.join(folder, path.basename(file));
+    try {
+        fs.writeFileSync(copy, source);
+        return check(require(path.join(tree, "bin/lib/qml-library.js")).load(copy));
+    } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 }
 
 // Bind an asynchronous instrument to its source. Each invocation owns a
@@ -144,4 +164,4 @@ async function datagram(project, abstract, check) {
     }
 }
 
-module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, asyncControl, moduleCopy, datagram };
+module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, qmlCopy, asyncControl, moduleCopy, datagram };

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // jarvisd --tree ABSOLUTE_VGS_TREE
 // Stdin is the service's lease. EOF exits 0; a partial line or a refused
-// message exits 65. Task-store failure exits 74. Node below 22 or a
+// message exits 65. Task-store or confirmation-audit failure exits 74. Node below 22 or a
 // mute-store failure exits 78. Stdout carries v1 status/state
 // messages judged by JarvisProtocol; stderr carries keyed jarvis: failures.
 // Startup validates coding-task records and publishes their durable producer.
@@ -25,6 +25,8 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
 } else if (process.argv.length !== 4 || process.argv[2] !== "--tree" || !path.isAbsolute(process.argv[3])) {
     refuse(2, "jarvis: arguments=expected-tree");
 } else {
+    const Audit = require("./Audit.js");
+    const ToolRouter = require("./ToolRouter.js");
     const { load } = require(path.join(process.argv[3], "bin/lib/qml-library.js"));
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
     const Session = Protocol.Session;
@@ -35,6 +37,17 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let context = null;
     let ending = false;
     let seq = 0;
+    let audit = null;
+
+    function teardown() {
+        runner.close();
+        if (audit !== null) audit.close();
+    }
+
+    function intentIdentity(message) {
+        if (context === null || message.revision !== context.revision)
+            throw new Error("jarvis: protocol=identity");
+    }
 
     function readMute() {
         let fd;
@@ -137,11 +150,25 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             for (const line of framed.lines) {
                 const message = Protocol.accept(line, "shell");
                 if (message.type === "intent") {
-                    if (context === null || message.revision !== context.revision)
-                        throw new Error("jarvis: protocol=identity");
+                    intentIdentity(message);
                     // Key edges are ordered input, not asynchronous completions.
                     // The observed gen can lag a down followed immediately by up.
-                    runner.dispatch({ type: message.intent === "mute" ? "mute-toggle" : message.intent });
+                    if (message.intent === "confirm" || message.intent === "cancel") {
+                        runner.dispatch({ type: message.intent === "cancel" ? "approval-cancel" : "confirm",
+                            gen: message.gen, id: message.id, digest: message.digest, source: message.source });
+                    } else {
+                        const dispatch = () => {
+                            runner.dispatch({ type: message.intent === "mute" ? "mute-toggle" : message.intent });
+                        };
+                        if (["mute", "stop"].includes(message.intent)) audit.cleanup(message.intent, dispatch);
+                        else dispatch();
+                    }
+                    continue;
+                }
+                if (message.type === "shown") {
+                    intentIdentity(message);
+                    const hold = runner.state.approval;
+                    runner.dispatch({ type: "shown", gen: message.gen, op: hold.op, id: message.id });
                     continue;
                 }
                 if (context !== null && (message.revision !== context.revision
@@ -162,6 +189,16 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         + recovered.status + " signal=" + recovered.signal + " cause=" + recovered.stderr.trim());
                 }
                 context = message;
+                if (first) {
+                    audit = Audit.create({ state: context.directories.state });
+                    const router = ToolRouter.create({ session: Session, state: () => runner.state,
+                        dispatch: event => runner.dispatch(event), audit,
+                        context: () => ({ profile: runner.state.settings.policy ?? "standard",
+                            locked: context.locked, denied: null }),
+                        result: value => runner.ports.brain.outcome(value) });
+                    // Executor owners register only after their real probes.
+                    Object.assign(runner.ports, router.ports);
+                }
                 if (first && readMute()) runner.dispatch({ type: "mute" });
                 write({ v: 1, type: "status", gen: runner.state.gen, revision: context.revision,
                     daemon: context.locked ? "locked" : "ready" });
@@ -175,9 +212,9 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             }
         } catch (error) {
             ending = true;
-            runner.close();
+            teardown();
             void audio.close("protocol");
-            refuse(error.message.startsWith("jarvis: tasks=") ? 74
+            refuse(error.message.startsWith("jarvis: tasks=") || error.message.startsWith("jarvis: audit=") ? 74
                 : error.message.startsWith("jarvis: mute=") ? 78 : 65, error.message);
         }
     }
@@ -185,7 +222,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     function ioFailed(channel, error) {
         if (ending) return;
         ending = true;
-        runner.close();
+        teardown();
         const released = audio.close(channel);
         refuse(74, "jarvis: " + channel + "=" + error.code);
         // Node's standard output can retain a blocked write after destroy.
@@ -199,7 +236,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         read(decoder.end());
         if (ending) return;
         ending = true;
-        runner.close();
+        teardown();
         void audio.close("lease");
         if (tail !== "") refuse(65, "jarvis: protocol=unterminated-line");
         // No child or handle holds the process alive after lease loss.

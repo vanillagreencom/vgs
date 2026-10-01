@@ -122,9 +122,10 @@ world(() => {
             const needle = `${command}: { effect: "${row[2]}"`;
             control("browser-effect-" + command, needle, `${command}: { effect: "destructive"`, logic => check(logic, row));
         } else {
-            const needle = `"${row[0]}": { effect: "${row[2]}"`;
+            const needle = toolsSource.split("\n").find(line => line.trim().startsWith(`"${row[0]}": {`));
             const wrong = row[2] === "read" ? "exec" : "read";
-            control("effect-" + row[0], needle, `"${row[0]}": { effect: "${wrong}"`, logic => check(logic, row));
+            control("effect-" + row[0], needle, needle.replace(`effect: "${row[2]}"`, `effect: "${wrong}"`),
+                logic => check(logic, row));
         }
         if (row[3] != null) {
             const line = toolsSource.split("\n").find(line => row[0] === "browser"
@@ -205,11 +206,19 @@ world(() => {
         logic => check(logic, ["shell.argv", { argv: ["pwd", "extra"], cwd: project, network: false }, "exec", "command"]));
     control("network", 'if (call.args.network) effect = "external";', 'if (false && call.args.network) effect = "external";',
         logic => check(logic, ["shell.argv", { argv: ["pwd"], cwd: project, network: true }, "external", "command"]));
-    control("snapshot", 'call: structuredClone(call)', 'call: call', logic => {
+    control("snapshot", 'call: freeze(structuredClone(call))', 'call: call', logic => {
         const call = { id: "files.write", args: { path: target, text: "old" } };
         const result = logic.refine(call);
         call.args.text = "changed";
         assert.equal(result.call.args.text, "old");
     });
+    const frozen = logic => {
+        const result = logic.refine({ id: "shell.argv", args: { argv: ["pwd"], cwd: project, network: false } });
+        assert.equal(Object.isFrozen(result.call), true);
+        assert.equal(Object.isFrozen(result.call.args), true);
+        assert.equal(Object.isFrozen(result.call.args.argv), true);
+    };
+    frozen(Tools);
+    control("immutable-call", "call: freeze(structuredClone(call))", "call: structuredClone(call)", frozen);
     console.log("test-jarvis-tools: ok calls=" + cases.length + " controls=" + controls);
 });

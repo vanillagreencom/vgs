@@ -1,7 +1,7 @@
 // Own reducer effects and deadlines in the daemon. Ports own their resources;
 // each receives a completion function stamped with its original gen/op.
-// Audio supplies its production ports. Speech, brain and router ports remain
-// unavailable until their owners can enforce the session prerequisites.
+// Audio and the action router supply production ports. Speech and brain ports
+// remain unavailable until their owners enforce the session prerequisites.
 "use strict";
 
 class SessionRunner {
@@ -25,8 +25,13 @@ class SessionRunner {
             while (this.queue.length) {
                 const result = this.session.reduce(this.state, this.queue.shift());
                 this.state = result.state;
+                this.ports.tools.sync(this.state);
+                // A published mute value must already survive a daemon restart.
+                for (const effect of result.effects)
+                    if (effect.kind === "mute-store") this.consume(effect);
                 this.publish(this.state, this.session.phaseOf(this.state));
-                for (const effect of result.effects) this.consume(effect);
+                for (const effect of result.effects)
+                    if (effect.kind !== "mute-store") this.consume(effect);
             }
             this.schedule();
         } finally { this.draining = false; }
@@ -49,9 +54,10 @@ class SessionRunner {
         case "playback-flush": this.ports.playback.flush(e, () => done("flushed")); break;
         case "tool-start": this.ports.tools.start(e, outcome => done("tool-done", { outcome })); break;
         case "tool-cancel": this.ports.tools.cancel(e); break;
-        case "tool-outcome": this.ports.brain.outcome(e); break;
-        case "approval-show": this.ports.approval.show(e, () => done("shown")); break;
+        case "tool-outcome": this.ports.tools.outcome(e); break;
+        case "approval-show": this.ports.approval.show(e); break;
         case "approval-ended": this.ports.approval.end(e); break;
+        case "confirm-refused": this.ports.approval.refused(e); break;
         case "mute-store": this.ports.mute.store(e.muted); break;
         default: throw new Error("jarvis: session=effect kind=" + e.kind);
         }
@@ -76,8 +82,10 @@ class SessionRunner {
 
     // Lease loss also releases a deadline which could otherwise retain Node.
     close() {
+        if (this.lifetime.kind !== "open") return;
         this.lifetime = { kind: "closed" };
         this.dispatch({ type: "lease-ended" });
+        this.ports.tools.close();
     }
 }
 
@@ -89,8 +97,8 @@ function unavailable() {
         capture: { open: refuse, close: (e, done) => done(), collect: refuse },
         brain: { send: refuse, cancel: (e, done) => done(), close: () => {}, outcome: refuse },
         playback: { start: refuse, flush: (e, done) => done() },
-        tools: { start: refuse, cancel: refuse },
-        approval: { show: refuse, end: () => {} }
+        tools: { start: refuse, cancel: refuse, outcome: refuse, sync: () => {}, close: () => {} },
+        approval: { show: refuse, end: () => {}, refused: refuse }
     };
 }
 

@@ -43,8 +43,8 @@ function world(implementation = Owner, synchronous = false, session = Session) {
             outcome: port("outcome")
         },
         playback: { start: port("play"), flush: port("flush") },
-        tools: { start: port("tool"), cancel: port("tool-cancel") },
-        approval: { show: port("approval"), end: port("approval-end") }
+        tools: { start: port("tool"), cancel: port("tool-cancel"), outcome: port("outcome"), sync: () => {}, close: () => {} },
+        approval: { show: port("approval"), end: port("approval-end"), refused: port("confirm-refused") }
     }, {
         now: () => at,
         set: (fn, ms) => {
@@ -83,13 +83,51 @@ function thinking(w) {
     assert.equal(w.runner.state.turn.kind, "thinking");
 }
 const tests = [
+    ["durable-mute", impl => {
+        const w = world(impl);
+        let stored = false;
+        w.runner.ports.mute.store = value => { stored = value; };
+        const publish = w.runner.publish;
+        w.runner.publish = (state, phase) => {
+            if (state.mute.kind === "on") assert.equal(stored, true);
+            if (state.mute.kind === "off") assert.equal(stored, false);
+            publish(state, phase);
+        };
+        w.dispatch("mute-toggle");
+        w.dispatch("mute-toggle");
+    }],
+    ["router-ports", impl => {
+        const w = world(impl);
+        const syncs = [];
+        let closed = 0;
+        w.runner.ports.tools.sync = state => syncs.push(state);
+        w.runner.ports.tools.close = () => { closed++; };
+        w.dispatch("confirm", { gen: w.runner.state.gen, id: "unknown", digest: "a".repeat(64), source: "key" });
+        assert.equal(w.calls.at(-1)?.name, "confirm-refused");
+        assert.equal(w.calls.at(-1)?.e.reason, "no-hold");
+        assert.equal(syncs.at(-1), w.runner.state);
+        thinking(w);
+        w.pending.send("approval", { id: "test", digest: "a".repeat(64), physical: false,
+            text: "Fixture", tool: "fixture", timeoutMs: 1000, cancellable: true });
+        assert.equal(w.pending.approval, undefined, "the show port cannot acknowledge drawing");
+        w.dispatch("shown", { gen: w.runner.state.gen, op: w.runner.state.approval.op, id: "test" });
+        w.tick(700);
+        w.dispatch("confirm", { gen: w.runner.state.gen, id: "test", digest: "a".repeat(64), source: "button" });
+        assert.equal(w.calls.at(-1).name, "tool");
+        assert.equal(w.calls.at(-1).e.confirmed, "button");
+        w.pending.tool("completed");
+        assert.equal(w.calls.at(-1).name, "outcome");
+        w.runner.close();
+        w.runner.close();
+        assert.equal(closed, 1);
+    }],
     ["mute-persistence", impl => {
         const w = world(impl);
         w.dispatch("talk-down");
         w.pending.open();
         w.dispatch("mute-toggle");
         assert.equal(w.runner.state.mute.kind, "muting");
-        assert.deepEqual(w.calls.at(-1), { name: "mute-store", value: true });
+        assert.deepEqual(w.calls.find(call => call.name === "mute-store"), { name: "mute-store", value: true });
         w.pending.close();
         assert.equal(w.runner.state.mute.kind, "on");
         w.dispatch("mute-toggle");
@@ -185,12 +223,14 @@ const tests = [
     ["approval-and-tool", impl => {
         const w = world(impl);
         thinking(w);
-        w.pending.send("approval", { id: "test", digest: "a".repeat(64) });
-        w.pending.approval();
+        w.pending.send("approval", { id: "test", digest: "a".repeat(64),
+            physical: true, text: "Fixture", tool: "fixture", timeoutMs: 50, cancellable: true });
+        w.runner.dispatch({ type: "shown", gen: w.runner.state.gen,
+            op: w.runner.state.approval.op, id: "test" });
         assert.equal(w.runner.state.approval.shownAt, 0);
         w.pending.send("tool", { tool: "blocked", timeoutMs: 10, cancellable: true });
         assert.equal(w.calls.some(c => c.name === "tool"), false);
-        w.dispatch("approval-cancel");
+        w.dispatch("approval-cancel", { id: "test", gen: w.runner.state.gen });
         assert.equal(w.calls.at(-1).name, "approval-end");
         w.pending.send("tool", { tool: "fixture", timeoutMs: 50, cancellable: true });
         w.tick(50);
@@ -259,6 +299,11 @@ const source = fs.readFileSync(file, "utf8");
 let controls = 0;
 try {
     const mutants = [
+        ["durable-mute", 'if (effect.kind === "mute-store") this.consume(effect);',
+            'if (false) this.consume(effect);', "durable-mute"],
+        ["router-sync", 'this.ports.tools.sync(this.state);', 'void this.state;', "router-ports"],
+        ["confirmation-refusal", 'this.ports.approval.refused(e);', 'void e;', "router-ports"],
+        ["router-close", 'this.ports.tools.close();', 'void this.ports.tools;', "router-ports"],
         ["mute-persistence", 'this.ports.mute.store(e.muted);', 'void e.muted;', "mute-persistence"],
         ["queue", 'if (this.draining) return;', 'if (false && this.draining) return;', "synchronous-queue"],
         ["identity", 'gen: e.gen, op: e.op', 'gen: e.gen, op: e.op + 1', "identity"],
@@ -266,7 +311,7 @@ try {
         ["deadline-cancel", 'op: e.target', 'op: e.op', "identity"],
         ["timer-replace", 'if (this.timer !== null) this.clock.clear(this.timer);', 'if (false && this.timer !== null) this.clock.clear(this.timer);', "timer-release"],
         ["closed-clock", 'if (this.lifetime.kind === "closed") return;', 'if (false && this.lifetime.kind === "closed") return;', "closed-clock"],
-        ["outcome", 'this.ports.brain.outcome(e);', 'void this.ports.brain.outcome;', "approval-and-tool"],
+        ["outcome", 'this.ports.tools.outcome(e);', 'void this.ports.tools.outcome;', "approval-and-tool"],
         ["completed-connection", 'this.ports.brain.close(e);', 'if (false) this.ports.brain.close(e);', "completed-connection"],
         ["unavailable", 'function refuse() { throw new Error("jarvis: session=adapter-unavailable"); }',
             'function refuse() { if (false) throw new Error("jarvis: session=adapter-unavailable"); }', "unavailable"]

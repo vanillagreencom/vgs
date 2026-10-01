@@ -7,9 +7,9 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 ## Owners
 
 - `Policy.js::decide` is the one action judge. `Tools.js::refine` narrows model calls. `Denied.js::create` owns filesystem protection.
-- The planned J19 router owns an immutable call snapshot, conversation grants, serial execution and approval binding. It offers only tools whose executors, confinement and required commands exist. `Tools.TABLE` is a reserved contract, not an offer list.
-- J11 owns turn lifetime. J19 calls `Policy.observe` after content reaches that turn, not when a read starts or fails. A new turn starts clean. Existing taint never becomes clean.
-- [The audit writer](jarvis-audit.md) owns redaction and persistence before execution. The planned router consumes its fail-closed boundary. A policy answer alone does not satisfy that requirement.
+- [The router](jarvis-approval.md) owns the immutable call snapshot, conversation grants, serial execution and approval binding. It offers only registered, command-ready tools. Executor owners must prove confinement before registration. `Tools.TABLE` is a reserved contract, not an offer list.
+- Session owns turn lifetime. The router calls `Policy.observe` after content reaches that turn, not when a read starts or fails. A new turn starts clean. Existing taint never becomes clean.
+- [The audit writer](jarvis-audit.md) owns redaction and persistence before execution. The router consumes its fail-closed boundary. A policy answer alone does not satisfy that requirement.
 - `Policy.release` owns outbound consent separately from the action decision. [Jarvis release](jarvis-release.md) defines its immutable recipient set and the network door. An `external` action still needs both decisions.
 - [Kernel confinement](jarvis-sandbox.md) consumes the protected snapshot. A shell line is a program, not a string the policy can prove safe. Shell argv wrappers remain `exec`. Direct elevation argv is refused, but that check cannot confine a program that starts another program.
 - J27 supplies all discovered and hand-added account roots. The filesystem judge protects those roots in addition to its built-in credential roots. It opens no credential, marker or profile content.
@@ -18,7 +18,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 
 `Tools.refine({ id, args })` returns `{ kind: "call", call, effect, executor, command, paths, input, source }` or `{ kind: "refuse", reason }`. `call` is a copied snapshot. Extra or missing required keys and invalid argument types refuse. Optional task account and agent selections do not grant authority.
 
-`Tools.TABLE` holds closed JSON Schema object descriptors, effects, executor ids and required commands. `Tools.BROWSER` holds the browser subcommands. They are frozen data. The table supports the schema types it declares, not an arbitrary schema supplied by a model. The future bridge uses these same descriptors instead of writing a second schema.
+`Tools.TABLE` holds closed JSON Schema object descriptors, typed sentence templates, effects, executor ids and required commands. `Tools.BROWSER` holds the browser subcommands. They are frozen data. Refined call snapshots are frozen too. The table supports the schema types it declares, not an arbitrary schema supplied by a model. The future bridge uses these same descriptors instead of writing a second schema.
 
 Browser arguments are named fields, not vendor argv. Unknown commands and extra flags refuse. Action references use snapshot element ids, not flags or arbitrary selectors. URLs admit HTTP and HTTPS without userinfo. This prevents a caller from selecting a host browser profile or passing browser security overrides. J51 still owns the private session and vendor action policy.
 
@@ -32,7 +32,7 @@ The exact read-only argv table belongs to `Tools.js`. Extra options, an absolute
 |---|---|
 | `profile` | Service settings, validated by their owner. The profile table lives in `Policy.js`. An unknown profile refuses. |
 | `locked` | Current service observation of the core session capability. Only literal `false` permits a decision. Missing state refuses. |
-| `taint` | J11's turn record: `{ kind: "clean" }` or `{ kind: "tainted" }`. Missing or invalid taint refuses. |
+| `taint` | Router's value keyed to Session's turn: `{ kind: "clean" }` or `{ kind: "tainted" }`. Missing or invalid taint refuses. |
 | `denied` | Current `Denied.create` result. Every path-bearing call requires it. |
 | `input.target` | J47 or J51's send-time observation: `{ kind, id, password? }`. Kinds are application, terminal, site, VGS, lock and polkit. The code uses lower-case ids for these kinds. Unknown targets or empty identities refuse. |
 | `input.key` | J47's `{ request, chord, effective }`. `request` must equal the call's chord. `chord` and every effective Jarvis chord are `{ modifiers, keycode }` records resolved against the live keymap. |

@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API or local account when you request it. The installed daemon has no speech or conversation engine and performs no desktop actions.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API or local account when you request it. The installed daemon has no speech or conversation engine and performs no desktop actions.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -16,6 +16,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Mute persists across restarts and blocks talk input.
 - A bar icon shows whether Jarvis is off, ready, listening, working, muted or has a problem.
 - A click on the bar icon toggles mute, as the Mute key does.
+- The child records refused action approvals and privacy cleanup.
 - Settings opens Add key in a floating terminal with hidden key input.
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
 - Settings and the launcher open local voice setup in a floating terminal.

@@ -10,7 +10,7 @@ Covers: shell/plugins/vgs.jarvis/backend/OpenAIChat.js, shell/plugins/vgs.jarvis
 - `Sse.js::reader` parses the [WHATWG event stream format](https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation) from bytes. It owns no transport or timer. Its caller chooses the line, event and total byte ceilings.
 - `WireBrain.js::create` owns one conversation's history, release reports, looked-up key and live request. The session owns the [net owner, recipient set and grants](jarvis-release.md#owners). Both drivers use this owner; a provider row for a different driver refuses `brain=driver`.
 - `OpenAIChat.js` and `AnthropicMessages.js` own their wire encoding and event judges. They send only through the shared owner.
-- The session's turn loop (J33) connects the driver to the [session ports](jarvis-session.md) and owns context bounds and summaries. Account choice and the `brains` and `models` choices status belong to J27. The driver publishes no model list. J19 owns grants and the approval prompt. J50 owns OCR text for a brain without image input.
+- The session's turn loop (J33) connects the driver to the [session ports](jarvis-session.md) and [action router](jarvis-approval.md), and owns context bounds and summaries. Account choice and the `brains` and `models` choices status belong to J27. The driver publishes no model list. The router owns action scopes; J33 integrates recipient-labelled release consent. J20 owns approval display. J50 owns OCR text for a brain without image input.
 
 ## Driver contract
 

@@ -1,7 +1,7 @@
 .pragma library
 .import "Session.js" as Session
 
-// Service produces hello snapshots and intent(talk-down, talk-up, mute, stop).
+// Shell produces hello, intent and shown. Voice confirmation is daemon-internal.
 // Daemon produces status/state/devices/level/audio-fault. A line excludes its LF.
 var MAX_LINE_BYTES = 256 * 1024;
 
@@ -49,6 +49,10 @@ function directory(value) {
     return typeof value === "string" && value.length > 1 && value[0] === "/" && !/[\x00-\x1f\x7f]/.test(value);
 }
 
+function approvalId(value) {
+    return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+}
+
 // Return the judged message, or throw a keyed protocol error.
 function accept(line, direction) {
     if (typeof line !== "string") fail("line-not-string");
@@ -84,8 +88,24 @@ function accept(line, direction) {
         break;
     case "intent":
         if (direction !== "shell") fail("direction-intent");
-        keys(message, ["v", "type", "gen", "revision", "intent"], "intent");
-        if (["talk-down", "talk-up", "mute", "stop"].indexOf(message.intent) === -1) fail("intent");
+        var fields = ["v", "type", "gen", "revision", "intent"];
+        if (message.intent === "confirm") {
+            keys(message, fields.concat(["id", "digest", "source"]), "confirm");
+            if (!approvalId(message.id)) fail("approval-id");
+            if (typeof message.digest !== "string" || !/^[0-9a-f]{64}$/.test(message.digest)) fail("approval-digest");
+            if (["key", "button"].indexOf(message.source) === -1) fail("approval-source");
+        } else if (message.intent === "cancel") {
+            keys(message, fields.concat(["id"]), "cancel");
+            if (!approvalId(message.id)) fail("approval-id");
+        } else {
+            keys(message, fields, "intent");
+            if (["talk-down", "talk-up", "mute", "stop"].indexOf(message.intent) === -1) fail("intent");
+        }
+        break;
+    case "shown":
+        if (direction !== "shell") fail("direction-shown");
+        keys(message, ["v", "type", "gen", "revision", "id"], "shown");
+        if (!approvalId(message.id)) fail("approval-id");
         break;
     case "status":
         if (direction !== "daemon") fail("direction-status");

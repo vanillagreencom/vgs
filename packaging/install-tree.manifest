@@ -245,6 +245,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Speakable.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/SpeechLanguage.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Sse.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tasks.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/ToolRouter.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/WireBrain.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/accounts.js

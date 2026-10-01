@@ -1,0 +1,61 @@
+# Jarvis action routing and approval
+
+Covers: shell/plugins/vgs.jarvis/backend/ToolRouter.js, shell/plugins/vgs.jarvis/backend/Tools.js, shell/plugins/vgs.jarvis/Session.js, shell/plugins/vgs.jarvis/backend/session-runner.js, shell/plugins/vgs.jarvis/backend/jarvisd.js, shell/plugins/vgs.jarvis/JarvisProtocol.js, scripts/test-jarvis-router.js
+
+[D082](../decisions/D082-jarvis-approval-bound-to-the-action.md) refines [D070](../decisions/D070-jarvis-action-policy.md). [Policy](jarvis-policy.md) judges the typed action. [Session](jarvis-session.md) judges confirmation identity and time. [Audit](jarvis-audit.md) persists the decision before an executor starts.
+
+## Owners
+
+- `ToolRouter.create` owns the daemon's serial slot, frozen call, executor registry, action grants and turn taint. It receives state and dispatch from `SessionRunner`. Its trusted context producer supplies current profile, lock and Denied facts. No model field supplies those facts.
+- The daemon acquires one router and one audit writer on its first hello. The router clears conversation grants when Session changes generation or ends the conversation. Each thinking turn starts with clean taint. Reusing the leased owner avoids a second conversation clock or identity owner.
+- Production registers no executor. The daemon offers no tool and creates no brain. J45 through J51 own actual executors; J33 connects the brain stream. J28 owns the external tool bridge. J20 owns the bubble, key and voice phrase matcher.
+- The router sends `tool` or `approval` proposals only after `Policy.decide`. Session retains its defensive proposal check. A router call refuses `busy` while Session cannot propose or a proposal occupies the queued serial slot. The brain receives that refusal; the router never queues another call silently.
+- `tools.sync` runs before publication and effect delivery. `tools.start`, `tools.cancel`, `tools.outcome` and `tools.close` consume the reducer's lifecycle effects. The router's approval show port does not acknowledge drawing. Only the shell's `shown` message does that.
+
+## Executor and brain contracts
+
+| API | Producer and consumer |
+|---|---|
+| `register(id, executor)` | An executor owner registers its Tools executor id once after its confinement and command probes pass. The record supplies `commands`, `timeoutMs`, `cancellable`, `start(call, done)`, optional `cancel(call)` and optional `observe(call)`. Cancellable executors require cancel. |
+| `commands` | Commands the registrant has proved present. A table row with a missing command has no offer and refuses execution. Node-native rows need no command. Registration alone does not establish confinement. |
+| `observe(call)` | Input executors provide fresh target and layout-resolved key facts. A missing observer leaves input facts absent; Policy refuses them. Denied facts come from the trusted context producer, not this observer. |
+| `offer()` | Returns `{id, description, parameters}` only for registered, command-ready rows. Tools owns descriptions and schemas. Closing the owner removes all offers. |
+| `route(call, turn)` | Brain call `{kind:"tool-call", id, tool, arguments}` plus Session's `{gen, op}`. Tools narrows the tool and arguments. A stale turn refuses before proposal. Session checks deadlines first, including when its timer has not fired. |
+| `start(call, done)` | Receives the immutable `{id,args}` snapshot, not the brain envelope. Completion is `{outcome:"completed"\|"failed"\|"unknown", content:string}`. Exceptions become failed outcomes without copying exception text. |
+| `result(value)` | J33's brain port receives `{gen, op, outcome, kind:"tool-results", results:[{id,item}]}`. `id` is the original model call id; `item` is a Policy-labelled text item. Refusals use a JSON `{kind:"refuse",reason}` item and cancelled outcome. |
+
+The router caps result text at the plan's 16 KiB tool-result bound. It marks clipping. A held sentence above that same bound refuses as `approval-size`; it cannot overflow the state wire. Timeout reports unknown but retains Session's serial slot until the actual completion. The later outcome still names the original generation and turn. J33 must match those identities rather than deliver an old result into a new turn.
+
+Tool result labels come from `Tools.refine(...).source`. Metadata-only results use desktop. A source reaches `Policy.observe` only when its result reaches the same live thinking turn. A late result cannot taint a newer turn.
+
+## Action binding
+
+The router creates a random UUID for each proposal. Its digest is SHA-256 hex over the tool id, a newline and canonical argument JSON. Object keys sort recursively; array order stays unchanged. Tools copies and freezes the call before the router hashes, displays or executes it. The [Node 22 crypto reference](https://github.com/nodejs/node/blob/v22.20.0/doc/api/crypto.md) defines `createHash`, `update`, `digest` and `randomUUID`.
+
+`Tools.TABLE` supplies each sentence template. The router substitutes only typed arguments. It never uses a model description. Trusted terminal input shows the exact text after its fixed label. A scoped input hold names the application or site and states that Jarvis can act as the user there.
+
+Session's held record retains the call id, digest, physical requirement, sentence, original turn, tool and executor lifetime facts. `confirm` carries the id, digest, observed generation and source. Session accepts only the live identity, after a drawing acknowledgment and the plan's drawing delay, before the approval deadline. Key and button are physical user intent. Voice cannot accept a physical hold. Unknown sources refuse.
+
+Every refused confirmation emits `confirm-refused`. The router audits it even when no hold exists. Acceptance retires the hold before emitting tool-start, so a repeated confirmation finds no hold. Interrupt, cancel, stop, lock, setting change, thinking timeout and approval timeout retire holds. A replaced or old-generation confirmation cannot release a newer hold.
+
+The brain and executors receive no confirm method. A model tool called confirm or confirm_last is unknown. J20 may dispatch voice only from the daemon's final user transcript after it enforces the plan's utterance and playback conditions. Shell wire never admits voice.
+
+## Fresh decisions and grants
+
+Immediately before start, the router calls Policy again with current lock, paths, input target, taint and grants. An accepted confirmation authorizes only its original effect, physical requirement and scope. A changed target or stronger effect requires another proposal. A fresh refusal ends the action without an executor start.
+
+Audit.before wraps every executor start. Failure returns audit-write and starts nothing. A scoped confirmation adds its grant only inside that admitted start, after the fresh scope check. Rejecting a confirmation, changing its target or failing audit cannot issue a grant. Grants survive turns in the same conversation, never a new generation or router. The router caps application and site grants at 64 scopes; another new scope refuses grant-limit without evicting an existing grant. They are action scopes, not the recipient-labelled release grants in [jarvis-release.md](jarvis-release.md).
+
+Held decisions, refusals, retirement and outcomes use Audit.record. Outcomes retain the original turn identity. A failed outcome write reports its keyed failure to the brain but cannot undo an action. A confirmation refusal that cannot be recorded ends the daemon with exit 74 and the audit cause. Stop, mute and lease cleanup use Audit.cleanup; an unwritable store cannot block privacy teardown. The daemon closes its writer after ending the runner.
+
+## Wire and residual boundary
+
+[The controls wire](jarvis-controls.md#wire) owns confirm, cancel and shown shapes. The existing Service does not send them yet. Held state reaches the shell through the existing state message.
+
+No VGS check can identify another same-user program as a human key press. Such a program can produce the effective confirm bind when J20 adds it. Serial holds remove Jarvis's own execution path; sandbox confinement and J47's protected targets and own-chord refusals supply the other boundaries. Those executors must land before their tools are offered.
+
+## Evidence and comparison
+
+`scripts/test-jarvis-router.js` runs the real reducer, runner, Policy and private-file Audit with stand-in executors in [J09](validation-jarvis.md). Its named cases cover immutable binding, typed sentences, held and running serialization, synthetic, replayed, expired, early and replaced confirmations, voice restrictions, fresh lock/path/target decisions, audit failure, scope lifetime, taint, stale turns, outcomes and teardown. Disposable controls remove each independent rule. Session and protocol suites test their own guards. The real daemon suite proves an unheld confirm reaches Session and writes a refusal.
+
+The read-only Omarchy shell agents plugin separates display from collectors. It provides no action approval judge. The read-only omarchy-voice tools owner holds one pending action; its live loop blocks unrelated calls during that hold and journals before action. VGS keeps those controls. Its realtime driver also exposes confirm_last to model calls. VGS differs: no model confirmation API, immutable digest, reducer-owned drawing delay and deadline, physical-only destructive approval and fresh typed Policy decisions.

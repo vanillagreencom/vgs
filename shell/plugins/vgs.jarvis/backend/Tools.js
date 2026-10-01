@@ -1,4 +1,4 @@
-// Reserved call contracts for the planned router and executors. This is not
+// Reserved call contracts for the router and executor owners. This is not
 // a tool offer list: no executor is registered or started here.
 "use strict";
 const path = require("node:path");
@@ -25,48 +25,48 @@ const objectValue = { type: "object" };
 // Each row owns its argument shape, effect, executor, requirement and output
 // source. Executors may add a row only with a test and a real consumer.
 const TABLE = {
-    "help": { effect: "read", executor: "guidance", command: null, schema: { topic: oneOf(["windows", "apps", "input", "clipboard", "media", "notify", "files", "shell", "vision", "browser"]) } },
-    "windows.list": { effect: "read", executor: "windows", command: "hyprctl", schema: {} },
-    "windows.focus": { effect: "reversible", executor: "compositor", command: null, schema: { window: windowId } },
-    "windows.reveal": { effect: "reversible", executor: "compositor", command: null, schema: { window: windowId } },
-    "windows.move": { effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, x: integer, y: integer } },
-    "windows.resize": { effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, width: positive, height: positive } },
-    "windows.close": { effect: "persistent", executor: "compositor", command: null, schema: { window: windowId } },
-    "windows.fullscreen": { effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, mode: oneOf(["fullscreen", "maximized"]), action: oneOf(["set", "unset", "toggle"]) } },
-    "windows.float": { effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, action: oneOf(["set", "unset", "toggle"]) } },
-    "windows.monitor": { effect: "reversible", executor: "compositor", command: null, schema: { monitor: text } },
-    "apps.list": { effect: "read", executor: "apps", command: null, schema: {} },
-    "apps.launch": { effect: "reversible", executor: "apps", command: null, schema: { desktop: desktop } },
-    "apps.open": { effect: "reversible", executor: "apps", command: null, schema: { path: absolute }, paths: [["path", "read"]] },
-    "apps.url": { effect: "reversible", executor: "apps", command: null, schema: { url: url } },
-    "input.text": { effect: "input", executor: "input", command: "wtype", schema: { text: text }, input: "text" },
-    "input.key": { effect: "input", executor: "input", command: "wtype", schema: { chord: text }, input: "key" },
-    "input.click": { effect: "input", executor: "input", command: "wlrctl", schema: { x: integer, y: integer, button: oneOf(["left", "right", "middle"]) }, input: "pointer" },
-    "input.scroll": { effect: "input", executor: "input", command: "wlrctl", schema: { x: integer, y: integer, direction: oneOf(["up", "down", "left", "right"]), steps: positive }, input: "pointer" },
-    "clipboard.read": { effect: "read", executor: "clipboard", command: "wl-paste", schema: {}, source: "clipboard" },
-    "clipboard.write": { effect: "reversible", executor: "clipboard", command: "wl-copy", schema: { text: text } },
-    "media.play": { effect: "reversible", executor: "media", command: "playerctl", schema: {} },
-    "media.pause": { effect: "reversible", executor: "media", command: "playerctl", schema: {} },
-    "media.next": { effect: "reversible", executor: "media", command: "playerctl", schema: {} },
-    "media.volume": { effect: "reversible", executor: "media", command: "wpctl", schema: { value: { type: "number", minimum: 0, maximum: 1 } } },
-    "media.mute": { effect: "reversible", executor: "media", command: "wpctl", schema: { muted: bool } },
-    "media.brightness": { effect: "reversible", executor: "media", command: "brightnessctl", schema: { value: { type: "integer", minimum: 0, maximum: 100 } } },
-    "notify.notification": { effect: "reversible", executor: "notify", command: "notify-send", schema: { title: text, body: text } },
-    "notify.toast": { effect: "reversible", executor: "wire", command: null, schema: { title: text, body: text } },
-    "files.list": { effect: "read", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "read"]] },
-    "files.read": { effect: "read", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "read"]], source: "file" },
-    "files.search": { effect: "read", executor: "files", command: null, schema: { path: absolute, query: text }, paths: [["path", "tree-read"]], source: "file" },
-    "files.write": { effect: "persistent", executor: "files", command: null, schema: { path: absolute, text: { ...text, minLength: 0 } }, paths: [["path", "write"]] },
-    "files.move": { effect: "persistent", executor: "files", command: null, schema: { from: absolute, to: absolute }, paths: [["from", "move"], ["to", "write"]] },
-    "files.delete": { effect: "destructive", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "remove"]] },
-    "shell.argv": { effect: "exec", executor: "sandbox", command: "bwrap", schema: { argv: strings, cwd: absolute, network: bool }, paths: [["cwd", "workspace"]], source: "command" },
-    "shell.line": { effect: "exec", executor: "sandbox", command: "bwrap", schema: { line: text, cwd: absolute, network: bool }, paths: [["cwd", "workspace"]], source: "command" },
-    "vision.screen": { effect: "read", executor: "vision", command: "grim", schema: {}, source: "screen" },
-    "vision.monitor": { effect: "read", executor: "vision", command: "grim", schema: { monitor: text }, source: "screen" },
-    "vision.window": { effect: "read", executor: "vision", command: "grim", schema: { window: windowId }, source: "screen" },
-    "vision.region": { effect: "read", executor: "vision", command: "grim", schema: { x: integer, y: integer, width: positive, height: positive }, source: "screen" },
-    "task.start": { effect: "exec", executor: "task", command: null, schema: { goal: text, cwd: absolute, agent: text, account: text }, optional: ["agent", "account"], paths: [["cwd", "workspace"]], source: "agent" },
-    "browser": { executor: "browser", command: "agent-browser", schema: { command: text, args: objectValue } }
+    "help": { sentence: "Read help for {topic}", effect: "read", executor: "guidance", command: null, schema: { topic: oneOf(["windows", "apps", "input", "clipboard", "media", "notify", "files", "shell", "vision", "browser"]) } },
+    "windows.list": { sentence: "List windows", effect: "read", executor: "windows", command: "hyprctl", schema: {} },
+    "windows.focus": { sentence: "Focus window {window}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId } },
+    "windows.reveal": { sentence: "Reveal window {window}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId } },
+    "windows.move": { sentence: "Move window {window} to {x}, {y}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, x: integer, y: integer } },
+    "windows.resize": { sentence: "Resize window {window} to {width} by {height}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, width: positive, height: positive } },
+    "windows.close": { sentence: "Close window {window}", effect: "persistent", executor: "compositor", command: null, schema: { window: windowId } },
+    "windows.fullscreen": { sentence: "{action} {mode} for window {window}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, mode: oneOf(["fullscreen", "maximized"]), action: oneOf(["set", "unset", "toggle"]) } },
+    "windows.float": { sentence: "{action} floating for window {window}", effect: "reversible", executor: "compositor", command: null, schema: { window: windowId, action: oneOf(["set", "unset", "toggle"]) } },
+    "windows.monitor": { sentence: "Focus monitor {monitor}", effect: "reversible", executor: "compositor", command: null, schema: { monitor: text } },
+    "apps.list": { sentence: "List applications", effect: "read", executor: "apps", command: null, schema: {} },
+    "apps.launch": { sentence: "Launch application {desktop}", effect: "reversible", executor: "apps", command: null, schema: { desktop: desktop } },
+    "apps.open": { sentence: "Open {path}", effect: "reversible", executor: "apps", command: null, schema: { path: absolute }, paths: [["path", "read"]] },
+    "apps.url": { sentence: "Open {url}", effect: "reversible", executor: "apps", command: null, schema: { url: url } },
+    "input.text": { sentence: "Type this exact text:\n{text}", effect: "input", executor: "input", command: "wtype", schema: { text: text }, input: "text" },
+    "input.key": { sentence: "Press {chord}", effect: "input", executor: "input", command: "wtype", schema: { chord: text }, input: "key" },
+    "input.click": { sentence: "Click {button} at {x}, {y}", effect: "input", executor: "input", command: "wlrctl", schema: { x: integer, y: integer, button: oneOf(["left", "right", "middle"]) }, input: "pointer" },
+    "input.scroll": { sentence: "Scroll {direction} by {steps} at {x}, {y}", effect: "input", executor: "input", command: "wlrctl", schema: { x: integer, y: integer, direction: oneOf(["up", "down", "left", "right"]), steps: positive }, input: "pointer" },
+    "clipboard.read": { sentence: "Read the clipboard", effect: "read", executor: "clipboard", command: "wl-paste", schema: {}, source: "clipboard" },
+    "clipboard.write": { sentence: "Write clipboard text {text}", effect: "reversible", executor: "clipboard", command: "wl-copy", schema: { text: text } },
+    "media.play": { sentence: "Play media", effect: "reversible", executor: "media", command: "playerctl", schema: {} },
+    "media.pause": { sentence: "Pause media", effect: "reversible", executor: "media", command: "playerctl", schema: {} },
+    "media.next": { sentence: "Play the next media item", effect: "reversible", executor: "media", command: "playerctl", schema: {} },
+    "media.volume": { sentence: "Set volume to {value}", effect: "reversible", executor: "media", command: "wpctl", schema: { value: { type: "number", minimum: 0, maximum: 1 } } },
+    "media.mute": { sentence: "Set media mute to {muted}", effect: "reversible", executor: "media", command: "wpctl", schema: { muted: bool } },
+    "media.brightness": { sentence: "Set brightness to {value}", effect: "reversible", executor: "media", command: "brightnessctl", schema: { value: { type: "integer", minimum: 0, maximum: 100 } } },
+    "notify.notification": { sentence: "Show notification {title}: {body}", effect: "reversible", executor: "notify", command: "notify-send", schema: { title: text, body: text } },
+    "notify.toast": { sentence: "Show notice {title}: {body}", effect: "reversible", executor: "wire", command: null, schema: { title: text, body: text } },
+    "files.list": { sentence: "List files in {path}", effect: "read", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "read"]] },
+    "files.read": { sentence: "Read {path}", effect: "read", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "read"]], source: "file" },
+    "files.search": { sentence: "Search {path} for {query}", effect: "read", executor: "files", command: null, schema: { path: absolute, query: text }, paths: [["path", "tree-read"]], source: "file" },
+    "files.write": { sentence: "Write {path} with text {text}", effect: "persistent", executor: "files", command: null, schema: { path: absolute, text: { ...text, minLength: 0 } }, paths: [["path", "write"]] },
+    "files.move": { sentence: "Move {from} to {to}", effect: "persistent", executor: "files", command: null, schema: { from: absolute, to: absolute }, paths: [["from", "move"], ["to", "write"]] },
+    "files.delete": { sentence: "Delete {path}", effect: "destructive", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "remove"]] },
+    "shell.argv": { sentence: "Run {argv} in {cwd}, network {network}", effect: "exec", executor: "sandbox", command: "bwrap", schema: { argv: strings, cwd: absolute, network: bool }, paths: [["cwd", "workspace"]], source: "command" },
+    "shell.line": { sentence: "Run shell text {line} in {cwd}, network {network}", effect: "exec", executor: "sandbox", command: "bwrap", schema: { line: text, cwd: absolute, network: bool }, paths: [["cwd", "workspace"]], source: "command" },
+    "vision.screen": { sentence: "Read the screen", effect: "read", executor: "vision", command: "grim", schema: {}, source: "screen" },
+    "vision.monitor": { sentence: "Read monitor {monitor}", effect: "read", executor: "vision", command: "grim", schema: { monitor: text }, source: "screen" },
+    "vision.window": { sentence: "Read window {window}", effect: "read", executor: "vision", command: "grim", schema: { window: windowId }, source: "screen" },
+    "vision.region": { sentence: "Read screen region {x}, {y}, {width} by {height}", effect: "read", executor: "vision", command: "grim", schema: { x: integer, y: integer, width: positive, height: positive }, source: "screen" },
+    "task.start": { sentence: "Start task {goal} in {cwd}, agent {agent}, account {account}", effect: "exec", executor: "task", command: null, schema: { goal: text, cwd: absolute, agent: text, account: text }, optional: ["agent", "account"], paths: [["cwd", "workspace"]], source: "agent" },
+    "browser": { sentence: "Browser {command} with {args}", executor: "browser", command: "agent-browser", schema: { command: text, args: objectValue } }
 };
 
 // No raw vendor flags or arbitrary arguments cross this boundary. The browser
@@ -155,7 +155,7 @@ function refine(call) {
         }
         if (call.args.network) effect = "external";
     }
-    return { kind: "call", call: structuredClone(call), effect, executor: row.executor,
+    return { kind: "call", call: freeze(structuredClone(call)), effect, executor: row.executor,
         command: row.command, paths: row.paths || [], input: refined.input || null, source: refined.source || null };
 }
 

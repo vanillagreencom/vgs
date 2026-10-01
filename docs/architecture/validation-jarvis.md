@@ -14,6 +14,8 @@ The [audio lifetime suites](jarvis-audio.md#evidence) reuse this world with synt
 
 [Local setup controls](jarvis-setup.md#evidence) use explicit local installer, downloader and interpreter doubles. Their extra namespace-command double enters PATH only after J09 has created the real private world. Bootstrap tools never become installer fallbacks.
 
+The [action router suite](jarvis-approval.md#evidence-and-comparison) uses this world with real scratch audit files and stand-in executors. Its injected clock exercises confirmation timing without a wait. Reducer copies and backend copies carry the independent defects; shipped APIs contain no fixture or confirmation backdoor.
+
 ## Ownership
 
 - `scripts/lib/jarvis-env.sh::jarvis_env_run` owns one scratch world per invocation. Its header defines the caller contract. A suite starts its fixture servers, daemon and children inside that invocation, so they share the same loopback network.

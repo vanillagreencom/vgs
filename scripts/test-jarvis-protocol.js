@@ -13,6 +13,10 @@ const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphon
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
 const intent = { v: 1, type: "intent", gen: 0, revision: hello.revision, intent: "talk-down" };
+const id = "11111111-1111-4111-8111-111111111111";
+const confirm = { ...intent, intent: "confirm", id, digest: "a".repeat(64), source: "key" };
+const cancel = { ...intent, intent: "cancel", id };
+const shown = { v: 1, type: "shown", gen: 0, revision: hello.revision, id };
 const status = { v: 1, type: "status", gen: 0, revision: hello.revision, daemon: "ready" };
 const state = { v: 1, type: "state", gen: 0, revision: hello.revision, seq: 1,
     state: JSON.parse(JSON.stringify(Protocol.Session.initial())), phase: "down" };
@@ -66,7 +70,16 @@ const cases = [
     ["key-empty", changed(hello, { keys: { ...hello.keys, talk: "" } }), "shell", "key-talk"],
     ["intent-direction", JSON.stringify(intent), "daemon", "direction-intent"],
     ["intent-shape", changed(intent, { extra: true }), "shell", "shape-intent"],
-    ["intent-name", changed(intent, { intent: "confirm" }), "shell", "intent"],
+    ["intent-name", changed(intent, { intent: "approve" }), "shell", "intent"],
+    ["confirm-shape", changed(confirm, { extra: true }), "shell", "shape-confirm"],
+    ["confirm-id", changed(confirm, { id: "made-up" }), "shell", "approval-id"],
+    ["confirm-digest", changed(confirm, { digest: "A".repeat(64) }), "shell", "approval-digest"],
+    ["confirm-voice", changed(confirm, { source: "voice" }), "shell", "approval-source"],
+    ["confirm-model", changed(confirm, { source: "model" }), "shell", "approval-source"],
+    ["cancel-shape", changed(cancel, { digest: confirm.digest }), "shell", "shape-cancel"],
+    ["shown-direction", JSON.stringify(shown), "daemon", "direction-shown"],
+    ["shown-shape", changed(shown, { source: "button" }), "shell", "shape-shown"],
+    ["shown-id", changed(shown, { id: "" }), "shell", "approval-id"],
     ["directories-shape", changed(hello, { directories: {} }), "shell", "shape-directories"],
     ["directory", changed(hello, { directories: { ...hello.directories, data: "relative" } }), "shell", "directory-data"],
     ["directory-control", changed(hello, { directories: { ...hello.directories, data: "/path\n" } }), "shell", "directory-data"],
@@ -96,6 +109,8 @@ for (const daemon of ["ready", "locked"])
 assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(state), "daemon")), JSON.stringify(state));
 for (const name of ["talk-down", "talk-up", "mute", "stop"])
     assert.equal(Protocol.accept(changed(intent, { intent: name }), "shell").intent, name);
+for (const message of [confirm, { ...confirm, source: "button" }, cancel, shown])
+    assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, mode: "toggle" },
     keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
 for (const message of [devices, level, audioFault])
@@ -122,9 +137,9 @@ let controls = 0;
 try {
     if (process.argv[2] !== "--fresh") freshSuite(path.resolve(__dirname, ".."), "protocol", root);
     fs.copyFileSync(path.join(path.dirname(file), "Session.js"), path.join(root, "Session.js"));
-    function control(name, needle, replacement, check) {
-        assert.equal(source.split(needle).length - 1, 1, name + " mutation match");
-        const mutated = source.replace(needle, replacement);
+    function control(name, needle, replacement, check, matches = 1) {
+        assert.equal(source.split(needle).length - 1, matches, name + " mutation match");
+        const mutated = source.split(needle).join(replacement);
         assert.notEqual(mutated, source);
         const copy = path.join(root, name + ".js");
         fs.writeFileSync(copy, mutated);
@@ -132,6 +147,14 @@ try {
         controls++;
     }
     const guards = [
+        ["approval-id", 'if (!approvalId(message.id)) fail("approval-id");',
+            'if (false) fail("approval-id");', "confirm-id", 3],
+        ["approval-digest", 'if (typeof message.digest !== "string" || !/^[0-9a-f]{64}$/.test(message.digest)) fail("approval-digest");',
+            'if (false) fail("approval-digest");', "confirm-digest"],
+        ["approval-source", 'if (["key", "button"].indexOf(message.source) === -1) fail("approval-source");',
+            'if (false) fail("approval-source");', "confirm-voice"],
+        ["shown-direction", 'if (direction !== "shell") fail("direction-shown");',
+            'if (false) fail("direction-shown");', "shown-direction"],
         ["mode", 'if (message.settings.mode !== "hold" && message.settings.mode !== "toggle") fail("mode");',
             'if (false) fail("mode");', "mode"],
         ["key-type", 'fail("key-" + shortcut);', ';', "key-type"],
@@ -173,8 +196,8 @@ try {
         ["state-gen", 'if (message.state.gen !== message.gen) fail("state-generation");', 'if (false) fail("state-generation");', "state-gen"],
         ["state-phase", 'if (message.phase !== Session.phaseOf(message.state)) fail("phase");', 'if (false) fail("phase");', "state-phase"]
     ];
-    for (const [name, needle, replacement, example] of guards)
-        control(name, needle, replacement, logic => rejected(logic, cases.find(row => row[0] === example)));
+    for (const [name, needle, replacement, example, matches] of guards)
+        control(name, needle, replacement, logic => rejected(logic, cases.find(row => row[0] === example)), matches);
     control("unsupported-echo", 'keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");',
         'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");',
         logic => {

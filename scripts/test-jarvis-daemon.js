@@ -69,6 +69,36 @@ async function inside() {
         return lines;
     }
     await run(daemon, [JSON.stringify(hello) + "\n"], 0, null, states([false]));
+    const auditRows = () => {
+        const directory = path.join(hello.directories.state, "audit");
+        return fs.existsSync(directory) ? fs.readdirSync(directory).filter(name => name.endsWith(".jsonl"))
+            .flatMap(name => fs.readFileSync(path.join(directory, name), "utf8").trim().split("\n").map(JSON.parse)) : [];
+    };
+    const confirmation = { v: 1, type: "intent", gen: 1, revision: hello.revision, intent: "confirm",
+        id: "11111111-1111-4111-8111-111111111111", digest: "a".repeat(64), source: "key" };
+    function refusalFrames() {
+        const frames = states([false]);
+        const refused = structuredClone(frames[1]);
+        refused.seq = 2;
+        refused.state.nextOp = 2;
+        return [...frames, refused];
+    }
+    const noHold = async file => {
+        const before = auditRows().filter(row => row.kind === "action").length;
+        await run(file, [JSON.stringify(hello) + "\n", JSON.stringify(confirmation) + "\n"], 0, null, refusalFrames());
+        const actions = auditRows().filter(row => row.kind === "action");
+        assert.equal(actions.length, before + 1, "a real daemon audits a confirmation with no live hold");
+        assert.equal(actions.at(-1).decision, "refuse");
+        assert.equal(actions.at(-1).outcome, "cancelled");
+    };
+    await noHold(daemon);
+    const brokenState = path.join(process.env.JARVIS_TEST_ROOT, "broken-audit-state");
+    fs.mkdirSync(brokenState);
+    fs.writeFileSync(path.join(brokenState, "audit"), "blocked");
+    const auditFailure = file => run(file, [JSON.stringify({ ...hello,
+        directories: { ...hello.directories, state: brokenState } }) + "\n", JSON.stringify(confirmation) + "\n"],
+        74, "jarvis: audit=write cause=directory-type", refusalFrames());
+    await auditFailure(daemon);
     await run(daemon, [JSON.stringify(hello).slice(0, 20), JSON.stringify(hello).slice(20) + "\n",
         JSON.stringify({ ...hello, locked: true }) + "\n"], 0, null, states([false, true]));
     await run(daemon, [], 0);
@@ -107,7 +137,8 @@ async function inside() {
         fs.writeFileSync(path.join(copyDir, "JarvisProtocol.js"), protocol);
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"), path.join(copyDir, "Session.js"));
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/session-runner.js"), path.join(copyDir, "backend/session-runner.js"));
-        for (const filename of ["Tasks.js", "task-event", "Audio.js", "audio-child.py"])
+        for (const filename of ["Tasks.js", "task-event", "Audio.js", "audio-child.py",
+            "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js"])
             fs.copyFileSync(path.join(path.dirname(daemon), filename), path.join(copyDir, "backend", filename));
         const copy = path.join(copyDir, "backend/jarvisd.js");
         fs.writeFileSync(copy, source.replace(needle, replacement));
@@ -117,10 +148,14 @@ async function inside() {
     await control("lease", 'if (tail !== "") refuse(65, "jarvis: protocol=unterminated-line");',
         'if (tail !== "") refuse(65, "jarvis: protocol=unterminated-line");\n        setInterval(() => {}, 1000);',
         file => run(file, [], 0));
+    await control("confirmation-audit", "Object.assign(runner.ports, router.ports);",
+        "Object.assign(runner.ports, router.ports, { approval: { ...router.ports.approval, refused() {} } });", noHold);
+    await control("confirmation-audit-cause", 'error.message.startsWith("jarvis: audit=")', "false", auditFailure);
     await control("hello", 'if (!process.stdout.write(wire + "\\n")) process.stdin.pause();',
         'if (false && !process.stdout.write(wire + "\\n")) process.stdin.pause();',
         file => run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false])));
-    await control("session-forward", "locked: context.locked,", "locked: false,",
+    await control("session-forward", 'runner.dispatch({ type: "snapshot", locked: context.locked,',
+        'runner.dispatch({ type: "snapshot", locked: false,',
         file => run(file, [JSON.stringify({ ...hello, locked: true }) + "\n"], 0, null, states([true])));
     await control("state-publish", 'if (!ending && context !== null) write({ v: 1, type: "state"',
         'if (false && !ending && context !== null) write({ v: 1, type: "state"',
@@ -152,7 +187,9 @@ async function inside() {
     taskStore.create("retention-extra", taskGoal, engine);
     fs.writeFileSync(path.join(taskStore.root, "retention-extra/events/0001.json"),
         '{"v":1,"seq":1,"at":0,"kind":"lost","data":{}}', { mode: 0o600 });
-    await control("startup-retention", "if (first) {", "if (false) {", async file => {
+    const recoveryGuard = "if (first) {\n                    const engine = Tasks.publish";
+    const skipRecovery = "if (false) {\n                    const engine = Tasks.publish";
+    await control("startup-retention", recoveryGuard, skipRecovery, async file => {
         await run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false]));
         assert.equal(taskStore.list().length, 50);
     });
@@ -164,7 +201,7 @@ async function inside() {
         /jarvis: tasks=parse:.*path=.*broken\/task.json/, []);
     // A parse failure withholds ready and names the record, not the wire.
     await badRecord(daemon);
-    await control("task-read", "if (first) {", "if (false) {",
+    await control("task-read", recoveryGuard, skipRecovery,
         badRecord);
     fs.rmSync(taskFolder, { recursive: true });
 
@@ -172,7 +209,9 @@ async function inside() {
         const directory = path.join(root, name);
         fs.mkdirSync(path.join(directory, "backend"), { recursive: true });
         for (const relative of ["JarvisProtocol.js", "Session.js", "backend/session-runner.js",
-            "backend/jarvisd.js", "backend/Tasks.js", "backend/task-event", "backend/Audio.js", "backend/audio-child.py"])
+            "backend/jarvisd.js", "backend/Tasks.js", "backend/task-event",
+            "backend/Audio.js", "backend/audio-child.py", "backend/ToolRouter.js",
+            "backend/Audit.js", "backend/Redact.js", "backend/Tools.js", "backend/Policy.js"])
             fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis", relative), path.join(directory, relative));
         return path.join(directory, "backend/jarvisd.js");
     }

@@ -75,11 +75,14 @@ function ports(root) {
         },
         tools: {
             start: () => { throw new Error("scripted: unexpected-tool"); },
-            cancel: () => { throw new Error("scripted: unexpected-tool"); }
+            cancel: () => { throw new Error("scripted: unexpected-tool"); },
+            outcome: () => { throw new Error("scripted: unexpected-tool"); },
+            sync: () => {}, close: () => {}
         },
         approval: {
             show: () => { throw new Error("scripted: unexpected-approval"); },
-            end: () => { throw new Error("scripted: unexpected-approval"); }
+            end: () => { throw new Error("scripted: unexpected-approval"); },
+            refused: () => { throw new Error("scripted: unexpected-approval"); }
         }
     };
 }

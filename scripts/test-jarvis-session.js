@@ -13,12 +13,13 @@ const copy = value => JSON.parse(JSON.stringify(value));
 const events = ["snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle", "stop",
     "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial", "final", "brain-done",
     "brain-failed", "cancelled", "play", "played", "flushed", "tool", "tool-done", "approval",
-    "shown", "approval-cancel", "deadline", "lease-ended"];
+    "shown", "confirm", "approval-cancel", "deadline", "lease-ended"];
 assert.deepEqual(copy(Session.EVENTS), events, "every supported event enters the pair matrix");
 const snapshot = extra => ({ type: "snapshot", at: 0, locked: false, configured: true,
     settings: {}, ...extra });
 const event = (type, at = 10, extra = {}) => ({ type, at, ...extra });
-const callback = (type, owner, at = 20, extra = {}) => event(type, at, { gen: owner.gen, op: owner.op, ...extra });
+const callback = (type, owner, at = 20, extra = {}) => event(type, at, {
+    gen: owner.gen, op: owner.op, ...(owner.kind === "held" ? { id: owner.id, digest: owner.digest } : {}), ...extra });
 const step = (logic, s, e) => copy(logic.reduce(s, e));
 const ready = logic => step(logic, step(logic, logic.initial(), snapshot()).state,
     event("indicator", 1, { shown: true })).state;
@@ -40,12 +41,84 @@ function acting(logic, cancellable = true) {
     let s = thinking(logic);
     return step(logic, s, callback("tool", s.turn, 40, { tool: "fixture", timeoutMs: 100, cancellable })).state;
 }
-function held(logic) {
+function held(logic, physical = true) {
     let s = thinking(logic);
-    return step(logic, s, callback("approval", s.turn, 40, { id: "held", digest: "a".repeat(64) })).state;
+    return step(logic, s, callback("approval", s.turn, 40, { id: "held", digest: "a".repeat(64),
+        physical, text: "Delete the fixture", tool: "fixture", timeoutMs: 100, cancellable: true })).state;
 }
 const kinds = result => result.effects.map(e => e.kind);
+function confirmation(logic, s, at, extra = {}) {
+    return step(logic, s, callback("confirm", s.approval, at, { source: "key", ...extra }));
+}
 const table = [
+    ["confirmation", logic => {
+        const heldState = held(logic);
+        const s = step(logic, heldState, callback("shown", heldState.approval, 50)).state;
+        const accepted = confirmation(logic, s, 750);
+        assert.equal(accepted.state.approval.kind, "none");
+        assert.equal(accepted.state.action.kind, "running");
+        assert.equal(accepted.state.action.brain, s.approval.brain);
+        assert.equal(accepted.state.action.limit.deadline, 850);
+        assert.equal(accepted.effects.find(e => e.kind === "tool-start").confirmed, "key");
+        const replay = step(logic, accepted.state, callback("confirm", s.approval, 751, { source: "key" }));
+        assert.equal(replay.effects.find(e => e.kind === "confirm-refused")?.reason, "no-hold");
+        assert.equal(kinds(replay).includes("tool-start"), false);
+        for (const source of ["button", "voice"]) {
+            const h = held(logic, false);
+            const shown = step(logic, h, callback("shown", h.approval, 50)).state;
+            assert.equal(confirmation(logic, shown, 750, { source }).state.action.kind, "running");
+        }
+    }],
+    ...[
+        ["confirm-id", { id: "synthetic" }, "identity"],
+        ["confirm-digest", { digest: "b".repeat(64) }, "identity"],
+        ["confirm-generation", { gen: 999 }, "identity"],
+        ["confirm-source", { source: "model" }, "source"],
+        ["confirm-physical", { source: "voice" }, "voice-physical"]
+    ].map(([name, extra, reason]) => [name, logic => {
+        const h = held(logic);
+        const s = step(logic, h, callback("shown", h.approval, 50)).state;
+        const r = confirmation(logic, s, 750, extra);
+        assert.equal(r.effects.find(e => e.kind === "confirm-refused")?.reason, reason);
+        assert.equal(r.state.action.kind, "none");
+        assert.equal(r.state.approval.kind, "held");
+    }]),
+    ["confirm-draw", logic => {
+        const h = held(logic);
+        const s = step(logic, h, callback("shown", h.approval, 50)).state;
+        for (const [seed, at] of [[h, 750], [s, 749]]) {
+            const r = confirmation(logic, seed, at);
+            assert.equal(r.effects.find(e => e.kind === "confirm-refused")?.reason, "early");
+            assert.equal(r.state.action.kind, "none");
+        }
+    }],
+    ["confirm-expired", logic => {
+        const h = held(logic);
+        // Extend the independent thinking owner so this row reaches approval expiry.
+        h.turn.deadline = 70000;
+        const s = step(logic, h, callback("shown", h.approval, 50)).state;
+        const r = confirmation(logic, s, 60040);
+        assert.equal(r.effects.find(e => e.kind === "confirm-refused")?.reason, "expired");
+        assert.equal(r.state.action.kind, "none");
+    }],
+    ["confirm-replaced", logic => {
+        const h = held(logic);
+        const stopped = step(logic, h, event("interrupt", 50)).state;
+        const r = step(logic, stopped, callback("confirm", h.approval, 750, { source: "key" }));
+        assert.equal(r.effects.find(e => e.kind === "confirm-refused")?.reason, "no-hold");
+        assert.equal(r.state.action.kind, "none");
+    }],
+    ["shown-id", logic => {
+        const h = held(logic);
+        const r = step(logic, h, callback("shown", h.approval, 50, { id: "other" }));
+        assert.equal(r.state.approval.shownAt, null);
+    }],
+    ["cancel-id", logic => {
+        const h = held(logic);
+        const r = step(logic, h, callback("approval-cancel", h.approval, 50, { id: "other" }));
+        assert.equal(r.state.approval.kind, "held");
+        assert.equal(step(logic, h, callback("approval-cancel", h.approval, 50)).state.approval.kind, "none");
+    }],
     ["key-mode", logic => {
         let s = step(logic, ready(logic), snapshot({ settings: { mode: "toggle" } })).state;
         s = step(logic, s, event("talk-down", 100)).state;
@@ -553,11 +626,14 @@ function fixtureEvent(type, s, at) {
         "playback-failed": "playback", partial: "turn", final: "turn",
         "brain-done": "turn", "brain-failed": "turn", cancelled: "turn", play: "turn",
         played: "playback", flushed: "playback", tool: "turn", "tool-done": "action",
-        approval: "turn", shown: "approval", deadline: "turn"
+        approval: "turn", shown: "approval", confirm: "approval", "approval-cancel": "approval", deadline: "turn"
     };
     const owner = s[regions[type]] || {};
     return { ...snapshot(), type, at, shown: true, text: "fixture", reason: "fixture", outcome: "completed",
         tool: "fixture", timeoutMs: 100, cancellable: true, interruptible: true, id: "fixture", digest: "a".repeat(64),
+        physical: true, source: "key",
+        ...(s.approval.kind === "held" && ["shown", "confirm", "approval-cancel"].includes(type)
+            ? { id: s.approval.id, digest: s.approval.digest } : {}),
         gen: owner.gen === undefined ? s.gen : owner.gen, op: owner.op === undefined ? 99999 : owner.op };
 }
 function invariants(before, e, r) {
@@ -737,7 +813,7 @@ for (const seed of seeds) for (const a of pairEvents) for (const b of pairEvents
     }
     pairs++;
 }
-assert.equal(pairs, 16184, "matrix discovery floor and exact event set");
+assert.equal(pairs, seeds.length * pairEvents.length ** 2, "matrix discovery floor and exact event set");
 const createdPairs = createdPairMatrix(Session);
 
 const parent = path.resolve(__dirname, "../tmp");
@@ -748,6 +824,24 @@ let controls = 0;
 try {
     // Each independent lifetime rule has its own planted defect.
     const mutants = [
+        ["confirm-id", "e.id !== approval.id", "(false && e.id !== approval.id)", "confirm-id"],
+        ["confirm-digest", "e.digest !== approval.digest", "(false && e.digest !== approval.digest)", "confirm-digest"],
+        ["confirm-generation", "e.gen !== approval.gen", "(false && e.gen !== approval.gen)", "confirm-generation"],
+        ["confirm-source", '["key", "button", "voice"].indexOf(e.source) === -1',
+            'false && ["key", "button", "voice"].indexOf(e.source) === -1', "confirm-source"],
+        ["confirm-drawn", ": approval.shownAt === null ||", ": (false && approval.shownAt === null) ||", "confirm-draw"],
+        ["confirm-draw-delay", "e.at - approval.shownAt < APPROVAL_DRAW_MS",
+            "(false && e.at - approval.shownAt < APPROVAL_DRAW_MS)", "confirm-draw"],
+        ["confirm-physical", 'e.source === "voice" && approval.physical',
+            'false && e.source === "voice" && approval.physical', "confirm-physical"],
+        ["confirm-once", 's.approval = { kind: "none" };\n        var accepted',
+            's.approval = approval;\n        var accepted', "confirmation"],
+        ["confirm-replaced", 'dropApproval(s, effects, "interrupt");',
+            'if (false) dropApproval(s, effects, "interrupt");', "confirm-replaced"],
+        ["shown-id", 'if (e.id !== s.approval.id) { stale(s); break; }',
+            'if (false && e.id !== s.approval.id) { stale(s); break; }', "shown-id"],
+        ["cancel-id", 'if (e.id !== s.approval.id || e.gen !== s.approval.gen)',
+            'if (false && (e.id !== s.approval.id || e.gen !== s.approval.gen))', "cancel-id"],
         ["key-mode", 'if (s.settings.mode === "toggle") { toggle(s, effects, e.at); break; }',
             'if (false) { toggle(s, effects, e.at); break; }', "key-mode"],
         ["mute-key-store", 'effect(s, effects, "mute-store", { muted: true });',

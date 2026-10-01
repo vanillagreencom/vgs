@@ -29,6 +29,9 @@ function freshSuite(tree, suite, root) {
         "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
         "scripts/fixtures/jarvis/audio-tool.py"])
         fs.copyFileSync(path.join(tree, file), path.join(clone, file));
+    for (const name of ["ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js"])
+        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend", name),
+            path.join(clone, "shell/plugins/vgs.jarvis/backend", name));
     const file = path.join(clone, relative);
     const run = () => cp.spawnSync(process.execPath, [file, "--fresh"], {
         cwd: clone, env: { PATH: "/usr/bin:/bin", HOME: clone, LC_ALL: "C",

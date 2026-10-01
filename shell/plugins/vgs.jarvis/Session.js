@@ -6,11 +6,13 @@
 // identity across stop; content callbacks do not.
 var SESSION_SETTINGS = ["mode", "voiceProvider", "voice", "language", "brain", "model", "customBaseUrl", "policy", "account"];
 var RESPONSE_TIMEOUT_MS = 60000;
+var APPROVAL_TIMEOUT_MS = 60000;
+var APPROVAL_DRAW_MS = 700;
 var EVENTS = [
     "snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle",
     "stop", "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial",
     "final", "brain-done", "brain-failed", "cancelled", "play", "played",
-    "flushed", "tool", "tool-done", "approval",     "shown", "approval-cancel", "deadline", "lease-ended"
+    "flushed", "tool", "tool-done", "approval", "shown", "confirm", "approval-cancel", "deadline", "lease-ended"
 ];
 
 function initial() {
@@ -95,6 +97,7 @@ function end(s, effects, at, reason, stopTool) {
     }
     s.input = { kind: "released" };
     closeCapture(s, effects);
+    dropApproval(s, effects, "thinking-timeout");
     cancelTurn(s, effects, at);
     if (s.turn.kind === "none") closeBrain(s, effects);
     flushPlayback(s, effects);
@@ -163,6 +166,11 @@ function canPropose(s) {
     return s.conversation.kind === "active" && s.action.kind === "none" && s.approval.kind === "none";
 }
 
+function toolDuration(e) {
+    if (!Number.isFinite(e.timeoutMs) || e.timeoutMs <= 0)
+        throw new Error("jarvis: session=tool-deadline tool=" + e.tool);
+}
+
 function interrupt(s, effects, at) {
     if (s.conversation.kind === "ended") return;
     s.conversation = { kind: "interrupted" };
@@ -199,13 +207,15 @@ function expire(s, effects, at) {
 }
 
 // Return a new state and ordered effects. The input state/event are untouched.
-// Tool proposals enter only after the future policy/router has authorised them.
-// This reducer controls lifetime, not permission or confirmation authority.
+// The router supplies authorized proposals. Session owns confirmation identity
+// and timing, not the typed call or the policy decision.
 function reduce(state, e) {
     if (EVENTS.indexOf(e.type) === -1) throw new Error("jarvis: session=event type=" + e.type);
     if (!Number.isFinite(e.at) || e.at < 0) throw new Error("jarvis: session=clock");
     var s = JSON.parse(JSON.stringify(state));
     var effects = [];
+    var expiredApproval = s.approval.kind === "held" && e.at >= s.approval.deadline
+        ? s.approval : null;
     // A late callback cannot outrun a delayed event-loop timer.
     if (e.type !== "deadline") expire(s, effects, e.at);
     switch (e.type) {
@@ -352,9 +362,8 @@ function reduce(state, e) {
     case "tool":
         if (!live(s, e, "turn", ["thinking"])) { stale(s); break; }
         if (!canPropose(s)) break;
-        if (!Number.isFinite(e.timeoutMs) || e.timeoutMs <= 0)
-            throw new Error("jarvis: session=tool-deadline tool=" + e.tool);
-        var tool = effect(s, effects, "tool-start", { tool: e.tool });
+        toolDuration(e);
+        var tool = effect(s, effects, "tool-start", { tool: e.tool, id: e.id });
         s.action = { kind: "running", gen: tool.gen, op: tool.op, tool: e.tool,
             brain: e.op, limit: { kind: "pending", deadline: e.at + e.timeoutMs },
             cancellation: { kind: e.cancellable ? "available" : "unavailable" } };
@@ -370,15 +379,41 @@ function reduce(state, e) {
     case "approval":
         if (!live(s, e, "turn", ["thinking"])) { stale(s); break; }
         if (!canPropose(s)) break;
+        toolDuration(e);
         var hold = effect(s, effects, "approval-show", { id: e.id, digest: e.digest });
         s.approval = { kind: "held", gen: hold.gen, op: hold.op, id: e.id, digest: e.digest,
-            deadline: e.at + RESPONSE_TIMEOUT_MS, shownAt: null };
+            deadline: e.at + APPROVAL_TIMEOUT_MS, shownAt: null, physical: e.physical,
+            text: e.text, tool: e.tool, timeoutMs: e.timeoutMs, cancellable: e.cancellable,
+            brain: e.op };
         break;
     case "shown":
         if (!live(s, e, "approval", ["held"])) { stale(s); break; }
+        if (e.id !== s.approval.id) { stale(s); break; }
         if (s.approval.shownAt === null) s.approval.shownAt = e.at;
         break;
+    case "confirm": {
+        var approval = s.approval;
+        var reason = approval.kind !== "held" ? (expiredApproval !== null ? "expired" : "no-hold")
+            : e.gen !== approval.gen || e.id !== approval.id || e.digest !== approval.digest ? "identity"
+            : ["key", "button", "voice"].indexOf(e.source) === -1 ? "source"
+            : approval.shownAt === null || e.at - approval.shownAt < APPROVAL_DRAW_MS ? "early"
+            : e.source === "voice" && approval.physical ? "voice-physical" : null;
+        if (reason !== null) {
+            effect(s, effects, "confirm-refused", { reason: reason, id: e.id,
+                gen: approval.kind === "held" ? approval.gen : s.gen,
+                target: approval.kind === "held" ? approval.brain : null });
+            break;
+        }
+        s.approval = { kind: "none" };
+        var accepted = effect(s, effects, "tool-start", { tool: approval.tool,
+            id: approval.id, confirmed: e.source });
+        s.action = { kind: "running", gen: accepted.gen, op: accepted.op, tool: approval.tool,
+            brain: approval.brain, limit: { kind: "pending", deadline: e.at + approval.timeoutMs },
+            cancellation: { kind: approval.cancellable ? "available" : "unavailable" } };
+        break;
+    }
     case "approval-cancel":
+        if (e.id !== s.approval.id || e.gen !== s.approval.gen) { stale(s); break; }
         dropApproval(s, effects, "cancel");
         break;
     case "deadline":
@@ -401,7 +436,7 @@ var REGIONS = {
     brain: { closed: "", acquired: "gen op" },
     playback: { idle: "", playing: "gen op source interruptible admission", flushing: "gen op" },
     action: { none: "", running: "gen op tool brain limit cancellation" },
-    approval: { none: "", held: "gen op id digest deadline shownAt" },
+    approval: { none: "", held: "gen op id digest deadline shownAt physical text tool timeoutMs cancellable brain" },
     fault: { none: "", error: "reason retry", retrying: "reason retry" }, conversation: { ended: "", active: "", interrupted: "" },
     input: { released: "", held: "", conversation: "", "follow-up": "", armed: "" },
     indicator: { gone: "", shown: "" }, duplex: { half: "" }
@@ -428,7 +463,9 @@ function validate(s) {
                 if (!Number.isSafeInteger(r[f]) || r[f] < (["op", "brain", "source"].indexOf(f) !== -1 ? 1 : 0)) return false;
             } else if (f === "deadline" || f === "shownAt") {
                 if (!(f === "shownAt" && r[f] === null) && (!Number.isFinite(r[f]) || r[f] < 0)) return false;
-            } else if (f === "interruptible") {
+            } else if (f === "timeoutMs") {
+                if (!Number.isFinite(r[f]) || r[f] <= 0) return false;
+            } else if (["interruptible", "physical", "cancellable"].indexOf(f) !== -1) {
                 if (typeof r[f] !== "boolean") return false;
             } else if (f === "cancellation") {
                 if (!exact(r[f], ["kind"]) || ["available", "unavailable", "requested"].indexOf(r[f].kind) === -1) return false;

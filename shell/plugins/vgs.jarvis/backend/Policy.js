@@ -1,5 +1,5 @@
 // The action and release judges. Routing, approvals, audit and confinement
-// belong to their separate owners. The daemon exposes neither API yet.
+// belong to their separate owners. Production registers no action executor.
 "use strict";
 const Tools = require("./Tools.js");
 
@@ -105,7 +105,7 @@ function release(value, selected, grants = []) {
     return { kind: "send", ...current };
 }
 
-/** J11 owns the turn. J19 calls observe only after content reaches that turn. */
+/** Session owns the turn. The router observes only content reaching that turn. */
 function observe(taint, source) {
     if (!taint || !["clean", "tainted"].includes(taint.kind) || !SOURCES.includes(source))
         throw new Error("jarvis: taint=invalid");
