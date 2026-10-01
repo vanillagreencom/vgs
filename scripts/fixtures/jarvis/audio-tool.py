@@ -89,8 +89,5 @@ elif name == "pw-cat":
         time.sleep(0.01)
     while os.read(0, 4096):
         pass
-elif name == "pw-cli":
-    while os.read(0, 4096):
-        pass
 else:
     sys.exit("unknown fixture command: " + name)

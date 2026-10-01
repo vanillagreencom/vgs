@@ -16,20 +16,19 @@ const events = ["snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute
     "shown", "approval-cancel", "deadline", "lease-ended"];
 assert.deepEqual(copy(Session.EVENTS), events, "every supported event enters the pair matrix");
 const snapshot = extra => ({ type: "snapshot", at: 0, locked: false, configured: true,
-    echoCancel: false, settings: {}, ...extra });
+    settings: {}, ...extra });
 const event = (type, at = 10, extra = {}) => ({ type, at, ...extra });
 const callback = (type, owner, at = 20, extra = {}) => event(type, at, { gen: owner.gen, op: owner.op, ...extra });
 const step = (logic, s, e) => copy(logic.reduce(s, e));
 const ready = logic => step(logic, step(logic, logic.initial(), snapshot()).state,
     event("indicator", 1, { shown: true })).state;
-function listening(logic, toggle = false, echo = false) {
+function listening(logic, toggle = false) {
     let s = ready(logic);
-    if (echo) s = step(logic, s, snapshot({ echoCancel: true })).state;
     s = step(logic, s, event(toggle ? "toggle" : "talk-down")).state;
     return step(logic, s, callback("capture-opened", s.capture)).state;
 }
-function thinking(logic, toggle = false, echo = false) {
-    let s = listening(logic, toggle, echo);
+function thinking(logic, toggle = false) {
+    let s = listening(logic, toggle);
     s = step(logic, s, callback("final", s.turn, 30, { text: "test" })).state;
     return step(logic, s, callback("capture-closed", s.capture, 31)).state;
 }
@@ -443,22 +442,21 @@ const table = [
         const r = step(logic, s, callback("play", s.turn, 40, { interruptible: true }));
         assert.equal(r.state.capture.kind, "closing");
         assert.equal(r.state.playback.admission.kind, "waiting");
+        assert.equal(logic.canPlayback(r.state), false, "Audio cannot start before capture closes");
         assert.deepEqual(kinds(r), ["capture-close"], "close before any playback start");
         const ack = step(logic, r.state, callback("capture-closed", r.state.capture, 41));
         assert.deepEqual(kinds(ack), ["playback-start"]);
         assert.equal(ack.state.capture.kind, "closed");
         assert.equal(ack.state.playback.admission.kind, "started");
+        assert.equal(logic.canPlayback(ack.state), true);
         const done = step(logic, ack.state, callback("played", ack.state.playback, 42));
         assert.equal(done.state.capture.kind, "opening");
     }],
-    ["echo-overlap", logic => {
-        let s = thinking(logic, true, true);
-        s = step(logic, s, callback("capture-opened", s.capture, 32)).state;
-        s = step(logic, s, callback("play", s.turn, 40, { interruptible: true })).state;
-        assert.equal(s.capture.kind, "open");
-        assert.equal(s.playback.admission.kind, "started");
-        s = step(logic, s, callback("tool", s.turn, 41, { tool: "fixture", timeoutMs: 100, cancellable: true })).state;
-        assert.equal(logic.phaseOf(s), "acting");
+    ["echo-unavailable", logic => {
+        const s = ready(logic);
+        assert.equal(s.duplex.kind, "half");
+        s.duplex = { kind: "echo" };
+        assert.equal(logic.validate(s), false, "the wire cannot claim unsupported echo cancellation");
     }],
     ["phase-priority", logic => {
         let s = held(logic);
@@ -541,14 +539,13 @@ const seeds = [ready(Session), listening(Session), thinking(Session), speaking(S
     step(Session, ready(Session), event("mute", 50)).state,
     step(Session, ready(Session), event("talk-down", 50)).state,
     step(Session, thinking(Session), event("cancel", 50)).state,
-    step(Session, thinking(Session, true, true), callback("play", thinking(Session, true, true).turn, 40, { interruptible: true })).state,
+    step(Session, thinking(Session, true), callback("play", thinking(Session, true).turn, 40, { interruptible: true })).state,
     step(Session, acting(Session), callback("deadline", acting(Session).action, 140)).state];
 const pairEvents = events.map(type => ({ type, extra: {} })).concat([
     { type: "snapshot", extra: { locked: true } },
     { type: "snapshot", extra: { locked: null } },
     { type: "snapshot", extra: { configured: false } },
-    { type: "snapshot", extra: { settings: { brain: "new-account" } } },
-    { type: "snapshot", extra: { echoCancel: true } }
+    { type: "snapshot", extra: { settings: { brain: "new-account" } } }
 ]);
 function fixtureEvent(type, s, at) {
     const regions = {
@@ -575,7 +572,7 @@ function invariants(before, e, r) {
         assert.equal(s.indicator.kind, "shown");
         assert.notEqual(s.fault.kind, "error");
         assert.notEqual(s.turn.kind, "cancelling");
-        assert.ok(s.duplex.kind === "echo" || s.playback.kind === "idle");
+        assert.equal(s.playback.kind, "idle");
     }
     for (const effect of r.effects) {
         assert.ok(Number.isSafeInteger(effect.op) && effect.op > 0);
@@ -583,7 +580,7 @@ function invariants(before, e, r) {
             assert.equal(s.conversation.kind, "active");
             assert.equal(s.approval.kind, "none");
         }
-        if (effect.kind === "playback-start" && s.duplex.kind === "half") assert.equal(s.capture.kind, "closed");
+        if (effect.kind === "playback-start") assert.equal(s.capture.kind, "closed");
         if (effect.kind === "tool-cancel") assert.notEqual(before.action.cancellation.kind, "unavailable");
     }
 }
@@ -809,8 +806,9 @@ try {
         ["held", 's.approval.kind === "none";', '(true || s.approval.kind === "none");', "tool-held"],
         ["interrupt-tools", 's.conversation.kind === "active" && s.action', '(true || s.conversation.kind === "active") && s.action', "tool-interrupted"],
         ["tool-bound", "at >= s.action.limit.deadline", "false && at >= s.action.limit.deadline", "tool-deadline"],
-        ["half", 's.duplex.kind === "echo" || s.playback.kind === "idle"', 'true || s.duplex.kind === "echo" || s.playback.kind === "idle"', "half-duplex"],
-        ["play-after-close", 's.duplex.kind === "echo" || s.capture.kind === "closed"', 'true || s.duplex.kind === "echo" || s.capture.kind === "closed"', "half-duplex"],
+        ["half", '&& s.playback.kind === "idle"', '&& (true || s.playback.kind === "idle")', "half-duplex"],
+        ["play-after-close", '&& s.capture.kind === "closed";', '&& (true || s.capture.kind === "closed");', "half-duplex"],
+        ["echo-state", 'duplex: { half: "" }', 'duplex: { half: "", echo: "" }', "echo-unavailable"],
         ["phase", 'if (s.approval.kind === "held") return "confirming";', 'if (false && s.approval.kind === "held") return "confirming";', "phase-priority"]
     ];
     mutants.push(

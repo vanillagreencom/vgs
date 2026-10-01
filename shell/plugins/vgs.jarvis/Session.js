@@ -108,12 +108,13 @@ function canEngage(s) {
 
 function canCapture(s) {
     return canEngage(s) && s.indicator.kind === "shown"
-        && (s.duplex.kind === "echo" || s.playback.kind === "idle")
+        && s.playback.kind === "idle"
         && s.turn.kind !== "cancelling" && s.conversation.kind !== "ended" && s.input.kind !== "released";
 }
 
 function canPlayback(s) {
-    return s.gate.kind === "up" && s.fault.kind !== "error" && s.playback.kind === "playing";
+    return s.gate.kind === "up" && s.fault.kind !== "error" && s.playback.kind === "playing"
+        && s.capture.kind === "closed";
 }
 
 function reconcile(s, effects) {
@@ -127,8 +128,7 @@ function reconcile(s, effects) {
         var collect = effect(s, effects, "collect", {});
         s.turn = { kind: "collecting", gen: collect.gen, op: collect.op, partial: "" };
     }
-    if (s.playback.kind === "playing" && s.playback.admission.kind === "waiting"
-            && (s.duplex.kind === "echo" || s.capture.kind === "closed")) {
+    if (s.playback.kind === "playing" && s.playback.admission.kind === "waiting" && canPlayback(s)) {
         effect(s, effects, "playback-start", { gen: s.playback.gen, op: s.playback.op, source: s.playback.source });
         s.playback.admission = { kind: "started" };
     }
@@ -221,7 +221,6 @@ function reduce(state, e) {
             s.fault = { kind: "none" };
         }
         s.settings = JSON.parse(JSON.stringify(e.settings));
-        s.duplex = { kind: e.echoCancel ? "echo" : "half" };
         if (e.locked !== false || !e.configured) {
             end(s, effects, e.at, "gate", false);
             s.gate = { kind: "down", reason: e.locked === null ? "lock-unknown"
@@ -405,7 +404,7 @@ var REGIONS = {
     approval: { none: "", held: "gen op id digest deadline shownAt" },
     fault: { none: "", error: "reason retry", retrying: "reason retry" }, conversation: { ended: "", active: "", interrupted: "" },
     input: { released: "", held: "", conversation: "", "follow-up": "", armed: "" },
-    indicator: { gone: "", shown: "" }, duplex: { half: "", echo: "" }
+    indicator: { gone: "", shown: "" }, duplex: { half: "" }
 };
 
 function exact(value, names) {

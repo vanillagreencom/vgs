@@ -7,24 +7,43 @@ const { assert, fs, path, cp, tree, world, until, unlocked, copyBackend } = requ
 const { once } = require("node:events");
 const plugin = path.join(tree, "shell/plugins/vgs.jarvis");
 
-function daemonCopy(name, mutant = null) {
+function daemonCopy(name, mutant = null, half = false) {
     const folder = path.join(process.env.JARVIS_TEST_ROOT, name);
     copyBackend(path.join(folder, "backend"));
     for (const file of ["JarvisProtocol.js", "Session.js"])
         fs.copyFileSync(path.join(plugin, file), path.join(folder, file));
     let source = fs.readFileSync(path.join(folder, "backend/jarvisd.js"), "utf8");
     for (const [needle, replacement] of [
-        ["captureSink: null, playbackSource: null, echo: null",
-            'captureSink: () => new (require("node:stream").Writable)({ write(frame, encoding, done) { done(); } }), playbackSource: null, echo: null'],
+        ["captureSink: null, playbackSource: null",
+            'captureSink: () => new (require("node:stream").Writable)({ write(frame, encoding, done) { done(); } }), playbackSource: null'],
         ["ports.capture = { ...ports.capture, ...audio.capturePort };",
             "ports.capture = { ...ports.capture, ...audio.capturePort, collect: () => {} };"],
-        ["configured: false, echoCancel: false, settings: context.settings });",
-            'configured: true, echoCancel: false, settings: context.settings });\n' +
+        ["configured: false, settings: context.settings });",
+            'configured: true, settings: context.settings });\n' +
             '                runner.dispatch({ type: "indicator", shown: true });\n' +
             '                runner.dispatch({ type: "talk-down" });']
     ]) {
         assert.equal(source.split(needle).length - 1, 1, name + " instrumentation");
         source = source.replace(needle, replacement);
+    }
+    if (half) {
+        fs.copyFileSync(path.join(tree, "scripts/fixtures/jarvis/scripted.js"),
+            path.join(folder, "backend/scripted-fixture.js"));
+        const needle = "ports.playback = audio.playbackPort;";
+        assert.equal(source.split(needle).length - 1, 1);
+        source = source.replace(needle, needle + '\n' +
+            '    const speech = require("./scripted-fixture.js").ports(process.env.HOME);\n' +
+            '    ports.capture.collect = speech.capture.collect;\n' +
+            '    ports.brain = speech.brain;\n' +
+            '    audio.playbackSource = () => {\n' +
+            '        const source = new (require("node:stream").PassThrough)();\n' +
+            '        source.write(Buffer.alloc(480));\n' +
+            '        const timer = setInterval(() => {\n' +
+            '            if (fs.existsSync(path.join(process.env.HOME, "audio-complete"))) source.end();\n' +
+            '        }, 10);\n' +
+            '        source.once("close", () => clearInterval(timer));\n' +
+            '        return source;\n' +
+            '    };');
     }
     fs.writeFileSync(path.join(folder, "backend/jarvisd.js"), source);
     if (mutant) {
@@ -51,8 +70,9 @@ async function run(file, trigger) {
     child.stdout.on("data", data => { output += data; });
     child.stderr.on("data", data => { error += data; });
     child.stdin.on("error", e => { if (e.code !== "EPIPE") throw e; });
+    const half = trigger.startsWith("speaking-");
     const hello = locked => JSON.stringify({ v: 1, type: "hello", gen: 0,
-        settings: { mode: "hold", microphone: "", speaker: "", brain: "" },
+        settings: { mode: half ? "toggle" : "hold", microphone: "", speaker: "", brain: "" },
         keys: { talk: null, mute: null, stop: null }, locked,
         directories: { state: process.env.HOME, data: process.env.HOME, runtime: process.env.XDG_RUNTIME_DIR },
         revision: "a".repeat(64) }) + "\n";
@@ -60,25 +80,70 @@ async function run(file, trigger) {
         child.stdin.write(hello(false));
         await until(() => output.includes('"phase":"listening"'), "real daemon captured fixture PCM: " + error);
         await until(() => !unlocked(), "detached child reached its lock");
+        if (half) {
+            const state = () => output.split("\n").slice(0, -1).map(JSON.parse)
+                .filter(row => row.type === "state").at(-1).state;
+            fs.writeFileSync(path.join(process.env.HOME, "final"), "");
+            await until(() => state().turn.kind === "thinking" && state().capture.kind === "open",
+                "actual daemon reopens conversation capture while thinking");
+            fs.writeFileSync(path.join(process.env.HOME, "brain"), "");
+            await until(() => state().playback.kind === "playing" && state().playback.admission.kind === "started"
+                && state().turn.kind === "none", "actual daemon reaches playback");
+            assert.equal(state().duplex.kind, "half");
+            assert.equal(state().capture.kind, "closed", "daemon closes recorder before speech");
+            const intent = name => child.stdin.write(JSON.stringify({ v: 1, type: "intent", gen: state().gen,
+                revision: "a".repeat(64), intent: name }) + "\n");
+            if (trigger === "speaking-complete") {
+                fs.writeFileSync(path.join(process.env.HOME, "audio-complete"), "");
+                await until(() => state().capture.kind === "open", "actual daemon resumes permitted conversation");
+            } else if (trigger === "speaking-mute") {
+                intent("mute");
+                await until(() => state().playback.kind === "idle" && state().mute.kind === "on",
+                    "mute ends playback without restarting capture");
+                assert.equal(state().capture.kind, "closed");
+                await until(() => unlocked(), "mute releases every audio child");
+            } else if (trigger === "speaking-lock") {
+                child.stdin.write(hello(true));
+                await until(() => state().gate.reason === "locked" && state().playback.kind === "idle",
+                    "lock ends playback");
+                assert.equal(state().capture.kind, "closed");
+                await until(() => unlocked(), "lock releases every audio child");
+            } else if (trigger === "speaking-kill") child.kill("SIGKILL");
+            else if (trigger !== "speaking-lease") throw new Error("daemon fixture trigger: " + trigger);
+        }
         if (trigger === "kill") child.kill("SIGKILL");
         else if (trigger === "lock") {
             child.stdin.write(hello(true));
             await until(() => unlocked(), "lock released all audio children");
             child.stdin.end();
-        } else child.stdin.end();
+        } else if (trigger !== "speaking-kill") child.stdin.end();
         const [code, signal] = await closed;
-        if (trigger === "kill") assert.equal(signal, "SIGKILL");
+        if (trigger === "kill" || trigger === "speaking-kill") assert.equal(signal, "SIGKILL");
         else { assert.equal(signal, null); assert.equal(code, 0, error); }
         await until(() => unlocked(), trigger + " left an audio descendant");
         assert.equal(unlocked(), true);
     } finally {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        for (const marker of ["final", "brain", "audio-complete", "mute.json"])
+            fs.rmSync(path.join(process.env.HOME, marker), { force: true });
     }
 }
 
 async function inside() {
     const file = daemonCopy("audio-daemon");
     for (const trigger of ["lease", "lock", "kill"]) await run(file, trigger);
+    const half = daemonCopy("half-daemon", null, true);
+    for (const trigger of ["speaking-complete", "speaking-mute", "speaking-lock", "speaking-lease", "speaking-kill"])
+        await run(half, trigger);
+    const admission = daemonCopy("half-admission-control", null, true);
+    const sessionFile = path.resolve(admission, "../../Session.js");
+    const sessionSource = fs.readFileSync(sessionFile, "utf8");
+    const admissionNeedle = '&& s.playback.kind === "idle"';
+    assert.equal(sessionSource.split(admissionNeedle).length - 1, 1);
+    const admissionChanged = sessionSource.replace(admissionNeedle, '&& (true || s.playback.kind === "idle")');
+    assert.notEqual(admissionChanged, sessionSource);
+    fs.writeFileSync(sessionFile, admissionChanged);
+    await assert.rejects(() => run(admission, "speaking-complete"), assert.AssertionError);
     // No audio program may run if setpriv's installation happened after the
     // parent died. A wrong expected PID reaches the same bootstrap refusal.
     const bootstrap = path.join(plugin, "backend/audio-child.py");
@@ -134,6 +199,6 @@ async function inside() {
     // Let the same commands run without the PID boundary. The detached lock
     // survives daemon death, and the unchanged lifetime assertion turns red.
     await assert.rejects(() => run(mutant, "kill"), assert.AssertionError);
-    console.log("test-jarvis-audio-daemon: ok triggers=3 controls=2 startup-race=refused");
+    console.log("test-jarvis-audio-daemon: ok triggers=8 controls=3 startup-race=refused");
 }
 world(inside).catch(error => { console.error(error); process.exitCode = 1; });

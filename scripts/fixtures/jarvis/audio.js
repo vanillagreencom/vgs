@@ -9,7 +9,7 @@ const tree = path.resolve(__dirname, "../../..");
 
 function standins(folder) {
     fs.mkdirSync(folder, { recursive: true });
-    for (const command of ["pw-record", "pw-cat", "pw-dump", "pw-cli"])
+    for (const command of ["pw-record", "pw-cat", "pw-dump"])
         fs.writeFileSync(path.join(folder, command), "#!/bin/bash\nexec python3 -I " +
             JSON.stringify(path.join(__dirname, "audio-tool.py")) + " " + command + ' "$@"\n', { mode: 0o700 });
 }

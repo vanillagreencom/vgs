@@ -91,8 +91,8 @@ function instrument(file, root) {
     const changes = [
         ['ports.playback = audio.playbackPort;',
             'ports.playback = audio.playbackPort;\n    Object.assign(ports, require("./scripted-fixture.js").ports(' + JSON.stringify(root) + '));'],
-        ['configured: false, echoCancel: false, settings: context.settings',
-            'configured: true, echoCancel: false, settings: context.settings'],
+        ['configured: false, settings: context.settings',
+            'configured: true, settings: context.settings'],
         ['runner.dispatch({ type: "snapshot", locked: context.locked,',
             'runner.dispatch({ type: "indicator", shown: true });\n                runner.dispatch({ type: "snapshot", locked: context.locked,']
     ];

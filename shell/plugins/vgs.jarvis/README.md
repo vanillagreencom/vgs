@@ -40,6 +40,8 @@ Talk mode defaults to Hold. Toggle keeps conversation demand open until the next
 
 Turn on Show in bar on the Jarvis page to put the Jarvis icon in the bar's right section. Its tooltip names the state and what a click does.
 
+Audio uses half duplex. Jarvis closes its microphone while speech plays. Talk can interrupt speech, but spoken interruption during playback is unavailable. Echo cancellation has no supported setting. Jarvis changes no desktop audio defaults.
+
 The Keys section changes Talk, Mute and Stop. Talk defaults to Super with Right Alt. Mute defaults to Super with Shift and Right Alt. Stop defaults to Super with Alt and Period. Mute is separate from Talk mode.
 
 Open Jarvis in Settings and select Add key. Use the provider's origin, such as `https://api.openai.com`, without a path. Add key can ask the desktop keyring to unlock because you started storage. The background presence check never unlocks it.

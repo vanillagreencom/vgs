@@ -114,7 +114,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             if (!ending && context !== null) write({ v: 1, type: "audio-fault", gen: runner.state.gen,
                 revision: context.revision, reason: String(reason).replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 180) });
         },
-        captureSink: null, playbackSource: null, echo: null
+        captureSink: null, playbackSource: null
     });
     const ports = unavailable();
     ports.capture = { ...ports.capture, ...audio.capturePort };
@@ -124,7 +124,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer)
     }, (state, phase) => {
         audio.observe(state);
-        if (state.gate.kind === "down") void audio.teardown("gate", ["capture", "echo", "playback"]);
+        if (state.gate.kind === "down") void audio.teardown("gate", ["capture", "playback"]);
         if (!ending && context !== null) write({ v: 1, type: "state", gen: state.gen,
             revision: context.revision, seq: ++seq, state, phase });
     });
@@ -168,7 +168,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                 // No speech adapter or indicator exists yet. A healthy
                 // child is not permission to capture or start a tool.
                 runner.dispatch({ type: "snapshot", locked: context.locked,
-                    configured: false, echoCancel: false, settings: context.settings });
+                    configured: false, settings: context.settings });
                 if (first) void audio.discover().catch(error => {
                     if (!ending) audio.fault(error.message);
                 });

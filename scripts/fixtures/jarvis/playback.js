@@ -27,7 +27,7 @@ function setup(source, time = clock(), Implementation = Audio, environment = nul
         environment: environment || { PATH: process.env.PATH, HOME: process.env.HOME,
             XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR },
         clock: time, offers: () => {}, level: () => {}, fault: reason => failures.push(reason),
-        captureSink: null, playbackSource: () => source, echo: null
+        captureSink: null, playbackSource: () => source
     });
     const state = Session.initial();
     state.gate = { kind: "up" };

@@ -187,6 +187,8 @@ Each is a manifest `schema` entry with its default in `settings` (D032). "Ends":
 
 \* `optionsFrom` a `choices` status (J03); "" is the first offered. `auto` voice: local when its runtime is ready, else the first provider with a key.
 
+J15 selects the permitted [half-duplex alternative](../architecture/jarvis-audio-duplex.md). Its implemented settings omit `echoCancel`; the Voice table's echo default applies only to an echo implementation.
+
 Status: `daemon`, `voiceState`, `brainState`, `localRuntime`, `browser`, `pointer` (state, with the setup command); `accounts`, `keys` (presenceList); `tasks` (count); a `choices` entry per starred setting (`brains` from `Accounts.js`); `leaves` (text: what each provider receives); `detail` (data).
 
 Files: state under `$XDG_STATE_HOME/vgs/jarvis/`; the runtime, models and the task hook's engine copy under `$XDG_DATA_HOME/vgs/jarvis/`; the socket and screenshots under `$XDG_RUNTIME_DIR/vgs/jarvis/`. Every file but the audit and the log is written whole and renamed. The plugin directory is never written.

@@ -1,6 +1,6 @@
-// One owner for capture, playback, the local echo loader and the sidecar feed.
-// Speech consumers supply PCM sinks/sources. Audio never transcribes,
-// selects echo parameters or changes a default device.
+// One owner for capture, paced playback, heard-prefix reports and the sidecar feed.
+// Speech consumers supply PCM sinks/sources. Audio never transcribes
+// or changes a default device. Session admits half-duplex only.
 "use strict";
 const cp = require("node:child_process");
 const path = require("node:path");
@@ -16,7 +16,7 @@ const DISCOVERY_BYTES = 1024 * 1024;
 const STREAM_PROPERTIES = JSON.stringify({ "node.dont-fallback": true, "node.dont-reconnect": true });
 
 class Audio {
-    constructor({ session, environment, clock, offers, level, fault, captureSink, playbackSource, echo }) {
+    constructor({ session, environment, clock, offers, level, fault, captureSink, playbackSource }) {
         this.session = session;
         this.environment = {};
         for (const key of ["PATH", "HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
@@ -28,7 +28,6 @@ class Audio {
         this.fault = fault;
         this.captureSink = captureSink;
         this.playbackSource = playbackSource;
-        this.echo = echo;
         this.children = new Map();
         this.state = null;
         this.lifetime = { kind: "open" };
@@ -45,7 +44,7 @@ class Audio {
         this.release = Promise.resolve();
         this.capturePort = {
             open: (e, done, failed) => this.openCapture(e, done, failed),
-            close: (e, done) => this.teardown("capture-close", ["capture", "echo"]).then(done)
+            close: (e, done) => this.teardown("capture-close", ["capture"]).then(done)
         };
         this.playbackPort = {
             start: (e, done, failed) => this.startPlayback(e, done, failed),
@@ -279,19 +278,10 @@ class Audio {
             feed.on("error", error => {
                 if (this.capture === capture) this.failCapture("provider-disconnected", error.message);
             });
-            if (this.state.duplex.kind === "echo") {
-                if (this.echo === null) throw new Error("echo-unavailable");
-                const loader = await this.spawn("echo", "pw-cli");
-                loader.child.stdout.resume();
-                loader.child.stdin.write("load-module libpipewire-module-echo-cancel " + this.echo.arguments + "\n");
-                loader.closed.then(() => {
-                    if (this.capture === capture && !loader.stopping) this.failCapture("echo-exit", loader.diagnostic);
-                });
-            }
             if (!this.allowed("capture") || this.capture !== capture) return;
             const owner = await this.spawn("capture", "pw-record", [
                 "--raw", "--rate", String(PCM_RATE), "--channels", "1", "--format", "s16",
-                "--target", this.state.duplex.kind === "echo" ? this.echo.target : target,
+                "--target", target,
                 "--properties", STREAM_PROPERTIES, "-"
             ]);
             if (this.capture !== capture) return;
@@ -319,11 +309,11 @@ class Audio {
             owner.closed.then(() => {
                 if (this.capture === capture && !owner.stopping) void this.captureExited(capture, owner);
             });
-            if (!this.allowed("capture")) await this.teardown("capture-refused", ["capture", "echo"]);
+            if (!this.allowed("capture")) await this.teardown("capture-refused", ["capture"]);
         } catch (error) {
             if (capture !== null && this.capture !== capture) return;
             if (capture !== null) capture.kind = "failed";
-            await this.teardown("capture-failed", ["capture", "echo"]);
+            await this.teardown("capture-failed", ["capture"]);
             failed(error.message === "device-lost" ? "device-lost" : "audio-start: " + error.message);
         }
     }
@@ -332,7 +322,7 @@ class Audio {
     // Read a fresh snapshot before deciding whether the selected device was
     // lost. This one-shot read belongs to the same discovery owner.
     async captureExited(capture, owner) {
-        await this.teardown("capture-failed", ["capture", "echo"]);
+        await this.teardown("capture-failed", ["capture"]);
         if (!this.session.live(this.state, capture.e, "capture", ["opening", "open"])) return;
         try {
             await this.refreshDevices();
@@ -371,7 +361,7 @@ class Audio {
         const capture = this.capture;
         if (capture === null || capture.kind === "failed" || (capture.owner !== null && capture.owner.stopping)) return;
         capture.kind = "failed";
-        void this.teardown(reason, ["capture", "echo"]).then(() => capture.failed(reason));
+        void this.teardown(reason, ["capture"]).then(() => capture.failed(reason));
         if (diagnostic !== "") this.fault(reason + ": " + diagnostic.slice(0, 200));
     }
 
@@ -626,7 +616,7 @@ class Audio {
     close(reason) {
         this.lifetime = { kind: "closed" };
         if (this.discovery.kind === "waiting") this.clock.clear(this.discovery.timer);
-        return this.teardown(reason, ["capture", "echo", "playback", "discovery"]);
+        return this.teardown(reason, ["capture", "playback", "discovery"]);
     }
 }
 

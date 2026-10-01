@@ -9,7 +9,7 @@ const { SessionRunner, unavailable } = require("../shell/plugins/vgs.jarvis/back
 const file = path.join(tree, "shell/plugins/vgs.jarvis/backend/Audio.js");
 const { Audio } = require(file);
 
-function setup(Implementation = Audio, echo = null, sink = null, source = null, clock = null) {
+function setup(Implementation = Audio, sink = null, source = null, clock = null) {
     const levels = [], offers = [], faults = [];
     let frames = 0, at = 0;
     const audio = new Implementation({
@@ -22,7 +22,7 @@ function setup(Implementation = Audio, echo = null, sink = null, source = null, 
         fault: value => faults.push(value),
         captureSink: e => typeof sink === "function" ? sink(e)
             : sink || new Writable({ write(frame, encoding, done) { frames++; at += 10; done(); } }),
-        playbackSource: () => source || new PassThrough(), echo
+        playbackSource: () => source || new PassThrough()
     });
     const ports = unavailable();
     ports.capture = { ...ports.capture, ...audio.capturePort,
@@ -33,10 +33,10 @@ function setup(Implementation = Audio, echo = null, sink = null, source = null, 
         now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer)
     }, s => {
         audio.observe(s);
-        if (s.gate.kind === "down") void audio.teardown("gate", ["capture", "echo", "playback"]);
+        if (s.gate.kind === "down") void audio.teardown("gate", ["capture", "playback"]);
     });
     const dispatch = (type, values = {}) => runner.dispatch({ type, ...values });
-    dispatch("snapshot", { locked: false, configured: true, echoCancel: echo !== null,
+    dispatch("snapshot", { locked: false, configured: true,
         settings: { microphone: "", speaker: "" } });
     dispatch("indicator", { shown: true });
     return { audio, runner, dispatch, levels, offers, faults, frames: () => frames, tick: ms => { at += ms; } };
@@ -50,7 +50,7 @@ async function capture(w) {
 }
 
 async function trigger(Implementation, type) {
-    const w = setup(Implementation, { arguments: "fixture=true", target: "fixture.echo" });
+    const w = setup(Implementation);
     try {
         await capture(w);
         if (type === "mute") w.dispatch("mute");
@@ -58,7 +58,7 @@ async function trigger(Implementation, type) {
         else if (type === "provider") w.audio.failCapture("provider-disconnected", "");
         else if (type === "lease") w.runner.close();
         else w.dispatch("snapshot", { locked: type === "unknown" ? null : true, configured: true,
-            echoCancel: true, settings: w.runner.state.settings });
+            settings: w.runner.state.settings });
         if (type === "mute") assert.equal(w.runner.state.mute.kind, "muting");
         await until(() => w.runner.state.capture.kind === "closed", type + " acknowledgment");
         assert.equal([...w.audio.children.values()].filter(owner => owner.kind !== "discovery").length, 0,
@@ -105,7 +105,7 @@ async function inside() {
     for (const [name, setting] of [["no-devices", ""], ["unavailable-id", "missing.mic"]]) {
         const w = setup();
         if (name === "no-devices") fs.writeFileSync(path.join(process.env.HOME, name), "");
-        w.dispatch("snapshot", { locked: false, configured: true, echoCancel: false,
+        w.dispatch("snapshot", { locked: false, configured: true,
             settings: { microphone: setting, speaker: "" } });
         w.dispatch("talk-down");
         await until(() => w.runner.state.fault.kind === "error" && w.runner.state.capture.kind === "closed",
@@ -129,7 +129,7 @@ async function inside() {
     fs.unlinkSync(path.join(process.env.HOME, "capture-exits"));
 
     async function startupFailure(Implementation = Audio) {
-        const w = setup(Implementation, null, () => {
+        const w = setup(Implementation, () => {
             const sink = new Writable({ write(frame, encoding, done) { done(); } });
             queueMicrotask(() => sink.destroy(new Error("synthetic provider disconnect")));
             return sink;
@@ -146,7 +146,7 @@ async function inside() {
 
     async function retiredSink(Implementation = Audio) {
         const sinks = [];
-        const w = setup(Implementation, null, () => {
+        const w = setup(Implementation, () => {
             const sink = new Writable({ write(frame, encoding, done) { done(); } });
             sinks.push(sink);
             return sink;
@@ -183,7 +183,7 @@ async function inside() {
 
     async function playback(Implementation = Audio) {
         const source = new PassThrough();
-        const w = setup(Implementation, null, null, source);
+        const w = setup(Implementation, null, source);
         try {
             await capture(w);
             w.dispatch("final", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op, text: "fixture" });
@@ -214,58 +214,72 @@ async function inside() {
     }
     await playback();
 
-    async function overlap(Implementation = Audio, operation = "flush") {
+    async function halfDuplex(Implementation = Audio, operation = "complete") {
         const source = new PassThrough();
-        const w = setup(Implementation, { arguments: "fixture=true", target: "fixture.echo" }, null, source);
+        const w = setup(Implementation, null, source);
         try {
             w.dispatch("toggle");
             await until(() => w.runner.state.capture.kind === "open", "conversation capture opens");
             w.dispatch("final", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op, text: "fixture" });
-            await until(() => w.runner.state.capture.kind === "open", "echo capture reopens after final");
+            await until(() => w.runner.state.capture.kind === "open", "conversation capture reopens after final");
+            const sink = w.audio.feed;
             w.dispatch("play", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op, interruptible: true });
             source.write(Buffer.alloc(480));
-            await until(() => [...w.audio.children.values()].some(owner => owner.kind === "playback"),
-                "echo capture and playback overlap");
+            await until(() => w.audio.playback !== null && w.audio.playback.kind === "feeding",
+                "playback starts after recorder exit");
             w.dispatch("brain-done", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op });
-            const capture = w.audio.capture;
-            const echo = [...w.audio.children.values()].find(owner => owner.kind === "echo");
-            const player = [...w.audio.children.values()].find(owner => owner.kind === "playback");
-            assert.notEqual(capture, null);
-            assert.notEqual(echo, undefined);
-            if (operation === "flush") {
-                w.dispatch("interrupt");
-                await until(() => w.runner.state.playback.kind === "idle", "playback flush acknowledgment");
-                assert.equal(w.runner.state.capture.kind, "open");
-                assert.equal(w.audio.capture, capture, "flush retains the capture owner");
-                assert.equal(echo.stopping, false, "flush retains echo");
-                assert.equal(capture.owner.stopping, false);
-                assert.equal(w.audio.children.has(echo.child), true);
-                assert.equal(w.audio.children.has(capture.owner.child), true);
-                assert.equal(w.audio.feed.destroyed, false);
-                assert.equal(source.destroyed, true);
-            } else {
-                if (operation === "capture-close") w.dispatch("cancel");
-                else w.audio.failCapture(operation, "");
-                await until(() => w.runner.state.capture.kind === "closed", "capture release acknowledgment");
-                assert.equal(w.runner.state.playback.kind, "playing");
-                assert.notEqual(w.audio.playback, null, "capture release retains playback until its own acknowledgment");
-                assert.equal(player.stopping, false);
-                assert.equal(w.audio.children.has(player.child), true);
-                assert.equal(source.destroyed, false);
-                assert.equal(echo.stopping, true);
-                w.dispatch("stop");
-                await until(() => w.runner.state.playback.kind === "idle", "Session separately flushes playback");
-                assert.equal(source.destroyed, true);
+            assert.equal(w.runner.state.duplex.kind, "half");
+            assert.equal(w.runner.state.capture.kind, "closed");
+            assert.equal(w.audio.capture, null, "half duplex has no recorder owner during playback");
+            assert.equal(sink.closed, true, "speech receives no microphone feed during playback");
+            assert.equal([...w.audio.children.values()].some(owner => owner.kind === "capture"), false);
+            const playback = w.runner.state.playback;
+            const resumes = ["complete", "interrupt", "talk"].includes(operation);
+            if (operation === "complete") source.end();
+            else if (operation === "interrupt") w.dispatch("interrupt");
+            else if (operation === "talk") w.dispatch("talk-down");
+            else if (operation === "release") {
+                w.dispatch("talk-down");
+                w.dispatch("talk-up");
             }
+            else if (operation === "indicator") w.dispatch("indicator", { shown: false });
+            else if (operation === "provider") source.destroy(new Error("synthetic provider disconnect"));
+            else if (operation === "device") w.audio.snapshot([{ id: 12, info: null }]);
+            else if (operation === "lease") w.runner.close();
+            else if (operation === "mute" || operation === "stop") w.dispatch(operation);
+            else if (operation === "locked" || operation === "unknown") {
+                w.dispatch("snapshot", { locked: operation === "unknown" ? null : true, configured: true,
+                    settings: w.runner.state.settings });
+            } else {
+                throw new Error("half-duplex fixture operation: " + operation);
+            }
+            // Indicator loss blocks capture, not playback. Let its real player
+            // finish so the same admission check reaches the resume boundary.
+            if (operation === "indicator") source.end();
+            await until(() => w.runner.state.playback.kind === "idle", operation + " playback ends");
+            assert.equal(source.destroyed, true, "playback release ends the provider source");
+            if (resumes) {
+                await until(() => w.runner.state.capture.kind === "open", operation + " resumes permitted demand");
+                assert.notEqual(w.audio.feed, sink, "resume acquires a new speech feed");
+                assert.equal(w.runner.state.input.kind, operation === "talk" ? "held" : "conversation");
+            } else {
+                assert.equal(w.runner.state.capture.kind, "closed", operation + " cannot revive capture");
+                assert.equal(w.audio.capture, null);
+                assert.equal(unlocked(), true, operation + " releases detached audio children");
+            }
+            w.dispatch("played", { gen: playback.gen, op: playback.op });
+            assert.equal(w.runner.state.playback.kind, "idle", "late player completion cannot restart playback");
+            const calls = fs.readFileSync(path.join(process.env.HOME, "audio-argv"), "utf8").trim().split("\n").map(JSON.parse);
+            assert.equal(calls.some(row => row.command === "pw-cli"), false, "half duplex loads no module");
         } finally { w.runner.close(); await w.audio.close("test-end"); }
     }
-    for (const operation of ["flush", "capture-close", "capture-overflow", "echo-exit", "capture-refused", "discovery-failed"])
-        await overlap(Audio, operation);
+    for (const operation of ["complete", "interrupt", "talk", "release", "mute", "stop", "locked", "unknown",
+        "indicator", "provider", "device", "lease"]) await halfDuplex(Audio, operation);
 
     async function playbackExit(Implementation = Audio) {
         fs.writeFileSync(path.join(process.env.HOME, "playback-exits"), "");
         const source = new PassThrough();
-        const w = setup(Implementation, null, null, source);
+        const w = setup(Implementation, null, source);
         try {
             await capture(w);
             w.dispatch("final", { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op, text: "fixture" });
@@ -294,7 +308,7 @@ async function inside() {
 
     async function overflow(Implementation = Audio) {
         const sink = new Writable({ highWaterMark: 1048576, write() {} });
-        const w = setup(Implementation, null, sink);
+        const w = setup(Implementation, sink);
         try {
             await capture(w);
             await until(() => w.runner.state.fault.kind === "error", "bounded capture buffer faults");
@@ -388,7 +402,7 @@ async function inside() {
         const timers = new Map();
         const clock = { now: () => 0, set: (fn, ms) => { const timer = {}; timers.set(timer, { fn, ms }); return timer; },
             clear: timer => timers.delete(timer) };
-        const w = setup(Implementation, null, null, null, clock);
+        const w = setup(Implementation, null, null, clock);
         const marker = path.join(process.env.HOME, "monitor-exits");
         try {
             await w.audio.discover();
@@ -437,7 +451,7 @@ async function inside() {
         let released;
         const sink = new Writable({ write(frame, encoding, done) { done(); },
             destroy(error, done) { released = () => done(error); } });
-        const w = setup(impl, null, sink);
+        const w = setup(impl, sink);
         try {
             await capture(w);
             w.dispatch("mute");
@@ -492,10 +506,8 @@ async function inside() {
         'if (false) this.failPlayback("playback-exit-" + (owner.exit.signal || owner.exit.code));', playbackExit);
     await control("device-fallback", '"node.dont-fallback": true', '"node.dont-fallback": false', playback);
     await control("device-reconnect", '"node.dont-reconnect": true', '"node.dont-reconnect": false', playback);
-    await control("flush-owner", 'this.teardown("interrupt", ["playback"])',
-        'this.teardown("interrupt", ["capture", "echo", "playback"])', overlap);
-    await control("capture-fault-owner", 'this.teardown(reason, ["capture", "echo"])',
-        'this.teardown(reason, ["capture", "echo", "playback"])', impl => overlap(impl, "capture-overflow"));
+    await control("half-capture-release", 'this.teardown("capture-close", ["capture"])',
+        '(false ? this.teardown("capture-close", ["capture"]) : Promise.resolve())', halfDuplex);
     await control("discovery-retired", 'this.discovery = waiting;',
         'if (false) this.discovery = waiting;', discoveryRecovery);
     await control("discovery-recovery-bound", "if (discovery.retries === 3)", "if (discovery.retries === 4)", discoveryBound);

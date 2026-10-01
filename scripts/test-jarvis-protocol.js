@@ -25,6 +25,7 @@ assert.deepEqual(manifest.hyprland.binds, [
     { shortcut: "stop", key: "SUPER+ALT+PERIOD" }
 ]);
 assert.equal(manifest.capabilities.includes("shortcut"), true);
+assert.equal(manifest.requirements.some(row => row.command === "pw-cli"), false);
 const devices = { v: 1, type: "devices", gen: 0, revision: hello.revision,
     microphones: [{ label: "Microphone", value: "fixture.mic" }], speakers: [] };
 const level = { v: 1, type: "level", gen: 0, revision: hello.revision, level: { capture: 0.5, playback: 0 } };
@@ -54,6 +55,8 @@ const cases = [
     ["hello-shape", changed(hello, { surprise: true }), "shell", "shape-hello"],
     ["status-shape", changed(status, { surprise: true }), "daemon", "shape-status"],
     ["settings", changed(hello, { settings: {} }), "shell", "shape-settings"],
+    ...[false, true].map(echoCancel => ["echo-setting-" + echoCancel,
+        changed(hello, { settings: { ...hello.settings, echoCancel } }), "shell", "shape-settings"]),
     ["mode", changed(hello, { settings: { ...hello.settings, mode: "always" } }), "shell", "mode"],
     ["extra-setting", changed(hello, { settings: { ...hello.settings, extra: "" } }), "shell", "shape-settings"],
     ["missing-brain", changed(hello, { settings: { mode: "hold", microphone: "", speaker: "" } }), "shell", "shape-settings"],
@@ -172,6 +175,11 @@ try {
     ];
     for (const [name, needle, replacement, example] of guards)
         control(name, needle, replacement, logic => rejected(logic, cases.find(row => row[0] === example)));
+    control("unsupported-echo", 'keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");',
+        'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain"], "settings");',
+        logic => {
+            for (const row of cases.filter(row => row[0].startsWith("echo-setting-"))) rejected(logic, row);
+        });
     control("ceiling", 'if (bytes(line) > MAX_LINE_BYTES) fail("line-too-long");', 'if (false) fail("line-too-long");',
         logic => assert.throws(() => logic.feed("", "a".repeat(262145)), { message: "jarvis: protocol=line-too-long" }));
     control("utf8", "count += 4;", "count += 1;",

@@ -41,7 +41,7 @@ One Python sidecar on sherpa-onnx (Apache-2.0; it embeds espeak-ng, GPL-3.0, so 
 | Wake word | `sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01`: keywords as text, English only [L9] | The pinned archive's README declares Apache License 2.0: D066 closes Q5. openWakeWord's "hey jarvis" is CC BY-NC-SA; Picovoice has no personal plan [L10] |
 
 - **`artifacts.json`** (J38) pins per artifact: URL, revision, files, SHA-256, runtime version, execution provider, input format, languages, and the licence of software, model and voice. `measure-local` runs a bundled clip through each and records cold load, warm turn, unload, peak memory and speed.
-- **Echo cancellation**: PipeWire's `libpipewire-module-echo-cancel`. A module loaded with `pw-cli` lives in that process [P2], so the daemon owns a loader whose exit removes it. It holds a microphone stream, so it loads only while capture is open. J15 confirms, else half-duplex.
+- **Echo cancellation**: PipeWire's `libpipewire-module-echo-cancel`. A module loaded with `pw-cli` lives in that process [P2], so a loader's exit removes it. It holds a microphone stream, so an echo implementation must load it only while capture is open. [J15's implemented half-duplex alternative](../architecture/jarvis-audio-duplex.md#r3-pipewire-module-lifetime) records the documented API limits and answers R3.
 
 **Tiers and admission.** `Hardware.detect()` runs once at setup and is cached (a probe at each start wakes a suspended GPU): CPU flags, RAM, GPU vendor, total VRAM, and whether a CUDA decode of the probe clip succeeds. `Hardware.admit(tier)` runs at every load.
 
