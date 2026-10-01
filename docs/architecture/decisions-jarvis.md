@@ -1,6 +1,6 @@
 # Jarvis decisions
 
-Covers: docs/decisions/D064-*, docs/decisions/D066-*, docs/decisions/D070-*, docs/decisions/D072-*, docs/decisions/D074-*, docs/decisions/D079-*, docs/decisions/D082-*
+Covers: docs/decisions/D064-*, docs/decisions/D066-*, docs/decisions/D070-*, docs/decisions/D072-*, docs/decisions/D074-*, docs/decisions/D079-*, docs/decisions/D082-*, docs/decisions/DNNN-*
 
 The assistant's decision records. [Decisions](decisions.md) holds the other architecture records. [INDEX.md](../decisions/INDEX.md) holds the full log with dates, rationale and status.
 
@@ -11,3 +11,4 @@ The assistant's decision records. [Decisions](decisions.md) holds the other arch
 - [D074](../decisions/D074-jarvis-kernel-sandbox.md): Jarvis commands require a real kernel sandbox probe, protected masks and private endpoints.
 - [D079](../decisions/D079-brains-wire-and-harness-adapters.md): Jarvis brains are wire adapters through the origin-bound network door or harness adapters that start the vendor's own program; one provider table and one bounded event stream reader serve them, with no npm dependency. Refines D009 and D046.
 - [D082](../decisions/D082-jarvis-approval-bound-to-the-action.md): Jarvis routes serial immutable actions; Session judges confirmation identity and time, Policy rejudges fresh facts and Audit gates starts. Refines D070.
+- [DNNN](../decisions/DNNN-jarvis-task-control.md): a launcher records a coding task's process-group identity before the agent execs; stops verify it before every signal and write `stopped` only after the group reads empty; tmux or the floating TUI only display the task. Refines D072 and D033.

@@ -134,6 +134,37 @@ function audioFaultThenDevices(file) {
     fs.writeFileSync(file, changed);
 }
 
+// The smoke's task row: the daemon sends one task TUI request per gate file
+// request-N under GATES, with spec path GATES/spec-N.json, and logs each
+// reply and each task TUI state the service forwards. Nothing launches a task.
+function taskRequests(file, gates) {
+    const source = fs.readFileSync(file, "utf8");
+    const observe = "if (first) void tasks.observe();";
+    const forward = "tasks.tuiState(message.running);";
+    assert.equal(source.split(observe).length - 1, 1);
+    assert.equal(source.split(forward).length - 1, 1);
+    const fixture = `
+                if (first) {
+                    const fixtureFs = require("node:fs");
+                    let fixtureNext = 1;
+                    const fixtureTimer = setInterval(() => {
+                        const n = fixtureNext;
+                        if (!fixtureFs.existsSync(path.join(${JSON.stringify(gates)}, "request-" + n))) return;
+                        fixtureNext++;
+                        void request({ kind: "tui.run", name: "task", args: [path.join(${JSON.stringify(gates)}, "spec-" + n + ".json")] })
+                            .then(answer => fixtureFs.appendFileSync(path.join(${JSON.stringify(gates)}, "replies.jsonl"),
+                                JSON.stringify({ n, answer }) + "\\n"));
+                    }, 10); // Wait for the row's explicit gate, not a startup delay.
+                    process.stdin.once("end", () => clearInterval(fixtureTimer));
+                }`;
+    const log = `require("node:fs").appendFileSync(path.join(${JSON.stringify(gates)}, "tui-states.jsonl"),
+                        JSON.stringify(message.running) + "\\n");
+                    `;
+    const changed = source.replace(observe, observe + fixture).replace(forward, log + forward);
+    assert.notEqual(changed, source);
+    fs.writeFileSync(file, changed);
+}
+
 function service(sourceTree, tree, root) {
     require("./keys-world.js").standins(path.join(root, "standins"));
     standins(path.join(root, "standins"));
@@ -199,6 +230,9 @@ if (require.main === module) {
     } else if (process.argv[2] === "--floor-daemon") {
         assert.equal(process.argv.length, 4);
         floorDaemon(process.argv[3]);
+    } else if (process.argv[2] === "--task-requests") {
+        assert.equal(process.argv.length, 5);
+        taskRequests(process.argv[3], process.argv[4]);
     } else if (process.argv[2] === "--audio-fault-devices") {
         assert.equal(process.argv.length, 4);
         audioFaultThenDevices(process.argv[3]);

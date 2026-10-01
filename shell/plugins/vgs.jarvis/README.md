@@ -25,6 +25,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Accounts finds nested account directories and lets you add another directory.
 - Accounts can remember a key another tool stored without copying its value.
 - Login hints and local-server presence are not verified inference access.
+- Jarvis watches its recorded coding tasks and shows how many are running in Settings.
+- Stopping a coding task interrupts its agent, escalates until every one of its processes has ended, and only then records it as stopped.
 
 ## Requirements
 
@@ -32,11 +34,19 @@ The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and
 
 The optional command sandbox needs bubblewrap and available user namespaces. This skeleton offers no shell tools. Opening a file or web link needs gio.
 
+Several coding tasks at once need tmux, which is optional. Without it, a coding task opens in a floating terminal, one task at a time. Task records need flock and Python.
+
 ## How it works
 
 The service sends its current configuration and lock observation to the child. The child answers with its health and session state. Settings shows its health. Add key asks for a provider, an account label and the provider's origin, then hides key input. The desktop keyring stores the key. VGS stores only the item's reference. Disable destroys the service and its child.
 
+## Coding tasks
+
+No coding agent is connected yet, so Jarvis starts no coding task. It still watches task records on your computer. A task's agent runs in its own process group, inside a private tmux session or the floating terminal. Jarvis checks that the processes are still the task's own before it signals them, and never touches your own tmux sessions. A stop that cannot end every process is reported as a notice and leaves the task running. The Stop key does not stop coding tasks.
+
 ## Settings
+
+Task terminal chooses where a coding task opens. Auto uses tmux when it is installed, so several tasks can run at once, and the floating terminal otherwise. Floating opens one task at a time.
 
 Talk mode defaults to Hold. Toggle keeps conversation demand open until the next press. No mode captures audio until an engine and its indicator are available.
 

@@ -235,6 +235,7 @@ f share/vgs/shell/plugins/vgs.jarvis/Widget.qml
 f share/vgs/shell/plugins/vgs.jarvis/WidgetView.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
 f share/vgs/shell/plugins/vgs.jarvis/backend/Accounts.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/AgentProfiles.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/AnthropicMessages.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audio.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
@@ -251,6 +252,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/ShellRequests.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Speakable.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/SpeechLanguage.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Sse.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/TaskRunner.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tasks.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ToolRouter.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
@@ -271,6 +273,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/lang/es.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/speech.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/turns.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/task-event
+f share/vgs/shell/plugins/vgs.jarvis/backend/task-run.py
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/PROVENANCE
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/probe.txt
 f share/vgs/shell/plugins/vgs.jarvis/fixtures/probe.wav
@@ -282,6 +285,7 @@ f share/vgs/shell/plugins/vgs.jarvis/setup-local
 f share/vgs/shell/plugins/vgs.jarvis/tui/accounts.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/add-key.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/setup-local.sh
+f share/vgs/shell/plugins/vgs.jarvis/tui/task.sh
 f share/vgs/shell/plugins/vgs.launcher/Anim.qml
 f share/vgs/shell/plugins/vgs.launcher/Appearance.js
 f share/vgs/shell/plugins/vgs.launcher/Caret.qml

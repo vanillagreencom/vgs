@@ -18,6 +18,8 @@ The [desktop executor suite](jarvis-desktop-tools.md#evidence) uses this world w
 
 The [action router suite](jarvis-approval.md#evidence-and-comparison) uses this world with real scratch audit files and stand-in executors. Its injected clock exercises confirmation timing without a wait. Reducer copies and backend copies carry the independent defects; shipped APIs contain no fixture or confirmation backdoor.
 
+The [task control suite](jarvis-task-control.md#evidence) runs the real launcher, a stand-in agent and real signals in this world. Production names its tmux socket with `-S`, which the PATH wrapper refuses, so the suite runs the bootstrap tmux with `-S` on a socket under the world's runtime directory. Every signal it sends targets a group it recorded.
+
 ## Ownership
 
 - `scripts/lib/jarvis-env.sh::jarvis_env_run` owns one scratch world per invocation. Its header defines the caller contract. A suite starts its fixture servers, daemon and children inside that invocation, so they share the same loopback network.
