@@ -644,13 +644,10 @@ scene_setup_steps() { # MODE
   settings_press "Show command" || fail "the click on the Token's Show command failed"
   park_pointer
   take "setup-$1-actions"
-  expect "the window opens the Automations page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.automations
-  expect_poll "the Automations page is shown" '"vgs.automations"' settings_page
+  # The harness's loginctl sentinel answers lingering off on every host, so
+  # the step is always offered and step_shot never skips it.
   expect_poll "Automations offers Enable while logged out" true step_offered vgs.automations linger
-  settings_scroll_to 0 >/dev/null || fail "the Automations page did not scroll to the top"
-  expect_poll "the Automations page is at its top" True settings_at_top
-  park_pointer
-  take "setup-$1-automations"
+  step_shot "$1" vgs.automations linger "Enable while logged out" automations
   step_shot "$1" vgs.agent-warden vsys "Install vsys" warden-install-vsys
   # Set up is offered while vsys is present: a stand-in that runs nothing
   # stands for it, and goes again after the shot, so the next mode offers
