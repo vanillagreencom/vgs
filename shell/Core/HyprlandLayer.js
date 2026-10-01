@@ -561,7 +561,7 @@ function shortcutKeys(sections, id) {
 // option not written. HELD maps each path written so far to its plugin, so
 // a path two plugins set stays with the first by id. TOUCHPADS is the
 // touchpad names Hyprland lists, or null while they are unread.
-function optionLines(section, held, touchpads, out) {
+function optionLines(section, held, touchpads, touchpadFailure, out) {
     var tree = {};
     var devices = [];
     var notes = [];
@@ -569,7 +569,7 @@ function optionLines(section, held, touchpads, out) {
         var name = section.id + ":" + option.setting;
         var refuse = function (error) {
             out.refusals.push({ id: section.id, setting: option.setting, path: option.path, error: error });
-            notes.push("-- skipped " + option.path + " for " + name + ": " + error);
+            notes.push("-- skipped " + commentText(option.path) + " for " + commentText(name) + ": " + commentText(error));
         };
         switch (option.kind) {
         case "unfit":
@@ -584,35 +584,50 @@ function optionLines(section, held, touchpads, out) {
             throw new Error("HyprlandLayer: option path " + JSON.stringify(option.path) + " is not one of OPTIONS");
         if (held[option.path] !== undefined) {
             out.conflicts.push({ id: section.id, setting: option.setting, path: option.path, heldBy: held[option.path] });
-            notes.push("-- skipped " + option.path + " for " + name + ": already set by " + held[option.path]);
+            notes.push("-- skipped " + commentText(option.path) + " for " + commentText(name) + ": already set by " + commentText(held[option.path]));
             return;
         }
         var row = OPTIONS[option.path];
-        var literal = optionLiteral(row, option.value);
-        if (!literal.ok) {
-            refuse(literal.error);
-            return;
-        }
-        held[option.path] = section.id;
-        out.written.push({ id: section.id, setting: option.setting, path: option.path, value: option.value });
+        if (typeof option.lua !== "string")
+            throw new Error("HyprlandLayer: option " + JSON.stringify(option.path) + " was not judged to a Lua literal");
+        var recordWritten = function () {
+            held[option.path] = section.id;
+            out.written.push({ id: section.id, setting: option.setting, path: option.path, value: option.value });
+        };
         if (row.device === "touchpad") {
-            if (touchpads === null || touchpads === undefined)
-                devices.push("-- " + option.path + " for " + name + ": Hyprland's touchpads are not read yet");
-            else if (touchpads.length === 0)
-                devices.push("-- " + option.path + " for " + name + ": Hyprland lists no touchpad");
-            else touchpads.forEach(function (touchpad) {
-                if (DEVICE_NAME.test(touchpad)) devices.push("hl.device({ name = \"" + touchpad + "\", enabled = " + literal.lua + " })");
-                else devices.push("-- skipped touchpad " + commentText(touchpad) + " for " + name + ": its name holds a quote, a backslash or a control character");
+            if (touchpads === null || touchpads === undefined) {
+                if (touchpadFailure !== "") refuse("touchpads unread: " + touchpadFailure);
+                devices.push("-- " + commentText(option.path) + " for " + commentText(name) + ": Hyprland's touchpads are not read yet");
+                return;
+            }
+            if (touchpads.length === 0) {
+                refuse("Hyprland lists no touchpad");
+                devices.push("-- " + commentText(option.path) + " for " + commentText(name) + ": Hyprland lists no touchpad");
+                return;
+            }
+            var wrote = false;
+            touchpads.forEach(function (touchpad) {
+                if (DEVICE_NAME.test(touchpad)) {
+                    devices.push("hl.device({ name = \"" + touchpad + "\", enabled = " + option.lua + " })");
+                    wrote = true;
+                } else {
+                    out.refusals.push({ id: section.id, setting: option.setting, path: option.path, error: "touchpad name refused" });
+                    devices.push("-- skipped touchpad " + commentText(touchpad) + " for " + commentText(name) + ": its name holds a quote, a backslash or a control character");
+                }
             });
+            if (wrote) {
+                recordWritten();
+            }
             return;
         }
+        recordWritten();
         var parts = option.path.split(".");
         var node = tree;
         for (var i = 0; i < parts.length - 1; i++) {
             if (node[parts[i]] === undefined) node[parts[i]] = {};
             node = node[parts[i]];
         }
-        node[parts[parts.length - 1]] = literal.lua;
+        node[parts[parts.length - 1]] = option.lua;
     });
     var lines = Object.keys(tree).length > 0 ? ["hl.config({ " + optionTree(tree) + " })"] : [];
     return lines.concat(devices, notes);
@@ -640,7 +655,7 @@ function optionLines(section, held, touchpads, out) {
 // setting, path, value }, each one skipped as a conflict, { id, setting,
 // path, heldBy }, or refused, { id, setting, path, error }, and `binds`,
 // the description of every bind written in the default submap.
-function render(sections, theme, themeName, highestScale, touchpads) {
+function render(sections, theme, themeName, highestScale, touchpads, touchpadFailure) {
     var plan = resolveBinds(sections);
     var switches = groupSwitches(sections);
     var lines = [
@@ -667,7 +682,7 @@ function render(sections, theme, themeName, highestScale, touchpads) {
         var section = row.section;
         if (section.options.length > 0) {
             lines.push("", "-- " + section.id + " " + commentText(section.version) + ": input options its settings set");
-            lines = lines.concat(optionLines(section, optionsHeld, touchpads, options));
+            lines = lines.concat(optionLines(section, optionsHeld, touchpads, touchpadFailure || "", options));
         }
         if (section.binds.length === 0 && section.layerRules.length === 0) return;
         lines.push("", "-- " + section.id + " " + commentText(section.version) + ": binds and layer rules from its manifest");

@@ -1,0 +1,51 @@
+{
+    "schemaVersion": 1,
+    "id": "acme.hyprland-other",
+    "name": "Hyprland options other",
+    "version": "0.1.0",
+    "author": "Smoke",
+    "description": "Sets a second input option for Hyprland option override filtering",
+    "kinds": [
+        "service"
+    ],
+    "entryPoints": {
+        "service": "Service.qml"
+    },
+    "capabilities": [
+        "hyprland",
+        "shortcut",
+        "ipc"
+    ],
+    "settings": {
+        "sensitivity": 0,
+        "repeatDelay": 600
+    },
+    "schema": {
+        "sensitivity": {
+            "type": "number",
+            "label": "Pointer speed",
+            "min": -1,
+            "max": 1,
+            "step": 0.05
+        },
+        "repeatDelay": {
+            "type": "number",
+            "label": "Repeat delay",
+            "min": 0,
+            "max": 2000,
+            "step": 1
+        }
+    },
+    "hyprland": {
+        "binds": [
+            {
+                "shortcut": "ping",
+                "key": "SUPER+F8"
+            }
+        ],
+        "options": {
+            "sensitivity": "input.sensitivity",
+            "repeatDelay": "input.repeat_delay"
+        }
+    }
+}

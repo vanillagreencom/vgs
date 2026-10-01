@@ -48,6 +48,7 @@ f share/vgs/shell/Core/Capabilities.qml
 f share/vgs/shell/Core/Compositor.qml
 f share/vgs/shell/Core/Config.qml
 f share/vgs/shell/Core/Dispatch.js
+f share/vgs/shell/Core/HyprctlReader.qml
 f share/vgs/shell/Core/HyprlandLayer.js
 f share/vgs/shell/Core/HyprlandLayer.qml
 f share/vgs/shell/Core/HyprlandState.js

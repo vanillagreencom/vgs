@@ -1,6 +1,7 @@
 .pragma library
 .import "PluginLogic.js" as Logic
 .import "HyprlandLayer.js" as Layer
+.import "Dispatch.js" as Dispatch
 
 // Pure readings behind the `hyprland` capability: Hyprland's input devices,
 // the options the layer wrote that read back otherwise, and the keys bound
@@ -92,24 +93,27 @@ function differs(type, want, read) {
 
 // The options of WRITTEN whose value Hyprland reads back otherwise, from
 // the reply to optionsRequest(WRITTEN): { ok: true, overridden: [{ id,
-// path }] } in WRITTEN's order, or { ok: false, error } with a keyed line.
-// Hyprland answers the batch's requests in order, joined by "\n\n\n", which
-// its JSON never holds.
+// path }], errors: [...] } in WRITTEN's order, or { ok: false, error } with
+// a keyed line for a whole-batch failure.
 function overridden(written, text) {
     var rows = readable(written);
-    var parts = String(text).split("\n\n\n").map(function (part) { return part.trim(); }).filter(function (part) { return part !== ""; });
-    if (parts.length !== rows.length)
-        return { ok: false, error: "refused: options=parts count=" + parts.length + " want=" + rows.length };
+    var replies = Dispatch.batchReplies(text, rows.length, "options");
+    if (!replies.ok) return { ok: false, error: replies.error };
+    var parts = replies.parts;
     var out = [];
+    var errors = [];
     for (var i = 0; i < rows.length; i++) {
         var read = parsed(parts[i]);
         var field = REPLY_FIELD[Layer.OPTIONS[rows[i].path].type];
-        if (!read.ok || read.value === null || typeof read.value !== "object" || read.value.option !== rows[i].path || !Object.prototype.hasOwnProperty.call(read.value, field))
-            return { ok: false, error: "refused: options=unread path=" + rows[i].path + " reply=" + JSON.stringify(parts[i].slice(0, 120)) };
+        if (!read.ok || read.value === null || typeof read.value !== "object" || read.value.option !== rows[i].path || !Object.prototype.hasOwnProperty.call(read.value, field)) {
+            errors.push("refused: options=unread path=" + rows[i].path + " reply=" + JSON.stringify(parts[i].slice(0, 120)));
+            out.push({ id: rows[i].id, path: rows[i].path });
+            continue;
+        }
         if (differs(Layer.OPTIONS[rows[i].path].type, rows[i].value, read.value[field]))
             out.push({ id: rows[i].id, path: rows[i].path });
     }
-    return { ok: true, overridden: out };
+    return { ok: true, overridden: out, errors: errors };
 }
 
 // The keys `hyprctl -j binds` binds in the default submap, which it names

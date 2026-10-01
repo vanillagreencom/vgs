@@ -8,7 +8,6 @@
 // the suite must fail on every copy. Exit 1 when a row or a control fails.
 "use strict";
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { load } = require("../bin/lib/qml-library.js");
 
@@ -82,13 +81,13 @@ function suite(lib, check) {
             { id: "acme.mouse", path: "input.sensitivity" }, { id: "acme.keys", path: "input.repeat_rate" },
             { id: "acme.keys", path: "input.kb_layout" }, { id: "acme.mouse", path: "input.touchpad.tap_to_click" }] }],
         ["a reply missing", replies([0.35, 40, "us,de", false]).split("\n\n\n").slice(0, 3).join("\n\n\n"), { ok: false, error: "refused: options=parts count=3 want=4" }],
-        ["an option Hyprland does not know", replies([0.35, 40, "us,de", false]).replace(getoption("input.kb_layout", "str", "us,de"), "no such option"), { ok: false, error: "refused: options=unread path=input.kb_layout reply=\"no such option\"" }],
-        ["a reply of another type", replies([0.35, 40, "us,de", false]).replace(getoption("input.repeat_rate", "int", 40), getoption("input.repeat_rate", "float", 40)), { ok: false, error: "refused: options=unread path=input.repeat_rate " }],
-        ["a reply for another option", replies([0.35, 40, "us,de", false]).replace(getoption("input.sensitivity", "float", 0.35), getoption("input.scroll_factor", "float", 0.35)), { ok: false, error: "refused: options=unread path=input.sensitivity " }]
+        ["an option Hyprland does not know", replies([0.35, 40, "us,de", false]).replace(getoption("input.kb_layout", "str", "us,de"), "no such option"), { ok: true, overridden: [{ id: "acme.keys", path: "input.kb_layout" }], errors: ["refused: options=unread path=input.kb_layout reply=\"no such option\""] }],
+        ["a reply of another type", replies([0.35, 40, "us,de", false]).replace(getoption("input.repeat_rate", "int", 40), getoption("input.repeat_rate", "float", 40)), { ok: true, overridden: [{ id: "acme.keys", path: "input.repeat_rate" }], errors: ["refused: options=unread path=input.repeat_rate "] }],
+        ["a reply for another option", replies([0.35, 40, "us,de", false]).replace(getoption("input.sensitivity", "float", 0.35), getoption("input.scroll_factor", "float", 0.35)), { ok: true, overridden: [{ id: "acme.mouse", path: "input.sensitivity" }], errors: ["refused: options=unread path=input.sensitivity "] }]
     ];
     for (const [name, text, want] of overrides) {
         const got = lib.overridden(written, text);
-        check("overridden: " + name, got.ok ? got : { ok: false, error: got.error.slice(0, want.ok ? 0 : want.error.length) }, want);
+        check("overridden: " + name, got.ok ? Object.assign({ ok: true, overridden: got.overridden }, want.errors === undefined ? {} : { errors: got.errors.map((e, i) => e.slice(0, want.errors[i].length)) }) : { ok: false, error: got.error.slice(0, want.ok ? 0 : want.error.length) }, want);
     }
 
     const layerBinds = ["acme.keys:toggle", "acme.keys:talk", "acme.keys:talk.release"];
@@ -127,7 +126,7 @@ const CONTROLS = [
     ["unread devices have no touchpads", "if (devices === null) return null;", "if (devices === null) return [];"],
     ["the device row is not read back", "return Layer.OPTIONS[option.path].device === undefined; });", "return true; });"],
     ["no request reads nothing", "if (rows.length === 0) return null;", ""],
-    ["one reply per option", "if (parts.length !== rows.length)", "if (false)"],
+    ["one reply per option", 'var replies = Dispatch.batchReplies(text, rows.length, "options");', 'var replies = { ok: true, parts: String(text).split("\\n\\n\\n").map(function (part) { return part.trim(); }).filter(function (part) { return part !== ""; }) };'],
     ["each reply names its option", "read.value.option !== rows[i].path || ", ""],
     ["each reply holds its type's field", " || !Object.prototype.hasOwnProperty.call(read.value, field))", ")"],
     ["a float within a millionth is the same", "Math.abs(read - want) > 0.000001", "read !== want"],
@@ -142,11 +141,12 @@ const CONTROLS = [
     ["a bind's shape is judged", '|| typeof bind.description !== "string" || !Number.isInteger(bind.modmask))', ")"]
 ];
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "hyprland-state-control-"));
+fs.mkdirSync(path.join(__dirname, "..", "tmp"), { recursive: true });
+const temp = fs.mkdtempSync(path.join(__dirname, "..", "tmp", "hyprland-state-control-"));
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Ui", "icons"), { recursive: true });
-    for (const name of ["PluginLogic.js", "HyprlandLayer.js", "PackageManagers.js"])
+    for (const name of ["PluginLogic.js", "HyprlandLayer.js", "PackageManagers.js", "Dispatch.js"])
         fs.symlinkSync(path.join(__dirname, "..", "shell", "Core", name), path.join(temp, "shell", "Core", name));
     fs.symlinkSync(path.join(__dirname, "..", "shell", "Ui", "icons", "Lucide.js"), path.join(temp, "shell", "Ui", "icons", "Lucide.js"));
     const source = fs.readFileSync(STATE, "utf8");

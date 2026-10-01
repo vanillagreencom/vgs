@@ -169,6 +169,7 @@ function verifyReveal(lib, report) {
     ];
     for (const [name, text, want] of replies) row("reveal state: " + name, lib.revealState(text), want);
     row("reveal state request asks for the three in that order", lib.REVEAL_STATE_REQUEST, "j/clients;j/activewindow;j/monitors");
+    row("batch replies split a hyprctl batch", lib.batchReplies("one\n\n\ntwo\n", 2, "batch"), { ok: true, parts: ["one", "two"] });
     return bad;
 }
 failures += verifyReveal(ctx, true);
@@ -224,7 +225,7 @@ const revealControls = [
     ["a special workspace shows on some monitor", "return monitors.some(function (m) { return m.specialWorkspace && m.specialWorkspace.name === ws.name; });", "return false;"],
     ["a regular workspace shows on its own monitor", "return m.id === client.monitor && m.activeWorkspace", "return m.activeWorkspace"],
     ["no special workspace over it", "&& (!m.specialWorkspace || m.specialWorkspace.id === 0);", ";"],
-    ["the state has three replies", "if (parts.length !== 3) return", "if (false) return"],
+    ["the state has three replies", "if (parts.length !== want) return", "if (false) return"],
     ["the state replies are in order", "if (!Array.isArray(read[0]) || read[1] === null || typeof read[1] !== \"object\" || Array.isArray(read[1]) || !Array.isArray(read[2]))", "if (false)"],
     ["only mapped windows", "return c.mapped && addresses", "return addresses"]
 ];

@@ -5,7 +5,6 @@
 // row or control fails.
 "use strict";
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { load } = require("../bin/lib/qml-library.js");
 
@@ -266,13 +265,15 @@ function suite(ctx, check) {
         ["a boolean for a free string", { tap: "input.kb_layout" }, {}, "hyprland.options.tap needs a string or enum schema entry, got boolean"]
     ];
     for (const [name, options, schemaPatch, want] of optionRows) {
-        const raw = Object.assign(JSON.parse(JSON.stringify(svc)), { settings: optionSettings, schema: Object.assign({}, optionSchema, schemaPatch), hyprland: { options: options } });
+        const raw = Object.assign(JSON.parse(JSON.stringify(svc)), { capabilities: ["hyprland"], settings: optionSettings, schema: Object.assign({}, optionSchema, schemaPatch), hyprland: { options: options } });
         const r = ctx.validateManifest(raw, "/p");
         check("hyprland.options: " + name, r.ok ? null : r.error.slice(0, want === null ? 0 : want.length), want);
     }
+    check("hyprland.options needs the hyprland capability", ctx.validateManifest(Object.assign({}, svc, { settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").error, "hyprland.options needs capability hyprland");
+    check("hyprland.options setting names are schema setting names", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: Object.assign({}, optionSettings, { "bad\nos.exit()": "us" }), schema: Object.assign({}, optionSchema, { "bad\nos.exit()": { type: "string", label: "Bad" } }), hyprland: { options: { "bad\nos.exit()": "input.kb_layout" } } }), "/p").error, "hyprland.options.bad\nos.exit() must be a setting name");
     check("hyprland is a known capability", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"] }), "/p").ok, true);
     check("a normalised manifest carries its options", (() => {
-        const m = ctx.validateManifest(Object.assign({}, svc, { settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").manifest;
+        const m = ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").manifest;
         return m.hyprland.options;
     })(), { sensitivity: "input.sensitivity" });
     check("validateManifest does not alias its input", (() => { const raw = JSON.parse(JSON.stringify(bar)); const m = ctx.validateManifest(raw, "/p").manifest; m.kinds.push("x"); return raw.kinds; })(), ["bar"]);
@@ -797,6 +798,8 @@ const CONTROLS = [
     ["session is a known capability", '"lock", "session",', '"lock", ("session" && "planted"),'],
     ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit"].concat(["session"]);'],
     ["optionsFrom needs a string", "if (entry.type !== \"string\")\n                return at + \".optionsFrom needs type string\";", "if (false)\n                return at + \".optionsFrom needs type string\";"],
+    ["hyprland options need the capability", "if (options !== undefined && capabilities.indexOf(\"hyprland\") === -1)\n        return \"hyprland.options needs capability hyprland\";", "if (false)\n        return \"hyprland.options needs capability hyprland\";"],
+    ["hyprland option names are setting names", "if (!STATUS_KEY_PATTERN.test(name))\n            return at + \" must be a setting name\";", "if (false)\n            return at + \" must be a setting name\";"],
     ["optionsFrom names a status key", "if (typeof entry.optionsFrom !== \"string\" || !STATUS_KEY_PATTERN.test(entry.optionsFrom))", "if (false)"],
     ["optionsFrom names its own choices entry", "if (!hasOwn(status, entry.optionsFrom) || status[entry.optionsFrom].type !== \"choices\")", "if (false)"],
     ["a string entry needs presets or optionsFrom", "if (entry.type === \"string\" && entry.presets === undefined && entry.optionsFrom === undefined)", "if (false)"],
@@ -956,7 +959,8 @@ const CONTROLS = [
     ["placement needs the widget kind", "return manifest.kinds.indexOf(\"bar-widget\") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1;", "return layoutIds(config).indexOf(manifest.id) !== -1;"],
 ];
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-logic-control-"));
+fs.mkdirSync(path.join(__dirname, "..", "tmp"), { recursive: true });
+const temp = fs.mkdtempSync(path.join(__dirname, "..", "tmp", "plugin-logic-control-"));
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Commons"), { recursive: true });

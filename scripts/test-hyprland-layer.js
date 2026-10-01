@@ -12,7 +12,6 @@
 "use strict";
 const assert = require("assert");
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { load } = require("../bin/lib/qml-library.js");
 
@@ -443,6 +442,7 @@ function verify(logic, layer, shellText) {
     // Input options: what hyprlandSection lists from the plugins row, and the
     // section the layer writes from it.
     const optionManifest = manifestOf(logic, {
+        capabilities: ["shortcut", "hyprland"],
         settings: { sensitivity: 0, natural: false, tap: true, layouts: "us", rate: 25, touchpad: true },
         schema: {
             sensitivity: { type: "number", label: "S", min: -1, max: 1, step: 0.05 },
@@ -456,10 +456,19 @@ function verify(logic, layer, shellText) {
     });
     const optionConfig = row => ({ plugins: [Object.assign({ id: "acme.keys" }, row)] });
     same(logic.hyprlandSection(optionConfig({ sensitivity: 0.35, tap: false, layouts: "us,de" }), optionManifest).options, [
-        { kind: "set", setting: "sensitivity", path: "input.sensitivity", value: 0.35 },
-        { kind: "set", setting: "tap", path: "input.touchpad.tap_to_click", value: false },
-        { kind: "set", setting: "layouts", path: "input.kb_layout", value: "us,de" }
+        { kind: "set", setting: "sensitivity", path: "input.sensitivity", value: 0.35, lua: "0.35" },
+        { kind: "set", setting: "tap", path: "input.touchpad.tap_to_click", value: false, lua: "false" },
+        { kind: "set", setting: "layouts", path: "input.kb_layout", value: "us,de", lua: "\"us,de\"" }
     ], "hyprlandSection lists only the options the plugins row sets, in the manifest's order");
+    const enumOptionManifest = manifestOf(logic, {
+        capabilities: ["hyprland"],
+        settings: { layouts: "us" },
+        schema: { layouts: { type: "enum", label: "L", options: ["us", "us\nos.exit()"] } },
+        hyprland: { options: { layouts: "input.kb_layout" } }
+    });
+    same(logic.hyprlandSection(optionConfig({ layouts: "us\nos.exit()" }), enumOptionManifest).options,
+        [{ kind: "unfit", setting: "layouts", path: "input.kb_layout", error: "want=characters:^[A-Za-z0-9_.,:()+-]*$" }],
+        "hyprlandSection judges an enum value through the Lua literal judge");
     same(logic.hyprlandSection({}, optionManifest).options, [], "a plugin with no plugins row sets no option");
     same(logic.hyprlandSection(optionConfig({ sensitivity: 3 }), optionManifest).options, [{ kind: "unfit", setting: "sensitivity", path: "input.sensitivity", error: "want=at-most:1" }], "a set value outside its schema entry is unfit");
     const optionSection = row => logic.hyprlandSection(optionConfig(row), optionManifest);
@@ -477,6 +486,11 @@ function verify(logic, layer, shellText) {
     ], "the options section holds one hl.config of the set options, in the manifest's order, before the plugin's binds");
     assert.ok(!optionsOut.text.includes("tap-to-click"), "the layer writes the Lua name tap_to_click, never the hyphenated option name");
     assert.ok(!optionsOut.text.includes("natural_scroll") && !optionsOut.text.includes("repeat_rate"), "an option the plugins row does not set is not written");
+    same(layer.optionLiteral(layer.OPTIONS["input.repeat_rate"], 2.5), { ok: false, error: "want=whole-number" }, "the option literal judge refuses a fractional int");
+    same(layer.optionLiteral(layer.OPTIONS["input.kb_layout"], "us\nos.exit()"), { ok: false, error: "want=characters:^[A-Za-z0-9_.,:()+-]*$" }, "the option literal judge refuses a string that can leave Lua");
+    const injectedOptionComment = optionText([Object.assign({}, optionSection({}), { options: [{ kind: "unfit", setting: "bad\nos.exit()", path: "input.kb_layout", error: "want=one\nos.exit()" }] })], null).text;
+    assert.ok(injectedOptionComment.includes("-- skipped input.kb_layout for acme.keys:bad?os.exit(): want=one?os.exit()"), "option comments replace newlines in setting names and errors");
+    assert.ok(!injectedOptionComment.includes("\nos.exit()"), "option comments cannot start Lua on another line");
     same(optionsOut.options, [
         { id: "acme.keys", setting: "sensitivity", path: "input.sensitivity", value: 0.35 },
         { id: "acme.keys", setting: "tap", path: "input.touchpad.tap_to_click", value: false },
@@ -490,8 +504,8 @@ function verify(logic, layer, shellText) {
         ["a fractional int is refused", { rate: 2.5 }, null, ["-- skipped input.repeat_rate for acme.keys:rate: want=whole-number"], [{ id: "acme.keys", setting: "rate", path: "input.repeat_rate", error: "want=whole-number" }]],
         ["a string that would end the Lua string is refused", { layouts: "us\"), os.exit(" }, null, ["-- skipped input.kb_layout for acme.keys:layouts: want=characters:^[A-Za-z0-9_.,:()+-]*$"], [{ id: "acme.keys", setting: "layouts", path: "input.kb_layout", error: "want=characters:^[A-Za-z0-9_.,:()+-]*$" }]],
         ["an unfit value is skipped with its reason", { sensitivity: 3 }, null, ["-- skipped input.sensitivity for acme.keys:sensitivity: want=at-most:1"], [{ id: "acme.keys", setting: "sensitivity", path: "input.sensitivity", error: "want=at-most:1" }]],
-        ["the touchpad is written per touchpad Hyprland lists", { touchpad: false }, ["elan0676:00-04f3:3195-touchpad", "apple-trackpad\"x"], ["hl.device({ name = \"elan0676:00-04f3:3195-touchpad\", enabled = false })", "-- skipped touchpad apple-trackpad\"x for acme.keys:touchpad: its name holds a quote, a backslash or a control character"], []],
-        ["no touchpad listed writes none", { touchpad: false }, [], ["-- device.touchpad.enabled for acme.keys:touchpad: Hyprland lists no touchpad"], []],
+        ["the touchpad is written per touchpad Hyprland lists", { touchpad: false }, ["elan0676:00-04f3:3195-touchpad", "apple-trackpad\"x"], ["hl.device({ name = \"elan0676:00-04f3:3195-touchpad\", enabled = false })", "-- skipped touchpad apple-trackpad\"x for acme.keys:touchpad: its name holds a quote, a backslash or a control character"], [{ id: "acme.keys", setting: "touchpad", path: "device.touchpad.enabled", error: "touchpad name refused" }]],
+        ["no touchpad listed writes none", { touchpad: false }, [], ["-- device.touchpad.enabled for acme.keys:touchpad: Hyprland lists no touchpad", "-- skipped device.touchpad.enabled for acme.keys:touchpad: Hyprland lists no touchpad"], [{ id: "acme.keys", setting: "touchpad", path: "device.touchpad.enabled", error: "Hyprland lists no touchpad" }]],
         ["unread touchpads write none", { touchpad: true }, null, ["-- device.touchpad.enabled for acme.keys:touchpad: Hyprland's touchpads are not read yet"], []]
     ];
     for (const [name, row, touchpads, want, refusals] of optionRows) {
@@ -520,7 +534,7 @@ function verify(logic, layer, shellText) {
     ], "sections by id, and a path two plugins set stays with the first by id");
     same(contested.optionConflicts, [{ id: "acme.other", setting: "sensitivity", path: "input.sensitivity", heldBy: "acme.keys" }], "the skipped option is the one option conflict");
     same([layer.wantsTouchpads([optionSection({ touchpad: false })]), layer.wantsTouchpads([optionSection({ tap: false })]), layer.wantsTouchpads([])], [true, false, false], "only a set touchpad option asks for the touchpads");
-    assert.throws(() => optionText([Object.assign({}, optionSection({}), { options: [{ kind: "set", setting: "x", path: "input.nope", value: true }] })], null), /option path "input.nope" is not one of OPTIONS/, "a path outside the table never reaches the text");
+    assert.throws(() => optionText([Object.assign({}, optionSection({}), { options: [{ kind: "set", setting: "x", path: "input.nope", value: true, lua: "true" }] })], null), /option path "input.nope" is not one of OPTIONS/, "a path outside the table never reaches the text");
     for (const [name, events, wantActions, wantState] of SEQUENCES) {
         let state = layer.initialState();
         const actions = [];
@@ -788,6 +802,7 @@ const CONTROLS = [
     [layerFile, "a result out of its phase is refused", "if (state.phase !== phase)", "if (false)"],
     [logicFile, "only a set option is listed", "if (row === undefined || !hasOwn(row, setting)) return;", "if (row === undefined) return;"],
     [logicFile, "an option value is judged by its schema entry", "var unfit = settingError(manifest.schema[setting], row[setting]);", "var unfit = \"\";"],
+    [logicFile, "an option value is judged by its Lua literal", "var literal = HyprlandLayer.optionLiteral(HyprlandLayer.OPTIONS[path], row[setting]);", "var literal = { ok: true, lua: JSON.stringify(row[setting]) };"],
     [layerFile, "the options section is written", "if (section.options.length > 0) {", "if (false) {"],
     [layerFile, "the options section precedes the binds", "    plan.sections.forEach(function (row) {\n        var section = row.section;\n        if (section.options.length > 0) {", "    plan.sections.slice().reverse().forEach(function (row) {\n        var section = row.section;\n        if (section.options.length > 0) {"],
     [layerFile, "options keep the manifest's order", "return Object.keys(tree).map(function (key) {", "return Object.keys(tree).sort().map(function (key) {"],
@@ -807,7 +822,8 @@ const CONTROLS = [
 
 // A copy sits at its file's own place in a temporary tree, beside the icon
 // set, the package-manager table and the layer PluginLogic.js imports.
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "hyprland-layer-control-"));
+fs.mkdirSync(path.join(__dirname, "..", "tmp"), { recursive: true });
+const temp = fs.mkdtempSync(path.join(__dirname, "..", "tmp", "hyprland-layer-control-"));
 try {
     fs.mkdirSync(path.join(temp, "shell", "Core"), { recursive: true });
     fs.mkdirSync(path.join(temp, "shell", "Commons"), { recursive: true });

@@ -25,7 +25,7 @@ Singleton {
     SystemSteps { id: systemSteps; active: root.systemHeld }
     HyprlandState {
         id: hyprlandState
-        active: root.holderIds("hyprland").length > 0 || hyprlandState.touchpadsWanted
+        active: root.holderIds("hyprland").length > 0
     }
     readonly property alias sessionLock: sessionLock
     readonly property alias themes: themes

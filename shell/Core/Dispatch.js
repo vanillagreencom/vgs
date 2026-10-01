@@ -146,9 +146,19 @@ function revealEvent(addresses, name, data) {
 // JSON never holds. { ok: true, clients, active, monitors }, `active` {}
 // when no window has the focus, or { ok: false, error } with a keyed line.
 var REVEAL_STATE_REQUEST = "j/clients;j/activewindow;j/monitors";
-function revealState(text) {
+
+// Hyprland answers a `hyprctl --batch` request in order, joined by
+// "\n\n\n", which its JSON never holds.
+function batchReplies(text, want, label) {
     var parts = String(text || "").split("\n\n\n").map(function (p) { return p.trim(); }).filter(function (p) { return p !== ""; });
-    if (parts.length !== 3) return { ok: false, error: "refused: reveal state=parts count=" + parts.length + " want=3" };
+    if (parts.length !== want) return { ok: false, error: "refused: " + label + "=parts count=" + parts.length + " want=" + want };
+    return { ok: true, parts: parts };
+}
+
+function revealState(text) {
+    var replies = batchReplies(text, 3, "reveal state");
+    if (!replies.ok) return { ok: false, error: replies.error };
+    var parts = replies.parts;
     var read = [];
     for (var i = 0; i < 3; i++) {
         try {

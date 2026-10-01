@@ -1181,7 +1181,8 @@ function keysError(keys, at) {
 // which the manifest must name, so a plugin binds only its own shortcuts. A
 // rule matches `^vgs:<name>$` and sets blur, ignoreAlpha from 0 to 1, or
 // both. Appearance needs the `theme` capability because those switches change
-// how the theme reaches Hyprland. `options` passes hyprlandOptionsError.
+// how the theme reaches Hyprland. Options need the `hyprland` capability
+// because the same plugin must read the compositor state back.
 // Neither a shortcut, a key nor a namespace appears twice.
 function hyprlandError(hyprland, capabilities, schema) {
     if (!isPlainObject(hyprland))
@@ -1272,6 +1273,8 @@ function hyprlandError(hyprland, capabilities, schema) {
                 return at + " must name a boolean schema entry, got " + schema[setting].type;
         }
     }
+    if (options !== undefined && capabilities.indexOf("hyprland") === -1)
+        return "hyprland.options needs capability hyprland";
     if (options !== undefined)
         return hyprlandOptionsError(options, schema);
     return "";
@@ -1289,6 +1292,8 @@ function hyprlandOptionsError(options, schema) {
         var name = names[i];
         var path = options[name];
         var at = "hyprland.options." + name;
+        if (!STATUS_KEY_PATTERN.test(name))
+            return at + " must be a setting name";
         if (typeof path !== "string" || !hasOwn(HyprlandLayer.OPTIONS, path))
             return at + " must be one of " + Object.keys(HyprlandLayer.OPTIONS).join(", ") + ", got " + JSON.stringify(path);
         if (paths.indexOf(path) !== -1)
@@ -2695,7 +2700,12 @@ function hyprlandSection(config, manifest) {
         if (row === undefined || !hasOwn(row, setting)) return;
         var path = declared.options[setting];
         var unfit = settingError(manifest.schema[setting], row[setting]);
-        options.push(unfit === "" ? { kind: "set", setting: setting, path: path, value: clone(row[setting]) } : { kind: "unfit", setting: setting, path: path, error: unfit });
+        if (unfit !== "") {
+            options.push({ kind: "unfit", setting: setting, path: path, error: unfit });
+            return;
+        }
+        var literal = HyprlandLayer.optionLiteral(HyprlandLayer.OPTIONS[path], row[setting]);
+        options.push(literal.ok ? { kind: "set", setting: setting, path: path, value: clone(row[setting]), lua: literal.lua } : { kind: "unfit", setting: setting, path: path, error: literal.error });
     });
     return {
         id: manifest.id,

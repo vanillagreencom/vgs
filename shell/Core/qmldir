@@ -21,4 +21,5 @@ SecretWriter 1.0 SecretWriter.qml
 SystemSteps 1.0 SystemSteps.qml
 HyprlandLayer 1.0 HyprlandLayer.qml
 HyprlandState 1.0 HyprlandState.qml
+HyprctlReader 1.0 HyprctlReader.qml
 singleton ServiceGate 1.0 ServiceGate.qml

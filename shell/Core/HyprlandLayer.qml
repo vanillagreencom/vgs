@@ -36,9 +36,11 @@ Scope {
     // waits.
     property var machine: Layer.initialState()
 
-    readonly property bool inputsReady: Registry.scanned && Config.ready && Theme.fileState !== "pending"
     // PluginLogic.hyprlandSection for every enabled plugin.
     readonly property var sections: Registry.hyprlandSections
+    readonly property bool touchpadsNeeded: Layer.wantsTouchpads(root.sections)
+    readonly property bool inputsReady: Registry.scanned && Config.ready && Theme.fileState !== "pending"
+        && (!touchpadsNeeded || Capabilities.hyprland.touchpads !== null || Capabilities.hyprland.devicesFailure !== "")
     readonly property real highestMonitorScale: {
         let highest = 1;
         for (const screen of Quickshell.screens) {
@@ -63,7 +65,7 @@ Scope {
         hyprland: Theme.hyprland,
         motionScale: Theme.motion.scale
     })
-    readonly property var rendered: inputsReady ? Layer.render(sections, themeAppearance, Theme.name, highestMonitorScale, Capabilities.hyprland.touchpads) : null
+    readonly property var rendered: inputsReady ? Layer.render(sections, themeAppearance, Theme.name, highestMonitorScale, Capabilities.hyprland.touchpads, Capabilities.hyprland.devicesFailure) : null
 
     // What `listPlugins` and the plugin manager report beside the manifest
     // errors, as { id, dir, error }: each bind a conflict skipped and each
@@ -97,8 +99,8 @@ Scope {
     Binding { target: Registry; property: "hyprlandProblems"; value: root.problems }
     // What the `hyprland` capability's reads compare against.
     Binding { target: Capabilities.hyprland; property: "written"; value: root.rendered === null ? [] : root.rendered.options }
+    Binding { target: Capabilities.hyprland; property: "optionConflicts"; value: root.rendered === null ? [] : root.rendered.optionConflicts }
     Binding { target: Capabilities.hyprland; property: "layerBinds"; value: root.rendered === null ? [] : root.rendered.binds }
-    Binding { target: Capabilities.hyprland; property: "touchpadsWanted"; value: Layer.wantsTouchpads(root.sections) }
     Binding { target: Notices; property: "consent"; value: Layer.consentView(root.machine.consent) }
     Binding { target: Notices; property: "consentState"; value: root.machine.consent }
 

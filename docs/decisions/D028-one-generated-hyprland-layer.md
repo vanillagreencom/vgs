@@ -83,3 +83,7 @@ The decision holds. The layer gains a third constant core section after the shel
 The decision holds with consent. The shell no longer wires `hyprland.lua` silently. After the first read and any needed layer write and reload in a shell run, it runs read-only `vgsh hypr state`. If the answer is `unwired`, the core notice host asks "Let VGS manage its Hyprland settings?" with Connect, Not now and a Show command disclosure for `vgsh hypr wire`. Connect runs the existing wire path and reloads Hyprland. Not now writes the current `HYPRLAND_INSTANCE_SIGNATURE` to `$XDG_RUNTIME_DIR/vgs/hypr/consent-declined`, so a restart in the same Hyprland session does not ask again. A later Hyprland session can ask again, even when systemd lingering keeps the runtime directory alive.
 
 Omarchy, read from `/home/method/dev/vgs/tmp/omarchy-ref` on branch `quattro`, owns the user's whole `hyprland.lua`, so it does not need this question. Its first-run prompts use critical notifications and `omarchy-done` markers. VGS differs because it edits a file the user owns. A centred dialog asks before the edit, and the runtime marker declines only for the current Hyprland session.
+
+## Revisit Outcome (2026-09-30, VGS-694)
+
+[D080](D080-hyprland-options-rendered-from-data.md) refines this decision. The layer now renders Hyprland input options from manifest data and writes each option only while the user's plugin configuration sets it.

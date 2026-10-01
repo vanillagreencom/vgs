@@ -19,12 +19,16 @@ hypr_lua="$home/.config/hypr/hyprland.lua"
 hypr_layer="$home/.local/state/vgs/hypr/vgs.lua"
 user_config="$home/.config/vgs/shell.json"
 fixture_dir="$home/.config/vgs/plugins/acme.hyprland"
+other_fixture_dir="$home/.config/vgs/plugins/acme.hyprland-other"
 mkdir -p "$fixture_dir"
+mkdir -p "$other_fixture_dir"
 cp -R "$repo/scripts/smoke/fixtures/plugins/acme.hyprland/." "$fixture_dir/"
+cp -R "$repo/scripts/smoke/fixtures/plugins/acme.hyprland-other/." "$other_fixture_dir/"
 cp -- "$user_config" "$sandbox/shell-before-options.json"
 cp -- "$hypr_lua" "$sandbox/hyprland-before-options.lua"
 
 read_options() { ipc smoke readInstance service acme.hyprland "$1"; }
+read_other_options() { ipc smoke readInstance service acme.hyprland-other "$1"; }
 # An option as the nested instance holds it: [value, whether a configuration
 # line set it]. FIELD is the reply's value field: bool, int, float or str.
 option_value() { hypr -j getoption "$1" | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps([v.get(sys.argv[1]), v["set"]]))' "$2"; }
@@ -34,18 +38,20 @@ foreign_has() { read_options foreignBinds | py_reply 'import json,sys; print(sys
 reads_active() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["hyprland"]["active"]))'; }
 layer_has() { if grep -qxF -- "$1" "$hypr_layer"; then echo yes; else echo no; fi; }
 layer_mentions() { if grep -qF -- "$1" "$hypr_layer"; then echo yes; else echo no; fi; }
+hypr_problems() { ipc shell listPlugins | py_reply 'import json,sys; print(json.dumps(sorted(e["error"] for e in json.load(sys.stdin)["errors"] if e["error"].startswith("hyprland: "))))'; }
+has_problem() { hypr_problems | py_reply 'import json,sys; print(sys.argv[1] in json.load(sys.stdin))' "$1"; }
 config_errors() { hypr -j configerrors | py_reply 'import json,sys; print(json.dumps([e for e in json.load(sys.stdin) if e]))'; }
 switch_layout() { ipc acme.hyprland invoke switch "$1"; }
 # Merge JSON object WANT into the fixture's plugins row in shell.json.
 set_options() {
-  python3 - "$user_config" "$1" <<'PY'
+  python3 - "$user_config" "$1" "$2" <<'PY'
 import json, os, sys
-path, want = sys.argv[1], json.loads(sys.argv[2])
+path, plugin_id, want = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
 config = json.load(open(path))
 rows = config.setdefault("plugins", [])
-row = next((r for r in rows if r.get("id") == "acme.hyprland"), None)
+row = next((r for r in rows if r.get("id") == plugin_id), None)
 if row is None:
-    row = {"id": "acme.hyprland"}
+    row = {"id": plugin_id}
     rows.append(row)
 row.update(want)
 with open(path + ".next", "w") as f:
@@ -53,34 +59,60 @@ with open(path + ".next", "w") as f:
 os.replace(path + ".next", path)
 PY
 }
+touchpad_status() {
+  local names
+  names="$(hypr -j devices | py_reply 'import json,sys; print(json.dumps([m["name"] for m in json.load(sys.stdin)["mice"] if "touchpad" in m["name"].lower() or "trackpad" in m["name"].lower()]))')" || return 1
+  if [[ $names == "[]" ]]; then
+    hypr_problems | py_reply 'import json,sys; want="hyprland: device.touchpad.enabled for acme.hyprland:touchpad skipped: Hyprland lists no touchpad"; print("ok" if want in json.load(sys.stdin) else "missing-problem")'
+    return
+  fi
+  python3 - "$hypr_layer" "$names" <<'PY'
+import json, sys
+text = open(sys.argv[1], encoding="utf-8").read().splitlines()
+names = json.loads(sys.argv[2])
+missing = [name for name in names if f'hl.device({{ name = "{name}", enabled = false }})' not in text]
+print("ok" if not missing else "missing:" + ",".join(missing))
+PY
+}
 
 expect "rescan discovers the options fixture" ok ipc shell rescanPlugins
 expect_poll "the options fixture is known" True plugin_known acme.hyprland
+expect_poll "the second options fixture is known" True plugin_known acme.hyprland-other
 expect "enabling the options fixture is allowed" ok ipc shell setPluginEnabled acme.hyprland true
+expect "enabling the second options fixture is allowed" ok ipc shell setPluginEnabled acme.hyprland-other true
 expect_poll "the options fixture builds" True record_exists acme.hyprland
+expect_poll "the second options fixture builds" True record_exists acme.hyprland-other
 expect_poll "the fixture reads back the exact hyprland members it was given" '"devices,foreignBinds,overridden,switchKeyboardLayout"' read_options members
 expect_poll "the core reads Hyprland while a plugin holds hyprland" true reads_active
 expect_poll "with no option set the layer writes no options section" no layer_mentions "acme.hyprland 0.1.0: input options its settings set"
 expect_poll "the fixture's bind is written" yes layer_has 'hl.bind("SUPER + F7", hl.dsp.global("acme.hyprland:ping"), { description = "acme.hyprland:ping" })'
 
-set_options '{"sensitivity": 0.35, "tapToClick": false, "layouts": "us,de", "repeatRate": 40}'
+set_options acme.hyprland '{"sensitivity": 0.35, "tapToClick": false, "layouts": "us,de", "repeatRate": 40, "touchpad": false}'
 expect_poll "the set options are one hl.config in the manifest's order" yes layer_has 'hl.config({ input = { sensitivity = 0.35, touchpad = { tap_to_click = false }, kb_layout = "us,de", repeat_rate = 40 } })'
+expect_poll "the touchpad option writes each listed touchpad or reports none" ok touchpad_status
 expect_poll "the set sensitivity reads back through getoption" '[0.35, true]' option_value input:sensitivity float
 expect_poll "the set tap-to-click reads back through its Lua name" '[false, true]' option_value input:touchpad:tap_to_click bool
 expect_poll "the set layouts read back" '["us,de", true]' option_value input:kb_layout str
 expect_poll "the set repeat rate reads back" '[40, true]' option_value input:repeat_rate int
 expect "an unset option keeps Hyprland's default" '[false, false]' option_value input:natural_scroll bool
 expect "the layer writes no unset option" no layer_mentions natural_scroll
-expect "an unset touchpad option writes no device" no layer_mentions 'hl.device('
 expect "the options hold no configuration error" '[]' config_errors
 expect_poll "no option is overridden while the user sets none after the line" '[]' read_options overridden
 expect_poll "the layer's own bind is no foreign bind" False foreign_has SUPER+F7
 
+set_options acme.hyprland '{"repeatRate": 2.5}'
+expect_poll "listPlugins reports the fractional repeat rate refusal" True has_problem 'hyprland: input.repeat_rate for acme.hyprland:repeatRate skipped: want=whole-number'
+set_options acme.hyprland '{"repeatRate": 40}'
+
+set_options acme.hyprland-other '{"sensitivity": -0.25, "repeatDelay": 900}'
+expect_poll "listPlugins reports the second fixture's option conflict" True has_problem 'hyprland: input.sensitivity for acme.hyprland-other:sensitivity skipped: already set by acme.hyprland'
+
 # The user's own lines after the loading line win, and the capability says so.
-printf '%s\n' 'hl.config({ input = { sensitivity = -0.5 } })' 'hl.bind("SUPER + F7", hl.dsp.exec_cmd("true"))' >>"$hypr_lua"
+printf '%s\n' 'hl.config({ input = { sensitivity = -0.5, repeat_delay = 700 } })' 'hl.bind("SUPER + F7", hl.dsp.exec_cmd("true"))' >>"$hypr_lua"
 expect "the nested instance reloads with the user's lines" ok hypr reload config-only
 expect_poll "the user's later sensitivity wins" '[-0.5, true]' option_value input:sensitivity float
 expect_poll "a later user line is reported in overridden" '["input.sensitivity"]' read_options overridden
+expect_poll "the second fixture lists only its own overridden paths" '["input.repeat_delay","input.sensitivity"]' read_other_options overridden
 expect_poll "a user bind on the same key shows in foreignBinds" True foreign_has SUPER+F7
 expect "the user's lines hold no configuration error" '[]' config_errors
 
@@ -101,7 +133,9 @@ cp -- "$sandbox/hyprland-before-options.lua" "$hypr_lua.next" && mv -T -- "$hypr
 expect "the nested instance reloads without the user's lines" ok hypr reload config-only
 cp -- "$sandbox/shell-before-options.json" "$user_config.next" && mv -T -- "$user_config.next" "$user_config"
 expect "disabling the options fixture is allowed" ok ipc shell setPluginEnabled acme.hyprland false
+expect "disabling the second options fixture is allowed" ok ipc shell setPluginEnabled acme.hyprland-other false
 expect_poll "the options fixture is disabled" False plugin_enabled acme.hyprland
+expect_poll "the second options fixture is disabled" False plugin_enabled acme.hyprland-other
 expect_poll "the disabled fixture's options leave the layer" no layer_mentions "acme.hyprland"
 expect_poll "the layer's sensitivity leaves Hyprland" '[0.0, false]' option_value input:sensitivity float
 expect_poll "the layouts are Hyprland's own again" '["us", false]' option_value input:kb_layout str
