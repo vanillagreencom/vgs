@@ -1,12 +1,19 @@
-# System steps, D081. bin/vgsh-system pins its PATH to the system
-# directories, so no PATH shim stands before its sudo, udevadm or sysfs.
-# Before the fixture is enabled, the row rewrites the sandbox copy's
-# `prefix=` line to a tree of its own, so every probe the core runs and
-# every command the step runs resolves there: a sysfs with one Apple Pro
-# Display XDR whose hidraw node is closed to the user, a stand-in udevadm
-# whose trigger opens it while the VGS rule exists, systemctl and gum
-# stand-ins, and as sudo a copy of the harness's sudo sentinel, which logs
-# to the one authentication log and runs nothing. No probe or command
+# System steps, D081, over the sandbox's device fakes
+# (docs/architecture/validation-smoke-devices.md). bin/vgsh-system pins its
+# PATH to the system directories and derives every path from its
+# `prefix=` line, so before the fixture is enabled the row rewrites the
+# sandbox copy's line to a tree of its own. That tree's sys and dev are
+# links to the fakes' sysfs and device trees, whose HID fake plants one
+# Pro Display XDR as hidraw0; the row closes that node to the user and
+# gives its mode back at the end. Its udevadm, systemctl and gum are links
+# to the fakes' stand-ins, answering from device_reply; for the trigger
+# the row stands over the udevadm stand-in with a script that opens the
+# node while the VGS rule exists and then runs the stand-in, which
+# records the call. The rest of the tree is not a device: the records,
+# the rules directory, a boot id, coreutils, a stat that reports the
+# user's own files as root's as they read under the stand-in sudo's
+# unshare -r, and as sudo a copy of the harness's sudo sentinel, which
+# logs to the one authentication log and runs nothing. No probe or command
 # reaches the host's /dev, /sys, systemctl, tailscale or sudo.
 #
 # The fixture acme.system declares the apple-displays step and publishes
@@ -23,37 +30,43 @@
 # the step reads ready until a plugin scan ends, then needed. The refusals
 # are the row's controls: a disabled fixture's act and a ready step's act
 # are refused and start no terminal, and the readings before the run's end
-# and before the scan show each flip is that re-probe's. rows/auth-sentinel.sh, the last row, reads the log
-# empty. Every reading is expect_poll's: 25 reads 0.2 s apart.
+# and before the scan show each flip is that re-probe's.
+# rows/auth-sentinel.sh, the last row, reads the log empty. Every reading
+# is expect_poll's: 25 reads 0.2 s apart.
 set -euo pipefail
+devices_ready system-steps || return 0
 if ! command -v unshare >/dev/null 2>&1 || ! unshare -r true 2>/dev/null; then
-  printf 'qml-smoke: status=not-measured missing=user-namespaces\n'
-  exit 77
+  not_measured system-steps missing=user-namespaces
+  return 0
 fi
 command -v script >/dev/null 2>&1 || { fail "system steps: script(1) is missing"; return 0; }
 system_root="$sandbox/system-root"
 system_bin="$system_root/usr/bin"
-system_hidraw="$system_root/dev/hidraw0"
+system_hidraw="$devices_dev_root/hidraw0"
 system_rule="$system_root/etc/udev/rules.d/60-vgs-apple-displays.rules"
 system_calls="$sandbox/system-sudo.calls"
-mkdir -p "$system_bin" "$system_root/etc/udev/rules.d" "$system_root/var/lib" "$system_root/proc/sys/kernel/random" \
-  "$system_root/sys/class/hidraw/hidraw0/device" "$system_root/dev"
+system_question="Run these commands as root?"
+mkdir -p "$system_bin" "$system_root/etc/udev/rules.d" "$system_root/var/lib" "$system_root/proc/sys/kernel/random"
+ln -s -- "$devices_sysfs_root" "$system_root/sys"
+ln -s -- "$devices_dev_root" "$system_root/dev"
 for tool in awk cat chmod env flock id install mkdir mv readlink rm sed sha256sum sleep kill tee touch; do
   tool_bin="$(command -v "$tool")" || { fail "system steps: $tool is missing"; return 0; }
   ln -s -- "$tool_bin" "$system_bin/$tool"
 done
-printf 'HID_ID=0003:000005AC:00009243\nHID_NAME=Apple Inc. Pro Display XDR\n' >"$system_root/sys/class/hidraw/hidraw0/device/uevent"
-: >"$system_hidraw"; chmod 0000 "$system_hidraw"
+for tool in udevadm systemctl gum; do ln -s -- "$shim/$tool" "$system_bin/$tool"; done
+system_hidraw_mode="$(stat -c %a -- "$system_hidraw")" || { fail "system steps: the HID fake planted no hidraw0"; return 0; }
+chmod 0000 "$system_hidraw"
 printf '11111111-2222-3333-4444-555555555555\n' >"$system_root/proc/sys/kernel/random/boot_id"
-# stat reports the user's own files as root's, as the tree reads under
-# the stand-in sudo's unshare -r.
 printf '#!/bin/sh\nout="$(%q "$@")" || exit $?\nprintf "%%s\\n" "$out" | sed "s/^%s /0 /"\n' "$(command -v stat)" "$(id -u)" >"$system_bin/stat"
-printf '#!/bin/sh\nif [ "$1" = trigger ]; then if [ -e %q ]; then chmod 0600 %q; else chmod 0000 %q; fi; fi\nexit 0\n' \
-  "$system_rule" "$system_hidraw" "$system_hidraw" >"$system_bin/udevadm"
-printf '#!/bin/sh\n[ "$1" = confirm ] && exit 0\nexit 0\n' >"$system_bin/gum"
-printf '#!/bin/sh\ncase "$1 $2" in "show --property=LoadState") echo not-found ;; *) exit 3 ;; esac\n' >"$system_bin/systemctl"
+chmod 755 "$system_bin/stat"
 cp -- "$shim/sudo" "$system_bin/sudo"
-chmod 755 "$system_bin/stat" "$system_bin/udevadm" "$system_bin/gum" "$system_bin/systemctl"
+for unit in bluetooth.service tailscaled.service; do
+  device_reply systemctl 3 "" is-active --quiet "$unit"
+  device_reply systemctl 0 not-found show --property=LoadState --value "$unit"
+done
+device_reply gum 0 "" confirm -- "$system_question"
+device_reply udevadm 0 "" control --reload
+device_reply udevadm 0 "" trigger --subsystem-match=hidraw --action=change --settle
 system_prefix() { python3 - "$repo/bin/vgsh-system" "$system_root" <<'PY'
 import sys
 path, root = sys.argv[1:]
@@ -95,10 +108,18 @@ expect_poll "Allow hands the terminal vgsh system apply with its step" \
   "$(core_words core/system "System setup" org.vgs.tui system apply apple-displays)" recorded
 
 # The command the TUI runs, on a terminal, over the row's sudo stand-in.
+# The stand-ins' records are the run's, so the row reads its own calls
+# from the counts before its apply.
+system_calls_since() { device_calls "$1" | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)[int(sys.argv[1]):]))' "$2"; }
+system_call_count() { device_calls "$1" | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
+system_gum_before="$(system_call_count gum)" || { fail "system steps: the gum stand-in's calls are unreadable"; return 0; }
+system_udevadm_before="$(system_call_count udevadm)" || { fail "system steps: the udevadm stand-in's calls are unreadable"; return 0; }
 : >"$system_calls"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>%q\ncase "$1" in -k|-n) exit 0 ;; esac\n[ "$1" = -- ] && shift\nexec %q -r "$@"\n' \
   "$system_calls" "$(command -v unshare)" | sentinel_stand_over "$system_bin/sudo"
 expect "the tree's sudo is the row's stand-in" replaced sentinel_of "$system_bin/sudo"
+printf '#!/bin/sh\nif [ "$1" = trigger ] && [ -e %q ]; then chmod 0600 %q; fi\nexec %q "$@"\n' \
+  "$system_rule" "$system_hidraw" "$(sentinel_saved "$shim/udevadm")" | sentinel_stand_over "$shim/udevadm"
 system_apply() {
   local status=0
   "${sandbox_env[@]}" "${shell_start_words[@]}" SHELL="$BASH" script -qec "$(printf '%q ' "$repo/bin/vgsh" system apply apple-displays)" /dev/null \
@@ -109,7 +130,11 @@ system_apply() {
 expect "the step's command applies it" "ok system=apple-displays state=ready" system_apply
 expect "the stand-in ran the rule's install as root" 1 grep -c -F -- "-- $system_bin/install -m 0644 -o root -g root -T -- $repo/config/system/udev/60-vgs-apple-displays.rules $system_rule" "$system_calls"
 sentinel_restore "$system_bin/sudo"
+sentinel_restore "$shim/udevadm"
 expect "the tree's sudo is the sentinel again" sentinel sentinel_of "$system_bin/sudo"
+expect "the step asked its one question through the gum stand-in" "[[\"confirm\", \"--\", \"$system_question\"]]" system_calls_since gum "$system_gum_before"
+expect "the udevadm stand-in reloaded the rules, then triggered hidraw" \
+  '[["control", "--reload"], ["trigger", "--subsystem-match=hidraw", "--action=change", "--settle"]]' system_calls_since udevadm "$system_udevadm_before"
 expect "the core reads the step needed until the run ends" "needed hidraw-denied" system_core
 release_runs
 expect_run_end "the core/system run ends" core/system
@@ -129,3 +154,7 @@ expect_poll "no plugin holds system once the fixture is disabled" '[]' system_ho
 expect "the manager refuses Allow while the fixture is disabled" "refused: action=apple reason=disabled" settings_act acme.system apple
 expect "the refused disabled act started no terminal" absent recorded
 settings_page_close acme.system
+chmod "$system_hidraw_mode" "$system_hidraw"
+device_reply_clear systemctl
+device_reply_clear gum
+device_reply_clear udevadm
