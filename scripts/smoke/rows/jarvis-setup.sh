@@ -117,3 +117,4 @@ printf 'absent\n' >"$sandbox/jarvis-world/local-mode"
 jarvis_rescan
 expect_poll "the restored setup action is offered" matched local_value absent
 settings_page_close vgs.jarvis
+jarvis_disable
