@@ -59,6 +59,8 @@ f share/vgs/shell/Core/IdleRegistry.qml
 f share/vgs/shell/Core/IpcRegistry.qml
 f share/vgs/shell/Core/Layers.qml
 f share/vgs/shell/Core/Lifetime.js
+f share/vgs/shell/Core/MonitorLogic.js
+f share/vgs/shell/Core/MonitorState.qml
 f share/vgs/shell/Core/Notices.qml
 f share/vgs/shell/Core/NotificationHub.qml
 f share/vgs/shell/Core/PackageManagers.js

@@ -18,7 +18,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "window", "service
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "system", "requirements", "doctor", "secrets", "hyprland", "bluetoothAgent"];
+var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "system", "requirements", "doctor", "secrets", "hyprland", "bluetoothAgent", "monitors"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -32,9 +32,10 @@ var TOAST_TITLE_MAX = 120;
 var TOAST_MESSAGE_MAX = 600;
 
 // Capabilities whose core object serves one plugin at a time: the session
-// lock, the polkit agent and the Bluetooth pairing agent. A second plugin
-// naming one is not built while another plugin holds it.
-var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent"];
+// lock, the polkit agent, the Bluetooth pairing agent and the monitor
+// rules, a session-wide role. A second plugin naming one is not built while
+// another plugin holds it.
+var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];
 
 // The types a settings schema entry may declare, and the keys an entry may
 // carry. `presets`, `allowCustom`, `format` and `unit` choose the Settings

@@ -28,10 +28,15 @@ Singleton {
         active: root.holderIds("hyprland").length > 0
     }
     BluetoothAgent { id: bluetoothAgent }
+    MonitorState {
+        id: monitorState
+        active: root.holderIds("monitors").length > 0
+    }
     readonly property alias sessionLock: sessionLock
     readonly property alias themes: themes
     readonly property alias tuis: tuis
     readonly property alias hyprland: hyprlandState
+    readonly property alias monitors: monitorState
 
     readonly property bool notificationsHeld: holderIds("notifications").length > 0
     // `<plugin id>:<name>` -> the description each registered shortcut
@@ -165,6 +170,7 @@ Singleton {
         bluetoothAgent: bluetoothAgent.provider,
         secrets: secrets.provider,
         hyprland: hyprlandState.provider,
+        monitors: monitorState.provider,
         // `missing`: the plugin's own requirement commands the last scan did
         // not find, in declaration order, a copy per read; bindable.
         requirements: ctx => ({
@@ -290,7 +296,8 @@ Singleton {
             system: systemSteps.record(),
             bluetoothAgent: bluetoothAgent.record(),
             notices: Notices.record(),
-            hyprland: hyprlandState.record()
+            hyprland: hyprlandState.record(),
+            monitors: monitorState.record()
         });
     }
 }

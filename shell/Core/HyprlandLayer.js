@@ -476,6 +476,36 @@ function sessionLockLines() {
     ];
 }
 
+// The monitor rules: MonitorLogic.render's `hl.monitor` lines for the rules
+// monitors.json sets, after the core's own sections and before every plugin
+// section, so a user line after the loading line still wins. MONITORS is
+// { lines } or, for a document the judge refused or the shell could not
+// read, { refused } with the reason; omitted, as no rules. No rule writes no
+// section.
+var MONITORS_HEADER = "-- Monitors: the output rules monitors.json sets.";
+
+// MONITORS for render from DOCUMENT, monitors.json as
+// Capabilities.monitors last read it, and LINES, MonitorLogic.render of its
+// rules: null while the document is unread, which holds the first render
+// back, so a layer written before the read cannot drop the user's rules for
+// a moment; { refused } for a document refused or unreadable; else
+// { lines }, none for an absent document.
+function monitorInput(document, lines) {
+    if (document === null) return null;
+    if (document.rules === null) return { refused: document.error };
+    return { lines: lines };
+}
+
+function monitorLines(monitors) {
+    if (monitors === undefined) return [];
+    if (typeof monitors.refused === "string")
+        return ["", "-- Monitors: monitors.json is not applied: " + commentText(monitors.refused)];
+    if (!Array.isArray(monitors.lines))
+        throw new Error("HyprlandLayer: monitors " + JSON.stringify(monitors) + " is neither { lines } nor { refused }");
+    if (monitors.lines.length === 0) return [];
+    return ["", MONITORS_HEADER].concat(monitors.lines);
+}
+
 // A layer rule as data: its namespace and effects, which two plugins
 // declaring the same rule share.
 function ruleKey(rule) {
@@ -651,11 +681,12 @@ function optionLines(section, held, touchpads, touchpadFailure, out) {
 // sections. A section whose plugins row sets options is followed by its
 // options section, optionLines; an option two sections set goes to the
 // first by id. TOUCHPADS is the touchpad names Hyprland lists, or null
-// while unread. The result also lists each option written, as { id,
+// while unread. MONITORS gives the monitor rules' section, monitorLines,
+// written after the session lock's restore. The result also lists each option written, as { id,
 // setting, path, value }, each one skipped as a conflict, { id, setting,
 // path, heldBy }, or refused, { id, setting, path, error }, and `binds`,
 // the description of every bind written in the default submap.
-function render(sections, theme, themeName, highestScale, touchpads, touchpadFailure) {
+function render(sections, theme, themeName, highestScale, touchpads, touchpadFailure, monitors) {
     var plan = resolveBinds(sections);
     var switches = groupSwitches(sections);
     var lines = [
@@ -674,7 +705,7 @@ function render(sections, theme, themeName, highestScale, touchpads, touchpadFai
     lines.push("");
     if (switches.groups.motion.enabled) lines = lines.concat(motionLines(theme));
     else lines.push(disabledGroupLine("motion", switches.groups.motion.setting));
-    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan), [""], sessionLockLines());
+    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan), [""], sessionLockLines(), monitorLines(monitors));
     var written = Object.create(null);
     var options = { written: [], conflicts: [], refusals: [] };
     var optionsHeld = Object.create(null);

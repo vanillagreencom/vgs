@@ -23,4 +23,5 @@ BluetoothAgent 1.0 BluetoothAgent.qml
 HyprlandLayer 1.0 HyprlandLayer.qml
 HyprlandState 1.0 HyprlandState.qml
 HyprctlReader 1.0 HyprctlReader.qml
+MonitorState 1.0 MonitorState.qml
 singleton ServiceGate 1.0 ServiceGate.qml
