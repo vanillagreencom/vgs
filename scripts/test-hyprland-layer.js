@@ -542,7 +542,7 @@ function verify(logic, layer, shellText) {
     const optionSection = row => logic.hyprlandSection(optionConfig(row), optionManifest);
     const optionText = (sections, touchpads) => layer.render(sections, theme, "vgs", 1, touchpads);
     const optionsOut = optionText([optionSection({ sensitivity: 0.35, tap: false, layouts: "us,de" })], null);
-    const optionsTail = lines(optionsOut).slice(lines(optionsOut).indexOf(PASSTHROUGH_SECTION[0]) + PASSTHROUGH_SECTION.length);
+    const optionsTail = lines(optionsOut).slice(lines(optionsOut).indexOf(LOCK_SECTION[1]) + 1);
     same(optionsTail, [
         "",
         "-- acme.keys 1.0.0: input options its settings set",
