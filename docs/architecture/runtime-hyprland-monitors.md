@@ -1,0 +1,25 @@
+# Runtime: Hyprland monitor rules and outputs
+
+Covers: shell/Core/MonitorLogic.js, shell/Core/MonitorState.qml, scripts/smoke/rows/monitor-rules.sh
+
+The Hyprland v0.56.2 facts the layer's monitor rules and the `monitors` capability rest on ([hyprland-monitors.md](hyprland-monitors.md)), each with the source or the reading that establishes it. The source is the `v0.56.2` tag of hyprwm/Hyprland. Each reading was taken in the nested sandbox of `scripts/qml-smoke.sh` on host cachy on 2026-10-01. The other Hyprland facts are in [runtime-hyprland.md](runtime-hyprland.md), the nested output's in [runtime-hyprland-nested.md](runtime-hyprland-nested.md).
+
+## Rules
+
+- `hl.monitor` takes `output`, required, and the fields `mode`, `position`, `scale`, `reserved`, `reserved_area`, `disabled`, `transform` (0 to 7), `mirror`, `bitdepth`, `cm`, `sdr_eotf`, `sdrbrightness`, `sdrsaturation`, `vrr` (-1 to 3), `icc`, `supports_wide_color`, `supports_hdr`, `sdr_min_luminance` and `sdr_max_luminance`; any other key is an `unknown field` in `configerrors` (`MONITOR_FIELDS` and `hlMonitor` in `src/config/lua/bindings/LuaBindingsConfigRules.cpp`). `mode`, `position` and `scale` are strings Hyprland converts, so a Lua number for `scale` is read as its text. `bitdepth` 10 turns 10-bit on and any other value off.
+- `mode` is `WxH` or `WxH@R`; `position` is `XxY`, each part read with `std::stoi`, negatives included; a `scale` below 0.25 is refused (`CMonitorRuleParser::parseMode`, `parsePosition`, `parseScale` in `src/config/shared/monitor/Parser.cpp`). The colour modes are `auto`, `srgb`, `wide`, `edid`, `hdr`, `hdredid`, `dcip3`, `dp3` and `adobe` (`NCMType::fromString` in `src/helpers/CMType.cpp`).
+- An `hl.monitor` for an output a rule already names starts from that rule and changes only the fields it sets, then replaces it at the end of the list (`hlMonitor`; `CMonitorRuleManager::add` in `src/config/shared/monitor/MonitorRuleManager.cpp`). Hyprland applies the last rule whose name matches the output, and the `output = ""` rule only when none does (`CMonitorRuleManager::get`). So the harness's default rule, after the loading line, does not override the layer's rule for `WAYLAND-1`. A user line `hl.monitor({ output = "WAYLAND-1", position = "10x0" })` after the line made `overridden` list the output while it kept the held mode and scale, read in `scripts/smoke/rows/monitor-rules.sh`.
+- A `desc:` name matches an output whose description or short description starts with the rest of the name, trimmed. The short description is the make, model and serial joined by spaces, trimmed, with every comma removed (`CMonitor::onConnect`, `CMonitor::matchesStaticSelector` in `src/output/Monitor.cpp`).
+- A configuration reload runs `CConfigManager::reload`, which clears the rules, runs `hyprland.lua` again and applies the rules (`ensureMonitorStatus`) before it answers (`src/config/lua/ConfigManager.cpp`). `reload config-only` is no different in v0.56.2: `reloadRequest` in `src/debug/HyprCtl.cpp` reads only `full-reset`. The layer's own reload therefore applies a changed rule, read in `scripts/smoke/rows/monitor-rules.sh`: the scale-2 write read 3512 × 1866 at scale 2 on a 1756 × 933 nested window once the layer reloaded.
+- A scale that leaves fractional logical pixels is moved to the nearest one that does not ([runtime-hyprland-nested.md](runtime-hyprland-nested.md)), so a written scale would not read back; the judge refuses it first.
+
+## Outputs
+
+- `monitors -j all` lists every output, disabled ones included, as `getMonitorData` in `src/debug/HyprCtl.cpp` prints it: `id`, `name`, `description` (the short description), `make`, `model`, `serial`, `width` and `height` (the mode in device pixels), `refreshRate` to five places, `x`, `y`, `scale`, `transform`, `vrr`, `disabled`, `currentFormat`, `mirrorOf` (the mirrored output's `id` as text, or `none`) and `availableModes`, each `WxH@R.RRHz`.
+- `vrr` is whether adaptive sync runs on the output now, a boolean, not the rule's 0 to 3: it reads false on an output without adaptive sync whatever the rule says.
+- The nested Wayland output has no make, model or serial and lists no mode: Aquamarine's Wayland backend (`src/backend/Wayland.cpp`, aquamarine v0.15.1) adds none. It read `{"name": "WAYLAND-1", "serial": "", "availableModes": [], "refreshRate": 60.00000}`, and `hl.monitor({ output = "WAYLAND-1", mode = "3512x1866@60.000", position = "0x0", scale = 2 })` read back at 3512 × 1866, refresh 60 and scale 2.
+- The event socket posts `monitoradded>>NAME` and `monitoraddedv2>>ID,NAME,DESCRIPTION` when an output connects, `monitorremoved` and `monitorremovedv2` when it goes (`src/output/Monitor.cpp`), and `configreloaded` after each reload.
+
+## Transport
+
+- `qs ipc call` strips the brackets of an argument that starts with `[`, so a JSON list sent as one argument arrives as its first element's text: the fixture `acme.monitors` takes its rules inside an object, `{"rules": [...]}`. Read in `scripts/smoke/rows/monitor-rules.sh`, where a list argument reached the handler as `{"output": ...}`.
