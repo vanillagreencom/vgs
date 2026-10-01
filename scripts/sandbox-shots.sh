@@ -87,8 +87,10 @@
 # the stand-in's submit only counts, and the scene reads that no request
 # went live and no authentication helper ran. The Settings scene enables
 # vgs.automations over the harness's automations_stand_ins for its page's
-# shot, so no call reaches the host's systemd user manager, and disables it
-# again. It enables vgs.jarvis for its page's shot, once the daemon
+# shot, so no call reaches the host's systemd user manager, and leaves its
+# enablement as it found it: a tree with the setup steps of D061 enables
+# the plugin for their Automations shot, which comes later in the same
+# mode. It enables vgs.jarvis for its page's shot, once the daemon
 # answers, over the J09 world the harness prepares for every sandbox
 # (scripts/smoke/harness.sh), so the child reaches no audio, account,
 # network or desktop, and disables it again.
@@ -644,14 +646,11 @@ scene_setup_steps() { # MODE
   take "setup-$1-actions"
   expect "the window opens the Automations page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.automations
   expect_poll "the Automations page is shown" '"vgs.automations"' settings_page
+  expect_poll "Automations offers Enable while logged out" true step_offered vgs.automations linger
   settings_scroll_to 0 >/dev/null || fail "the Automations page did not scroll to the top"
   expect_poll "the Automations page is at its top" True settings_at_top
-  if [[ $(step_offered vgs.automations linger) == true ]]; then
-    park_pointer
-    take "setup-$1-automations"
-  else
-    ok "skipped setup-$1-automations: vgs.automations offers no Enable while logged out here"
-  fi
+  park_pointer
+  take "setup-$1-automations"
   step_shot "$1" vgs.agent-warden vsys "Install vsys" warden-install-vsys
   # Set up is offered while vsys is present: a stand-in that runs nothing
   # stands for it, and goes again after the shot, so the next mode offers
@@ -767,12 +766,21 @@ scene_settings() { # MODE
   # The automations' page at its top, the plugin enabled over the stand-ins
   # rows/automations.sh reads (automations_stand_ins in
   # scripts/smoke/harness.sh), so no call reaches the host's systemd user
-  # manager; disabled again and the stand-ins removed after the shot.
+  # manager; the stand-ins removed after the shot, and the plugin disabled
+  # again only when this scene enabled it, since the setup steps' shot below
+  # reads the page of the plugin their setup enabled.
+  local auto_found=unread
   if "$has_automations"; then
+    auto_found="$(plugin_enabled vgs.automations)" || auto_found=unread
+    [[ $auto_found == True || $auto_found == False ]] || fail "vgs.automations' enablement is unreadable: $auto_found"
+  fi
+  if [[ $auto_found != unread ]]; then
     automations_stand_ins "$sandbox/shots-automations-$1"
     expect "the automations' stand-ins are scanned" ok ipc shell rescanPlugins
-    expect "enabling vgs.automations is allowed" ok ipc shell setPluginEnabled vgs.automations true
-    expect_poll "vgs.automations is built" True record_exists vgs.automations
+    if [[ $auto_found == False ]]; then
+      expect "enabling vgs.automations is allowed" ok ipc shell setPluginEnabled vgs.automations true
+      expect_poll "vgs.automations is built" True record_exists vgs.automations
+    fi
     expect "the window opens the automations' page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.automations
     expect_poll "the automations' page is shown" '"vgs.automations"' settings_page
     expect_poll "the automations' status rows are reported" True page_reported vgs.automations
@@ -785,8 +793,10 @@ scene_settings() { # MODE
     fi
     park_pointer
     take "settings-$1-automations"
-    expect "disabling vgs.automations is allowed" ok ipc shell setPluginEnabled vgs.automations false
-    expect_poll "vgs.automations is gone" False record_exists vgs.automations
+    if [[ $auto_found == False ]]; then
+      expect "disabling vgs.automations is allowed" ok ipc shell setPluginEnabled vgs.automations false
+      expect_poll "vgs.automations is gone" False record_exists vgs.automations
+    fi
     automations_stand_ins_restore "$sandbox/shots-automations-$1"
   fi
   # The Jarvis page at its top, the daemon's status reported: the plugin
