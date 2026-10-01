@@ -39,16 +39,19 @@ restore_windows_lua || fail "hyprland.lua is put back after the rule control"
 expect "the nested instance reloads hyprland.lua after the rule control" ok hypr reload config-only
 
 # Float toggles, the keyboard and a close through Hyprland, beside the
-# toplevel helper. The pointer rests off every window: under Hyprland's
-# default follow_mouse a float toggle that tiles Settings under the pointer
-# hands it the keyboard, and Qt's Wayland client can drop a keyboard that
-# leaves a window and returns within one compositor batch, leaving Settings
-# with the keyboard and no focused item (docs/architecture/runtime-qml.md).
+# toplevel helper. The pointer rests off every window, since under
+# Hyprland's default follow_mouse a float toggle that tiles Settings under
+# the pointer hands it the keyboard, so only the focus dispatch returns it.
+# The shell must read the keyboard leaving Settings before that return:
+# Qt's Wayland client can drop a return that lands in one batch with the
+# reply to the leave's sync, leaving Settings with the keyboard and no
+# focused item (docs/architecture/runtime-qml.md).
 expect "the IPC opens the Settings window for the keyboard rows" ok ipc shell summon window vgs.settings '{}'
 expect_poll "the Settings window is focused for the keyboard rows" "[\"$shell_class\", \"Settings\"]" active_window
 rest_pointer || fail "moving the pointer off the Settings window failed"
 if open_other "$sandbox/toplevel-windows.log"; then
   expect_poll "the new window takes the focus" '["smoke.other", "Other window"]' active_window
+  expect_poll "the shell reads the Settings window without the keyboard" false ipc smoke activeFocusIn window vgs.settings
   leaves_before="$(other_events '^keyboard leave$')"
   if address="$(window_address Settings)" && [[ $address == 0x* ]]; then
     expect "a float toggle aimed at the window answers ok" ok hypr dispatch "hl.dsp.window.float({ action = \"toggle\", window = \"address:$address\" })"
