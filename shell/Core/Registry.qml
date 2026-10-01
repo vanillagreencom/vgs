@@ -313,7 +313,7 @@ Singleton {
 
     // Every discovered plugin as the plugin manager shows it: listing
     // metadata, its icon, capabilities and source, whether it is enabled,
-    // its settings schema, the settings it currently receives (a bar
+    // whether its widget is placed (PluginLogic.isPlaced), its settings schema, the settings it currently receives (a bar
     // widget's from its first layout entry), its Keys rows, its Status rows
     // (PluginLogic.statusRows of activeManifestOf over the values it
     // published), the label of its `secrets`, "" without, its setting
@@ -350,6 +350,7 @@ Singleton {
                 capabilities: m.capabilities,
                 source: sourceOf(m),
                 enabled: isEnabled(id),
+                placed: Logic.isPlaced(config, m),
                 schema: m.schema,
                 settings: settings,
                 settingChoices: Logic.settingChoices(m, values, settings),
@@ -368,6 +369,7 @@ Singleton {
             version: manifests[id].version,
             kinds: manifests[id].kinds,
             enabled: isEnabled(id),
+            placed: Logic.isPlaced(Config.effective, manifests[id]),
             dir: manifests[id].__sourceDir,
             revision: manifests[id].__revision,
             requirements: requirementsOf(id)

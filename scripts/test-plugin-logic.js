@@ -380,11 +380,76 @@ function suite(ctx, check) {
         ["enable bar does not list it in plugins", null, shipped, "acme.bar", true, "plugins", undefined],
         ["enable widget does not list it in plugins", null, shipped, "acme.widget", true, "plugins", undefined],
         ["enable a widget-plus-service plugin places it and does not list it", null, shipped, "acme.both", true, "plugins", undefined],
+        ["enable an unplaced widget seeds its entry with its plugins row's settings", null, ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "row", keys: {} }] }), "acme.both", true, "bar.layout.right", [{ id: "acme.both", label: "row" }]],
     ];
     for (const [name, user, effective, id, enabled, p, want] of withRows) {
         check("withEnabled: " + name, dig(ctx.withEnabled(user, manifests[id], enabled, effective), p), want);
     }
     check("withEnabled does not alias the user file", (() => { const u = { bar: { layout: { left: [], center: [], right: [] } } }; ctx.withEnabled(u, manifests["acme.widget"], true, ctx.effectiveConfig(shipped, u)); return u.bar.layout.center; })(), []);
+
+    // isPlaced rows: [name, config, id, want]. Placement reads apart from
+    // enablement.
+    const placedRows = [
+        ["a widget in a section is placed", shipped, "vgs.clock", true],
+        ["a widget in no section is unplaced", shipped, "acme.widget", false],
+        ["a disabled widget's entry still reads placed", ctx.effectiveConfig(shipped, { disabledPlugins: ["vgs.clock"] }), "vgs.clock", true],
+        ["an entry of a plugin without the widget kind is no placement", ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [{ id: "acme.svc" }], center: [], right: [] } } }), "acme.svc", false],
+    ];
+    for (const [name, config, id, want] of placedRows) check("isPlaced: " + name, ctx.isPlaced(config, manifests[id]), want);
+
+    // placedRefusal rows: [name, config, id, want].
+    const placedRefusalRows = [
+        ["an enabled placed widget may be unplaced", shipped, "vgs.clock", ""],
+        ["an enabled unplaced widget-plus-panel may be placed", shipped, "vgs.widgetpanel", ""],
+        ["a service has no widget", shipped, "acme.svc", "refused: placed=acme.svc reason=no-bar-widget"],
+        ["a bar has no widget", shipped, "vgs.bar", "refused: placed=vgs.bar reason=no-bar-widget"],
+        ["a disabled widget is refused", ctx.effectiveConfig(shipped, { disabledPlugins: ["vgs.clock"] }), "vgs.clock", "refused: placed=vgs.clock reason=disabled"],
+        ["an unplaced widget-only plugin is disabled", shipped, "acme.widget", "refused: placed=acme.widget reason=disabled"],
+    ];
+    for (const [name, config, id, want] of placedRefusalRows) check("placedRefusal: " + name, ctx.placedRefusal(config, manifests[id], "vgs.bar"), want);
+
+    // withPlaced rows: [name, user, effective, id, placed, path, want].
+    const placedBoth = { version: 1, bar: { id: "vgs.bar", layout: { left: [{ id: "acme.both", label: "left" }], center: [{ id: "vgs.clock" }], right: [{ id: "acme.both", label: "right" }] } } };
+    const placedPanel = { version: 1, bar: { id: "vgs.bar", layout: { left: [], center: [{ id: "vgs.clock" }], right: [{ id: "vgs.widgetpanel" }] } } };
+    const inheritedDisabled = Object.assign({}, shipped, { disabledPlugins: ["vgs.workspaces"] });
+    const placeRows = [
+        ["place puts the widget in its default section", null, shipped, "acme.both", true, "bar.layout.right", [{ id: "acme.both" }]],
+        ["place puts a widget with no default section in center", null, shipped, "acme.widget", true, "bar.layout.center", [{ id: "vgs.clock" }, { id: "acme.widget" }]],
+        ["place seeds the user bar from the effective bar", null, shipped, "acme.both", true, "bar.layout.left", [{ id: "vgs.workspaces" }]],
+        ["place seeds the entry with its plugins row's settings", null, ctx.effectiveConfig(shipped, { plugins: [{ id: "acme.both", label: "row", keys: {} }] }), "acme.both", true, "bar.layout.right", [{ id: "acme.both", label: "row" }]],
+        ["place lists nothing in plugins", null, shipped, "acme.both", true, "plugins", undefined],
+        ["place a placed widget changes nothing", placedBoth, ctx.effectiveConfig(shipped, placedBoth), "acme.both", true, "bar", placedBoth.bar],
+        ["place keeps the user's disabled list", { disabledPlugins: ["vgs.svc"] }, ctx.effectiveConfig(shipped, { disabledPlugins: ["vgs.svc"] }), "acme.both", true, "disabledPlugins", ["vgs.svc"]],
+        ["place writes no inherited disabled list", null, inheritedDisabled, "acme.both", true, "disabledPlugins", undefined],
+        ["place writes version 1", null, shipped, "acme.both", true, "version", 1],
+        ["unplace removes every entry in every section and keeps other widgets", placedBoth, ctx.effectiveConfig(shipped, placedBoth), "acme.both", false, "bar.layout", { left: [], center: [{ id: "vgs.clock" }], right: [] }],
+        ["unplace keeps the bar id", placedBoth, ctx.effectiveConfig(shipped, placedBoth), "acme.both", false, "bar.id", "vgs.bar"],
+        ["unplace seeds the user bar from the effective bar", null, shipped, "vgs.clock", false, "bar.layout", { left: [{ id: "vgs.workspaces" }], center: [], right: [] }],
+        ["unplace a third-party widget-plus-service lists it with its first entry's settings", placedBoth, ctx.effectiveConfig(shipped, placedBoth), "acme.both", false, "plugins", [{ id: "acme.both", label: "left" }]],
+        ["unplace a listed third-party widget-plus-service keeps its row", Object.assign({ plugins: [{ id: "acme.both", label: "row" }] }, placedBoth), ctx.effectiveConfig(shipped, Object.assign({ plugins: [{ id: "acme.both", label: "row" }] }, placedBoth)), "acme.both", false, "plugins", [{ id: "acme.both", label: "row" }]],
+        ["unplace a first-party widget-plus-panel lists nothing", placedPanel, ctx.effectiveConfig(shipped, placedPanel), "vgs.widgetpanel", false, "plugins", undefined],
+        ["unplace a widget-only plugin lists nothing", null, shipped, "vgs.clock", false, "plugins", undefined],
+        ["unplace an unplaced widget changes nothing", null, shipped, "acme.both", false, "bar", undefined],
+        ["unplace keeps the user's disabled list", Object.assign({ disabledPlugins: ["vgs.svc"] }, placedBoth), ctx.effectiveConfig(shipped, Object.assign({ disabledPlugins: ["vgs.svc"] }, placedBoth)), "acme.both", false, "disabledPlugins", ["vgs.svc"]],
+        ["unplace writes no inherited disabled list", null, inheritedDisabled, "vgs.clock", false, "disabledPlugins", undefined],
+    ];
+    for (const [name, user, effective, id, placed, p, want] of placeRows) {
+        check("withPlaced: " + name, dig(ctx.withPlaced(user, manifests[id], placed, effective), p), want);
+    }
+    // Enablement after an unplace, read from the merged result.
+    const unplacedEnabled = (user, id) => ctx.isEnabled(ctx.effectiveConfig(shipped, ctx.withPlaced(user, manifests[id], false, ctx.effectiveConfig(shipped, user))), manifests[id], "vgs.bar");
+    check("withPlaced: a third-party widget-plus-service stays enabled once unplaced", unplacedEnabled(placedBoth, "acme.both"), true);
+    check("withPlaced: a first-party widget-plus-panel stays enabled once unplaced", unplacedEnabled(placedPanel, "vgs.widgetpanel"), true);
+    check("withPlaced: a widget-only plugin reads disabled once unplaced", unplacedEnabled(null, "vgs.clock"), false);
+    // Applying an edit twice gives the file applying it once gives.
+    const twice = (user, id, placed) => {
+        const once = ctx.withPlaced(user, manifests[id], placed, ctx.effectiveConfig(shipped, user));
+        return JSON.stringify(ctx.withPlaced(once, manifests[id], placed, ctx.effectiveConfig(shipped, once))) === JSON.stringify(once);
+    };
+    check("withPlaced: placing twice is placing once", twice(null, "acme.both", true), true);
+    check("withPlaced: unplacing twice is unplacing once", twice(placedBoth, "acme.both", false), true);
+    check("withPlaced does not alias the user file on place", (() => { const u = { bar: { layout: { left: [], center: [], right: [] } } }; ctx.withPlaced(u, manifests["acme.both"], true, ctx.effectiveConfig(shipped, u)); return u.bar.layout.right; })(), []);
+    check("withPlaced does not alias the user file on unplace", (() => { const u = { bar: { layout: { left: [], center: [], right: [{ id: "acme.both", tags: ["z"] }] } } }; const out = ctx.withPlaced(u, manifests["acme.both"], false, ctx.effectiveConfig(shipped, u)); out.plugins[0].tags.push("y"); return u.bar.layout.right; })(), [{ id: "acme.both", tags: ["z"] }]);
 
     // A plugin with a settings schema, for the setting rows.
     const tunable = ctx.validateManifest({ schemaVersion: 1, id: "acme.tune", name: "T", version: "1", author: "a", description: "d", kinds: ["service", "bar-widget"], entryPoints: { service: "S.qml", "bar-widget": "W.qml" },
@@ -714,6 +779,15 @@ const CONTROLS = [
     ["an idle watch takes whole seconds", "!Number.isInteger(seconds) || ", ""],
     ["an idle watch needs a handler", "if (typeof onChange !== \"function\") return \"refused: idle-handler=not-a-function\";", ""],
     ["a requirement the scan missed is reported missing", "missing.indexOf(entry.command) === -1 ? \"present\" : \"missing\"", "\"present\""],
+    ["placing never writes disabledPlugins", "function withPlaced(user, manifest, placed, effective) {\n    var out = isPlainObject(user) ? clone(user) : {};", "function withPlaced(user, manifest, placed, effective) {\n    var out = isPlainObject(user) ? clone(user) : {};\n    out.disabledPlugins = Array.isArray(effective.disabledPlugins) ? effective.disabledPlugins.slice() : [];"],
+    ["a widget already as asked changes nothing", "if (placed === isPlaced(effective, manifest))\n        return out;", "if (false)\n        return out;"],
+    ["unplacing removes the entries", "return entry.id !== manifest.id; });", "return true; });"],
+    ["unplacing lists a third-party plugin enabled by its placement", "if (enabledByPlacement) {", "if (false) {"],
+    ["an unplaced plugin's new row carries the entry's settings", "copyEntrySettings({ id: manifest.id }, layoutEntryOf(out, manifest.id))", "{ id: manifest.id }"],
+    ["a placed entry carries the plugins row's settings", "copyEntrySettings({ id: manifest.id }, pluginRow(effective, manifest.id))", "{ id: manifest.id }"],
+    ["a disabled plugin's placement is refused", "if (!isEnabled(config, manifest, defaultBarId))\n        return \"refused: placed=\"", "if (false)\n        return \"refused: placed=\""],
+    ["a plugin without a widget is refused placement", "if (manifest.kinds.indexOf(\"bar-widget\") === -1)\n        return \"refused: placed=\"", "if (false)\n        return \"refused: placed=\""],
+    ["placement needs the widget kind", "return manifest.kinds.indexOf(\"bar-widget\") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1;", "return layoutIds(config).indexOf(manifest.id) !== -1;"],
 ];
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-logic-control-"));

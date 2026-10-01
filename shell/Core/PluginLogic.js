@@ -193,8 +193,9 @@ function clone(value) {
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
-// The version a configuration file declares. `withEnabled` and `withSetting`
-// write it into a user file that has none.
+// The version a configuration file declares. Each user-file edit here
+// (`withEnabled`, `withPlaced`, `withSetting`, `withKey`) writes it into a
+// user file that has none.
 var CONFIG_VERSION = 1;
 
 // The first defect of a configuration file (shipped or user), or "". The
@@ -2373,9 +2374,17 @@ function settingsFor(config, manifest, target, layoutEntry) {
     if (target === "layout") entry = layoutEntry;
     else if (target === "plugins") entry = pluginRow(config, manifest.id);
     else throw new Error("settingsFor: target " + JSON.stringify(target) + " is not one of " + SETTING_TARGETS.join(", "));
+    return clone(copyEntrySettings(out, entry));
+}
+
+// Copy each key of configuration entry ENTRY into TARGET, but for the keys
+// ENTRY_RESERVED_KEYS names, which are no setting; nothing for an entry
+// that is no object. Values are copied, so TARGET and ENTRY share nothing.
+// Returns TARGET.
+function copyEntrySettings(target, entry) {
     if (isPlainObject(entry))
-        Object.keys(entry).forEach(function (k) { if (ENTRY_RESERVED_KEYS.indexOf(k) === -1) out[k] = entry[k]; });
-    return clone(out);
+        Object.keys(entry).forEach(function (k) { if (ENTRY_RESERVED_KEYS.indexOf(k) === -1) target[k] = clone(entry[k]); });
+    return target;
 }
 
 // Keys of a configuration entry that are no setting: the plugin's `id`, and
@@ -2430,6 +2439,15 @@ function managerSettings(config, manifest) {
     return entry !== null ? settingsFor(config, manifest, "layout", entry) : settingsFor(config, manifest, "plugins", null);
 }
 
+// Whether plugin MANIFEST's widget is placed under CONFIG: the manifest
+// declares kind bar-widget and a bar section holds an entry with its id.
+// Enablement is apart: a disabled plugin's entry still reads placed, and
+// effectiveLayout leaves it off the screen. The one placed reading; the
+// manager rows and every rule here that asks it call this.
+function isPlaced(config, manifest) {
+    return manifest.kinds.indexOf("bar-widget") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1;
+}
+
 // Whether a plugin is enabled under this configuration.
 // - disabledPlugins[] wins over every other rule.
 // - A plugin declaring kind bar is enabled only as the active bar; every
@@ -2444,7 +2462,7 @@ function isEnabled(config, manifest, defaultBarId) {
         return false;
     if (manifest.kinds.indexOf("bar") !== -1)
         return activeBarId(config, defaultBarId) === manifest.id;
-    if (manifest.kinds.indexOf("bar-widget") !== -1 && layoutIds(config).indexOf(manifest.id) !== -1)
+    if (isPlaced(config, manifest))
         return true;
     var nonBarKinds = manifest.kinds.filter(function (k) { return k !== "bar" && k !== "bar-widget"; });
     if (nonBarKinds.length === 0)
@@ -2494,10 +2512,9 @@ function hiddenByDisabling(manifests, config, id, defaultBarId) {
     var m = hasOwn(manifests, id) ? manifests[id] : undefined;
     if (!m || m.kinds.indexOf("bar") === -1 || activeBarId(config, defaultBarId) !== id)
         return [];
-    var placed = layoutIds(config);
     return Object.keys(manifests).filter(function (other) {
         var o = manifests[other];
-        return other !== id && o.kinds.indexOf("bar-widget") !== -1 && placed.indexOf(other) !== -1 && isEnabled(config, o, defaultBarId);
+        return other !== id && isPlaced(config, o) && isEnabled(config, o, defaultBarId);
     }).sort();
 }
 
@@ -2510,11 +2527,10 @@ function hiddenByDisabling(manifests, config, id, defaultBarId) {
 // plugin has no presence yet, gives it one: a bar becomes the active bar; a
 // bar widget not placed in any section is placed in its default section
 // (`center` when the manifest names none); a third-party plugin of another
-// kind not listed in plugins[] is listed. Because a user `bar` key replaces
-// the shipped one whole, a user file without one is seeded from the
-// effective bar before its first bar edit, so the edit keeps every other
-// widget in place. Enabling a plugin that already has its presence changes
-// nothing but the disabled list.
+// kind not listed in plugins[] is listed. A bar edit seeds the user `bar`
+// first (seedUserBar), so it keeps every other widget in place. Enabling a
+// plugin that already has its presence changes nothing but the disabled
+// list.
 function withEnabled(user, manifest, enabled, effective) {
     var out = isPlainObject(user) ? clone(user) : {};
     if (out.version === undefined) out.version = CONFIG_VERSION;
@@ -2527,21 +2543,12 @@ function withEnabled(user, manifest, enabled, effective) {
     out.disabledPlugins = disabled.filter(function (d) { return d !== manifest.id; });
     var isBar = manifest.kinds.indexOf("bar") !== -1;
     var isWidget = manifest.kinds.indexOf("bar-widget") !== -1;
-    var seedBar = function () {
-        if (!isPlainObject(out.bar))
-            out.bar = effective && isPlainObject(effective.bar) ? clone(effective.bar) : {};
-    };
     if (isBar && activeBarId(effective, "") !== manifest.id) {
-        seedBar();
+        seedUserBar(out, effective);
         out.bar.id = manifest.id;
     }
-    if (isWidget && layoutIds(effective).indexOf(manifest.id) === -1) {
-        seedBar();
-        if (!isPlainObject(out.bar.layout)) out.bar.layout = { left: [], center: [], right: [] };
-        var section = typeof manifest.defaultSection === "string" ? manifest.defaultSection : "center";
-        if (!Array.isArray(out.bar.layout[section])) out.bar.layout[section] = [];
-        out.bar.layout[section].push({ id: manifest.id });
-    }
+    if (isWidget && !isPlaced(effective, manifest))
+        placeWidget(out, manifest, effective);
     if (!isBar && !isWidget && manifest.id.indexOf(FIRST_PARTY_PREFIX) !== 0) {
         if (pluginRow(effective, manifest.id) === undefined) {
             var plugins = Array.isArray(out.plugins) ? out.plugins : [];
@@ -2549,6 +2556,77 @@ function withEnabled(user, manifest, enabled, effective) {
             out.plugins = plugins;
         }
     }
+    return out;
+}
+
+// Give OUT, a user file being edited, a `bar` copied from EFFECTIVE's when
+// it has none. A user `bar` key replaces the shipped one whole, so a bar
+// edit made without this would drop every other widget.
+function seedUserBar(out, effective) {
+    if (!isPlainObject(out.bar))
+        out.bar = effective && isPlainObject(effective.bar) ? clone(effective.bar) : {};
+}
+
+// Place plugin MANIFEST's widget in OUT, a user file being edited: one
+// entry at the end of its default section, `center` when the manifest names
+// none. The entry carries the settings of the plugin's effective plugins[]
+// row: the manager writes a plugin-wide setting to both entries
+// (settingTargets), so a setting outlives an unplace and a place. The one
+// placement rule; enabling and placing both call it.
+function placeWidget(out, manifest, effective) {
+    seedUserBar(out, effective);
+    if (!isPlainObject(out.bar.layout)) out.bar.layout = { left: [], center: [], right: [] };
+    var section = typeof manifest.defaultSection === "string" ? manifest.defaultSection : "center";
+    if (!Array.isArray(out.bar.layout[section])) out.bar.layout[section] = [];
+    out.bar.layout[section].push(copyEntrySettings({ id: manifest.id }, pluginRow(effective, manifest.id)));
+}
+
+// Why plugin MANIFEST's widget may not be placed or unplaced under CONFIG,
+// or "": a plugin without kind bar-widget has no widget, and a disabled
+// plugin is refused, as its setting is. The reply is one keyed line.
+function placedRefusal(config, manifest, defaultBarId) {
+    if (manifest.kinds.indexOf("bar-widget") === -1)
+        return "refused: placed=" + manifest.id + " reason=no-bar-widget";
+    if (!isEnabled(config, manifest, defaultBarId))
+        return "refused: placed=" + manifest.id + " reason=disabled";
+    return "";
+}
+
+// The user-file change that shows or hides plugin MANIFEST's widget in the
+// bar and leaves its enablement alone: disabledPlugins is never read or
+// written. Returns the new user object; the caller checks placedRefusal
+// first and writes it.
+//
+// Placing an unplaced widget is placeWidget. Unplacing seeds the user `bar`
+// and removes every layout entry with the plugin's id from every section.
+// A third-party plugin of a kind other than bar and bar-widget with no
+// plugins[] row is enabled only by its placement (isEnabled), so unplacing
+// lists it, the row seeded with the first removed entry's settings, and it
+// stays enabled. A plugin whose only kind is bar-widget has nothing left
+// once unplaced: it reads as disabled until enabling places it again. A
+// widget already as asked changes nothing but the version stamp.
+function withPlaced(user, manifest, placed, effective) {
+    var out = isPlainObject(user) ? clone(user) : {};
+    if (out.version === undefined) out.version = CONFIG_VERSION;
+    if (placed === isPlaced(effective, manifest))
+        return out;
+    if (placed) {
+        placeWidget(out, manifest, effective);
+        return out;
+    }
+    seedUserBar(out, effective);
+    var otherKinds = manifest.kinds.filter(function (k) { return k !== "bar" && k !== "bar-widget"; });
+    var enabledByPlacement = otherKinds.length > 0 && manifest.kinds.indexOf("bar") === -1
+        && manifest.id.indexOf(FIRST_PARTY_PREFIX) !== 0 && pluginRow(effective, manifest.id) === undefined;
+    if (enabledByPlacement) {
+        var row = copyEntrySettings({ id: manifest.id }, layoutEntryOf(out, manifest.id));
+        out.plugins = (Array.isArray(out.plugins) ? out.plugins : []).concat([row]);
+    }
+    SECTIONS.forEach(function (section) {
+        var entries = out.bar.layout[section];
+        if (Array.isArray(entries))
+            out.bar.layout[section] = entries.filter(function (entry) { return entry.id !== manifest.id; });
+    });
     return out;
 }
 
@@ -2635,15 +2713,14 @@ function settingTargets(config, manifest) {
     var wanted = manifest.kinds.map(settingTargetOf);
     return SETTING_TARGETS.filter(function (target) {
         if (wanted.indexOf(target) === -1) return false;
-        return target !== "layout" || layoutIds(config).indexOf(manifest.id) !== -1;
+        return target !== "layout" || isPlaced(config, manifest);
     });
 }
 
 // The user-file change that sets one setting of one plugin in each of
 // `targets`. "layout" sets the key on every layout entry with the plugin's
 // id, or with `locator` { section, nth } on the nth such entry of that
-// section alone, seeding the user `bar` key from the effective bar first;
-// "plugins"
+// section alone, seeding the user `bar` key first (seedUserBar); "plugins"
 // sets it on the plugin's plugins[] row, seeding that row from the
 // effective one, since a user row replaces the shipped row whole. The
 // caller checks the value with settingRefusal first.
@@ -2651,8 +2728,7 @@ function withSetting(user, manifest, key, value, effective, targets, locator) {
     var out = isPlainObject(user) ? clone(user) : {};
     if (out.version === undefined) out.version = CONFIG_VERSION;
     if (targets.indexOf("layout") !== -1) {
-        if (!isPlainObject(out.bar))
-            out.bar = effective && isPlainObject(effective.bar) ? clone(effective.bar) : {};
+        seedUserBar(out, effective);
         var layout = isPlainObject(out.bar.layout) ? out.bar.layout : {};
         SECTIONS.forEach(function (section) {
             if (isPlainObject(locator) && locator.section !== section) return;

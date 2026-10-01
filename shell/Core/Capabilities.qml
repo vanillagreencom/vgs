@@ -121,6 +121,7 @@ Singleton {
         manager: ctx => ({
             get plugins() { return Registry.managerRows; },
             setEnabled: (id, enabled) => typeof enabled === "boolean" ? Plugins.setEnabled(id, enabled) : "refused: enabled=" + JSON.stringify(enabled) + " want=boolean",
+            setPlaced: (id, placed) => typeof placed === "boolean" ? Plugins.setPlaced(id, placed) : "refused: placed=" + JSON.stringify(placed) + " want=boolean",
             setSetting: (id, key, value) => Plugins.setSetting(id, key, value),
             setKey: (id, shortcut, key) => Plugins.setKey(id, shortcut, key),
             update: id => root.managerTui("update", id),

@@ -15,7 +15,7 @@ import "Reply.js" as Reply
 // `motion.scale` of 0 makes a push or a pop instant; the page not shown is
 // hidden once the slide ends, so the keyboard reaches the shown page alone.
 // Escape pops a page; on the list it is left to the window host, which
-// closes the window. Enabling, disabling, a
+// closes the window. Enabling, disabling, showing a widget in the bar, a
 // setting and a key go through the manager capability; the rows come back
 // from the core, so the window shows what the configuration holds. Adding,
 // updating and removing a plugin open the manager's core TUIs, a floating
@@ -137,6 +137,15 @@ FocusScope {
         const row = rowOf(id);
         if (row === null) return "unknown: " + id;
         return keep(id, shell.manager.setEnabled(id, !row.enabled));
+    }
+
+    // Show plugin `id`'s widget in the bar, or hide it, the opposite of its
+    // placement now, and leave the plugin enabled; answers the manager's
+    // reply.
+    function togglePlaced(id) {
+        const row = rowOf(id);
+        if (row === null) return "unknown: " + id;
+        return keep(id, shell.manager.setPlaced(id, !row.placed));
     }
 
     // Write one setting of plugin `id` through the manager; answers its

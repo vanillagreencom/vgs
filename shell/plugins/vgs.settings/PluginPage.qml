@@ -7,20 +7,21 @@ import qs.Ui
 // back button, which returns to the list, and the plugin's name as a title
 // whose menu lists every plugin, the current one checked, and opens the
 // chosen one's page. The body holds the description, the capabilities,
-// every error, the enabled switch, the listing metadata, the Update and
-// Remove buttons of an installed plugin, one status section per status
-// group (entries without a group first, under `Status`), whose values are
-// read-only and whose setup steps run through the manager (D061), the
-// Requirements section with an Install button while one is missing, one
-// settings section per schema group (entries without a group first, under
-// `Settings`) and the Keys section. A disabled plugin's fields are
-// read-only and say to enable it; its status rows say it has not reported.
-// The header and body share one content edge, the scroll bar sits in the
-// window's right inset, and each inline value draws at line height 1,
-// centred on its label. The description draws in the hint role in the
-// muted colour; the enabled switch, the listing metadata and Manage are
-// one key/value group `stack.row` apart, the read-only metadata in compact
-// rows.
+// every error, the enabled switch, the Show in bar switch of a plugin with
+// a bar widget, which turns only while the plugin is enabled, the listing
+// metadata, the Update and Remove buttons of an installed plugin, one
+// status section per status group (entries without a group first, under
+// `Status`), whose values are read-only and whose setup steps run through
+// the manager (D061), the Requirements section with an Install button
+// while one is missing, one settings section per schema group (entries
+// without a group first, under `Settings`) and the Keys section. A
+// disabled plugin's fields are read-only and say to enable it; its status
+// rows say it has not reported. The header and body share one content
+// edge, the scroll bar sits in the window's right inset, and each inline
+// value draws at line height 1, centred on its label. The description
+// draws in the hint role in the muted colour; the two switches, the
+// listing metadata and Manage are one key/value group `stack.row` apart,
+// the read-only metadata in compact rows.
 FocusScope {
     id: page
 
@@ -194,6 +195,23 @@ FocusScope {
                     width: parent.width - x - enabledField.rightPadding
                     visible: page.isSelf
                     command: page.row === null ? "" : "vgsh plugin enable " + page.row.id
+                }
+
+                Field {
+                    width: parent.width
+                    label: "Show in bar"
+                    inline: true
+                    visible: page.row !== null && page.row.kinds.indexOf("bar-widget") !== -1
+                    hint: page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to show it in the bar." : ""
+                    Switch {
+                        size: "sm"
+                        checked: page.row !== null && page.row.placed
+                        enabled: page.editable
+                        onToggled: {
+                            checked = Qt.binding(() => page.row !== null && page.row.placed);
+                            if (page.row !== null) page.panel.togglePlaced(page.row.id);
+                        }
+                    }
                 }
 
                 Repeater {

@@ -7,8 +7,8 @@ import "Lifetime.js" as Lifetime
 // Every live plugin instance. Builds each instance the hosts ask for from
 // the Registry's manifests, mounts bar widgets into the active bar's
 // sections, keeps every live instance's settings current, releases what
-// an instance registered when it goes, owns enable and disable, and
-// answers the readbacks the validation rows use. Hosts call the slot API;
+// an instance registered when it goes, owns enable, disable and a
+// widget's placement, and answers the readbacks the validation rows use. Hosts call the slot API;
 // they never build a plugin or assign a plugin property themselves.
 Singleton {
     id: root
@@ -432,6 +432,20 @@ Singleton {
         if (written !== "ok") return written;
         if (enabled) Notices.enabled(id);
         return hidden.length > 0 ? "ok hidden=" + hidden.join(",") : "ok";
+    }
+
+    // Show or hide plugin `id`'s widget in the bar and leave its enablement
+    // alone: its service and other kinds stay built (PluginLogic.withPlaced).
+    // The reply is one keyed line the CLI prints as is: `ok` (the save is
+    // queued), `unknown: <id>`, `refused: placed=<id>
+    // reason=no-bar-widget|disabled` from PluginLogic.placedRefusal, or a
+    // refusal naming why the user file was not written.
+    function setPlaced(id, placed) {
+        if (!Registry.has(id)) return "unknown: " + id;
+        const m = Registry.manifests[id];
+        const refusal = Logic.placedRefusal(Config.effective, m, Registry.defaultBarId);
+        if (refusal !== "") return refusal;
+        return Config.writeUser(Logic.withPlaced(Config.user, m, placed, Config.effective));
     }
 
     // Write one setting of one plugin into each configuration entry in
