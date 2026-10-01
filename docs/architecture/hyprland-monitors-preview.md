@@ -52,7 +52,7 @@ The directory is made 0700 when absent and refused when it is a symlink or anoth
 
 ## Invariants
 
-1. The record is written and the guard holds its lock before any rule is applied. Enforced by `scripts/test-vgsh-monitor-guard.sh`, whose control arms after applying, and by `scripts/smoke/rows/monitor-preview.sh`, whose copy of the tree that arms after applying leaves scale 2 when killed between the two.
+1. The record is written and the guard holds its lock before any rule is applied. Enforced by `scripts/test-vgsh-monitor-guard.sh`, whose control arms after applying, and by `scripts/smoke/rows/monitor-preview.sh`, whose copy of the tree that arms after applying leaves the output unrestored when killed between the two.
 2. A guard restores the captured state explicitly and reads it back; it never reapplies saved rules. Enforced by `scripts/test-vgsh-monitor-guard.sh` on first use with no `monitors.json`, whose control restores through `hyprctl reload`, and whose stand-in applies an eval only on a later read.
 3. A record confirmed or reverted, before the deadline or while the guard waits on the transaction lock at it, is left alone, and a guard that reads the record otherwise under the lock lets the lock go. Enforced by `scripts/test-vgsh-monitor-guard.sh`, whose controls restore before reading the record and keep the lock.
 4. A failed restore sends every line, keeps the record and is tried again, up to its bound, unless the instance is gone. Enforced by `scripts/test-vgsh-monitor-guard.sh` with a control for each rule.

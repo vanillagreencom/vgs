@@ -28,8 +28,8 @@
 # record a kill after `record` leaves stays until a shell start's adopt
 # hands it to a guard.
 # The controls run every time: a copy of the tree whose preview arms its
-# guard only after it applied, killed right after `apply`, still reads
-# scale 2 after the deadline, and adopt then restores it; a shell copy
+# guard only after it applied, killed right after `apply`, is still not
+# restored after the deadline, and adopt then restores it; a shell copy
 # whose Keep writes after the helper refused it saves monitors.json; a
 # shell copy that takes a write during a preview answers it `ok`. Every
 # guard the row leaves running is a failure, reaped by the pid in the
@@ -83,6 +83,11 @@ helper_status() { local status=0; helper "$@" >/dev/null 2>&1 || status=$?; echo
 # adopt_reply: `armed` when the helper's adopt armed a guard, else its reply.
 adopt_reply() { local out; out="$(helper "$repo" adopt 2>&1)" || true; if [[ $out =~ ^ok\ adopt=armed\ token=[0-9a-f]{32}$ ]]; then echo armed; else echo "[$out]"; fi; }
 outputs_list() { read_monitors outputs | py_reply 'import json,sys; print("listed" if any(o["name"]==sys.argv[1] for o in (json.load(sys.stdin) or [])) else "unlisted")' "$1"; }
+# restored_state: `restored` when the first output reads its own mode at
+# scale 1, the captured state, else `unrestored`. A host configure moves a
+# scale-2 output to the window's size at scale 1.5, never to scale 1
+# (validation-smoke-faults.md), so it never reads as a restore.
+restored_state() { if [[ $(mode_scale_of "$preview_output") == "$scale1" ]]; then echo restored; else echo unrestored; fi; }
 doc_there() { if [[ -e $monitors_doc ]]; then echo yes; else echo no; fi; }
 layer_mentions_monitors() { if grep -qF -- "-- Monitors" "$home/.local/state/vgs/hypr/vgs.lua"; then echo yes; else echo no; fi; }
 # start_preview SECONDS: a preview through the fixture, read until its
@@ -257,7 +262,7 @@ else
     helper_env=()
     expect "control: the late-arming copy has no guard" no guard_held
     sleep 4 # past the copy's deadline
-    expect "control: the late-arming copy leaves scale 2 past its deadline" "$scale2" mode_scale_of "$preview_output"
+    expect "control: the late-arming copy leaves the output unrestored past its deadline" unrestored restored_state
     expect "control: adopt hands the copy's record to a guard" armed adopt_reply
     expect "control: the adopted guard exits" free guard_ends
     expect_poll "control: adopt's guard restores scale 1" "$scale1" mode_scale_of "$preview_output"
