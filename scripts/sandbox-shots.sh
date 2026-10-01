@@ -13,12 +13,13 @@
 # or started on the live desktop. It needs the smoke's prerequisites,
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
-# SCENE is gallery, settings, manager, launcher, notifications, bar,
+# SCENE is gallery, settings, plugin-pages, manager, launcher, notifications, bar,
 # panels, devtools, dialog, lock, polkit, narrow, theme-browser,
 # wallpaper-browser or automations. settings takes the automations' and
 # the Jarvis pages among the plugin pages, each when the tree ships its
-# plugin. bar
-# is the bar with every first-party widget and each widget's tooltip or
+# plugin. plugin-pages, taken only when named, opens every plugin the
+# Settings window lists, in that window's order, and captures every screen
+# of an overflowing page. bar is the bar with every first-party widget and each widget's tooltip or
 # hover; panels is the Agent Warden panel, the updates flyout and the
 # themes panel, each opened from its widget over planted status or
 # packages, the themes panel's apply held and answered by a stand-in
@@ -135,7 +136,7 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|settings|manager|launcher|notifications|bar|panels|devtools|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser|automations) scenes+=("$1"); shift ;;
+    gallery|settings|plugin-pages|manager|launcher|notifications|bar|panels|devtools|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser|automations) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -205,6 +206,7 @@ ships_plugin() { local id; for id; do [[ -f $tree/shell/plugins/$id/manifest.jso
 scene_ships() {
   case $1 in
     settings|manager) [[ $1 == "$manager_scene" ]] ;;
+    plugin-pages) [[ $manager_scene == settings ]] ;;
     gallery) ships_plugin vgs.gallery ;;
     launcher|notifications) ships_plugin "vgs.$1" ;;
     automations) ships_plugin vgs.automations ;;
@@ -862,6 +864,47 @@ scene_settings() { # MODE
   take "settings-$1-narrow-page"
   settings_close
   narrow_end
+}
+
+plugin_pages_list() {
+  ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; print("\n".join(p["id"] for p in json.load(sys.stdin)))'
+}
+
+plugin_page_shots() { # MODE ID
+  local mode="$1" id="$2" suffix=1 at cy ch h y=0
+  expect "the window opens the $id page for screenshots" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin "$id"
+  expect_poll "the $id page is shown for screenshots" "\"$id\"" settings_page
+  at="$(ipc smoke scrollTo "$settings_kind" vgs.settings 0)" || at=""
+  if [[ $at != "["* ]]; then
+    fail "the $id page did not scroll to its top: ${at:-no reply}"
+    return
+  fi
+  while :; do
+    read -r cy ch h < <(python3 -c 'import json,sys; print(*(int(v) for v in json.loads(sys.argv[1])))' "$at")
+    if (( suffix == 1 )); then take "plugin-pages-$mode-$id"; else take "plugin-pages-$mode-$id-$suffix"; fi
+    (( cy + h < ch )) || break
+    y=$(( cy + h - 40 ))
+    suffix=$(( suffix + 1 ))
+    at="$(ipc smoke scrollTo "$settings_kind" vgs.settings "$y")" || at=""
+    if [[ $at != "["* ]]; then
+      fail "the $id page did not scroll to page $suffix: ${at:-no reply}"
+      break
+    fi
+  done
+}
+
+scene_plugin-pages() { # MODE
+  local id ids=()
+  expect "the Settings window opens for all plugin pages" ok ipc shell summon "$settings_kind" vgs.settings '{}'
+  expect_poll "the Settings window maps for all plugin pages" 1 settings_count
+  mapfile -t ids < <(plugin_pages_list)
+  if [[ ${#ids[@]} -eq 0 ]]; then
+    fail "the Settings window listed no plugins for plugin page screenshots"
+  fi
+  for id in "${ids[@]}"; do
+    plugin_page_shots "$1" "$id"
+  done
+  settings_close
 }
 
 # The browsers' readings: the theme view's shown card count, whether it
@@ -1611,7 +1654,7 @@ PY
       fi
       expect "enabling vgs.$scene is allowed" ok ipc shell setPluginEnabled "vgs.$scene" true
       expect_poll "vgs.$scene is built" True record_exists "vgs.$scene" ;;
-    settings)
+    settings|plugin-pages)
       # The Settings window lists the probe fixture, a plugin with many
       # grouped settings, and the launcher, a plugin with a key; both
       # enabled, so their pages are editable. Three more fixtures make the

@@ -334,6 +334,8 @@ scene_cases=(
   "a revision before the Settings plugin refuses the settings scene" 2 "sandbox-shots: refused: scene=settings tree=$old_rev" --rev "$old_rev" settings
   "a revision before the Settings plugin takes the manager scene" 77 "qml-smoke: status=not-measured" --rev "$old_rev" manager
   "a checkout with the Settings plugin takes the settings scene" 77 "qml-smoke: status=not-measured" settings
+  "a checkout with the Settings plugin takes the plugin-pages scene" 77 "qml-smoke: status=not-measured" plugin-pages
+  "a revision before the Settings plugin refuses the plugin-pages scene" 2 "sandbox-shots: refused: scene=plugin-pages tree=$old_rev" --rev "$old_rev" plugin-pages
   "a scale other than 1 or 2 is refused" 2 "sandbox-shots: refused: scale=3" --scale 3 settings
   "scale 2 is taken" 77 "qml-smoke: status=not-measured" --scale 2 settings
   "a theme card that is no catalog name is refused" 2 "sandbox-shots: refused: theme-card=../x" --theme-card ../x settings
@@ -344,7 +346,7 @@ scene_cases=(
 )
 # Each case is label, status, line, then its arguments up to the next case,
 # counted by the arguments each row above carries.
-scene_arity=(1 3 3 1 3 3 3 3 1 1 3)
+scene_arity=(1 3 3 1 1 3 3 3 3 3 1 1 3)
 # Where each case starts in scene_cases and how many arguments it takes, by
 # label, for the controls below.
 declare -A scene_at scene_argc
