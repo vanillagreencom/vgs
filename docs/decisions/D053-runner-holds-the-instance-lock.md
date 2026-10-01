@@ -8,6 +8,8 @@
 
 **Research**: VGS-609
 
+**Refined by**: [D080](D080-hyprland-options-rendered-from-data.md): the monitor preview's guard, a process the shell starts that outlives it, closes every descriptor it inherited and leads a session of its own, so it never holds the instance lock and no stop of the shell or the runner reaches it.
+
 **Context**: `bin/vgsh run` took `flock` on `$XDG_RUNTIME_DIR/vgsh.lock` on descriptor 9 and then execed `qs`. The descriptor was not close-on-exec, so every process the shell started inherited it and held the lock after the shell had exited. On host cachy on 2026-09-29, a `/proc/<pid>/fd` scan during two nested smokes found children of the sandbox `qs`, such as `bash .../slow-download theme wallpapers --json nord`, holding the sandbox's `vgsh.lock` (VGS-605). The impact: `vgsh restart` stopped the shell, waited 10 s on the lock and refused `stop=timeout ... the shell is still running`, which was false, and started no shell, so the user had no bar until the child ended. `vgsh run` after a crash refused `another vgsh run holds the instance lock` for the same time. It needs a restart or a crash while a long child runs, such as a large theme download.
 
 **Decision**: The runner keeps the lock and does not exec `qs`. After it takes the lock, it starts a subshell that writes its own pid as the lock file's only line through descriptor 9, closes its copy of descriptor 9, and execs `setpriv --pdeathsig TERM -- qs -p <tree>/shell` with `VGSH_RUNNER_PID` set to that pid. The runner then waits on that child and exits with its status. A trap on HUP, INT and TERM passes TERM to the shell, and the wait is repeated when a trapped signal ends it early. The contract is [runtime.md § Process](../architecture/runtime.md#process).

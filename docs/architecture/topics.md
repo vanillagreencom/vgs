@@ -11,6 +11,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [hyprland.md](hyprland.md): read before touching the Hyprland layer, a manifest's `hyprland` key, a `plugins[].keys` entry or `vgsh hypr`.
 - [hyprland-options.md](hyprland-options.md): read before touching a manifest's `hyprland.options`, the option table or the `hyprland` capability.
 - [hyprland-monitors.md](hyprland-monitors.md): read before touching `monitors.json`, its judge, the layer's monitor rules or the `monitors` capability.
+- [hyprland-monitors-preview.md](hyprland-monitors-preview.md): read before touching a monitor preview, its record, its guard or `bin/vgsh-monitor-guard`.
 - [status.md](status.md): read before touching plugin status or the Settings page's Status rows.
 - [status-actions.md](status-actions.md): read before touching a status action, a manifest's `secrets` or the core's libsecret writer.
 - [jarvis.md](jarvis.md): read before implementing a Jarvis plan consumer of a landed core contract.
