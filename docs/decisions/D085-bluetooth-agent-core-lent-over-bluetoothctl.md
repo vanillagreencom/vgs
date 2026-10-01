@@ -15,7 +15,8 @@
 **Decision**: The core lends capability `bluetoothAgent`, exclusive like `lock` and `polkit`.
 
 - A holder takes a counted lease with `begin(reason)`. The first open lease starts one `bluetoothctl --agent KeyboardDisplay` child; the lease resolves only after BlueZ acknowledged the registration and then the `default-agent` request. The last release declines any open prompt, writes `agent off`, closes stdin and ends the child, and destroying the holder releases its leases.
-- The capability lends the open prompts as `requests`, `{ id, kind, code, service, entered }`, and `answer(id, value)` writes the reply. An answer never holds a line break or control character. An unknown prompt is rejected at once and logged.
+- The capability lends the open prompts as `requests`, `{ id, kind, code, service, entered }`, and `answer(id, value)` writes the reply. An answer never holds a line break or control character. An unknown prompt is declined at once and logged with no digit.
+- No line the core writes is accepted by a PIN or passkey prompt unless the user typed that value. bluetoothctl prints a device's name raw, line breaks included (`client/main.c:176-225`, `src/eir.c:136-148`), so a device in radio range can forge any line of its output, and a held prompt takes the next stdin line whatever it says (`src/shared/shell.c:887-918`). Every command and the one decline therefore start with 17 spaces, which bluetoothctl's `wordexp` drops from a command (`src/shared/shell.c:1500`), BlueZ refuses as a PIN longer than 16 characters (`src/agent.c:491-499`), and a passkey or yes/no prompt reads as a cancel (`client/agent.c:60-91`). A forged prompt the user sees and accepts gives a nearby device no more than a real inbound request the user accepts.
 - The lease takes BlueZ's default and gives it back on release. BlueZ 5.87 keeps default agents as a stack (`src/agent.c`): `agent_create` makes a new agent the default only when none is queued (l.278-281), `request_default` and `add_default_agent` move the caller to the head and never refuse (l.1006-1029, l.139-153), and `remove_default_agent`, run when an agent unregisters or its connection drops, makes the next queued agent the default again (l.156-172). `AgentManager1` has no member that reads the default.
 - `refused: agent=busy` answers only what the core observes: a registration or default-agent failure bluetoothctl prints, or a child that ends or stays silent past the acknowledgement timeout.
 - An entry names no device: bluetoothctl 5.87 reads the device for every agent request and prints none (`client/agent.c:118-261`). The holder pairs one device at a time and names it itself.
@@ -44,7 +45,7 @@
 | `bt-agent -c NoInputNoOutput`, as Omarchy runs it | NoInputNoOutput accepts every pairing without asking the user. |
 | Send `agent KeyboardDisplay` on stdin | It races bluetoothctl's own registration and fails with `Agent is already registered` or `Failed to register agent object`. |
 
-**Revisit When**: Quickshell ships a BlueZ agent type, BlueZ changes its default-agent stack or gains a read of the default, or bluetoothctl changes its prompt text.
+**Revisit When**: Quickshell ships a BlueZ agent type, BlueZ changes its default-agent stack or gains a read of the default, bluetoothctl changes its prompt text, or a helper that exports `org.bluez.Agent1` and prints structured events, which keeps remote text out of the channel the agent reads, is worth its own package.
 
 **Verification**: `scripts/test-bluetooth-agent.js` replays bluetoothctl's raw output through the model, with a control per rule. `scripts/test-plugin-logic.js` pins the exclusivity. `scripts/smoke/rows/bluetooth-agent.sh` drives a fixture holder over the bluetoothctl stand-in in the nested sandbox.
 
