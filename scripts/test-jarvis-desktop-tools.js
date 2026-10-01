@@ -13,7 +13,7 @@ const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const desktopFile = path.join(backend, "Desktop.js");
 const executorsFile = path.join(backend, "Executors.js");
 const toolsFile = path.join(backend, "Tools.js");
-const COMMANDS = ["wl-paste", "wl-copy", "playerctl", "wpctl", "brightnessctl", "notify-send"];
+const COMMANDS = ["wl-paste", "wl-copy", "playerctl", "wpctl", "notify-send"];
 
 const alive = pid => {
     try { process.kill(pid, 0); return true; }
@@ -34,7 +34,7 @@ async function main() {
     const wayland = { ...fixed, ...runtime, WAYLAND_DISPLAY: "wayland-fixture" };
     const bus = { ...fixed, ...runtime, DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS };
     const EXPECTED_ENV = { "wl-paste": wayland, "wl-copy": wayland, "playerctl": bus, "wpctl": { ...fixed, ...runtime },
-        "brightnessctl": fixed, "notify-send": bus };
+        "notify-send": bus };
     const TEXT = { "wl-paste --list-types": { stdout: "text/plain;charset=utf-8\ntext/plain\nUTF8_STRING\n" },
         "wl-paste --no-newline --type text": { stdout: "fixture clipboard text" } };
     const DONE = '{"kind":"done"}';
@@ -125,18 +125,19 @@ async function main() {
         ["media.volume", { value: 0.333 }, [["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.33"]], "", DONE],
         ["media.mute", { muted: true }, [["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"]], "", DONE],
         ["media.mute", { muted: false }, [["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"]], "", DONE],
-        ["media.brightness", { value: 40 }, [["brightnessctl", "--quiet", "--class=backlight", "set", "40%"]], "", DONE],
         ["notify.notification", { title: "--hint=int:urgency:2", body: "-u critical" },
             [["notify-send", "--app-name=Jarvis", "--", "--hint=int:urgency:2", "-u critical"]], "", DONE]
     ];
     const OFFERED = ["clipboard.read", "clipboard.write", "media.play", "media.pause", "media.next", "media.volume",
-        "media.mute", "media.brightness", "notify.notification"];
-    // Present commands, then the offered tools and registered executors.
+        "media.mute", "notify.notification"];
+    // Present commands, then the offered tools and registered executors. A
+    // brightnessctl on PATH offers nothing: vgs.displays owns brightness.
     const PROBES = [
-        ["all", COMMANDS, OFFERED, ["clipboard", "media", "notify"]],
-        ["no wl-paste", COMMANDS.filter(command => command !== "wl-paste"), OFFERED.filter(id => id !== "clipboard.read"), ["clipboard", "media", "notify"]],
+        ["all", [...COMMANDS, "brightnessctl"], OFFERED, ["clipboard", "media", "notify"]],
+        ["no wl-paste", ["wl-copy", "playerctl", "wpctl", "brightnessctl", "notify-send"], OFFERED.filter(id => id !== "clipboard.read"), ["clipboard", "media", "notify"]],
         ["no clipboard", ["playerctl", "wpctl", "brightnessctl", "notify-send"], OFFERED.filter(id => !id.startsWith("clipboard.")), ["media", "notify"]],
         ["playerctl only", ["playerctl"], ["media.play", "media.pause", "media.next"], ["media"]],
+        ["brightnessctl only", ["brightnessctl"], [], []],
         ["none", [], [], []]
     ];
 
@@ -247,6 +248,10 @@ async function main() {
                         assert.deepEqual(w.router.offer().map(tool => tool.id), offered, name);
                         assert.deepEqual(w.registered, registered, name + " registrations");
                         assert.equal(fs.existsSync(path.join(directory, "ran")), false, "the probe runs no command");
+                        const turn = w.runner.state.turn;
+                        assert.deepEqual(w.router.route({ kind: "tool-call", id: "model-brightness", tool: "media.brightness",
+                            arguments: { value: 50 } }, { gen: turn.gen, op: turn.op }),
+                        { kind: "refuse", reason: "executor-unavailable" }, name + ": brightness is not routed here");
                     } finally { w.close(); }
                 }
             } finally { process.env.PATH = saved; }
@@ -289,6 +294,8 @@ async function main() {
         [desktopFile, "server-output", 'input: args.text, output: "ignore" })', "input: args.text })", "wl-copy", true],
         [desktopFile, "cancel", "cancel: call => { running.get(call)?.abort(); }", "cancel: call => { void call; }", "cancel", true],
         [desktopFile, "parent-death", 'Child.run("setpriv", ["--pdeathsig", "KILL", "--", file, ...plan.args],', "Child.run(file, [...plan.args],", "argv"],
+        [desktopFile, "brightness", '    "media.mute": args => ({ args: ["set-mute", SINK, args.muted ? "1" : "0"] }),\n',
+            '    "media.mute": args => ({ args: ["set-mute", SINK, args.muted ? "1" : "0"] }),\n    "media.brightness": args => ({ args: ["set", args.value + "%"] }),\n', "probe"],
         [executorsFile, "probe-absent", "if (file !== null) commands.set(command, file);", "if (true) commands.set(command, file);", "probe"],
         [executorsFile, "zero-commands", "if (!rows.some(row => row.command === null || commands.has(row.command))) continue;", "if (false) continue;", "probe"],
         [toolsFile, "label-desktop", 'schema: {}, source: "clipboard" }', 'schema: {}, source: "desktop" }', "release-gate"],

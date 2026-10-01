@@ -27,7 +27,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Login hints and local-server presence are not verified inference access.
 - Jarvis watches its recorded coding tasks and shows how many are running in Settings.
 - Stopping a coding task interrupts its agent, escalates until every one of its processes has ended, and only then records it as stopped.
-- Desktop tools read and copy clipboard text, play, pause and skip media, set and mute the speaker volume, set screen brightness and show a notification.
+- Desktop tools read and copy clipboard text, play, pause and skip media, set and mute the speaker volume, and show a notification. Screen brightness waits for the Displays plugin's brightness service.
 - A clipboard read refuses a copy that a password manager marks as secret, and anything that is not text.
 
 ## Requirements
@@ -38,7 +38,7 @@ The optional command sandbox needs bubblewrap and available user namespaces. Thi
 
 Several coding tasks at once need tmux, which is optional. Without it, a coding task opens in a floating terminal, one task at a time. Task records need flock and Python.
 
-The desktop tools need wl-clipboard, playerctl, WirePlumber, brightnessctl and libnotify. A missing command removes only its own tools; Jarvis finds a newly installed one when it next starts.
+The desktop tools need wl-clipboard, playerctl, WirePlumber and libnotify. A missing command removes only its own tools; Jarvis finds a newly installed one when it next starts.
 
 ## How it works
 

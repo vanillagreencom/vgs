@@ -43,7 +43,6 @@
     { "command": "wl-copy", "packages": { "pacman": "wl-clipboard", "apt": "wl-clipboard", "dnf": "wl-clipboard" }, "optional": true, "purpose": "Lets Jarvis copy text to the clipboard" },
     { "command": "playerctl", "packages": { "pacman": "playerctl", "apt": "playerctl", "dnf": "playerctl" }, "optional": true, "purpose": "Lets Jarvis play, pause and skip media" },
     { "command": "wpctl", "packages": { "pacman": "wireplumber", "apt": "wireplumber", "dnf": "wireplumber" }, "optional": true, "purpose": "Lets Jarvis set and mute the speaker volume" },
-    { "command": "brightnessctl", "packages": { "pacman": "brightnessctl", "apt": "brightnessctl", "dnf": "brightnessctl" }, "optional": true, "purpose": "Lets Jarvis set the screen brightness" },
     { "command": "notify-send", "packages": { "pacman": "libnotify", "apt": "libnotify-bin", "dnf": "libnotify" }, "optional": true, "purpose": "Lets Jarvis show a desktop notification" },
     { "command": "pw-record", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Captures microphone PCM through a leased child" },
     { "command": "pw-cat", "packages": { "pacman": "pipewire", "apt": "pipewire-bin", "dnf": "pipewire-utils" }, "optional": false, "purpose": "Plays speech PCM through a leased child" },

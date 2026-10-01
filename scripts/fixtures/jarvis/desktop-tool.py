@@ -53,9 +53,18 @@ def main():
         modes = json.load(source)
     mode = modes.get(" ".join([NAME, *argv]), modes.get(NAME, {}))
     if mode.get("server"):
-        if os.fork() == 0:
-            mark(NAME + ".server", {"pid": os.getpid(), "deathsig": deathsig()})
+        # The member reports its own signal; the parent marks it before going
+        # on, so a timeout that follows cannot end the member unrecorded.
+        reader, writer = os.pipe()
+        child = os.fork()
+        if child == 0:
+            os.close(reader)
+            os.write(writer, str(deathsig()).encode())
+            os.close(writer)
             hold()
+        os.close(writer)
+        with os.fdopen(reader) as report:
+            mark(NAME + ".server", {"pid": child, "deathsig": int(report.read())})
     if "flood" in mode:
         sys.stdout.buffer.write(b"A" * mode["flood"])
     sys.stdout.write(mode.get("stdout", ""))

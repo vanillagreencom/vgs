@@ -1,4 +1,6 @@
-// Executors for the Tools rows whose executor is clipboard, media or notify.
+// Executors for the Tools rows of the clipboard, media and notify executors
+// that ARGV maps. media.brightness has no entry: vgs.displays owns brightness
+// (D083), and Jarvis routes that row through its service once it exists.
 // ARGV is the one map from a frozen call to the arguments and stdin of the
 // command its Tools row names. Each command runs as a bounded Child, without a
 // shell, in its own process group, with only the variables ENVIRONMENT lists,
@@ -35,7 +37,6 @@ const ENVIRONMENT = {
     "wl-copy": ["WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"],
     "playerctl": ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"],
     "wpctl": ["XDG_RUNTIME_DIR"],
-    "brightnessctl": [],
     "notify-send": ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"]
 };
 
@@ -44,7 +45,7 @@ const OFFERS = { args: ["--list-types"] };
 const ARGV = {
     "clipboard.read": () => ({ args: ["--no-newline", "--type", "text"] }),
     // Text goes through stdin: argv is readable in /proc. wl-copy forks a
-    // server that keeps the selection after wl-copy exits 0, so its output
+    // server that keeps the selection after wl-copy exits, so its output
     // goes to /dev/null rather than into pipes that server would hold open.
     "clipboard.write": args => ({ args: ["--type", TEXT_TYPE], input: args.text, output: "ignore" }),
     "media.play": () => ({ args: ["play"] }),
@@ -52,11 +53,11 @@ const ARGV = {
     "media.next": () => ({ args: ["next"] }),
     "media.volume": args => ({ args: ["set-volume", SINK, args.value.toFixed(2)] }),
     "media.mute": args => ({ args: ["set-mute", SINK, args.muted ? "1" : "0"] }),
-    // The backlight class keeps a keyboard LED out of reach.
-    "media.brightness": args => ({ args: ["--quiet", "--class=backlight", "set", args.value + "%"] }),
     // After --, model text cannot become an option.
     "notify.notification": args => ({ args: ["--app-name=Jarvis", "--", args.title, args.body] })
 };
+// The tools these executors run; the registration seam probes only their commands.
+const TOOLS = Object.freeze(Object.keys(ARGV));
 
 // Omarchy's clipboard capture reads these offers as text.
 const textOffer = type => type.startsWith("text/") || type === "UTF8_STRING" || type === "STRING";
@@ -92,9 +93,8 @@ const emptySelection = result => result.kind === "exited" && result.code !== 0
  * from it per command. cancel(call) ends that call's process group.
  */
 function create(id, { commands, environment, clock }) {
-    const rows = Object.keys(Tools.TABLE).filter(tool => Tools.TABLE[tool].executor === id);
-    if (rows.length === 0 || !rows.every(tool => Object.hasOwn(ARGV, tool)))
-        throw new Error("jarvis: desktop=executor id=" + id);
+    const rows = TOOLS.filter(tool => Tools.TABLE[tool].executor === id);
+    if (rows.length === 0) throw new Error("jarvis: desktop=executor id=" + id);
     const running = new Map();
 
     function run(command, plan, signal) {
@@ -144,4 +144,4 @@ function create(id, { commands, environment, clock }) {
         cancel: call => { running.get(call)?.abort(); } };
 }
 
-module.exports = { create };
+module.exports = { create, TOOLS };
