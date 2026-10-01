@@ -3,8 +3,9 @@
 // Startup recovery: node DATA_ENGINE/task-event --state ABS --prune.
 // KIND=create takes {goal,cwd,agent,account}; other kinds take Tasks.js data.
 // Stdin is one JSON object, at most 8192 bytes; empty stdin means {}.
-// Stdout: {accepted,id,seq?} or {accepted:false,id,noisy:true,reason}.
-// Exit 0: committed. 75: overflow dropped or writer busy. 65: argv/stdin JSON.
+// Stdout: {accepted,id,seq?}, {accepted:false,id,noisy:true,reason} or, for a
+// lost {seq} a later event or end has passed, {accepted:false,id,reason:"stale"}.
+// Exit 0: committed. 75: overflow dropped, stale or writer busy. 65: argv/stdin JSON.
 // Exit 74: record shape, store/parse/I/O failure. No hook response or control.
 "use strict";
 const fs = require("node:fs");
@@ -52,7 +53,8 @@ async function main() {
     const result = pruning ? { accepted: true, pruned: store.prune() }
         : kind === "create" ? store.create(id, data, __filename) : store.append(id, kind, data, oversized);
     process.stdout.write(JSON.stringify(result) + "\n");
-    if (!result.accepted) process.stderr.write("jarvis: task-event=overflow id=" + id + " reason=" + result.reason + "\n");
+    if (!result.accepted) process.stderr.write("jarvis: task-event=" + (result.reason === "stale" ? "stale" : "overflow")
+        + " id=" + id + " reason=" + result.reason + "\n");
     return result.accepted ? 0 : 75;
 }
 

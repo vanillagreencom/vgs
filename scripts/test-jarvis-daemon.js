@@ -225,7 +225,7 @@ async function inside() {
     assert.equal(fs.existsSync(path.join(taskStore.root, "retention-0")), false);
     taskStore.create("retention-extra", taskGoal, engine);
     fs.writeFileSync(path.join(taskStore.root, "retention-extra/events/0001.json"),
-        '{"v":1,"seq":1,"at":0,"kind":"lost","data":{}}', { mode: 0o600 });
+        '{"v":1,"seq":1,"at":0,"kind":"lost","data":{"seq":0}}', { mode: 0o600 });
     const recoveryGuard = "if (first) {\n                    engine = Tasks.publish";
     const skipRecovery = "if (false) {\n                    engine = Tasks.publish";
     await control("startup-retention", recoveryGuard, skipRecovery, async file => {

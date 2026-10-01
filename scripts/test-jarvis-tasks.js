@@ -40,7 +40,7 @@ function inside() {
             "alive", "working", "none", "reported-failed", "reported-failed"],
         ["bad-exit", [["started", started], ["outcome", { kind: "reported-ok" }], ["exited", { code: 1 }]],
             "exited", "working", "none", "reported-ok", "failed"],
-        ["lost", [["started", started], ["lost", {}]],
+        ["lost", [["started", started], ["lost", { seq: 1 }]],
             "lost", "working", "none", "none", "lost"],
         ["idle", [["started", started], ["wait", { kind: "idle" }]],
             "alive", "working", "idle", "none", "waiting"],
@@ -50,7 +50,7 @@ function inside() {
         ["stopped", [["started", started], ["stopped", {}]],
             "stopped", "working", "none", "none", "stopped"],
         // The launcher's exit lands after the controller's empty read; stopped holds.
-        ["stopped-then-exit", [["started", started], ["stopped", {}], ["exited", { code: 130 }], ["lost", {}],
+        ["stopped-then-exit", [["started", started], ["stopped", {}], ["exited", { code: 130 }], ["lost", { seq: 3 }],
             ["alive", {}], ["started", started], ["wait", { kind: "question" }]],
             "stopped", "working", "question", "none", "stopped"]
     ];
@@ -132,7 +132,7 @@ function inside() {
             later.append("ended-" + n, "exited", { code: 0 });
         }
         for (const id of ["capped", "second"]) seedTaskEvents(path.join(owner.root, id, "events"), 2000);
-        const payload = kind === "exited" ? { code: 0 } : {};
+        const payload = kind === "exited" ? { code: 0 } : kind === "lost" ? { seq: 2000 } : {};
         assert.deepEqual(owner.append("capped", kind, payload),
             { accepted: false, id: "capped", noisy: true, reason: "event-count" });
         const restarted = new logic.Store(stateRoot);
@@ -174,6 +174,71 @@ function inside() {
         logic => cappedTerminal(logic, "exited"));
     control("terminal-prune", "if (terminal === event) this.prune();", "if (false) this.prune();",
         logic => cappedTerminal(logic, "lost"));
+
+    // A stop retained in the marker stays absorbing: the launcher's later exit
+    // past the event ceiling does not replace it.
+    function cappedStop(logic) {
+        const owner = new logic.Store(fs.mkdtempSync(path.join(root, "capped-stop-")), () => 7000);
+        owner.create("halt", data, engine);
+        seedTaskEvents(path.join(owner.root, "halt/events"), 2000);
+        for (const [kind, payload] of [["stopped", {}], ["exited", { code: 137 }]])
+            assert.equal(owner.append("halt", kind, payload).reason, "event-count");
+        assert.deepEqual(owner.read("halt").process, { kind: "stopped" });
+        assert.equal(owner.read("halt").terminal.kind, "stopped");
+    }
+    cappedStop(Tasks);
+    control("capped-stop-absorbing", 'terminalKind(kind) && current.process.kind !== "stopped"', "terminalKind(kind)", cappedStop);
+
+    // lost is compare-and-set: an observation a later event passed is stale.
+    function lostRaces(logic) {
+        const owner = new logic.Store(fs.mkdtempSync(path.join(root, "lost-race-")));
+        for (const id of ["exit-first", "start-first", "current"]) owner.create(id, data, engine);
+        owner.append("exit-first", "started", started);
+        const seen = owner.read("exit-first").events.length;
+        owner.append("exit-first", "exited", { code: 0 });
+        assert.deepEqual(owner.append("exit-first", "lost", { seq: seen }), { accepted: false, id: "exit-first", reason: "stale" });
+        assert.equal(owner.read("exit-first").state, "exited", "a stale lost leaves the exit");
+        owner.append("start-first", "started", started);
+        assert.deepEqual(owner.append("start-first", "lost", { seq: 0 }), { accepted: false, id: "start-first", reason: "stale" });
+        assert.equal(owner.read("start-first").process.kind, "alive", "a stale lost leaves the start");
+        owner.append("current", "started", started);
+        assert.equal(owner.append("current", "lost", { seq: 1 }).accepted, true);
+        assert.equal(owner.read("current").state, "lost");
+        assert.equal(owner.read("current").dropped, 0, "a stale lost is not a dropped event");
+    }
+    lostRaces(Tasks);
+    control("lost-stale", 'return { accepted: false, id, reason: "stale" };', "void 0;", lostRaces);
+
+    // A prune renames a task away before removing it: a read outside the lock
+    // that meets one skips the task, and a later prune removes a leftover.
+    function pruneRace(logic) {
+        const owner = new logic.Store(fs.mkdtempSync(path.join(root, "prune-race-")));
+        for (const id of ["gone", "kept"]) owner.create(id, data, engine);
+        const away = path.join(owner.root, ".prune-interrupted");
+        const original = fs.readdirSync;
+        fs.readdirSync = (...args) => {
+            const out = original(...args);
+            if (args[0] === owner.root) {
+                fs.readdirSync = original;
+                fs.renameSync(path.join(owner.root, "gone"), away);
+            }
+            return out;
+        };
+        let listed;
+        try { assert.doesNotThrow(() => { listed = owner.list(); }); }
+        finally { fs.readdirSync = original; }
+        assert.deepEqual(listed.map(record => record.id), ["kept"]);
+        assert.equal(owner.find("gone"), null);
+        assert.equal(fs.existsSync(away), true);
+        assert.doesNotThrow(() => { listed = owner.list(); }, "a removal in progress is not a task");
+        assert.deepEqual(listed.map(record => record.id), ["kept"]);
+        owner.prune();
+        assert.equal(fs.existsSync(away), false, "prune finishes an interrupted removal");
+    }
+    pruneRace(Tasks);
+    control("pruned-read", "if (!fs.existsSync(path.join(this.root, idOf(id)))) return null;", "void 0;", pruneRace);
+    control("pruned-hidden", '|| entry.name.startsWith(".prune-")) && entry.isDirectory()) continue;', ") && entry.isDirectory()) continue;", pruneRace);
+    control("pruned-leftover", 'if (entry.name.startsWith(".prune-") && entry.isDirectory())\n', "if (false)\n", pruneRace);
 
     function terminalMarker(logic, id, terminal, reason) {
         const marker = path.join(store.root, id, "noisy.json");
@@ -220,6 +285,7 @@ function inside() {
         ["bad-sid", "started", { ...started, sid: 0 }, "started"],
         ["no-sid", "started", { pid: 123, pgid: 123, startTime: "456" }, "started"],
         ["extra-stopped", "stopped", { code: 0 }, "empty-event"],
+        ["bad-lost", "lost", {}, "lost"],
         ["bad-exit", "exited", { code: null }, "exit-code"],
         ["bad-failure", "turn-failed", { kind: "" }, "failure-kind"],
         ["extra-empty", "turn-ended", { kind: "question" }, "empty-event"]
@@ -232,7 +298,8 @@ function inside() {
         ["failure-kind", 'fail("failure-kind");', "turn-failed", { kind: "" }, "failure-kind"],
         ["wait-kind", 'fail("wait");', "wait", { kind: "maybe" }, "wait"],
         ["outcome-kind", 'fail("outcome");', "outcome", { kind: "success" }, "outcome"],
-        ["empty", 'fail("empty-event");', "turn-ended", { extra: true }, "empty-event"]
+        ["empty", 'fail("empty-event");', "turn-ended", { extra: true }, "empty-event"],
+        ["lost-seq", 'fail("lost");', "lost", { seq: -1 }, "lost"]
     ];
     for (const [name, needle, kind, payload, reason] of gates) {
         control(name, needle, ";", logic => assert.throws(
@@ -295,7 +362,7 @@ function inside() {
     const retention = new Tasks.Store(path.join(root, "state/retention"), () => now++);
     for (let n = 0; n <= 50; n++) {
         retention.create("end-" + n, data, engine);
-        retention.append("end-" + n, n === 0 ? "lost" : "exited", n === 0 ? {} : { code: 0 });
+        retention.append("end-" + n, n === 0 ? "lost" : "exited", n === 0 ? { seq: 0 } : { code: 0 });
     }
     retention.create("active", data, engine);
     assert.equal(retention.list().filter(record => record.endedAt !== null).length, 50);
@@ -303,7 +370,7 @@ function inside() {
     assert.equal(retention.read("active").state, "starting");
     control("retention", "ended.length - MAX_ENDED", "0", logic => {
         const owner = new logic.Store(path.join(root, "state/retention"), () => now++);
-        owner.append("active", "lost", {});
+        owner.append("active", "lost", { seq: 0 });
         assert.equal(owner.list().filter(record => record.endedAt !== null).length, 50);
     });
 

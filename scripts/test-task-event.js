@@ -90,6 +90,17 @@ async function inside() {
         ["exited", '{"code":130}']]) run(engine, "halt", kind, data, 0, haltState);
     assert.equal(new Tasks.Store(haltState).read("halt").state, "stopped");
     assert.match(run(engine, "halt", "stopped", '{"code":0}', 74, haltState).stderr, /tasks=empty-event/);
+    // A lost observation that a later event passed is refused as stale, not committed.
+    const staleLost = file => {
+        const id = "observed-" + (++cases);
+        run(file, id, "create", JSON.stringify(goal), 0, haltState);
+        run(file, id, "started", '{"pid":125,"pgid":125,"sid":120,"startTime":"458"}', 0, haltState);
+        const stale = run(file, id, "lost", '{"seq":0}', 75, haltState);
+        assert.deepEqual(JSON.parse(stale.stdout), { accepted: false, id, reason: "stale" });
+        assert.equal(stale.stderr.trim(), "jarvis: task-event=stale id=" + id + " reason=stale");
+        assert.equal(new Tasks.Store(haltState).read(id).process.kind, "alive");
+    };
+    staleLost(engine);
     run(engine, "one", "wait", '{"kind":"question"}');
     run(engine, "one", "turn-ended");
     assert.equal(new Tasks.Store(state).read("one").wait.kind, "question");
@@ -166,7 +177,7 @@ async function inside() {
             owner.append("ended-" + n, "exited", { code: 0 });
         }
         for (const id of ["capped", "second"]) seedTaskEvents(path.join(owner.root, id, "events"), 2000);
-        const payload = kind === "exited" ? { code: 0 } : {};
+        const payload = kind === "exited" ? { code: 0 } : kind === "lost" ? { seq: 2000 } : {};
         const result = run(file, "capped", kind, JSON.stringify(payload), 75, capState);
         assert.deepEqual(JSON.parse(result.stdout), { accepted: false, id: "capped", noisy: true, reason: "event-count" });
         assert.equal(result.stderr.trim(), "jarvis: task-event=overflow id=capped reason=event-count");
@@ -196,6 +207,7 @@ async function inside() {
         control("capped-forward-" + kind, "store.append(id, kind, data, oversized)",
             'store.append(id, "working", {}, oversized)', file => cappedTerminal(file, kind));
     }
+    control("stale-key", '(result.reason === "stale" ? "stale" : "overflow")', '"overflow"', staleLost);
     control("overflow-exit", "return result.accepted ? 0 : 75;", "return 0;",
         file => run(file, "one", "working", "x".repeat(8193), 75));
     control("json", "return 65; }\n    }\n    if (oversized", "data = {}; }\n    }\n    if (oversized",
@@ -255,7 +267,7 @@ async function inside() {
     assert.equal(fs.existsSync(path.join(store.root, "orphan-0")), false);
     store.create("interrupted", goal, engine);
     fs.writeFileSync(path.join(store.root, "interrupted/events/0001.json"),
-        '{"v":1,"seq":1,"at":0,"kind":"lost","data":{}}', { mode: 0o600 });
+        '{"v":1,"seq":1,"at":0,"kind":"lost","data":{"seq":0}}', { mode: 0o600 });
     control("prune", "pruned: store.prune()", "pruned: (false ? store.prune() : 0)", file => {
         run(file, "--prune", undefined);
         assert.equal(store.list().filter(task => task.endedAt !== null).length, 50);

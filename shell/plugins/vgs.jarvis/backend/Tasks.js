@@ -100,8 +100,11 @@ function eventData(kind, data) {
     case "outcome":
         if (!shape(data, ["kind"]) || !["reported-ok", "reported-failed"].includes(data.kind)) fail("outcome");
         break;
-    case "alive":
     case "lost":
+        // The number of events the observer read; append refuses a stale one.
+        if (!shape(data, ["seq"]) || !Number.isSafeInteger(data.seq) || data.seq < 0) fail("lost");
+        break;
+    case "alive":
     case "stopped":
     case "working":
     case "turn-ended":
@@ -268,13 +271,24 @@ class Store {
         return { ...record, ...derive(events, dropped > 0, terminal), events, terminal, noisy: dropped > 0, dropped };
     }
 
+    // A read outside the writer lock can meet a prune: prune renames a task
+    // away before removing it, so a task whose directory is gone is absent.
+    find(id) {
+        try { return this.read(id); }
+        catch (error) {
+            if (!fs.existsSync(path.join(this.root, idOf(id)))) return null;
+            throw error;
+        }
+    }
+
     list() {
         const records = [];
         for (const entry of entries(this.root)) {
-            // A create's unpublished directory is never a task.
-            if (entry.name.startsWith(".create-") && entry.isDirectory()) continue;
+            // A create's unpublished directory and a prune's removal are never tasks.
+            if ((entry.name.startsWith(".create-") || entry.name.startsWith(".prune-")) && entry.isDirectory()) continue;
             if (!entry.isDirectory() || entry.isSymbolicLink()) fail("task-directory", path.join(this.root, entry.name));
-            records.push(this.read(entry.name));
+            const record = this.find(entry.name);
+            if (record !== null) records.push(record);
         }
         return records.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
     }
@@ -301,11 +315,17 @@ class Store {
     append(id, kind, data, oversized = false) {
         const current = this.read(id);
         const folder = path.join(this.root, id);
+        // Compare and set under the lock: a lost observation from a read that
+        // a later event, an exit or a stop has passed changes nothing.
+        if (!oversized && kind === "lost" && (eventData(kind, data).seq !== current.events.length
+                || current.process.kind === "exited" || current.process.kind === "stopped"))
+            return { accepted: false, id, reason: "stale" };
         const event = { v: 1, seq: current.events.length + 1, at: this.clock(), kind, data };
         const reason = oversized || Buffer.byteLength(JSON.stringify(event) + "\n") > MAX_BYTES
             ? "record-bytes" : current.events.length >= MAX_EVENTS ? "event-count" : null;
         if (reason !== null) {
-            const terminal = reason === "event-count" && terminalKind(kind)
+            // A retained stop stays absorbing in the marker as in derive.
+            const terminal = reason === "event-count" && terminalKind(kind) && current.process.kind !== "stopped"
                 ? eventRecord(event, event.seq) : current.terminal;
             atomic(path.join(folder, "noisy.json"), {
                 v: 1, dropped: Math.min(Number.MAX_SAFE_INTEGER, current.dropped + 1), terminal
@@ -320,12 +340,19 @@ class Store {
     }
 
     prune() {
+        // A removal an interrupted prune left behind is finished first.
+        for (const entry of entries(this.root))
+            if (entry.name.startsWith(".prune-") && entry.isDirectory())
+                io("prune", entry.name, () => fs.rmSync(path.join(this.root, entry.name), { recursive: true }));
         const ended = this.list().filter(record => record.endedAt !== null)
             .sort((a, b) => a.endedAt - b.endedAt || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
         const removed = ended.slice(0, Math.max(0, ended.length - MAX_ENDED));
         for (const record of removed) {
             const folder = path.join(this.root, record.id);
-            io("prune", folder, () => fs.rmSync(folder, { recursive: true }));
+            const away = path.join(this.root, ".prune-" + crypto.randomUUID());
+            // One rename takes the whole task out of every reader's view.
+            io("prune", folder, () => fs.renameSync(folder, away));
+            io("prune", away, () => fs.rmSync(away, { recursive: true }));
         }
         return removed.length;
     }
