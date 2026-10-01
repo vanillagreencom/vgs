@@ -18,6 +18,8 @@ The [playback rows](jarvis-playback.md#evidence) select on Audio, its child boot
 
 The [Jarvis audit](jarvis-audit.md#evidence) has a redaction row in `logic` and a real-file writer row in `cli`. Both select on the tool schemas, shared fixture and private environment.
 
+The [GPT-Live row](jarvis-live.md#evidence) in `cli` selects on the engine, the Session judge and runner, the shared release, transport, secret and guidance inputs, its pinned scripts and the loopback WebSocket fixture.
+
 The [wire brain rows](jarvis-brain.md#evidence) select both drivers on shared history, release, transport, secret and stream inputs. Each driver's vendor scripts select its own row. The [Messages row](jarvis-anthropic.md#evidence) includes schema-pinned loopback and cancellation controls.
 
 The [Jarvis account suites](jarvis-accounts.md#evidence) select from the account judge, provider declaration, secret owner, terminal and private fixtures. Their CLI rows use the shared isolated world. The nested Jarvis row reads account status and core TUI completion.

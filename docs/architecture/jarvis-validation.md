@@ -16,6 +16,8 @@ The [Jarvis contract](jarvis.md) defines the service and reducer. [Audio evidenc
 - `scripts/smoke/rows/read-only-prefix.sh` adds the shared observer to its disposable installed tree. It requires zero-retry hello from the non-writable prefix and checks that startup changes no installed file. `scripts/smoke/rows/start-order.sh` uses the same fresh-start read for the default set.
 - Smoke instruments only disposable service copies to launch the child through the real J09 helper. `scripts/fixtures/jarvis/prepare.js` keeps that instrumentation in one place. Its `--task-requests` option gives the [task row](jarvis-task-control.md#evidence) a gated daemon copy that sends task TUI requests. The helper itself owns worktree-local scratch allocation. A fixture launcher carries the stdin pipe through a descriptor, because Bash replaces stdin with `/dev/null` for the helper's asynchronous namespace supervisor. It restores stdin inside the namespace before executing the real daemon.
 
+The Jarvis row reads the service's `transcript` status from a daemon copy that writes captions for the current and another generation. Removing the generation filter or the status write each breaks the same caption assertion.
+
 The Jarvis row also reads stable microphone and speaker offers from the service's status. Removing the service's offer publication fails that real consumer assertion. The installed-prefix row reads the same offers before it compares its tree snapshots. Both run the production audio discovery owner against stand-ins.
 
 ## Omarchy comparison

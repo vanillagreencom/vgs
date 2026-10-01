@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/GptLive.js, scripts/test-jarvis-live.js, scripts/fixtures/jarvis-live/, scripts/fixtures/jarvis/websocket.js
 
-`GptLive.js` is the duplex speech engine of [the Jarvis plan § Speech engines](../plans/v2-jarvis-plan.md#35-speech-engines-playback-accounting-latency): one OpenAI GPT-Live session per conversation, its input and output audio and its captions. It implements session lifetime and audio only. Delegation, the brain and commentary belong to J37. No shipped daemon path creates the engine yet.
+`GptLive.js` is the duplex speech engine of [the Jarvis plan § Speech engines](../plans/v2-jarvis-plan.md#35-speech-engines-playback-accounting-latency): one OpenAI GPT-Live session per conversation, its input and output audio and its captions. It implements session lifetime and audio only. Delegation, the brain and commentary belong to J37. No shipped daemon path creates the engine yet. [D084](../decisions/D084-duplex-speech-engine-sessions.md) records the choices.
 
 ## Owners
 
