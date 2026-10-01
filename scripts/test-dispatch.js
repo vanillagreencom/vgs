@@ -230,7 +230,9 @@ function verifyPassthrough(lib, report) {
         ["enter in a classic session", "enter", false, { ok: false, error: "refused: passthrough=enter session=classic" }],
         ["leave in a classic session", "leave", false, { ok: false, error: "refused: passthrough=leave session=classic" }],
         ["an unknown verb", "reset", true, { ok: false, error: "refused: passthrough=\"reset\" unknown" }],
-        ["a verb that carries Lua", "leave()", true, { ok: false, error: "refused: passthrough=\"leave()\" unknown" }]
+        ["a verb that carries Lua", "leave()", true, { ok: false, error: "refused: passthrough=\"leave()\" unknown" }],
+        ["a prototype name is no verb", "constructor", true, { ok: false, error: "refused: passthrough=\"constructor\" unknown" }],
+        ["a verb that is no text", 1, true, { ok: false, error: "refused: passthrough=1 unknown" }]
     ];
     for (const [name, verb, usingLua, want] of rows) row("pass-through: " + name, lib.passthroughRequest(verb, usingLua), want);
     row("pass-through requests are no plugin dispatcher", lib.PLUGIN_DISPATCHERS.some(name => /passthrough/i.test(name)), false);
@@ -269,6 +271,8 @@ const dispatchFile = path.join(__dirname, "..", "shell", "Core", "Dispatch.js");
 const source = fs.readFileSync(dispatchFile, "utf8");
 fs.mkdirSync(path.join(__dirname, "..", "tmp"), { recursive: true });
 const scratch = fs.mkdtempSync(path.join(__dirname, "..", "tmp", "test-dispatch-"));
+// A copy sits beside the Hyprland layer it imports.
+fs.symlinkSync(path.join(__dirname, "..", "shell", "Core", "HyprlandLayer.js"), path.join(scratch, "HyprlandLayer.js"));
 try {
     const dispatchControls = [
         ["known dispatcher", "if (!Object.prototype.hasOwnProperty.call(DISPATCHERS, name))", "if (false)"],
@@ -288,8 +292,9 @@ try {
         if (source.split(needle).length !== 2) { check("control " + name + " matches once", false, true); continue; }
         const mutant = path.join(scratch, "Dispatch.js");
         fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        const lib = require("../bin/lib/qml-library.js").load(mutant);
         let bad;
-        try { bad = verifyDispatch(require("../bin/lib/qml-library.js").load(mutant), false); }
+        try { bad = verifyDispatch(lib, false); }
         catch (e) { bad = 1; }
         check("control " + name + " fails the dispatcher rows", bad > 0, true);
     }
@@ -324,16 +329,20 @@ try {
         check("control " + name + " fails the switch rows", bad > 0, true);
     }
     const passthroughControls = [
-        ["the verb is judged", "if (PASSTHROUGH_VERBS.indexOf(verb) === -1)", "if (false)"],
+        ["the verb is judged", "if (typeof verb !== \"string\" || !Object.prototype.hasOwnProperty.call(passthrough.verbs, verb))", "if (typeof verb !== \"string\")"],
         ["a classic session is refused", "if (usingLua !== true)", "if (false)"],
-        ["the request names the layer's function", "request: \"hl.__vgs_key_passthrough.\" + verb", "request: \"hl.dsp.submap(\\\"reset\\\")\""]
+        ["the request names the layer's table", "request: \"hl.\" + passthrough.table + \".\" + passthrough.verbs[verb]", "request: \"hl.dsp.submap(\\\"reset\\\")\""],
+        ["the request names the layer's function for the verb", "passthrough.table + \".\" + passthrough.verbs[verb]", "passthrough.table + \".\" + passthrough.verbs.leave"]
     ];
     for (const [name, needle, replacement] of passthroughControls) {
         if (source.split(needle).length !== 2) { failures += 1; console.log("  FAIL  control " + name + ": the text to replace must occur once"); continue; }
         const mutant = path.join(scratch, "Dispatch.js");
         fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        // Loaded outside the try, so a copy that does not evaluate fails the
+        // suite instead of passing for a control.
+        const lib = require("../bin/lib/qml-library.js").load(mutant);
         let bad;
-        try { bad = verifyPassthrough(require("../bin/lib/qml-library.js").load(mutant), false); }
+        try { bad = verifyPassthrough(lib, false); }
         catch (e) { bad = 1; }
         check("control " + name + " fails the pass-through rows", bad > 0, true);
     }
@@ -341,9 +350,10 @@ try {
         if (source.split(needle).length !== 2) { failures += 1; console.log("  FAIL  control " + name + ": the text to replace must occur once"); continue; }
         const mutant = path.join(scratch, "Dispatch.js");
         fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        const lib = require("../bin/lib/qml-library.js").load(mutant);
         let bad;
         try {
-            bad = verifyReveal(require("../bin/lib/qml-library.js").load(mutant), false);
+            bad = verifyReveal(lib, false);
         } catch (e) {
             bad = 1;
         }

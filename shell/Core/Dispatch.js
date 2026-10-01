@@ -1,4 +1,5 @@
 .pragma library
+.import "HyprlandLayer.js" as HyprlandLayer
 
 // Pure construction of every Hyprland dispatch the shell sends, and the
 // decisions of bringing a window into view (Compositor.reveal). No QML
@@ -97,20 +98,20 @@ var PLUGIN_DISPATCHERS = Object.keys(DISPATCHERS);
 // ---------------------------------------------------- key pass-through
 
 // The key capture pass-through's two requests, which the core's key capture
-// owner sends and no plugin may: each calls the function of that name the
-// Hyprland layer defines (HyprlandLayer.keyPassthroughLines), so `enter`
-// fails loudly where the layer is not loaded and `leave` resets only the
-// pass-through submap. The shell writes its layer in Lua alone, so a
-// classic session, which loads no layer, is refused.
-var PASSTHROUGH_VERBS = ["enter", "leave"];
-
+// owner sends and no plugin may. Each calls the function the Hyprland layer
+// defines for that verb (HyprlandLayer.KEY_PASSTHROUGH), so `leave` resets
+// only the pass-through submap, and an `enter` the layer cannot serve, as
+// in a session that declined the layer, answers an error: the key field
+// then tells the user Hyprland's own shortcuts still run. The shell writes
+// its layer in Lua alone, so a classic session is refused.
 // { ok: true, request } or { ok: false, error } with a keyed line.
 function passthroughRequest(verb, usingLua) {
-    if (PASSTHROUGH_VERBS.indexOf(verb) === -1)
+    var passthrough = HyprlandLayer.KEY_PASSTHROUGH;
+    if (typeof verb !== "string" || !Object.prototype.hasOwnProperty.call(passthrough.verbs, verb))
         return { ok: false, error: "refused: passthrough=" + JSON.stringify(verb) + " unknown" };
     if (usingLua !== true)
         return { ok: false, error: "refused: passthrough=" + verb + " session=classic" };
-    return { ok: true, request: "hl.__vgs_key_passthrough." + verb };
+    return { ok: true, request: "hl." + passthrough.table + "." + passthrough.verbs[verb] };
 }
 
 // ------------------------------------------------------------- reveal

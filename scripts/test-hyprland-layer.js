@@ -354,6 +354,10 @@ function verify(logic, layer, shellText) {
 
     const section = (id, binds, layerRules, version, appearance) => ({ id: id, version: version || "1.0.0", binds: binds, layerRules: layerRules, appearance: appearance || {}, options: [], unknownKeys: [] });
     const lines = out => out.text.split("\n");
+    same(Object.keys(layer.layerBindDescriptions([
+        section("vgs.notes", [{ shortcut: "talk", key: "SUPER+T", hold: true }, { shortcut: "open", key: "SUPER+SPACE" }], []),
+        section("acme.keys", [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "gone", key: null }], [])
+    ])).sort(), ["acme.keys:toggle", "vgs.notes:talk", "vgs.notes:talk.release"], "the layer's bind descriptions: each bound press and hold release, no skipped or unbound shortcut");
     const bare = layer.render([], theme, "vgs", 2);
     const bareLines = lines(bare);
     assert.ok(bareLines.indexOf("-- Theme vgs: window, group and group bar borders.") < bareLines.indexOf("-- Theme appearance: corner radius."), "borders are before radius");
@@ -361,7 +365,7 @@ function verify(logic, layer, shellText) {
     assert.ok(bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off.") < bareLines.indexOf(TUI_SECTION[0]), "theme appearance is before floating TUIs");
     assert.ok(bareLines.indexOf(TUI_SECTION[0]) < bareLines.indexOf(APP_SECTION[0]), "floating TUIs are before application windows");
     same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, "", ...captureSection([]), "", ...PASSTHROUGH_SECTION, "", ...LOCK_SECTION, ""], "a layer with no plugin section ends with the floating TUIs window rules, the application window rule, overlay capture, the key capture pass-through, then the session lock's restore");
-    same(layer.KEY_PASSTHROUGH, { submap: "vgs:passthrough", cancel: "Escape", description: "vgs:passthrough-cancel", timeoutMs: 10000 }, "the key capture pass-through names its submap, cancel key, bind description and timeout");
+    same(layer.KEY_PASSTHROUGH, { submap: "vgs:passthrough", cancel: "Escape", description: "vgs:passthrough-cancel", timeoutMs: 10000, table: "__vgs_key_passthrough", verbs: { enter: "enter", leave: "leave" } }, "the key capture pass-through names its submap, cancel key, bind description, timeout, Lua table and verbs");
     // The monitor rules: one section after the session lock's restore and
     // before every plugin section, none without a rule, one comment for a
     // document the judge refused, and no render before the document is read.
@@ -868,10 +872,10 @@ const CONTROLS = [
     [layerFile, "key pass-through enters only from a shell window", "if window == nil or window.class ~= passthrough.class then error(", "if window == nil then error("],
     [layerFile, "key pass-through records the entering window", "        \"        passthrough.window = window.address\",", ""],
     [layerFile, "key pass-through times out", "        \"        passthrough.timer:set_enabled(name == passthrough.submap)\",", "        \"        passthrough.timer:set_enabled(false)\","],
-    [layerFile, "key pass-through timer stops as it fires", "        \"        passthrough.timer:set_enabled(false)\",\n        \"        passthrough.leave()\",", "        \"        passthrough.leave()\","],
-    [layerFile, "key pass-through leaves on its window's close", "if window ~= nil and window.address == passthrough.window then passthrough.leave() end", "local _ = window"],
-    [layerFile, "key pass-through leaves when the layer runs", "        \"    passthrough.leave()\",\n        \"end\"", "        \"end\""],
-    [layerFile, "key pass-through timeout", "timeoutMs: 10000 };", "timeoutMs: 60000 };"],
+    [layerFile, "key pass-through timer stops as it fires", "        \"        passthrough.timer:set_enabled(false)\",\n        \"        passthrough.\" + p.verbs.leave + \"()\",", "        \"        passthrough.\" + p.verbs.leave + \"()\","],
+    [layerFile, "key pass-through leaves on its window's close", "if window ~= nil and window.address == passthrough.window then passthrough.\" + p.verbs.leave + \"() end", "local _ = window"],
+    [layerFile, "key pass-through leaves when the layer runs", "        \"    passthrough.\" + p.verbs.leave + \"()\",\n        \"end\"", "        \"end\""],
+    [layerFile, "key pass-through timeout", "timeoutMs: 10000,", "timeoutMs: 60000,"],
     [layerFile, "session lock restore allowed", "misc = { allow_session_lock_restore = true }", "misc = { allow_session_lock_restore = false }"],
     [layerFile, "application window class is the shell's app-id", "match = { class = \" + classLiteral(APP_WINDOW.appId) + \" }", "match = { class = \" + classLiteral(\"org.quickshell\") + \" }"],
     [shellFile, "shell.qml sets the shell's app-id", "//@ pragma AppId org.vgs.shell\n", ""],

@@ -180,7 +180,16 @@ var OVERLAY_CAPTURE = {
 // shell's included, after `timeoutMs` and whenever the layer runs again; the
 // shell leaves it on commit and teardown. `timeoutMs` bounds how long a
 // wedged shell holds every bind: long enough to find and press a chord.
-var KEY_PASSTHROUGH = { submap: "vgs:passthrough", cancel: "Escape", description: "vgs:passthrough-cancel", timeoutMs: 10000 };
+// `table` is the name of the Lua table on `hl` that holds the submap's
+// state and its two functions, named by `verbs`, which Dispatch.js calls.
+var KEY_PASSTHROUGH = {
+    submap: "vgs:passthrough",
+    cancel: "Escape",
+    description: "vgs:passthrough-cancel",
+    timeoutMs: 10000,
+    table: "__vgs_key_passthrough",
+    verbs: { enter: "enter", leave: "leave" }
+};
 
 function overlayCaptureDirections() {
     return ["left", "right", "up", "down"];
@@ -517,7 +526,7 @@ function monitorLines(monitors) {
 }
 
 // The key capture pass-through's submap, KEY_PASSTHROUGH. Its two functions
-// on `hl.__vgs_key_passthrough` are what Dispatch.js asks for: `enter`
+// on `hl.<table>` are what Dispatch.js asks for: `enter`
 // refuses unless a shell window has the focus and records that window, and
 // `leave` resets only this submap. One repeating timer, armed while the
 // submap is current and disarmed as it fires, is the timeout; the window
@@ -528,14 +537,14 @@ function keyPassthroughLines() {
         "-- Key capture pass-through: a vgs window that captures a key combo takes every key but " + p.cancel + ".",
         "do",
         "    local passthrough = { submap = \"" + p.submap + "\", class = \"" + APP_WINDOW.appId + "\" }",
-        "    hl.__vgs_key_passthrough = passthrough",
+        "    hl." + p.table + " = passthrough",
         "    hl.define_submap(passthrough.submap, function()",
         "        hl.bind(\"" + p.cancel + "\", hl.dsp.submap(\"reset\"), { description = \"" + p.description + "\" })",
         "    end)",
-        "    function passthrough.leave()",
+        "    function passthrough." + p.verbs.leave + "()",
         "        if hl.get_current_submap() == passthrough.submap then hl.dispatch(hl.dsp.submap(\"reset\")) end",
         "    end",
-        "    function passthrough.enter()",
+        "    function passthrough." + p.verbs.enter + "()",
         "        local window = hl.get_active_window()",
         "        if window == nil or window.class ~= passthrough.class then error(\"" + p.submap + ": the focused window is not a vgs window\") end",
         "        passthrough.window = window.address",
@@ -543,7 +552,7 @@ function keyPassthroughLines() {
         "    end",
         "    passthrough.timer = hl.timer(function()",
         "        passthrough.timer:set_enabled(false)",
-        "        passthrough.leave()",
+        "        passthrough." + p.verbs.leave + "()",
         "    end, { timeout = " + p.timeoutMs + ", type = \"repeat\" })",
         "    passthrough.timer:set_enabled(false)",
         "    hl.on(\"keybinds.submap\", function(name)",
@@ -551,9 +560,9 @@ function keyPassthroughLines() {
         "        if name ~= passthrough.submap then passthrough.window = nil end",
         "    end)",
         "    hl.on(\"window.close\", function(window)",
-        "        if window ~= nil and window.address == passthrough.window then passthrough.leave() end",
+        "        if window ~= nil and window.address == passthrough.window then passthrough." + p.verbs.leave + "() end",
         "    end)",
-        "    passthrough.leave()",
+        "    passthrough." + p.verbs.leave + "()",
         "end"
     ];
 }

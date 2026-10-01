@@ -1155,8 +1155,7 @@ function hyprlandKey(text) {
 }
 
 // The key capture control's key table: a Qt 6 `Qt::Key` value
-// (qnamespace.h) and the keysym name hyprlandKey writes for it. A keypad
-// digit, a Qt digit with `Qt.KeypadModifier`, is `KP_<digit>`. A key
+// (qnamespace.h) and the keysym name hyprlandKey writes for it. A key
 // outside the table, such as a shifted symbol Qt reports by its glyph, is
 // unnamed, and the user types it into the text entry instead.
 var CAPTURE_KEY_NAMES = (function () {
@@ -1188,25 +1187,45 @@ var CAPTURE_MODIFIER_KEYS = {
 // the Super key as the Meta modifier on Linux.
 var CAPTURE_MODIFIER_FLAGS = { SUPER: 0x10000000, CTRL: 0x04000000, ALT: 0x08000000, SHIFT: 0x02000000 };
 var CAPTURE_KEYPAD_FLAG = 0x20000000;
+// The keys Qt reports with `Qt.KeypadModifier`, by Qt value, as the keypad
+// keysyms: digits and operators with Num Lock on, the movement keys with
+// it off, and Enter. Another key with the flag is unnamed.
+var CAPTURE_KEYPAD_NAMES = (function () {
+    var names = {
+        0x2a: "KP_MULTIPLY", 0x2b: "KP_ADD", 0x2c: "KP_SEPARATOR", 0x2d: "KP_SUBTRACT", 0x2e: "KP_DECIMAL", 0x2f: "KP_DIVIDE", 0x3d: "KP_EQUAL",
+        0x01000005: "KP_ENTER", 0x01000006: "KP_INSERT", 0x01000007: "KP_DELETE", 0x0100000b: "KP_BEGIN",
+        0x01000010: "KP_HOME", 0x01000011: "KP_END", 0x01000012: "KP_LEFT", 0x01000013: "KP_UP", 0x01000014: "KP_RIGHT", 0x01000015: "KP_DOWN",
+        0x01000016: "KP_PRIOR", 0x01000017: "KP_NEXT"
+    };
+    for (var code = 0x30; code <= 0x39; code++) names[code] = "KP_" + String.fromCharCode(code);
+    return names;
+})();
+// The keys that edit text without typing a character. Qt gives every key
+// that types one a value below 0x01000000, its character's code.
+var CAPTURE_EDIT_KEYS = ["TAB", "RETURN", "KP_ENTER", "BACKSPACE", "DELETE", "KP_DELETE"];
+var CAPTURE_TEXT_BELOW = 0x01000000;
 
 // What one key press the key capture control receives names, from a QML
 // KeyEvent's `key` and `modifiers`: { kind: "key", key } with the key
 // hyprlandKey writes, so a captured combo is the string the text entry
 // stores for the same keys; { kind: "held", modifiers } while only
-// modifiers are down, in HYPRLAND_MODIFIERS order; or { kind: "unnamed" }
-// for a key outside CAPTURE_KEY_NAMES.
+// modifiers are down, in HYPRLAND_MODIFIERS order; { kind: "text" } for a
+// key that types or edits text with no modifier but SHIFT, which a global
+// bind would take from every text field; or { kind: "unnamed" } for a key
+// neither table names.
 function capturedKey(key, modifiers) {
     var held = HYPRLAND_MODIFIERS.filter(function (mod) {
         return (modifiers & CAPTURE_MODIFIER_FLAGS[mod]) !== 0 || CAPTURE_MODIFIER_KEYS[key] === mod;
     });
     if (hasOwn(CAPTURE_MODIFIER_KEYS, key))
         return { kind: "held", modifiers: held };
-    if (!hasOwn(CAPTURE_KEY_NAMES, key))
+    var names = (modifiers & CAPTURE_KEYPAD_FLAG) !== 0 ? CAPTURE_KEYPAD_NAMES : CAPTURE_KEY_NAMES;
+    if (!hasOwn(names, key))
         return { kind: "unnamed" };
-    var name = CAPTURE_KEY_NAMES[key];
-    if ((modifiers & CAPTURE_KEYPAD_FLAG) !== 0 && /^[0-9]$/.test(name))
-        name = "KP_" + name;
-    return { kind: "key", key: hyprlandKey(held.concat([name]).join("+")).key };
+    var typesText = key < CAPTURE_TEXT_BELOW || CAPTURE_EDIT_KEYS.indexOf(names[key]) !== -1;
+    if (typesText && held.every(function (mod) { return mod === "SHIFT"; }))
+        return { kind: "text" };
+    return { kind: "key", key: hyprlandKey(held.concat([names[key]]).join("+")).key };
 }
 
 // Hyprland's modifier mask bits for HYPRLAND_MODIFIERS, as `hyprctl -j
@@ -1217,11 +1236,11 @@ var BIND_MODMASK = { SUPER: 64, CTRL: 4, ALT: 8, SHIFT: 1 };
 // The default-map binds a `hyprctl -j binds` reply TEXT lists that the
 // Hyprland layer did not write for SECTIONS, as { ok: true, binds: [{ key,
 // description }] } with each key as hyprlandKey writes it, or { ok: false,
-// error } with a keyed line. A layer bind is known by its description, the
-// shortcut's global. A bind with a modifier outside HYPRLAND_MODIFIERS, and
-// one whose key hyprlandKey refuses, such as a mouse bind or a `code:` bind
-// Hyprland reports with no key name, are left out: no key the shell writes
-// names them.
+// error } with a keyed line. A layer bind is known by its description
+// (HyprlandLayer.layerBindDescriptions). A bind with a modifier outside
+// HYPRLAND_MODIFIERS, and one whose key hyprlandKey refuses, such as a
+// mouse bind or a `code:` bind Hyprland reports with no key name, are left
+// out: no key the shell writes names them.
 function userBinds(text, sections) {
     var parsed;
     try {
@@ -1231,14 +1250,7 @@ function userBinds(text, sections) {
     }
     if (!Array.isArray(parsed))
         return { ok: false, error: "refused: binds=shape want=list" };
-    var layer = Object.create(null);
-    HyprlandLayer.resolveBinds(sections).sections.forEach(function (row) {
-        row.binds.forEach(function (entry) {
-            if (entry.kind !== "bound") return;
-            layer[entry.global] = true;
-            layer[HyprlandLayer.releaseShortcutName(entry.global)] = true;
-        });
-    });
+    var layer = HyprlandLayer.layerBindDescriptions(sections);
     var known = HYPRLAND_MODIFIERS.reduce(function (mask, mod) { return mask | BIND_MODMASK[mod]; }, 0);
     var out = [];
     parsed.forEach(function (bind) {
@@ -1252,18 +1264,20 @@ function userBinds(text, sections) {
     return { ok: true, binds: out };
 }
 
-// Who else holds KEY, the key a capture or the text entry gives shortcut
-// SHORTCUT of plugin ID: { plugins: [{ id, shortcut }], user: [description] },
-// the plugins from the keys resolveBinds puts in effect for SECTIONS and
-// the user's binds from userBinds' BINDS. A hint: nothing refuses the key.
+// Who else asks for KEY, the key a capture or the text entry gives
+// shortcut SHORTCUT of plugin ID: { plugins: [{ id, shortcut }], user:
+// [description] }, the plugins, by id, from the key each bind of SECTIONS
+// asks for, whether or not the layer's first-by-id rule
+// (HyprlandLayer.resolveBinds) gives it the key, so a key that would take
+// another plugin's bind names it; the user's binds from userBinds' BINDS.
+// A hint: nothing refuses the key.
 function keyConflicts(key, sections, binds, id, shortcut) {
     var parsed = hyprlandKey(key);
-    var keys = HyprlandLayer.resolveBinds(sections).keys;
     var plugins = [];
-    Object.keys(keys).sort().forEach(function (other) {
-        Object.keys(keys[other]).forEach(function (name) {
-            if (keys[other][name] === parsed.key && !(other === id && name === shortcut))
-                plugins.push({ id: other, shortcut: name });
+    sections.slice().sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; }).forEach(function (section) {
+        section.binds.forEach(function (bind) {
+            if (bind.key === parsed.key && !(section.id === id && bind.shortcut === shortcut))
+                plugins.push({ id: section.id, shortcut: bind.shortcut });
         });
     });
     var user = binds.filter(function (bind) { return bind.key === parsed.key; }).map(function (bind) { return bind.description; });
