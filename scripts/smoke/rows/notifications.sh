@@ -237,10 +237,6 @@ hint_file="$sandbox/hint-transcript.log"
 hint_other="$sandbox/hint-other.log"
 printf 'transcript\n' >"$hint_file"
 printf 'other\n' >"$hint_other"
-# An xdg-open that answers 1 stays for the rest of the run, so no row
-# reaches the host's opener.
-printf '#!/usr/bin/env bash\nexit 1\n' >"$shim/xdg-open"
-chmod 755 "$shim/xdg-open"
 hint_roles() { ipc smoke modelRows vgs.notifications rows summary,hintIcon,hintTone,hintOpen,hintClick | py_reply 'import json,sys; print(json.dumps(next((r[1:] for r in json.load(sys.stdin) if r[0] == sys.argv[1]), None)))' "$1"; }
 hint_drawn() { ipc smoke layerItems vgs.notifications NotificationCard summary,mediaKind,showsSlot | py_reply 'import json,sys; print(json.dumps(next(([v["mediaKind"], v["showsSlot"]] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None)))' "$1"; }
 forget_record

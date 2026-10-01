@@ -210,6 +210,8 @@ smoke_row list-motion
 smoke_row notifications
 smoke_row automations
 smoke_row polkit
+# The device fakes the System rows build on; they stay up after it.
+smoke_row device-fakes
 smoke_row jarvis
 smoke_row jarvis-setup
 smoke_row hyprland

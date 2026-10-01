@@ -277,12 +277,13 @@ fi
 EOF
   chmod 755 "$shim/vsys"
 }
+# It stands over the harness's systemctl stand-in, which
+# sentinel_restore puts back after the press.
 warden_systemctl_stub() {
-  cat >"$shim/systemctl" <<EOF
+  sentinel_stand_over "$shim/systemctl" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >"$warden_systemctl_log"
 EOF
-  chmod 755 "$shim/systemctl"
 }
 warden_section() { ipc shell listShellConfig | py_reply 'import json,sys; l=json.load(sys.stdin)["bar"]["layout"]; print(([s for s in ("left","center","right") if any(e["id"]==sys.argv[1] for e in l.get(s,[]))] + ["none"])[0])' vgs.agent-warden; }
 warden_tones="$(python3 -c 'import json,sys; print(json.dumps(dict(zip(["neutral", "accent", "warning", "danger"], [json.loads(v).lower() for v in sys.argv[1:]]))))' \
@@ -623,7 +624,7 @@ else
   fail "the stand-in systemctl does not come first on the shell's PATH, so Start it was not pressed"
   ipc shell hide panel vgs.agent-warden >/dev/null
 fi
-rm -f -- "$shim/systemctl"
+sentinel_restore "$shim/systemctl"
 
 # Without vsys the panel offers it through the core's notice, and a scan
 # that finds it closes the notice with no rest.

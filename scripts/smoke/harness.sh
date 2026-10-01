@@ -166,6 +166,9 @@ PY
 tree_smoke_observer "$repo" "$sandbox/repo"
 [[ -z ${source_tree:-} ]] || tree_overlay_helpers "$source_tree" "$sandbox/repo"
 repo="$sandbox/repo"
+# The device fakes, their stand-ins and guards; the paths it names go in
+# every sandbox process's environment below.
+source "$repo/scripts/smoke/devices.sh"
 # The one authentication log: every sentinel below appends `<name> <argv>`
 # to it, and rows/auth-sentinel.sh, the last row, requires it empty.
 auth_log="$sandbox/auth-sentinel.calls"
@@ -233,7 +236,8 @@ fi
 sandbox_env=(env -i
   HOME="$home" PATH="$(dirname -- "$node_bin"):$PATH" USER="${USER:-$(id -un)}" TERM=dumb LANG=C.UTF-8
   XDG_RUNTIME_DIR="$rt_dir" XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share"
-  XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache" TMUX_TMPDIR="$rt_dir" VGS_TEST_RUN=1)
+  XDG_STATE_HOME="$home/.local/state" XDG_CACHE_HOME="$home/.cache" TMUX_TMPDIR="$rt_dir" VGS_TEST_RUN=1
+  "${devices_env_words[@]}")
 
 # The shell alone resolves hyprctl through this directory, so a row can
 # stand a command in for it without touching what the rows themselves run.
@@ -301,6 +305,10 @@ exit 1
 EOF
 chmod 755 "$shim/loginctl" "$shim/secret-tool"
 auth_sentinels=(sudo doas run0 pkexec su loginctl secret-tool)
+# The device commands' stand-ins, in the same directory for the whole run
+# (scripts/smoke/devices.sh), so no shell reaches the host's rfkill,
+# browser opener or service manager.
+devices_write_stand_ins
 # A row that needs one of the sentinels to answer its own way stands over
 # it with sentinel_stand_over FILE, the script on stdin, and puts it back
 # with sentinel_restore FILE. The first stand-over keeps the sentinel; a
@@ -573,6 +581,14 @@ fi
 # vgs.lock starts disabled for the launcher's reason, and its idle watch
 # would lock the session under the rows after five minutes; rows/lock.sh
 # enables it and disables it again.
+# The System family's ids, vgs.system, vgs.sound, vgs.bluetooth,
+# vgs.network, vgs.vpn, vgs.displays, vgs.mouse and vgs.keyboard, start
+# disabled before any of them ships, so a section that lands enables its
+# own plugin in its row over the device fakes (scripts/smoke/devices.sh)
+# and no earlier row, lending record or first-bar reading counts it. The
+# configuration keeps an id no plugin has and `vgsh plugin list` reports
+# it as unknown. The default set below names none of them: it starts
+# every first-party plugin, as a live session does.
 # vgs.themes stays enabled, its background built on every
 # screen: it maps no surface while the sandbox holds no backgrounds.json,
 # so the host rows see only their fixture's background surface.
@@ -783,7 +799,7 @@ case "$plugin_set" in
     mkdir -p "$tick"
     cp -R "$repo/scripts/smoke/fixtures/plugins/acme.tick/." "$tick/"
     cat >"$home/.config/vgs/shell.json" <<'JSON'
-{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools", "vgs.automations", "vgs.polkit", "vgs.lock", "vgs.jarvis"] }
+{ "version": 1, "bar": { "id": "vgs.bar", "layout": { "left": [], "center": [{ "id": "acme.tick", "format": "ddd d MMM  HH:mm" }], "right": [] } }, "disabledPlugins": ["vgs.launcher", "vgs.notifications", "vgs.settings", "vgs.updates", "vgs.agent-warden", "vgs.devtools", "vgs.automations", "vgs.polkit", "vgs.lock", "vgs.jarvis", "vgs.system", "vgs.sound", "vgs.bluetooth", "vgs.network", "vgs.vpn", "vgs.displays", "vgs.mouse", "vgs.keyboard"] }
 JSON
     ;;
   default) default_set_prepare '[]' ;;

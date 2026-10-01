@@ -1,0 +1,5 @@
+{ "schemaVersion": 1, "id": "acme.devices", "name": "Devices", "version": "0.1.0", "author": "acme", "description": "smoke fixture reading the sandbox's device fakes through Quickshell",
+  "kinds": ["service"], "entryPoints": { "service": "Service.qml" }, "capabilities": ["ipc"],
+  "requirements": [
+    { "command": "rfkill", "packages": { "pacman": "util-linux" }, "purpose": "Blocks and unblocks radios; in the sandbox, the harness's stand-in" }
+  ] }

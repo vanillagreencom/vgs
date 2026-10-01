@@ -1,0 +1,6 @@
+{
+  "devices": [
+    { "id": 0, "type": "bluetooth", "device": "hci0", "soft": "unblocked", "hard": "unblocked" },
+    { "id": 1, "type": "wlan", "device": "phy0", "soft": "unblocked", "hard": "unblocked" }
+  ]
+}

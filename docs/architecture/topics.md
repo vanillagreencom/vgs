@@ -57,6 +57,8 @@ One line per architecture document: the change to read it before. [overview.md](
 - [runtime-pointer.md](runtime-pointer.md): read before touching a pointer handler, a cursor, a hover reading or a popup.
 - [validation.md](validation.md), [validation-qml-unit.md](validation-qml-unit.md), [validation-smoke.md](validation-smoke.md), [validation-smoke-gallery.md](validation-smoke-gallery.md) and [validation-smoke-harness.md](validation-smoke-harness.md): read before touching `scripts/validate`, the nested sandbox, the Gallery or HiDPI smoke rows, its harness or a smoke row's verdict.
 - [validation-smoke-host.md](validation-smoke-host.md): read before touching a sentinel, the stand-in terminal or a row that presses a button which opens a TUI.
+- [validation-smoke-devices.md](validation-smoke-devices.md): read before touching a device fake, a device command's stand-in, the device guard or a System row.
+- [runtime-devices.md](runtime-devices.md): read before a plugin reads Quickshell's `Bluetooth`, `Networking` or `Pipewire`.
 - [validation-smoke-faults.md](validation-smoke-faults.md): read before touching a sandbox fault the smoke excuses, a mode a row holds on the nested output, or `scripts/smoke/verdict.sh`.
 - [validation-latency.md](validation-latency.md): read before touching a latency the smoke reads or its budget.
 - [readme-images.md](readme-images.md): read before touching a plugin README's screenshot, `docs/images/plugins/`, `scripts/readme-shots.sh` or its check.

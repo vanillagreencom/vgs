@@ -1,0 +1,6 @@
+{
+  "devices": [
+    { "name": "hidraw0", "vendor": "05ac", "product": "9243", "hidName": "Apple Inc. Pro Display XDR", "serial": "VGSSMOKEXDR01",
+      "reports": { "1": "01a86100000000" } }
+  ]
+}
