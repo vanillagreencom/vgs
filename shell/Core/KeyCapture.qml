@@ -9,25 +9,49 @@ import "HyprlandLayer.js" as Layer
 // holds reach it (HyprlandLayer.KEY_PASSTHROUGH). A control asks to begin
 // and to end, and never dispatches; the owner enters the submap through
 // Compositor and leaves it on every end the shell sees: the control's
-// commit or cancel, the control's destruction, its plugin instance's
-// teardown and a newer holder. Hyprland leaves the submap by itself on
-// Escape, on the close of the window that entered it and on a timeout; the
-// owner reads each submap change from Hyprland's event socket and ends a
-// capture whose submap is gone, so the control and Hyprland agree.
+// commit, cancel or focus loss, the control's destruction, its plugin
+// instance's teardown and a newer holder. Hyprland leaves the submap by
+// itself on Escape, on the close of the window that entered it, on a
+// timeout and when the layer runs again; the owner reads each submap change
+// from Hyprland's event socket and ends a capture whose submap is gone, so
+// the control and Hyprland agree.
 Scope {
     id: root
 
     // The control capturing keys, or null. An object property reads null
     // once its object is destroyed, which ends the capture.
     property Item holder: null
-    // `idle`; `entering`, the enter request sent; or `passthrough`, once
+    // `idle`; `waiting`, a holder whose enter waits for an earlier leave to
+    // run; `entering`, the enter request sent; or `passthrough`, once
     // Hyprland reports the submap current.
     property string phase: "idle"
+    // Whether the holder's enter was refused or answered with an error:
+    // Hyprland's own binds still run, and only keys they leave reach it.
+    property bool failed: false
+    // Leave requests sent and not yet answered. A begin while one is
+    // pending waits to send its enter until every leave was answered:
+    // Hyprland posts a request's submap event before it answers the request
+    // (Actions::setSubmap, HyprCtl.cpp), so an earlier capture's events come
+    // while the new holder waits, and a waiting holder reads none.
+    property int leaving: 0
+    // Counts begins, so an enter answer for an earlier capture is dropped.
+    property int generation: 0
+    property real began: 0
+    // The last capture that ended, as { item, reason }: `commit`, `cancel`,
+    // `tab`, `focus`, `destroyed`, `disposed`, `superseded`, `compositor`,
+    // or `timeout` for a compositor end after the layer's timeout.
+    property var ended: ({ item: null, reason: "" })
     // The holder's instance lifetime registration, released when it ends.
     property var release: null
-    // The user's own binds from the last read (Logic.userBinds); null
-    // before the first read, which the first conflict question starts.
-    property var userBinds: null
+    // The user's own binds (Logic.userBinds) and the read's state:
+    // `unread`, `reading`, `read` or `failed`. The first conflict question
+    // starts the first read, and a question after a failed read asks once
+    // more; every begin and every Hyprland reload read again.
+    property var userBinds: []
+    property string bindsState: "unread"
+    // Plain state a conflict question writes while a binding reads it, so
+    // the write notifies no binding.
+    property var bindsRetry: ({ asked: false })
 
     onHolderChanged: if (holder === null && phase !== "idle") finish("destroyed")
 
@@ -36,6 +60,9 @@ Scope {
         return {
             get holder() { return root.holder; },
             get passthrough() { return root.phase === "passthrough"; },
+            get failed() { return root.failed; },
+            get ended() { return root.ended; },
+            timeoutMs: Layer.KEY_PASSTHROUGH.timeoutMs,
             begin: item => root.begin(ctx, item),
             end: (item, reason) => root.end(item, reason),
             keyFor: (key, modifiers) => Logic.capturedKey(key, modifiers),
@@ -52,56 +79,97 @@ Scope {
         if (holder !== null) finish("superseded");
         holder = item;
         release = ctx.onDispose(() => root.end(item, "disposed"));
-        phase = "entering";
-        Compositor.passthrough("enter");
+        failed = false;
+        generation += 1;
+        began = Date.now();
+        if (leaving > 0) phase = "waiting";
+        else enter();
         readBinds();
         return "ok";
     }
 
-    // ITEM's capture ends for REASON, `commit` or `cancel`; nothing happens
-    // for an item that holds nothing.
+    // ITEM's capture ends for REASON, such as `commit`, `cancel` or
+    // `focus`; nothing happens for an item that holds nothing.
     function end(item, reason) {
         if (holder === null || item !== holder) return;
         finish(reason);
     }
 
+    function enter() {
+        phase = "entering";
+        const at = generation;
+        const answer = Compositor.passthrough("enter", reply => root.entered(at, reply));
+        if (answer !== "ok") entered(at, answer);
+    }
+
+    function entered(at, reply) {
+        if (at !== generation || holder === null || reply === "ok") return;
+        failed = true;
+        console.info("capture: enter=failed reply=" + JSON.stringify(reply));
+    }
+
     // Every end runs here. The leave request goes out unless Hyprland left
-    // the submap itself: it resets only the pass-through submap, so a leave
-    // that follows an enter still in flight undoes it.
+    // the submap itself or no enter was sent: it resets only the
+    // pass-through submap, so a leave that follows an enter still in flight
+    // undoes it.
     function finish(reason) {
         const was = phase;
+        const item = holder;
         const registration = release;
+        ended = { item: item, reason: reason };
         phase = "idle";
         release = null;
+        failed = false;
         holder = null;
         if (registration !== null) registration();
-        if (was !== "idle" && reason !== "compositor") Compositor.passthrough("leave");
+        if ((was === "entering" || was === "passthrough") && reason !== "compositor" && reason !== "timeout") leave();
         console.info("capture: end=" + reason);
+    }
+
+    function leave() {
+        leaving += 1;
+        if (Compositor.passthrough("leave", () => root.left()) !== "ok") left();
+    }
+
+    function left() {
+        leaving -= 1;
+        if (leaving === 0 && phase === "waiting") enter();
     }
 
     function submapChanged(name) {
         if (name === Layer.KEY_PASSTHROUGH.submap) {
             if (phase === "entering") phase = "passthrough";
         } else if (phase === "passthrough") {
-            finish("compositor");
+            const held = Date.now() - began;
+            console.info("capture: compositor submap=" + JSON.stringify(name) + " held_ms=" + held);
+            finish(held >= Layer.KEY_PASSTHROUGH.timeoutMs ? "timeout" : "compositor");
         }
     }
 
+    // Who else holds KEY, for the field's hint: Logic.keyConflicts with
+    // `binds`, the user bind read's state, beside it.
     function conflicts(key, id, shortcut) {
-        if (userBinds === null) Qt.callLater(readBinds);
-        return Logic.keyConflicts(key, Registry.hyprlandSections, userBinds === null ? [] : userBinds, id, shortcut);
+        if (bindsState === "unread" || (bindsState === "failed" && !bindsRetry.asked)) {
+            bindsRetry.asked = bindsState === "failed";
+            Qt.callLater(readBinds);
+        }
+        const found = Logic.keyConflicts(key, Registry.hyprlandSections, userBinds, id, shortcut);
+        return { plugins: found.plugins, user: found.user, binds: bindsState };
     }
 
     function readBinds() {
-        if (userBinds === null) userBinds = [];
+        bindsState = "reading";
         Compositor.readBinds(text => {
-            if (text === null) return;
-            const read = Logic.userBinds(text, Registry.hyprlandSections);
+            const read = text === null ? { ok: false, error: "refused: binds=unread" } : Logic.userBinds(text, Registry.hyprlandSections);
             if (!read.ok) {
                 console.error("capture: " + read.error);
+                root.userBinds = [];
+                root.bindsState = "failed";
                 return;
             }
             root.userBinds = read.binds;
+            root.bindsState = "read";
+            root.bindsRetry.asked = false;
         });
     }
 
@@ -109,7 +177,7 @@ Scope {
         target: Hyprland
         function onRawEvent(event) {
             if (event.name === "submap") root.submapChanged(event.data);
-            else if (event.name === "configreloaded" && root.userBinds !== null) root.readBinds();
+            else if (event.name === "configreloaded" && root.bindsState !== "unread") root.readBinds();
         }
     }
 }

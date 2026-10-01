@@ -19,10 +19,15 @@ import "Dispatch.js" as Dispatch
 Singleton {
     id: root
 
-    // The argv running, or null; the argv waiting, in order.
+    // The argv running, or null, and the callback that takes its answer;
+    // each waiting request as { argv, done }, in order.
     property var pending: null
+    property var pendingDone: null
+    property string reply: ""
     property var queue: []
     property var completion: null
+    property var pendingDone: null
+    property string reply: ""
 
     // The screen a surface lands on when nothing chose one: the focused
     // monitor, or the first screen when Hyprland names none Quickshell
@@ -38,22 +43,24 @@ Singleton {
     // Send one dispatcher Dispatch.js knows. Returns `ok` once the request
     // is accepted, or the keyed refusal; the reply is judged when it lands.
     function send(name, args) {
-        return enqueue(Dispatch.request(name, args, Hyprland.usingLua));
+        return enqueueRequest(Dispatch.request(name, args, Hyprland.usingLua), null);
     }
 
     // Enter or leave the key capture pass-through submap, `enter` or
     // `leave` (Dispatch.passthroughRequest); KeyCapture.qml is the one
-    // caller. Answers as `send` does.
-    function passthrough(verb) {
-        return enqueue(Dispatch.passthroughRequest(verb, Hyprland.usingLua));
+    // caller. Answers as `send` does, and an accepted request hands DONE
+    // its answer once it ran: `ok`, Hyprland's reply text otherwise, or a
+    // keyed `dispatch-start=failed` or `exit=<code>` line.
+    function passthrough(verb, done) {
+        return enqueueRequest(Dispatch.passthroughRequest(verb, Hyprland.usingLua), done);
     }
 
-    function enqueue(r) {
+    function enqueueRequest(r, done) {
         if (!r.ok) {
             console.error("compositor: " + r.error);
             return r.error;
         }
-        return enqueue(["hyprctl", "dispatch", r.request]);
+        return enqueue(["hyprctl", "dispatch", r.request], done);
     }
 
     // Switch every keyboard's layout: `next`, `prev` or an index. Returns
@@ -65,25 +72,27 @@ Singleton {
             console.error("compositor: " + r.error);
             return r.error;
         }
-        return enqueue(r.argv);
+        return enqueue(r.argv, null);
     }
 
-    function enqueue(argv) {
+    function enqueue(argv, done) {
         if (queue.length >= Dispatch.QUEUE_LIMIT) {
             const error = "refused: dispatch-queue=full limit=" + Dispatch.QUEUE_LIMIT + " request=" + JSON.stringify(argv);
             console.error("compositor: " + error);
             return error;
         }
-        queue = queue.concat([argv]);
+        queue = queue.concat([{ argv: argv, done: typeof done === "function" ? done : null }]);
         drain();
         return "ok";
     }
 
     function drain() {
         if (pending !== null || queue.length === 0) return;
-        pending = queue[0];
+        pending = queue[0].argv;
+        pendingDone = queue[0].done;
         queue = queue.slice(1);
         completion = null;
+        reply = "";
         proc.command = pending;
         proc.running = true;
     }
@@ -213,15 +222,22 @@ Singleton {
 
     // ------------------------------------------------------------- binds
 
-    // The callers waiting for the binds read in flight.
+    // The callers waiting for the binds read in flight, and whether one
+    // asked while it ran.
     property var bindsWaiting: []
+    property bool bindsReread: false
 
     // Read Hyprland's binds, `hyprctl -j binds`, and hand `done` the reply
-    // text, or null when hyprctl did not exit 0; a call while a read runs
-    // waits for that read. KeyCapture.qml judges the text.
+    // text, or null when hyprctl did not exit 0. A call while a read runs
+    // reads again once it ends, so every waiter's answer follows the state
+    // after its call, as a reveal's state read does. KeyCapture.qml judges
+    // the text.
     function readBinds(done) {
         bindsWaiting = bindsWaiting.concat([done]);
-        if (bindsProc.running) return;
+        if (bindsProc.running) {
+            bindsReread = true;
+            return;
+        }
         bindsProc.completion = null;
         bindsProc.running = true;
     }
@@ -234,6 +250,12 @@ Singleton {
         onExited: (code, status) => { completion = { code: code, status: status }; }
         onRunningChanged: {
             if (running) return;
+            if (root.bindsReread) {
+                root.bindsReread = false;
+                completion = null;
+                running = true;
+                return;
+            }
             const waiting = root.bindsWaiting;
             root.bindsWaiting = [];
             const ok = completion !== null && completion.code === 0;
@@ -246,9 +268,9 @@ Singleton {
         id: proc
         stdout: StdioCollector {
             onStreamFinished: {
-                const reply = text.trim();
-                if (reply !== "ok")
-                    console.error("compositor: request " + JSON.stringify(root.pending) + " answered " + JSON.stringify(reply));
+                root.reply = text.trim();
+                if (root.reply !== "ok")
+                    console.error("compositor: request " + JSON.stringify(root.pending) + " answered " + JSON.stringify(root.reply));
             }
         }
         onExited: (code, status) => {
@@ -260,7 +282,11 @@ Singleton {
             if (running || root.pending === null) return;
             if (root.completion === null)
                 console.error("compositor: dispatch-start=failed request=" + JSON.stringify(root.pending));
+            const done = root.pendingDone;
+            const answer = root.completion === null ? "dispatch-start=failed" : root.completion.code !== 0 ? "exit=" + root.completion.code : root.reply;
             root.pending = null;
+            root.pendingDone = null;
+            if (done !== null) done(answer);
             root.drain();
         }
     }
