@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/ChainedEngine.js, shell/plugins/vgs.jarvis/backend/jarvisd.js, scripts/test-jarvis-engine.js, scripts/fixtures/jarvis/engine.js, scripts/fixtures/jarvis-brain/openai-chat-frames.js
 
-The chained engine implements the [plan's chained voice](../plans/v2-jarvis-plan.md#35-speech-engines-playback-accounting-latency): speech to text, brain, `Speakable`, text to speech, playback. It connects the existing owners for one conversation at a time. It adds no second queue, player, clock or identity owner.
+The chained engine implements the [plan's chained voice](../plans/v2-jarvis-plan.md#35-speech-engines-playback-accounting-latency): speech to text, brain, `Speakable`, text to speech, playback. It connects the existing owners for one conversation at a time. It adds no second queue, player, clock or identity owner. [D089](../decisions/D089-jarvis-chained-engine-and-heard-prefix.md) records the choices.
 
 ## Owners
 
