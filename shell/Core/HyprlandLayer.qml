@@ -8,7 +8,8 @@ import "HyprlandLayer.js" as Layer
 
 // The one writer of the Hyprland layer: HyprlandLayer.js renders the theme's
 // Hyprland appearance groups, the floating TUIs' window rules and every
-// enabled plugin's `hyprland` manifest data, and this writes the text to
+// enabled plugin's `hyprland` manifest data, the input options with the
+// touchpads Capabilities.hyprland reads, and this writes the text to
 // `<stateDir>/hypr/vgs.lua`, only when its bytes change, then runs
 // `hyprctl reload config-only`. The radius group gets the highest monitor
 // scale here, so grouped-window tab rounding can match scaled window corners.
@@ -62,7 +63,7 @@ Scope {
         hyprland: Theme.hyprland,
         motionScale: Theme.motion.scale
     })
-    readonly property var rendered: inputsReady ? Layer.render(sections, themeAppearance, Theme.name, highestMonitorScale) : null
+    readonly property var rendered: inputsReady ? Layer.render(sections, themeAppearance, Theme.name, highestMonitorScale, Capabilities.hyprland.touchpads) : null
 
     // What `listPlugins` and the plugin manager report beside the manifest
     // errors, as { id, dir, error }: each bind a conflict skipped and each
@@ -79,6 +80,12 @@ Scope {
         if (rendered !== null)
             for (const c of rendered.appearanceConflicts)
                 out.push({ id: c.id, dir: dirOf(c.id), error: "hyprland: appearance declaration ignored for " + c.id + ": already owned by " + c.heldBy });
+        if (rendered !== null)
+            for (const c of rendered.optionConflicts)
+                out.push({ id: c.id, dir: dirOf(c.id), error: "hyprland: " + c.path + " for " + c.id + ":" + c.setting + " skipped: already set by " + c.heldBy });
+        if (rendered !== null)
+            for (const c of rendered.optionRefusals)
+                out.push({ id: c.id, dir: dirOf(c.id), error: "hyprland: " + c.path + " for " + c.id + ":" + c.setting + " skipped: " + c.error });
         for (const section of sections)
             for (const name of section.unknownKeys)
                 out.push({ id: section.id, dir: dirOf(section.id), error: "hyprland: shell.json keys." + name + " names no bind of " + section.id });
@@ -88,6 +95,10 @@ Scope {
     }
 
     Binding { target: Registry; property: "hyprlandProblems"; value: root.problems }
+    // What the `hyprland` capability's reads compare against.
+    Binding { target: Capabilities.hyprland; property: "written"; value: root.rendered === null ? [] : root.rendered.options }
+    Binding { target: Capabilities.hyprland; property: "layerBinds"; value: root.rendered === null ? [] : root.rendered.binds }
+    Binding { target: Capabilities.hyprland; property: "touchpadsWanted"; value: Layer.wantsTouchpads(root.sections) }
     Binding { target: Notices; property: "consent"; value: Layer.consentView(root.machine.consent) }
     Binding { target: Notices; property: "consentState"; value: root.machine.consent }
 

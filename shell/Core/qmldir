@@ -20,4 +20,5 @@ TuiRecords 1.0 TuiRecords.qml
 SecretWriter 1.0 SecretWriter.qml
 SystemSteps 1.0 SystemSteps.qml
 HyprlandLayer 1.0 HyprlandLayer.qml
+HyprlandState 1.0 HyprlandState.qml
 singleton ServiceGate 1.0 ServiceGate.qml

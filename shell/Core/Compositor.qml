@@ -10,13 +10,17 @@ import "Dispatch.js" as Dispatch
 // out of it; the request runs through hyprctl and its reply is judged by
 // text: Hyprland answers a refused dispatcher with exit 0 and an error
 // sentence, so exit status alone says nothing. One process drains a bounded
-// queue, preserving each request until all of its completion signals land.
+// queue of hyprctl argument lists, preserving each request until all of its
+// completion signals land: a dispatch is `hyprctl dispatch <request>`, and
+// a keyboard layout switch, which is no dispatcher, its own argv from
+// Dispatch.switchLayoutRequest.
 // `reveal` brings an application's window into view; its decisions are
 // Dispatch.js's and the Hyprland facts it rests on are runtime-hyprland.md's.
 Singleton {
     id: root
 
-    property string pending: ""
+    // The argv running, or null; the argv waiting, in order.
+    property var pending: null
     property var queue: []
     property var completion: null
 
@@ -39,22 +43,38 @@ Singleton {
             console.error("compositor: " + r.error);
             return r.error;
         }
+        return enqueue(["hyprctl", "dispatch", r.request]);
+    }
+
+    // Switch every keyboard's layout: `next`, `prev` or an index. Returns
+    // `ok` once the request is accepted, or the keyed refusal; the reply is
+    // judged when it lands, as a dispatch's is.
+    function switchLayout(target) {
+        const r = Dispatch.switchLayoutRequest(target);
+        if (!r.ok) {
+            console.error("compositor: " + r.error);
+            return r.error;
+        }
+        return enqueue(r.argv);
+    }
+
+    function enqueue(argv) {
         if (queue.length >= Dispatch.QUEUE_LIMIT) {
-            const error = "refused: dispatch-queue=full limit=" + Dispatch.QUEUE_LIMIT + " request=" + r.request;
+            const error = "refused: dispatch-queue=full limit=" + Dispatch.QUEUE_LIMIT + " request=" + JSON.stringify(argv);
             console.error("compositor: " + error);
             return error;
         }
-        queue = queue.concat([r.request]);
+        queue = queue.concat([argv]);
         drain();
         return "ok";
     }
 
     function drain() {
-        if (pending !== "" || queue.length === 0) return;
+        if (pending !== null || queue.length === 0) return;
         pending = queue[0];
         queue = queue.slice(1);
         completion = null;
-        proc.command = ["hyprctl", "dispatch", pending];
+        proc.command = pending;
         proc.running = true;
     }
 
@@ -187,7 +207,7 @@ Singleton {
             onStreamFinished: {
                 const reply = text.trim();
                 if (reply !== "ok")
-                    console.error("compositor: dispatch " + JSON.stringify(root.pending) + " answered " + JSON.stringify(reply));
+                    console.error("compositor: request " + JSON.stringify(root.pending) + " answered " + JSON.stringify(reply));
             }
         }
         onExited: (code, status) => {
@@ -196,10 +216,10 @@ Singleton {
                 console.error("compositor: hyprctl exited " + code + " for " + JSON.stringify(root.pending));
         }
         onRunningChanged: {
-            if (running || root.pending === "") return;
+            if (running || root.pending === null) return;
             if (root.completion === null)
                 console.error("compositor: dispatch-start=failed request=" + JSON.stringify(root.pending));
-            root.pending = "";
+            root.pending = null;
             root.drain();
         }
     }

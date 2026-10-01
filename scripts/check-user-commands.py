@@ -108,6 +108,7 @@ EXEMPT = (
     ("secrets", "service"),
     ("hyprland", "binds", "*", "shortcut"), ("hyprland", "binds", "*", "key"), ("hyprland", "binds", "*", "hold"), ("hyprland", "appearance"),
     ("hyprland", "layerRules", "*", "namespace"), ("hyprland", "layerRules", "*", "blur"), ("hyprland", "layerRules", "*", "ignoreAlpha"),
+    ("hyprland", "options"),
 )
 
 # A clause's rest runs to its sentence's end: a `.`, `!`, `?` or `;` that

@@ -1,0 +1,31 @@
+{
+    "schemaVersion": 1,
+    "id": "acme.hyprland",
+    "name": "Hyprland options",
+    "version": "0.1.0",
+    "author": "Smoke",
+    "description": "Sets input options through the Hyprland layer and reads the hyprland capability back",
+    "kinds": ["service"],
+    "entryPoints": { "service": "Service.qml" },
+    "capabilities": ["hyprland", "shortcut", "ipc"],
+    "settings": { "sensitivity": 0, "naturalScroll": false, "tapToClick": true, "layouts": "us", "repeatRate": 25, "touchpad": true },
+    "schema": {
+        "sensitivity": { "type": "number", "label": "Pointer speed", "min": -1, "max": 1, "step": 0.05 },
+        "naturalScroll": { "type": "boolean", "label": "Natural scrolling" },
+        "tapToClick": { "type": "boolean", "label": "Tap to click" },
+        "layouts": { "type": "string", "label": "Layouts" },
+        "repeatRate": { "type": "number", "label": "Repeat rate", "min": 1, "max": 200, "step": 1 },
+        "touchpad": { "type": "boolean", "label": "Touchpad" }
+    },
+    "hyprland": {
+        "binds": [{ "shortcut": "ping", "key": "SUPER+F7" }],
+        "options": {
+            "sensitivity": "input.sensitivity",
+            "naturalScroll": "input.natural_scroll",
+            "tapToClick": "input.touchpad.tap_to_click",
+            "layouts": "input.kb_layout",
+            "repeatRate": "input.repeat_rate",
+            "touchpad": "device.touchpad.enabled"
+        }
+    }
+}

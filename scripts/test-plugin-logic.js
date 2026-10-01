@@ -231,6 +231,50 @@ function suite(ctx, check) {
         const r = ctx.validateManifest(raw, "/p");
         check("validateManifest: " + name, r.ok ? null : r.error.slice(0, want === null ? 0 : want.length), want === null ? null : want);
     }
+    // hyprland.options rows over a service whose schema holds one entry of
+    // each kind an option path takes: [name, options, schema patch, want].
+    const optionSettings = { sensitivity: 0, rate: 25, tap: true, natural: false, layouts: "us", profile: "flat" };
+    const optionSchema = {
+        sensitivity: { type: "number", label: "S", min: -1, max: 1, step: 0.05 },
+        rate: { type: "number", label: "R", min: 1, max: 100, step: 1 },
+        tap: { type: "boolean", label: "T" },
+        natural: { type: "boolean", label: "N" },
+        layouts: { type: "string", label: "L" },
+        profile: { type: "enum", label: "P", options: ["flat", "adaptive"] }
+    };
+    const optionRows = [
+        ["an option of each type", { sensitivity: "input.sensitivity", rate: "input.repeat_rate", tap: "input.touchpad.tap_to_click", layouts: "input.kb_layout", profile: "input.accel_profile" }, {}, null],
+        ["the touchpad's enabled through its device", { tap: "device.touchpad.enabled" }, {}, null],
+        ["an enum for a free string", { profile: "input.kb_options" }, {}, null],
+        ["options not an object", ["input.sensitivity"], {}, "hyprland.options must be a non-empty object"],
+        ["options empty", {}, {}, "hyprland.options must be a non-empty object"],
+        ["a path outside the table", { tap: "input.touchpad.drag_lock" }, {}, "hyprland.options.tap must be one of input.kb_layout, "],
+        ["the hyphenated option name, which Lua refuses", { tap: "input.touchpad.tap-to-click" }, {}, "hyprland.options.tap must be one of"],
+        ["a path that is no string", { tap: true }, {}, "hyprland.options.tap must be one of"],
+        ["an inherited path", { tap: "constructor" }, {}, "hyprland.options.tap must be one of"],
+        ["one path for two settings", { tap: "input.natural_scroll", natural: "input.natural_scroll" }, {}, "hyprland.options.natural sets input.natural_scroll, which another setting sets already"],
+        ["a setting with no schema entry", { lefty: "input.left_handed" }, {}, "hyprland.options.lefty names no schema entry \"lefty\""],
+        ["a boolean path for a number", { rate: "input.left_handed" }, {}, "hyprland.options.rate needs a boolean schema entry, got number"],
+        ["a number path for a boolean", { tap: "input.scroll_factor" }, {}, "hyprland.options.tap needs a number schema entry, got boolean"],
+        ["a float without a max", { sensitivity: "input.sensitivity" }, { sensitivity: { type: "number", label: "S", min: -1 } }, "hyprland.options.sensitivity needs min and max within -1 to 1"],
+        ["a float below Hyprland's range", { sensitivity: "input.sensitivity" }, { sensitivity: { type: "number", label: "S", min: -2, max: 1 } }, "hyprland.options.sensitivity needs min and max within -1 to 1"],
+        ["a float above Hyprland's range", { sensitivity: "input.scroll_factor" }, { sensitivity: { type: "number", label: "S", min: 0, max: 3 } }, "hyprland.options.sensitivity needs min and max within 0 to 2"],
+        ["an int with a fractional step", { rate: "input.repeat_rate" }, { rate: { type: "number", label: "R", min: 1, max: 100, step: 0.5 } }, "hyprland.options.rate needs a whole min, max and step"],
+        ["an int with a fractional bound", { rate: "input.repeat_delay" }, { rate: { type: "number", label: "R", min: 1.5, max: 100 } }, "hyprland.options.rate needs a whole min, max and step"],
+        ["a string for a path with choices", { layouts: "input.accel_profile" }, {}, "hyprland.options.layouts needs an enum schema entry, got string"],
+        ["an enum offering a value outside the choices", { profile: "input.accel_profile" }, { profile: { type: "enum", label: "P", options: ["flat", "custom"] } }, "hyprland.options.profile offers \"custom\", not one of adaptive, flat"],
+        ["a boolean for a free string", { tap: "input.kb_layout" }, {}, "hyprland.options.tap needs a string or enum schema entry, got boolean"]
+    ];
+    for (const [name, options, schemaPatch, want] of optionRows) {
+        const raw = Object.assign(JSON.parse(JSON.stringify(svc)), { settings: optionSettings, schema: Object.assign({}, optionSchema, schemaPatch), hyprland: { options: options } });
+        const r = ctx.validateManifest(raw, "/p");
+        check("hyprland.options: " + name, r.ok ? null : r.error.slice(0, want === null ? 0 : want.length), want);
+    }
+    check("hyprland is a known capability", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"] }), "/p").ok, true);
+    check("a normalised manifest carries its options", (() => {
+        const m = ctx.validateManifest(Object.assign({}, svc, { settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").manifest;
+        return m.hyprland.options;
+    })(), { sensitivity: "input.sensitivity" });
     check("validateManifest does not alias its input", (() => { const raw = JSON.parse(JSON.stringify(bar)); const m = ctx.validateManifest(raw, "/p").manifest; m.kinds.push("x"); return raw.kinds; })(), ["bar"]);
     check("validateManifest normalizes capabilities and settings", (() => { const m = ctx.validateManifest(bar, "/p").manifest; return [m.capabilities, m.settings, m.defaultSection]; })(), [[], {}, undefined]);
     check("validateManifest normalizes an absent schema to an object", ctx.validateManifest(bar, "/p").manifest.schema, {});
@@ -800,7 +844,25 @@ const CONTROLS = [
     ["a plugin without an icon is listed with the default", ": DEFAULT_ICON;", ": \"\";"],
     ["status is a manifest key", "\"requirements\", \"status\", \"tui\", \"secrets\", ", "\"requirements\", \"tui\", \"secrets\", "],
     ["secrets is a manifest key", "\"status\", \"tui\", \"secrets\", \"extras\"];", "\"status\", \"tui\", \"extras\"];"],
-    ["secrets is a capability", "\"doctor\", \"secrets\"];", "\"doctor\"];"],
+    ["secrets is a capability", "\"doctor\", \"secrets\", ", "\"doctor\", "],
+    ["hyprland is a capability", "\"secrets\", \"hyprland\"];", "\"secrets\"];"],
+    ["options is a hyprland key", "\"appearance\", \"options\"];", "\"appearance\"];"],
+    ["options alone declare something", " && options === undefined)", ")"],
+    ["options are judged", "return hyprlandOptionsError(options, schema);", "return \"\";"],
+    ["options are a non-empty object", "if (!isPlainObject(options) || Object.keys(options).length === 0)", "if (false)"],
+    ["an option names a table path", "if (typeof path !== \"string\" || !hasOwn(HyprlandLayer.OPTIONS, path))", "if (typeof path !== \"string\")"],
+    ["an option path once", "if (paths.indexOf(path) !== -1)", "if (false)"],
+    ["an option names a schema entry", "if (!hasOwn(schema, name))", "if (false)"],
+    ["a boolean option takes a boolean", "return entry.type === \"boolean\" ? \"\" : \"needs a boolean", "return true ? \"\" : \"needs a boolean"],
+    ["a number option takes a number", "if (entry.type !== \"number\")\n            return \"needs a number", "if (false)\n            return \"needs a number"],
+    ["a number option is bounded", "entry.min === undefined || entry.max === undefined || ", ""],
+    ["a number option lies in Hyprland's range", " || entry.min < row.min || entry.max > row.max)", ")"],
+    ["an int option is whole", "if (row.type === \"int\" && !(", "if (false && !("],
+    ["an int option's step is whole", " && (entry.step === undefined || Number.isInteger(entry.step))))", "))"],
+    ["a choice option takes an enum", "if (entry.type !== \"enum\")\n            return \"needs an enum", "if (false)\n            return \"needs an enum"],
+    ["a choice option offers its choices alone", "if (row.choices.indexOf(entry.options[o]) === -1)", "if (false)"],
+    ["a free string option takes a string or an enum", "return entry.type === \"string\" || entry.type === \"enum\" ? \"\" : \"needs a string", "return true ? \"\" : \"needs a string"],
+    ["a manifest carries its options", "options: clone(raw.hyprland.options || {})", "options: {}"],
     ["a command needs an action", "if (entry.command !== undefined && entry.action === undefined && entry.type !== \"data\")", "if (false)"],
     ["an action is judged", "var badAction = statusActionError(entry, at + \".action\", tui, requirements, system);", "var badAction = \"\";"],
     ["an action sits on a presence or a state", "if (STATUS_ACTION_TYPES.indexOf(entry.type) === -1)\n        return at + \" needs a type", "if (false)\n        return at + \" needs a type"],

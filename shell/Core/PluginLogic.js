@@ -18,7 +18,7 @@ var KINDS = ["bar-widget", "bar", "panel", "overlay", "menu", "window", "service
 
 // Capabilities the core can hand a plugin. A manifest naming another one is
 // refused. Capabilities.qml maps each name to its provider.
-var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "system", "requirements", "doctor", "secrets"];
+var CAPABILITIES = ["compositor", "configure", "idle", "ipc", "lock", "session", "notifications", "polkit", "run", "screens", "shortcut", "surfaces", "builtins", "manager", "toasts", "theme", "layers", "status", "tui", "system", "requirements", "doctor", "secrets", "hyprland"];
 
 // The toast stack's ceilings: how many show at once and how many wait. Core
 // policy; a theme sets the look and the default duration, never these.
@@ -178,10 +178,11 @@ var SECRET_REASONS = ["undeclared", "disabled", "unlisted", "not-offered", "valu
 var NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 // What a manifest's `hyprland` key may hold: binds of the plugin's own
-// shortcuts and blur rules for the core's layer namespaces. Data only; the
-// core renders it (HyprlandLayer.js), so no plugin text reaches the
+// shortcuts, blur rules for the core's layer namespaces, the theme
+// appearance switches and the input options its settings set. Data only;
+// the core renders it (HyprlandLayer.js), so no plugin text reaches the
 // compositor's Lua.
-var HYPRLAND_KEYS = ["binds", "layerRules", "appearance"];
+var HYPRLAND_KEYS = ["binds", "layerRules", "appearance", "options"];
 var HYPRLAND_BIND_KEYS = ["shortcut", "key", "hold"];
 var HYPRLAND_RULE_KEYS = ["namespace", "blur", "ignoreAlpha"];
 // The modifiers a Hyprland key may hold, in the order a normalised key
@@ -1180,8 +1181,8 @@ function keysError(keys, at) {
 // which the manifest must name, so a plugin binds only its own shortcuts. A
 // rule matches `^vgs:<name>$` and sets blur, ignoreAlpha from 0 to 1, or
 // both. Appearance needs the `theme` capability because those switches change
-// how the theme reaches Hyprland. Neither a shortcut, a key nor a namespace
-// appears twice.
+// how the theme reaches Hyprland. `options` passes hyprlandOptionsError.
+// Neither a shortcut, a key nor a namespace appears twice.
 function hyprlandError(hyprland, capabilities, schema) {
     if (!isPlainObject(hyprland))
         return "hyprland must be an object";
@@ -1193,12 +1194,13 @@ function hyprlandError(hyprland, capabilities, schema) {
     var binds = hyprland.binds === undefined ? [] : hyprland.binds;
     var rules = hyprland.layerRules === undefined ? [] : hyprland.layerRules;
     var appearance = hyprland.appearance;
+    var options = hyprland.options;
     if (!Array.isArray(binds))
         return "hyprland.binds must be a list";
     if (!Array.isArray(rules))
         return "hyprland.layerRules must be a list";
-    if (binds.length === 0 && rules.length === 0 && appearance === undefined)
-        return "hyprland declares no binds, layer rules or appearance";
+    if (binds.length === 0 && rules.length === 0 && appearance === undefined && options === undefined)
+        return "hyprland declares no binds, layer rules, appearance or options";
     if (binds.length > 0 && capabilities.indexOf("shortcut") === -1)
         return "hyprland.binds needs capability shortcut";
     var shortcuts = [];
@@ -1270,7 +1272,67 @@ function hyprlandError(hyprland, capabilities, schema) {
                 return at + " must name a boolean schema entry, got " + schema[setting].type;
         }
     }
+    if (options !== undefined)
+        return hyprlandOptionsError(options, schema);
     return "";
+}
+
+// The first defect of a manifest's `hyprland.options`, or "": a non-empty
+// object mapping a schema setting to a path of HyprlandLayer.OPTIONS, each
+// path once, the setting's entry of the path's type (optionSchemaError).
+function hyprlandOptionsError(options, schema) {
+    if (!isPlainObject(options) || Object.keys(options).length === 0)
+        return "hyprland.options must be a non-empty object";
+    var names = Object.keys(options);
+    var paths = [];
+    for (var i = 0; i < names.length; i++) {
+        var name = names[i];
+        var path = options[name];
+        var at = "hyprland.options." + name;
+        if (typeof path !== "string" || !hasOwn(HyprlandLayer.OPTIONS, path))
+            return at + " must be one of " + Object.keys(HyprlandLayer.OPTIONS).join(", ") + ", got " + JSON.stringify(path);
+        if (paths.indexOf(path) !== -1)
+            return at + " sets " + path + ", which another setting sets already";
+        paths.push(path);
+        if (!hasOwn(schema, name))
+            return at + " names no schema entry " + JSON.stringify(name);
+        var bad = optionSchemaError(HyprlandLayer.OPTIONS[path], schema[name]);
+        if (bad !== "")
+            return at + " " + bad;
+    }
+    return "";
+}
+
+// Why schema ENTRY cannot hold option row ROW's values, or "": a `bool`
+// takes a boolean; an `int` or a `float` a number whose `min` and `max` lie
+// in the row's range, whole with a whole `step` for an `int`; a string with
+// `choices` an enum whose options are among them; any other string a string
+// or an enum.
+function optionSchemaError(row, entry) {
+    switch (row.type) {
+    case "bool":
+        return entry.type === "boolean" ? "" : "needs a boolean schema entry, got " + entry.type;
+    case "int":
+    case "float":
+        if (entry.type !== "number")
+            return "needs a number schema entry, got " + entry.type;
+        if (entry.min === undefined || entry.max === undefined || entry.min < row.min || entry.max > row.max)
+            return "needs min and max within " + row.min + " to " + row.max;
+        if (row.type === "int" && !(Number.isInteger(entry.min) && Number.isInteger(entry.max) && (entry.step === undefined || Number.isInteger(entry.step))))
+            return "needs a whole min, max and step";
+        return "";
+    case "string":
+        if (row.choices === undefined)
+            return entry.type === "string" || entry.type === "enum" ? "" : "needs a string or enum schema entry, got " + entry.type;
+        if (entry.type !== "enum")
+            return "needs an enum schema entry, got " + entry.type;
+        for (var o = 0; o < entry.options.length; o++) {
+            if (row.choices.indexOf(entry.options[o]) === -1)
+                return "offers " + JSON.stringify(entry.options[o]) + ", not one of " + row.choices.join(", ");
+        }
+        return "";
+    }
+    throw new Error("optionSchemaError: option type " + JSON.stringify(row.type) + " has no rule");
 }
 
 // The first defect of a `requirements` list, or "": a manifest's key and
@@ -2325,8 +2387,8 @@ function tuiWindow(windows, window) {
 // `schema`, `status`, `tui` and `extras` (objects, `tui` normalTui's
 // shape and each extra both of its lists, {} and [] when undeclared),
 // `defaultSection` only when declared, and
-// `hyprland` only when declared, as { binds, layerRules } with every bind's
-// key normalised by hyprlandKey.
+// `hyprland` only when declared, as { binds, layerRules, appearance,
+// options } with every bind's key normalised by hyprlandKey.
 function validateManifest(raw, sourceDir) {
     if (!isPlainObject(raw))
         return { ok: false, error: "manifest is not a JSON object" };
@@ -2473,7 +2535,8 @@ function validateManifest(raw, sourceDir) {
                 return result;
             }),
             layerRules: clone(raw.hyprland.layerRules || []),
-            appearance: clone(raw.hyprland.appearance || {})
+            appearance: clone(raw.hyprland.appearance || {}),
+            options: clone(raw.hyprland.options || {})
         };
     }
     manifest.__sourceDir = sourceDir;
@@ -2594,11 +2657,16 @@ function copyEntrySettings(target, entry) {
 var ENTRY_RESERVED_KEYS = ["id", "keys"];
 
 // What plugin MANIFEST asks of Hyprland under CONFIG: { id, version, binds,
-// layerRules, appearance, unknownKeys }. `binds` follows the manifest's
+// layerRules, appearance, options, unknownKeys }. `binds` follows the manifest's
 // `hyprland.binds` in order, each { shortcut, key, hold? }: the key its plugins
 // row's `keys` gives that shortcut, normalised, null when the row gives it
 // null (the user unbinds it), else the manifest's. `appearance` resolves
 // each declared group to the boolean effective setting the plugin receives.
+// `options` follows the manifest's `hyprland.options` in order, holding
+// only the settings its plugins row sets, so an option the user never set
+// is never written: { kind: "set", setting, path, value } for a value that
+// fits the setting's schema entry, { kind: "unfit", setting, path, error }
+// with settingError's reason for one that does not.
 // `unknownKeys` lists, sorted, each name the row's `keys` gives that no bind
 // declares. A manifest without `hyprland` asks nothing: empty lists, no
 // appearance, and its row's names all unknown. CONFIG passed configError, so
@@ -2606,7 +2674,7 @@ var ENTRY_RESERVED_KEYS = ["id", "keys"];
 function hyprlandSection(config, manifest) {
     var row = pluginRow(config, manifest.id);
     var keys = row !== undefined && isPlainObject(row.keys) ? row.keys : {};
-    var declared = manifest.hyprland === undefined ? { binds: [], layerRules: [], appearance: {} } : manifest.hyprland;
+    var declared = manifest.hyprland === undefined ? { binds: [], layerRules: [], appearance: {}, options: {} } : manifest.hyprland;
     var binds = declared.binds.map(function (bind) {
         if (!hasOwn(keys, bind.shortcut)) return Object.assign({}, bind);
         if (keys[bind.shortcut] === null) return Object.assign({}, bind, { key: null });
@@ -2622,12 +2690,20 @@ function hyprlandSection(config, manifest) {
         var setting = declared.appearance[group];
         appearance[group] = { setting: setting, enabled: settings[setting] === true };
     });
+    var options = [];
+    Object.keys(declared.options).forEach(function (setting) {
+        if (row === undefined || !hasOwn(row, setting)) return;
+        var path = declared.options[setting];
+        var unfit = settingError(manifest.schema[setting], row[setting]);
+        options.push(unfit === "" ? { kind: "set", setting: setting, path: path, value: clone(row[setting]) } : { kind: "unfit", setting: setting, path: path, error: unfit });
+    });
     return {
         id: manifest.id,
         version: manifest.version,
         binds: binds,
         layerRules: clone(declared.layerRules),
         appearance: appearance,
+        options: options,
         unknownKeys: Object.keys(keys).filter(function (name) { return names.indexOf(name) === -1; }).sort()
     };
 }

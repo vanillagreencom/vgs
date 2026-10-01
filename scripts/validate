@@ -116,6 +116,7 @@ rows=(
   "logic|ipc capability logic table|node scripts/test-ipc-logic.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js shell/Commons/SettingValues.js bin/lib/qml-library.js"
   "logic|requirement notice logic table|node scripts/test-notice-logic.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js shell/Commons/SettingValues.js bin/lib/qml-library.js"
   "logic|Hyprland layer logic|node scripts/test-hyprland-layer.js|shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js shell/Commons/SettingValues.js shell/shell.qml bin/lib/qml-library.js"
+  "logic|Hyprland capability readings|node scripts/test-hyprland-state.js|shell/Core/HyprlandState.js shell/Core/PluginLogic.js shell/Core/PackageManagers.js shell/Ui/icons/Lucide.js shell/Core/HyprlandLayer.js shell/Commons/SettingValues.js bin/lib/qml-library.js"
   "logic|dispatch table|node scripts/test-dispatch.js|shell/Core/Dispatch.js bin/lib/qml-library.js"
   "logic|instance lifetime cleanup|node scripts/test-lifetime.js|shell/Core/Lifetime.js bin/lib/qml-library.js"
   "logic|library loader controls|node scripts/test-qml-library.js|bin/lib/qml-library.js"

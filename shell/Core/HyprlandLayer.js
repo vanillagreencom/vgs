@@ -71,6 +71,46 @@ var TUI_WINDOWS = {
 // shell's windows and centres them; each keeps the size it asks for.
 var APP_WINDOW = { appId: "org.vgs.shell", rule: "vgs:window" };
 
+// The Hyprland options a manifest's `hyprland.options` may map a setting
+// to: the input keys the Mouse and Keyboard settings set, each by its Lua
+// path, which `hyprctl getoption` reads too, with the type and range
+// Hyprland v0.56.2 declares for it (src/config/values/ConfigValues.cpp). A
+// string row with `choices` takes those values alone. The path is the Lua
+// table key, `tap_to_click`, not the hyphenated option name: Hyprland's Lua
+// config refuses `["tap-to-click"]` as an unknown key
+// (docs/architecture/runtime-hyprland-input.md). The `device` row is no
+// option: Hyprland keeps `enabled` per device, so the layer writes it as one
+// `hl.device` per touchpad Hyprland lists.
+var OPTIONS = {
+    "input.kb_layout": { type: "string" },
+    "input.kb_variant": { type: "string" },
+    "input.kb_options": { type: "string" },
+    "input.repeat_rate": { type: "int", min: 0, max: 200 },
+    "input.repeat_delay": { type: "int", min: 0, max: 2000 },
+    "input.numlock_by_default": { type: "bool" },
+    "input.sensitivity": { type: "float", min: -1, max: 1 },
+    "input.accel_profile": { type: "string", choices: ["adaptive", "flat"] },
+    "input.natural_scroll": { type: "bool" },
+    "input.left_handed": { type: "bool" },
+    "input.scroll_factor": { type: "float", min: 0, max: 2 },
+    "input.touchpad.tap_to_click": { type: "bool" },
+    "input.touchpad.natural_scroll": { type: "bool" },
+    "input.touchpad.disable_while_typing": { type: "bool" },
+    "input.touchpad.clickfinger_behavior": { type: "bool" },
+    "input.touchpad.scroll_factor": { type: "float", min: 0, max: 2 },
+    "device.touchpad.enabled": { type: "bool", device: "touchpad" }
+};
+
+// The characters a string option's value may hold: those of XKB layout,
+// variant and option names, which the user's configuration supplies. A
+// quote, a backslash or a line break would end the Lua string.
+var OPTION_STRING = /^[A-Za-z0-9_.,:()+-]*$/;
+
+// A touchpad name the layer may write into `hl.device`: printable ASCII but
+// the quote and the backslash. Hyprland names a device from its descriptor,
+// lower case with spaces and commas as dashes, and keeps every other byte.
+var DEVICE_NAME = /^[\x20\x21\x23-\x5b\x5d-\x7e]+$/;
+
 var APPEARANCE_GROUPS = ["borders", "radius", "motion"];
 var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: false };
 
@@ -329,11 +369,17 @@ function releaseShortcutName(name) {
     return name + ".release";
 }
 
+// The hold companion's global of a bound ENTRY, or null for a bind
+// without `hold`.
+function releaseGlobal(entry) {
+    return entry.bind.hold === true ? releaseShortcutName(entry.global) : null;
+}
+
 function shortcutBindLines(entry) {
     var global = entry.global;
     var lines = ["hl.bind(\"" + bindKeys(entry.bind.key) + "\", hl.dsp.global(\"" + global + "\"), { description = \"" + global + "\" })"];
-    if (entry.bind.hold === true) {
-        var release = releaseShortcutName(global);
+    var release = releaseGlobal(entry);
+    if (release !== null) {
         lines.push("hl.bind(\"" + bindKeys(entry.bind.key) + "\", hl.dsp.global(\"" + release + "\"), { description = \"" + release + "\", release = true, non_consuming = true, transparent = true, ignore_mods = true })");
     }
     return lines;
@@ -444,6 +490,63 @@ function ruleLine(id, rule) {
     return "hl.layer_rule({ " + fields.join(", ") + " })";
 }
 
+// The Lua literal of VALUE for option row ROW: { ok: true, lua } or
+// { ok: false, error }. VALUE fitted the setting's schema entry, whose type
+// PluginLogic matched to the row's, so a value of another type breaks that
+// invariant; a fractional `int` and a string outside OPTION_STRING are a
+// user's values the schema admits.
+function optionLiteral(row, value) {
+    switch (row.type) {
+    case "bool":
+        if (typeof value === "boolean") return { ok: true, lua: value ? "true" : "false" };
+        break;
+    case "int":
+        if (typeof value === "number" && Number.isInteger(value)) return { ok: true, lua: String(value) };
+        if (typeof value === "number") return { ok: false, error: "want=whole-number" };
+        break;
+    case "float":
+        if (typeof value === "number" && isFinite(value)) return { ok: true, lua: String(value) };
+        break;
+    case "string":
+        if (typeof value === "string") return OPTION_STRING.test(value) ? { ok: true, lua: "\"" + value + "\"" } : { ok: false, error: "want=characters:" + OPTION_STRING.source };
+        break;
+    default:
+        throw new Error("HyprlandLayer: option type " + JSON.stringify(row.type) + " has no literal");
+    }
+    throw new Error("HyprlandLayer: option value " + JSON.stringify(value) + " fitted its schema but is no " + row.type);
+}
+
+// The `hl.config` table text of TREE, nested objects of Lua literals keyed
+// in the order each key was first set.
+function optionTree(tree) {
+    return Object.keys(tree).map(function (key) {
+        return key + " = " + (typeof tree[key] === "string" ? tree[key] : "{ " + optionTree(tree[key]) + " }");
+    }).join(", ");
+}
+
+// Whether a section sets an option the layer writes per touchpad, so the
+// shell reads Hyprland's devices for it.
+function wantsTouchpads(sections) {
+    return sections.some(function (section) {
+        return section.options.some(function (option) { return OPTIONS[option.path].device === "touchpad"; });
+    });
+}
+
+// The descriptions of the binds the layer writes in the default submap:
+// each bound shortcut's global and its hold companion's.
+function boundDescriptions(plan) {
+    var out = [];
+    plan.sections.forEach(function (row) {
+        row.binds.forEach(function (entry) {
+            if (entry.kind !== "bound") return;
+            out.push(entry.global);
+            var release = releaseGlobal(entry);
+            if (release !== null) out.push(release);
+        });
+    });
+    return out;
+}
+
 // Resolution makes fresh maps per read, so plugin mutations stay local.
 // An undeclared name is absent; no enabled section means an empty map.
 function shortcutKeys(sections, id) {
@@ -451,8 +554,72 @@ function shortcutKeys(sections, id) {
     return resolved.keys[id] || Object.create(null);
 }
 
-// The layer's text and the binds or appearance owner declarations it could
-// not write.
+// One plugin section's options, as PluginLogic.hyprlandSection lists the
+// ones its plugins row sets, appended to OUT: one `hl.config({ input = ...
+// })` line holding every option written, in the manifest's order, then one
+// `hl.device` line per touchpad for the device row, then a comment for each
+// option not written. HELD maps each path written so far to its plugin, so
+// a path two plugins set stays with the first by id. TOUCHPADS is the
+// touchpad names Hyprland lists, or null while they are unread.
+function optionLines(section, held, touchpads, out) {
+    var tree = {};
+    var devices = [];
+    var notes = [];
+    section.options.forEach(function (option) {
+        var name = section.id + ":" + option.setting;
+        var refuse = function (error) {
+            out.refusals.push({ id: section.id, setting: option.setting, path: option.path, error: error });
+            notes.push("-- skipped " + option.path + " for " + name + ": " + error);
+        };
+        switch (option.kind) {
+        case "unfit":
+            refuse(option.error);
+            return;
+        case "set":
+            break;
+        default:
+            throw new Error("HyprlandLayer: option kind " + JSON.stringify(option.kind) + " is not one of set, unfit");
+        }
+        if (!Object.prototype.hasOwnProperty.call(OPTIONS, option.path))
+            throw new Error("HyprlandLayer: option path " + JSON.stringify(option.path) + " is not one of OPTIONS");
+        if (held[option.path] !== undefined) {
+            out.conflicts.push({ id: section.id, setting: option.setting, path: option.path, heldBy: held[option.path] });
+            notes.push("-- skipped " + option.path + " for " + name + ": already set by " + held[option.path]);
+            return;
+        }
+        var row = OPTIONS[option.path];
+        var literal = optionLiteral(row, option.value);
+        if (!literal.ok) {
+            refuse(literal.error);
+            return;
+        }
+        held[option.path] = section.id;
+        out.written.push({ id: section.id, setting: option.setting, path: option.path, value: option.value });
+        if (row.device === "touchpad") {
+            if (touchpads === null || touchpads === undefined)
+                devices.push("-- " + option.path + " for " + name + ": Hyprland's touchpads are not read yet");
+            else if (touchpads.length === 0)
+                devices.push("-- " + option.path + " for " + name + ": Hyprland lists no touchpad");
+            else touchpads.forEach(function (touchpad) {
+                if (DEVICE_NAME.test(touchpad)) devices.push("hl.device({ name = \"" + touchpad + "\", enabled = " + literal.lua + " })");
+                else devices.push("-- skipped touchpad " + commentText(touchpad) + " for " + name + ": its name holds a quote, a backslash or a control character");
+            });
+            return;
+        }
+        var parts = option.path.split(".");
+        var node = tree;
+        for (var i = 0; i < parts.length - 1; i++) {
+            if (node[parts[i]] === undefined) node[parts[i]] = {};
+            node = node[parts[i]];
+        }
+        node[parts[parts.length - 1]] = literal.lua;
+    });
+    var lines = Object.keys(tree).length > 0 ? ["hl.config({ " + optionTree(tree) + " })"] : [];
+    return lines.concat(devices, notes);
+}
+
+// The layer's text and the binds, options or appearance owner declarations
+// it could not write.
 //
 // SECTIONS are PluginLogic.hyprlandSection results for the enabled plugins,
 // in any order; they are written by plugin id, a section that asks nothing
@@ -466,8 +633,14 @@ function shortcutKeys(sections, id) {
 // written after the header, in order, when their switch is on. The floating
 // TUIs' window rules follow them, then the shell's application window rule
 // and the session lock's restore, before any plugin section, whatever the
-// sections.
-function render(sections, theme, themeName, highestScale) {
+// sections. A section whose plugins row sets options is followed by its
+// options section, optionLines; an option two sections set goes to the
+// first by id. TOUCHPADS is the touchpad names Hyprland lists, or null
+// while unread. The result also lists each option written, as { id,
+// setting, path, value }, each one skipped as a conflict, { id, setting,
+// path, heldBy }, or refused, { id, setting, path, error }, and `binds`,
+// the description of every bind written in the default submap.
+function render(sections, theme, themeName, highestScale, touchpads) {
     var plan = resolveBinds(sections);
     var switches = groupSwitches(sections);
     var lines = [
@@ -488,8 +661,14 @@ function render(sections, theme, themeName, highestScale) {
     else lines.push(disabledGroupLine("motion", switches.groups.motion.setting));
     lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan), [""], sessionLockLines());
     var written = Object.create(null);
+    var options = { written: [], conflicts: [], refusals: [] };
+    var optionsHeld = Object.create(null);
     plan.sections.forEach(function (row) {
         var section = row.section;
+        if (section.options.length > 0) {
+            lines.push("", "-- " + section.id + " " + commentText(section.version) + ": input options its settings set");
+            lines = lines.concat(optionLines(section, optionsHeld, touchpads, options));
+        }
         if (section.binds.length === 0 && section.layerRules.length === 0) return;
         lines.push("", "-- " + section.id + " " + commentText(section.version) + ": binds and layer rules from its manifest");
         section.layerRules.forEach(function (rule) {
@@ -513,7 +692,15 @@ function render(sections, theme, themeName, highestScale) {
             lines = lines.concat(shortcutBindLines(entry));
         });
     });
-    return { text: lines.join("\n") + "\n", conflicts: plan.conflicts, appearanceConflicts: switches.conflicts };
+    return {
+        text: lines.join("\n") + "\n",
+        conflicts: plan.conflicts,
+        appearanceConflicts: switches.conflicts,
+        options: options.written,
+        optionConflicts: options.conflicts,
+        optionRefusals: options.refusals,
+        binds: boundDescriptions(plan)
+    };
 }
 
 // The writer's sequence, HyprlandLayer.qml's one decision about what to do

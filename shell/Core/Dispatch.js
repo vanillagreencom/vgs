@@ -194,6 +194,31 @@ function revealTarget(state, addresses, named) {
     return { state: focused && onScreen(target, state.monitors) ? "shown" : "reveal", address: address };
 }
 
+// ------------------------------------------------------- keyboard layout
+
+// The keyboard layout switch, the `hyprland` capability's
+// switchKeyboardLayout. `switchxkblayout` is a top-level hyprctl command,
+// not a dispatcher: `hyprctl dispatch switchxkblayout ...` is refused in a
+// Lua session (docs/architecture/runtime-hyprland-input.md), so the switch
+// runs as its own argv. `all` moves every keyboard: `next`, `prev`, or the
+// index of a layout in each keyboard's list, which Hyprland reads with
+// std::stoi, so an index stays in its signed 32-bit range.
+var LAYOUT_TARGET = {
+    test: function (value) {
+        return value === "next" || value === "prev" || (/^(0|[1-9][0-9]*)$/.test(value) && Number(value) < 2147483648);
+    }
+};
+
+// Judge one switch: { ok: true, argv } or { ok: false, error } with a keyed
+// line naming the refused target. TARGET is `next`, `prev`, or an index as
+// a whole number or its decimal text.
+function switchLayoutRequest(target) {
+    var value = typeof target === "number" && Number.isInteger(target) ? String(target) : target;
+    if (!(typeof value === "string" && LAYOUT_TARGET.test(value)))
+        return { ok: false, error: "refused: layout=" + JSON.stringify(target === undefined ? null : target) + " want=next|prev|index" };
+    return { ok: true, argv: ["hyprctl", "switchxkblayout", "all", value] };
+}
+
 // Build one request. Returns { ok: true, request } or { ok: false, error }
 // with a keyed error line naming the dispatcher and the refused argument.
 function request(name, args, usingLua) {

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Checks for the Hyprland layer's decisions: the manifest's `hyprland` key
 // and the key grammar in shell/Core/PluginLogic.js, a plugins row's `keys`
-// under PluginLogic.configError, PluginLogic.hyprlandSection, the text
+// under PluginLogic.configError, PluginLogic.hyprlandSection with the input
+// options a plugins row sets, the text
 // shell/Core/HyprlandLayer.js renders, and the writer's sequence,
 // HyprlandLayer.step. Both files load under node through
 // bin/lib/qml-library.js, as the shell loads them.
@@ -170,7 +171,7 @@ const MANIFESTS = [
     ["hyprland with an unknown key", { hyprland: { binds: [toggle], windowRules: [] } }, "hyprland has unknown key \"windowRules\""],
     ["binds not a list", { hyprland: { binds: toggle } }, "hyprland.binds must be a list"],
     ["layerRules not a list", { hyprland: { layerRules: overlayRule } }, "hyprland.layerRules must be a list"],
-    ["no binds, rules or appearance", { hyprland: { binds: [], layerRules: [] } }, "hyprland declares no binds, layer rules or appearance"],
+    ["no binds, rules, appearance or options", { hyprland: { binds: [], layerRules: [] } }, "hyprland declares no binds, layer rules, appearance or options"],
     ["appearance alone", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { borders: "setBorders" } } }, null],
     ["appearance unknown group", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { gaps: "setBorders" } } }, "hyprland.appearance.gaps must be one of borders, radius, motion"],
     ["appearance missing schema key", { capabilities: ["theme"], settings: { setBorders: true }, schema: { setBorders: { type: "boolean", label: "Set borders" } }, hyprland: { appearance: { borders: "missing" } } }, "hyprland.appearance.borders names no schema entry \"missing\""],
@@ -284,7 +285,7 @@ function verify(logic, layer, shellText) {
     const losingHold = Object.assign({}, logic.hyprlandSection({}, holdManifest), { id: "acme.other" });
     assert.ok(!layer.render([logic.hyprlandSection({}, holdManifest), losingHold], theme, "hold").text.includes("acme.other:talk.release"), "conflict skips both hold binds");
     assert.ok(!keycodeText.includes("talk.release"), "ordinary bind has no release companion");
-    same(declared.hyprland, { binds: [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "inbox", key: "SUPER+N" }], layerRules: [overlayRule], appearance: {} }, "a normalised manifest holds normalised keys");
+    same(declared.hyprland, { binds: [{ shortcut: "toggle", key: "SUPER+SPACE" }, { shortcut: "inbox", key: "SUPER+N" }], layerRules: [overlayRule], appearance: {}, options: {} }, "a normalised manifest holds normalised keys");
     same(manifestOf(logic, { hyprland: { layerRules: [overlayRule] } }).hyprland.binds, [], "a normalised manifest without binds holds none");
     assert.strictEqual(manifestOf(logic, {}).hyprland, undefined, "a manifest declaring no hyprland key carries none");
 
@@ -299,17 +300,18 @@ function verify(logic, layer, shellText) {
         binds: [{ shortcut: "toggle", key: "SUPER+CTRL+T" }, { shortcut: "inbox", key: null }],
         layerRules: [overlayRule],
         appearance: {},
+        options: [],
         unknownKeys: ["early", "later"]
     }, "hyprlandSection takes the row's keys over the manifest's and names the unknown ones");
     same(logic.hyprlandSection({}, declared).binds, declared.hyprland.binds, "hyprlandSection keeps the manifest's keys without a row");
-    same(logic.hyprlandSection(config, manifestOf(logic, {})), { id: "acme.keys", version: "1.0.0", binds: [], layerRules: [], appearance: {}, unknownKeys: ["early", "inbox", "later", "toggle"] }, "a manifest asking nothing leaves every row name unknown");
+    same(logic.hyprlandSection(config, manifestOf(logic, {})), { id: "acme.keys", version: "1.0.0", binds: [], layerRules: [], appearance: {}, options: [], unknownKeys: ["early", "inbox", "later", "toggle"] }, "a manifest asking nothing leaves every row name unknown");
     const appearanceManifest = manifestOf(logic, { capabilities: ["theme"], settings: { setBorders: true, setMotion: false }, schema: { setBorders: { type: "boolean", label: "Set borders" }, setMotion: { type: "boolean", label: "Set motion" } }, hyprland: { appearance: { borders: "setBorders", motion: "setMotion" } } });
     same(logic.hyprlandSection({ plugins: [{ id: "acme.keys", setBorders: false, setMotion: true }] }, appearanceManifest).appearance, {
         borders: { setting: "setBorders", enabled: false },
         motion: { setting: "setMotion", enabled: true }
     }, "hyprlandSection resolves appearance switches from effective plugin settings");
 
-    const section = (id, binds, layerRules, version, appearance) => ({ id: id, version: version || "1.0.0", binds: binds, layerRules: layerRules, appearance: appearance || {}, unknownKeys: [] });
+    const section = (id, binds, layerRules, version, appearance) => ({ id: id, version: version || "1.0.0", binds: binds, layerRules: layerRules, appearance: appearance || {}, options: [], unknownKeys: [] });
     const lines = out => out.text.split("\n");
     const bare = layer.render([], theme, "vgs", 2);
     const bareLines = lines(bare);
@@ -438,6 +440,87 @@ function verify(logic, layer, shellText) {
     assert.ok(text.includes("-- Theme night?os.exit(): window, group and group bar borders."), "a theme name cannot leave its comment");
     same(out.conflicts, [{ id: "vgs.notes", shortcut: "open", key: "SUPER+SPACE", heldBy: "acme.keys" }], "the skipped bind is the one conflict");
 
+    // Input options: what hyprlandSection lists from the plugins row, and the
+    // section the layer writes from it.
+    const optionManifest = manifestOf(logic, {
+        settings: { sensitivity: 0, natural: false, tap: true, layouts: "us", rate: 25, touchpad: true },
+        schema: {
+            sensitivity: { type: "number", label: "S", min: -1, max: 1, step: 0.05 },
+            natural: { type: "boolean", label: "N" },
+            tap: { type: "boolean", label: "T" },
+            layouts: { type: "string", label: "L" },
+            rate: { type: "number", label: "R", min: 0, max: 200, step: 1 },
+            touchpad: { type: "boolean", label: "P" }
+        },
+        hyprland: { binds: [toggle], options: { sensitivity: "input.sensitivity", natural: "input.natural_scroll", tap: "input.touchpad.tap_to_click", layouts: "input.kb_layout", rate: "input.repeat_rate", touchpad: "device.touchpad.enabled" } }
+    });
+    const optionConfig = row => ({ plugins: [Object.assign({ id: "acme.keys" }, row)] });
+    same(logic.hyprlandSection(optionConfig({ sensitivity: 0.35, tap: false, layouts: "us,de" }), optionManifest).options, [
+        { kind: "set", setting: "sensitivity", path: "input.sensitivity", value: 0.35 },
+        { kind: "set", setting: "tap", path: "input.touchpad.tap_to_click", value: false },
+        { kind: "set", setting: "layouts", path: "input.kb_layout", value: "us,de" }
+    ], "hyprlandSection lists only the options the plugins row sets, in the manifest's order");
+    same(logic.hyprlandSection({}, optionManifest).options, [], "a plugin with no plugins row sets no option");
+    same(logic.hyprlandSection(optionConfig({ sensitivity: 3 }), optionManifest).options, [{ kind: "unfit", setting: "sensitivity", path: "input.sensitivity", error: "want=at-most:1" }], "a set value outside its schema entry is unfit");
+    const optionSection = row => logic.hyprlandSection(optionConfig(row), optionManifest);
+    const optionText = (sections, touchpads) => layer.render(sections, theme, "vgs", 1, touchpads);
+    const optionsOut = optionText([optionSection({ sensitivity: 0.35, tap: false, layouts: "us,de" })], null);
+    const optionsTail = lines(optionsOut).slice(lines(optionsOut).indexOf(LOCK_SECTION[1]) + 1);
+    same(optionsTail, [
+        "",
+        "-- acme.keys 1.0.0: input options its settings set",
+        "hl.config({ input = { sensitivity = 0.35, touchpad = { tap_to_click = false }, kb_layout = \"us,de\" } })",
+        "",
+        "-- acme.keys 1.0.0: binds and layer rules from its manifest",
+        "hl.bind(\"SUPER + SPACE\", hl.dsp.global(\"acme.keys:toggle\"), { description = \"acme.keys:toggle\" })",
+        ""
+    ], "the options section holds one hl.config of the set options, in the manifest's order, before the plugin's binds");
+    assert.ok(!optionsOut.text.includes("tap-to-click"), "the layer writes the Lua name tap_to_click, never the hyphenated option name");
+    assert.ok(!optionsOut.text.includes("natural_scroll") && !optionsOut.text.includes("repeat_rate"), "an option the plugins row does not set is not written");
+    same(optionsOut.options, [
+        { id: "acme.keys", setting: "sensitivity", path: "input.sensitivity", value: 0.35 },
+        { id: "acme.keys", setting: "tap", path: "input.touchpad.tap_to_click", value: false },
+        { id: "acme.keys", setting: "layouts", path: "input.kb_layout", value: "us,de" }
+    ], "the render lists each option it wrote");
+    same(optionsOut.binds, ["acme.keys:toggle"], "the render lists the description of each bind it wrote");
+    same([optionsOut.optionConflicts, optionsOut.optionRefusals], [[], []], "a clean options section reports nothing");
+    assert.ok(!lines(optionText([optionSection({})], null)).includes("-- acme.keys 1.0.0: input options its settings set"), "a plugins row that sets no option writes no options section");
+    // rows: [name, plugins row, touchpads, lines the options section ends with, refusals]
+    const optionRows = [
+        ["a fractional int is refused", { rate: 2.5 }, null, ["-- skipped input.repeat_rate for acme.keys:rate: want=whole-number"], [{ id: "acme.keys", setting: "rate", path: "input.repeat_rate", error: "want=whole-number" }]],
+        ["a string that would end the Lua string is refused", { layouts: "us\"), os.exit(" }, null, ["-- skipped input.kb_layout for acme.keys:layouts: want=characters:^[A-Za-z0-9_.,:()+-]*$"], [{ id: "acme.keys", setting: "layouts", path: "input.kb_layout", error: "want=characters:^[A-Za-z0-9_.,:()+-]*$" }]],
+        ["an unfit value is skipped with its reason", { sensitivity: 3 }, null, ["-- skipped input.sensitivity for acme.keys:sensitivity: want=at-most:1"], [{ id: "acme.keys", setting: "sensitivity", path: "input.sensitivity", error: "want=at-most:1" }]],
+        ["the touchpad is written per touchpad Hyprland lists", { touchpad: false }, ["elan0676:00-04f3:3195-touchpad", "apple-trackpad\"x"], ["hl.device({ name = \"elan0676:00-04f3:3195-touchpad\", enabled = false })", "-- skipped touchpad apple-trackpad\"x for acme.keys:touchpad: its name holds a quote, a backslash or a control character"], []],
+        ["no touchpad listed writes none", { touchpad: false }, [], ["-- device.touchpad.enabled for acme.keys:touchpad: Hyprland lists no touchpad"], []],
+        ["unread touchpads write none", { touchpad: true }, null, ["-- device.touchpad.enabled for acme.keys:touchpad: Hyprland's touchpads are not read yet"], []]
+    ];
+    for (const [name, row, touchpads, want, refusals] of optionRows) {
+        const out = optionText([optionSection(row)], touchpads);
+        const text = lines(out);
+        const start = text.indexOf("-- acme.keys 1.0.0: input options its settings set") + 1;
+        same(text.slice(start, start + want.length), want, "options: " + name);
+        same(out.optionRefusals, refusals, "options: " + name + ": refusals");
+    }
+    const rival = Object.assign({}, optionSection({ sensitivity: -0.5 }), { id: "acme.other" });
+    const contested = optionText([optionSection({ sensitivity: 0.35 }), rival], null);
+    const contestedLines = lines(contested);
+    same(contestedLines.slice(contestedLines.indexOf("-- acme.keys 1.0.0: input options its settings set")), [
+        "-- acme.keys 1.0.0: input options its settings set",
+        "hl.config({ input = { sensitivity = 0.35 } })",
+        "",
+        "-- acme.keys 1.0.0: binds and layer rules from its manifest",
+        "hl.bind(\"SUPER + SPACE\", hl.dsp.global(\"acme.keys:toggle\"), { description = \"acme.keys:toggle\" })",
+        "",
+        "-- acme.other 1.0.0: input options its settings set",
+        "-- skipped input.sensitivity for acme.other:sensitivity: already set by acme.keys",
+        "",
+        "-- acme.other 1.0.0: binds and layer rules from its manifest",
+        "-- skipped SUPER+SPACE: already bound by acme.keys",
+        ""
+    ], "sections by id, and a path two plugins set stays with the first by id");
+    same(contested.optionConflicts, [{ id: "acme.other", setting: "sensitivity", path: "input.sensitivity", heldBy: "acme.keys" }], "the skipped option is the one option conflict");
+    same([layer.wantsTouchpads([optionSection({ touchpad: false })]), layer.wantsTouchpads([optionSection({ tap: false })]), layer.wantsTouchpads([])], [true, false, false], "only a set touchpad option asks for the touchpads");
+    assert.throws(() => optionText([Object.assign({}, optionSection({}), { options: [{ kind: "set", setting: "x", path: "input.nope", value: true }] })], null), /option path "input.nope" is not one of OPTIONS/, "a path outside the table never reaches the text");
     for (const [name, events, wantActions, wantState] of SEQUENCES) {
         let state = layer.initialState();
         const actions = [];
@@ -595,7 +678,7 @@ const CONTROLS = [
     [logicFile, "hyprland keys", "if (HYPRLAND_KEYS.indexOf(keys[u]) === -1)", "if (false)"],
     [logicFile, "binds list", "if (!Array.isArray(binds))", "if (false)"],
     [logicFile, "rules list", "if (!Array.isArray(rules))", "if (false)"],
-    [logicFile, "declares something", "if (binds.length === 0 && rules.length === 0 && appearance === undefined)", "if (false)"],
+    [logicFile, "declares something", "if (binds.length === 0 && rules.length === 0 && appearance === undefined && options === undefined)", "if (false)"],
     [logicFile, "binds need shortcut", "if (binds.length > 0 && capabilities.indexOf(\"shortcut\") === -1)", "if (false)"],
     [logicFile, "bind object", "if (!isPlainObject(bind))", "if (false)"],
     [logicFile, "bind keys", "if (HYPRLAND_BIND_KEYS.indexOf(bindKeys[k]) === -1)", "if (false)"],
@@ -603,7 +686,7 @@ const CONTROLS = [
     [logicFile, "shortcut once", "if (shortcuts.indexOf(bind.shortcut) !== -1)", "if (false)"],
     [logicFile, "hold boolean", "if (bind.hold !== undefined && typeof bind.hold !== \"boolean\")", "if (false)"],
     [logicFile, "hold retained", "if (bind.hold === true) result.hold = true;", "if (false) result.hold = true;"],
-    [layerFile, "hold release emitted", "if (entry.bind.hold === true)", "if (false)"],
+    [layerFile, "hold release emitted", "return entry.bind.hold === true ? releaseShortcutName", "return false ? releaseShortcutName"],
     [layerFile, "release ignores live modifiers", "ignore_mods = true", "ignore_mods = false"],
     [layerFile, "release does not consume input", "non_consuming = true", "non_consuming = false"],
     [layerFile, "release is not shadowed", "transparent = true", "transparent = false"],
@@ -703,6 +786,22 @@ const CONTROLS = [
     [layerFile, "a render waits for the step", "return state.phase === \"idle\" ? begin(state, text) : { state: state, action: \"none\" };", "return begin(state, text);"],
     [layerFile, "a render request starts when idle", "return state.phase === \"idle\" ? begin(queued, text) : { state: queued, action: \"none\" };", "return { state: queued, action: \"none\" };"],
     [layerFile, "a result out of its phase is refused", "if (state.phase !== phase)", "if (false)"],
+    [logicFile, "only a set option is listed", "if (row === undefined || !hasOwn(row, setting)) return;", "if (row === undefined) return;"],
+    [logicFile, "an option value is judged by its schema entry", "var unfit = settingError(manifest.schema[setting], row[setting]);", "var unfit = \"\";"],
+    [layerFile, "the options section is written", "if (section.options.length > 0) {", "if (false) {"],
+    [layerFile, "the options section precedes the binds", "    plan.sections.forEach(function (row) {\n        var section = row.section;\n        if (section.options.length > 0) {", "    plan.sections.slice().reverse().forEach(function (row) {\n        var section = row.section;\n        if (section.options.length > 0) {"],
+    [layerFile, "options keep the manifest's order", "return Object.keys(tree).map(function (key) {", "return Object.keys(tree).sort().map(function (key) {"],
+    [layerFile, "the Lua name, not the hyphenated option name", "\"input.touchpad.tap_to_click\": { type: \"bool\" },", "\"input.touchpad.tap-to-click\": { type: \"bool\" },"],
+    [layerFile, "a path outside the table is refused", "if (!Object.prototype.hasOwnProperty.call(OPTIONS, option.path))\n            throw", "if (false)\n            throw"],
+    [layerFile, "the first plugin by id keeps a path", "if (held[option.path] !== undefined) {", "if (false) {"],
+    [layerFile, "an unfit option is reported", "case \"unfit\":\n            refuse(option.error);", "case \"unfit\":\n            void (option.error);"],
+    [layerFile, "an int is whole", "if (typeof value === \"number\" && Number.isInteger(value)) return { ok: true, lua: String(value) };", "if (typeof value === \"number\") return { ok: true, lua: String(value) };"],
+    [layerFile, "a string keeps to its characters", "return OPTION_STRING.test(value) ?", "return true ?"],
+    [layerFile, "the touchpad option is per device", "if (row.device === \"touchpad\") {", "if (false) {"],
+    [layerFile, "a touchpad name is judged", "if (DEVICE_NAME.test(touchpad))", "if (true)"],
+    [layerFile, "the written options are listed", "out.written.push({ id: section.id, setting: option.setting, path: option.path, value: option.value });", ""],
+    [layerFile, "the written binds are listed", "            out.push(entry.global);\n", ""],
+    [layerFile, "a set touchpad option asks for the touchpads", "return OPTIONS[option.path].device === \"touchpad\"; });", "return false; });"],
     [layerFile, "an unreadable file is reported", "event.notFound ? state.failure : \"read=failed \" + event.detail, text", "state.failure, text"]
 ];
 

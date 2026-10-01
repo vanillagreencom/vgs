@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Table-driven checks for shell/Core/Dispatch.js, loaded under node through
 // bin/lib/qml-library.js: every dispatcher in both syntaxes, one refusal
-// per argument class, and a control per rule. The compositor-dispatchers
+// per argument class, the keyboard layout switch's argv and refusals, and a
+// control per rule. The compositor-dispatchers
 // smoke row also reads the new effects back from nested Hyprland.
 "use strict";
 const path = require("path");
@@ -172,6 +173,36 @@ function verifyReveal(lib, report) {
 }
 failures += verifyReveal(ctx, true);
 
+// The keyboard layout switch: the argv it runs, never a dispatch, and the
+// targets it refuses. verifySwitch answers how many rows failed.
+function verifySwitch(lib, report) {
+    let bad = 0;
+    const row = (name, got, want) => {
+        if (JSON.stringify(got) !== JSON.stringify(want)) bad += 1;
+        if (report) check(name, got, want);
+    };
+    const argv = target => ({ ok: true, argv: ["hyprctl", "switchxkblayout", "all", target] });
+    // rows: [name, target, want]
+    const switches = [
+        ["the next layout", "next", argv("next")],
+        ["the previous layout", "prev", argv("prev")],
+        ["an index as a number", 1, argv("1")],
+        ["the first index as text", "0", argv("0")],
+        ["the last index std::stoi reads", "2147483647", argv("2147483647")],
+        ["an index past std::stoi", 2147483648, { ok: false, error: "refused: layout=2147483648 want=next|prev|index" }],
+        ["a negative index", -1, { ok: false, error: "refused: layout=-1 want=next|prev|index" }],
+        ["a fractional index", 1.5, { ok: false, error: "refused: layout=1.5 want=next|prev|index" }],
+        ["a leading zero", "01", { ok: false, error: "refused: layout=\"01\" want=next|prev|index" }],
+        ["another word", "up", { ok: false, error: "refused: layout=\"up\" want=next|prev|index" }],
+        ["a second command", "next; reload", { ok: false, error: "refused: layout=\"next; reload\" want=next|prev|index" }],
+        ["an empty target", "", { ok: false, error: "refused: layout=\"\" want=next|prev|index" }],
+        ["no target", undefined, { ok: false, error: "refused: layout=null want=next|prev|index" }]
+    ];
+    for (const [name, target, want] of switches) row("switch: " + name, lib.switchLayoutRequest(target), want);
+    return bad;
+}
+failures += verifySwitch(ctx, true);
+
 // Each control removes one reveal rule from a copy of Dispatch.js and keeps
 // the text around it; verifyReveal must fail on every copy.
 const fs = require("fs");
@@ -235,6 +266,25 @@ try {
             lib.DISPATCHERS[name][dialect] = () => dialect === "lua" ? "hl.dsp.no_op()" : "nop";
             check("control " + dialect + " drops " + name, verifyDispatch(lib, false) > 0, true);
         }
+    }
+    // Each switch control removes one rule from a copy; the first sends the
+    // switch through `hyprctl dispatch`, which a Lua session refuses.
+    const switchControls = [
+        ["the switch is its own command, not a dispatch", 'argv: ["hyprctl", "switchxkblayout", "all", value]', 'argv: ["hyprctl", "dispatch", "switchxkblayout all " + value]'],
+        ["the switch moves every keyboard", '"switchxkblayout", "all", value]', '"switchxkblayout", "current", value]'],
+        ["the target is judged", "if (!(typeof value === \"string\" && LAYOUT_TARGET.test(value)))", "if (false)"],
+        ["an index is decimal", "/^(0|[1-9][0-9]*)$/.test(value)", "/^[0-9]+$/.test(value)"],
+        ["an index stays in std::stoi's range", " && Number(value) < 2147483648", ""],
+        ["a whole number is an index", "Number.isInteger(target) ? String(target) : target", "false ? String(target) : target"]
+    ];
+    for (const [name, needle, replacement] of switchControls) {
+        if (source.split(needle).length !== 2) { check("control " + name + " matches once", false, true); continue; }
+        const mutant = path.join(scratch, "Dispatch.js");
+        fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        let bad;
+        try { bad = verifySwitch(require("../bin/lib/qml-library.js").load(mutant), false); }
+        catch (e) { bad = 1; }
+        check("control " + name + " fails the switch rows", bad > 0, true);
     }
     for (const [name, needle, replacement] of revealControls) {
         if (source.split(needle).length !== 2) { failures += 1; console.log("  FAIL  control " + name + ": the text to replace must occur once"); continue; }

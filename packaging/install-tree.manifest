@@ -50,6 +50,8 @@ f share/vgs/shell/Core/Config.qml
 f share/vgs/shell/Core/Dispatch.js
 f share/vgs/shell/Core/HyprlandLayer.js
 f share/vgs/shell/Core/HyprlandLayer.qml
+f share/vgs/shell/Core/HyprlandState.js
+f share/vgs/shell/Core/HyprlandState.qml
 f share/vgs/shell/Core/IdleRegistry.qml
 f share/vgs/shell/Core/IpcRegistry.qml
 f share/vgs/shell/Core/Layers.qml

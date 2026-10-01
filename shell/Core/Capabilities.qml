@@ -23,9 +23,14 @@ Singleton {
     TuiRunner { id: tuis }
     SecretWriter { id: secrets }
     SystemSteps { id: systemSteps; active: root.systemHeld }
+    HyprlandState {
+        id: hyprlandState
+        active: root.holderIds("hyprland").length > 0 || hyprlandState.touchpadsWanted
+    }
     readonly property alias sessionLock: sessionLock
     readonly property alias themes: themes
     readonly property alias tuis: tuis
+    readonly property alias hyprland: hyprlandState
 
     readonly property bool notificationsHeld: holderIds("notifications").length > 0
     // `<plugin id>:<name>` -> the description each registered shortcut
@@ -157,6 +162,7 @@ Singleton {
         tui: tuis.provider,
         system: systemSteps.provider,
         secrets: secrets.provider,
+        hyprland: hyprlandState.provider,
         // `missing`: the plugin's own requirement commands the last scan did
         // not find, in declaration order, a copy per read; bindable.
         requirements: ctx => ({
@@ -280,7 +286,8 @@ Singleton {
             theme: themes.record(),
             tui: tuis.record(),
             system: systemSteps.record(),
-            notices: Notices.record()
+            notices: Notices.record(),
+            hyprland: hyprlandState.record()
         });
     }
 }

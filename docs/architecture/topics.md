@@ -8,6 +8,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [appearance.md](appearance.md): read before writing a plugin that owns its look, or touching `Theme.appearance` or its judge.
 - [layers.md](layers.md): read before drawing a passive surface that takes no keyboard, or touching the `layers` capability or its host.
 - [hyprland.md](hyprland.md): read before touching the Hyprland layer, a manifest's `hyprland` key, a `plugins[].keys` entry or `vgsh hypr`.
+- [hyprland-options.md](hyprland-options.md): read before touching a manifest's `hyprland.options`, the option table or the `hyprland` capability.
 - [status.md](status.md): read before touching plugin status or the Settings page's Status rows.
 - [status-actions.md](status-actions.md): read before touching a status action, a manifest's `secrets` or the core's libsecret writer.
 - [jarvis.md](jarvis.md): read before implementing a Jarvis plan consumer of a landed core contract.
@@ -54,6 +55,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [runtime-hyprland.md](runtime-hyprland.md): read before touching a dispatch, `Compositor` or `Dispatch.js`, or relying on what Hyprland does.
 - [runtime-hyprland-nested.md](runtime-hyprland-nested.md): read before touching the nested sandbox's outputs, `scripts/smoke/shot.sh` or a fault that names the nested window.
 - [runtime-hyprland-capture.md](runtime-hyprland-capture.md): read before touching the overlay keyboard capture, its submap or `scripts/smoke/rows/overlay-capture.sh`.
+- [runtime-hyprland-input.md](runtime-hyprland-input.md): read before relying on a Hyprland input option, a device, a bind reading or `switchxkblayout`.
 - [runtime-pointer.md](runtime-pointer.md): read before touching a pointer handler, a cursor, a hover reading or a popup.
 - [validation.md](validation.md), [validation-qml-unit.md](validation-qml-unit.md), [validation-smoke.md](validation-smoke.md), [validation-smoke-gallery.md](validation-smoke-gallery.md) and [validation-smoke-harness.md](validation-smoke-harness.md): read before touching `scripts/validate`, the nested sandbox, the Gallery or HiDPI smoke rows, its harness or a smoke row's verdict.
 - [validation-smoke-host.md](validation-smoke-host.md): read before touching a sentinel, the stand-in terminal or a row that presses a button which opens a TUI.
