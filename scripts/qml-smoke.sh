@@ -225,6 +225,7 @@ smoke_row monitor-rules
 smoke_row hold-shortcuts
 smoke_row jarvis-keys
 smoke_row jarvis-widget
+smoke_row jarvis-desktop
 smoke_row instance-guard
 smoke_row diagnostics
 smoke_row supervise
