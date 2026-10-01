@@ -218,6 +218,7 @@ smoke_row jarvis
 smoke_row jarvis-setup
 smoke_row hyprland
 smoke_row hyprland-options
+smoke_row monitor-rules
 smoke_row hold-shortcuts
 smoke_row jarvis-keys
 smoke_row jarvis-widget

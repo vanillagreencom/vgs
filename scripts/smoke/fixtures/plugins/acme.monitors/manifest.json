@@ -1,0 +1,11 @@
+{
+    "schemaVersion": 1,
+    "id": "acme.monitors",
+    "name": "Monitor rules",
+    "version": "0.1.0",
+    "author": "Smoke",
+    "description": "Writes monitor rules through the monitors capability and reads them back",
+    "kinds": ["service"],
+    "entryPoints": { "service": "Service.qml" },
+    "capabilities": ["monitors", "ipc"]
+}

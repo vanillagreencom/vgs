@@ -272,6 +272,7 @@ function suite(ctx, check) {
     check("hyprland.options needs the hyprland capability", ctx.validateManifest(Object.assign({}, svc, { settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").error, "hyprland.options needs capability hyprland");
     check("hyprland.options setting names are schema setting names", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: Object.assign({}, optionSettings, { "bad\nos.exit()": "us" }), schema: Object.assign({}, optionSchema, { "bad\nos.exit()": { type: "string", label: "Bad", presets: [{ value: "us" }] } }), hyprland: { options: { "bad\nos.exit()": "input.kb_layout" } } }), "/p").error, "hyprland.options.bad\nos.exit() must be a setting name");
     check("hyprland is a known capability", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"] }), "/p").ok, true);
+    check("monitors is a known capability", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["monitors"] }), "/p").ok, true);
     check("a normalised manifest carries its options", (() => {
         const m = ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").manifest;
         return m.hyprland.options;
@@ -677,6 +678,7 @@ function suite(ctx, check) {
         ["a plugin may hold what it already holds", { polkit: "acme.tune" }, ["polkit"], ""],
         ["a shared capability is never refused", { lock: "acme.other" }, ["run", "screens"], ""],
         ["the Bluetooth agent held by another plugin refuses", { bluetoothAgent: "acme.other" }, ["bluetoothAgent", "ipc"], "refused: capability=bluetoothAgent held-by=acme.other"],
+        ["the monitor rules serve one plugin", { monitors: "acme.other" }, ["monitors", "ipc"], "refused: capability=monitors held-by=acme.other"],
     ];
     for (const [name, held, capabilities, want] of lendRows) {
         check("lendRefusal: " + name, ctx.lendRefusal(held, Object.assign({}, tunable, { capabilities: capabilities })), want);
@@ -797,8 +799,10 @@ suite(load(LOGIC), report);
 // package-manager table and the Hyprland layer's table it imports.
 const CONTROLS = [
     ["session is a known capability", '"lock", "session",', '"lock", ("session" && "planted"),'],
-    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent"].concat(["session"]);'],
-    ["the Bluetooth agent is exclusive", '"polkit", "bluetoothAgent"];', '"polkit"];'],
+    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"].concat(["session"]);'],
+    ["the Bluetooth agent is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "monitors"];'],
+    ["monitors is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent"];'],
+    ["monitors is a capability", "\"hyprland\", \"bluetoothAgent\", \"monitors\"];", "\"hyprland\", \"bluetoothAgent\"];"],
     ["optionsFrom needs a string", "if (entry.type !== \"string\")\n                return at + \".optionsFrom needs type string\";", "if (false)\n                return at + \".optionsFrom needs type string\";"],
     ["hyprland options need the capability", "if (options !== undefined && capabilities.indexOf(\"hyprland\") === -1)\n        return \"hyprland.options needs capability hyprland\";", "if (false)\n        return \"hyprland.options needs capability hyprland\";"],
     ["hyprland option names are setting names", "if (!STATUS_KEY_PATTERN.test(name))\n            return at + \" must be a setting name\";", "if (false)\n            return at + \" must be a setting name\";"],

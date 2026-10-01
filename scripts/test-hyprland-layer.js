@@ -46,6 +46,8 @@ const APP_SECTION = [
 ];
 // The session lock's restore, byte for byte: Omarchy's looknfeel.lua
 // setting, so a shell started after a crash while locked locks again.
+// The monitor rules' header, byte for byte.
+const MONITOR_HEADER = "-- Monitors: the output rules monitors.json sets.";
 const LOCK_SECTION = [
     "-- Session lock: a restarted shell takes over a lock whose client died.",
     "hl.config({ misc = { allow_session_lock_restore = true } })"
@@ -319,6 +321,29 @@ function verify(logic, layer, shellText) {
     assert.ok(bareLines.indexOf("-- Theme appearance: motion left to the user's config; core default is off.") < bareLines.indexOf(TUI_SECTION[0]), "theme appearance is before floating TUIs");
     assert.ok(bareLines.indexOf(TUI_SECTION[0]) < bareLines.indexOf(APP_SECTION[0]), "floating TUIs are before application windows");
     same(bareLines.slice(bareLines.indexOf(TUI_SECTION[0])), [...TUI_SECTION, "", ...APP_SECTION, "", ...captureSection([]), "", ...LOCK_SECTION, ""], "a layer with no plugin section ends with the floating TUIs window rules, the application window rule, overlay capture, then the session lock's restore");
+    // The monitor rules: one section after the session lock's restore and
+    // before every plugin section, none without a rule, one comment for a
+    // document the judge refused, and no render before the document is read.
+    const monitorRules = ["hl.monitor({ output = \"DP-2\", mode = \"3840x2160@60.000\", position = \"0x0\", scale = 2 })", "hl.monitor({ output = \"eDP-1\", disabled = true })"];
+    const ruled = lines(layer.render([section("acme.keys", [toggle], [overlayRule])], theme, "vgs", 1, null, "", { lines: monitorRules }));
+    same(ruled.slice(ruled.indexOf(LOCK_SECTION[0]), ruled.indexOf(LOCK_SECTION[0]) + 7), [...LOCK_SECTION, "", MONITOR_HEADER, ...monitorRules, ""], "the monitor rules follow the session lock's restore under their header");
+    assert.ok(ruled.indexOf(monitorRules[1]) < ruled.indexOf("-- acme.keys 1.0.0: binds and layer rules from its manifest"), "the monitor rules come before every plugin section");
+    const unruled = lines(layer.render([], theme, "vgs", 1, null, "", { lines: [] }));
+    same(unruled.slice(unruled.indexOf(LOCK_SECTION[0])), [...LOCK_SECTION, ""], "no monitor rule writes no section");
+    const refusedDocument = lines(layer.render([], theme, "vgs", 1, null, "", { refused: "refused: rule=0 output=\"DP-1\\n\" want=identifier" }));
+    same(refusedDocument.slice(refusedDocument.indexOf(LOCK_SECTION[0]) + 2), ["", "-- Monitors: monitors.json is not applied: refused: rule=0 output=\"DP-1\\n\" want=identifier", ""], "a refused document writes one comment in the section's place");
+    same(lines(layer.render([], theme, "vgs", 1, null, "", { refused: "line\nbreak" })).filter(line => line.startsWith("-- Monitors")), ["-- Monitors: monitors.json is not applied: line?break"], "a refusal reaches the comment as printable ASCII");
+    assert.throws(() => layer.render([], theme, "vgs", 1, null, "", {}), /neither \{ lines \} nor \{ refused \}/, "a monitor input of another shape is refused");
+    // rows: [name, document, want]
+    const monitorInputs = [
+        ["an unread document holds the render back", null, null],
+        ["an absent document is read and has no rule", { state: "absent", rules: [], error: "", text: null }, { lines: [] }],
+        ["a loaded document's lines", { state: "loaded", rules: [{ output: "eDP-1", disabled: true }], error: "", text: "{}" }, { lines: monitorRules.slice(1) }],
+        ["a refused document's reason", { state: "refused", rules: null, error: "refused: monitors.version=2 want=1", text: "{}" }, { refused: "refused: monitors.version=2 want=1" }],
+        ["an unreadable document's reason", { state: "unreadable", rules: null, error: "refused: monitors=unreadable path=p error=3", text: null }, { refused: "refused: monitors=unreadable path=p error=3" }]
+    ];
+    for (const [name, document, want] of monitorInputs)
+        same(layer.monitorInput(document, document === null || document.rules === null ? [] : document.rules.length === 0 ? [] : monitorRules.slice(1)), want, "monitorInput: " + name);
     same(layer.OVERLAY_CAPTURE, { submap: "vgs:capture", namespace: "vgs:overlay", appid: "vgs", shortcuts: { left: "overlay-left", right: "overlay-right", up: "overlay-up", down: "overlay-down" } }, "the overlay capture names its submap, namespace and shortcuts");
     same(layer.overlayCaptureDirections(), ["left", "right", "up", "down"], "the overlay capture direction list");
     assert.equal(layer.overlayCaptureGlobal("left"), "vgs:overlay-left", "the overlay capture global is derived");
@@ -756,13 +781,21 @@ const CONTROLS = [
     [layerFile, "smooth motion preset", "    smooth: {\n        curves: {", "    silky: {\n        curves: {"],
     [layerFile, "appearance defaults", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: false };", "var APPEARANCE_DEFAULTS = { borders: true, radius: true, motion: true };"],
     [layerFile, "appearance owner sorted", "}).sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });", "});"],
-    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());"],
-    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());"],
+    [layerFile, "floating TUI rules written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));"],
+    [layerFile, "floating TUI rules after appearance", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = tuiWindowLines().concat([\"\"], lines, [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));"],
     [layerFile, "floating TUI class escapes each dot", ".join(\"\\\\\\\\.\")", ".join(\".\")"],
     [layerFile, "floating TUI class anchored", "return \"\\\"^\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"$\\\"\";", "return \"\\\"\" + appId.split(\".\").join(\"\\\\\\\\.\") + \"\\\"\";"],
-    [layerFile, "application window rule written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());"],
-    [layerFile, "application window rule after the TUIs", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines());"],
-    [layerFile, "session lock restore written", "overlayCaptureLines(plan), [\"\"], sessionLockLines());", "overlayCaptureLines(plan));"],
+    [layerFile, "application window rule written", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));"],
+    [layerFile, "application window rule after the TUIs", "lines = lines.concat([\"\"], tuiWindowLines(), [\"\"], appWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "lines = lines.concat([\"\"], appWindowLines(), [\"\"], tuiWindowLines(), [\"\"], overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));"],
+    [layerFile, "session lock restore written", "overlayCaptureLines(plan), [\"\"], sessionLockLines(), monitorLines(monitors));", "overlayCaptureLines(plan), monitorLines(monitors));"],
+    [layerFile, "monitor rules written", "sessionLockLines(), monitorLines(monitors));", "sessionLockLines());"],
+    [layerFile, "monitor rules after the session lock", "[\"\"], sessionLockLines(), monitorLines(monitors));", "monitorLines(monitors), [\"\"], sessionLockLines());"],
+    [layerFile, "monitor rules before the plugin sections", "text: lines.join(\"\\n\") + \"\\n\",", "text: lines.filter(function (line) { return line.indexOf(\"hl.monitor(\") !== 0 && line !== MONITORS_HEADER; }).concat(monitorLines(monitors)).join(\"\\n\") + \"\\n\","],
+    [layerFile, "no monitor rule writes no section", "if (monitors.lines.length === 0) return [];", ""],
+    [layerFile, "a refused document writes its comment", "return [\"\", \"-- Monitors: monitors.json is not applied: \" + commentText(monitors.refused)];", "return [];"],
+    [layerFile, "a refusal's comment is printable", "\"-- Monitors: monitors.json is not applied: \" + commentText(monitors.refused)", "\"-- Monitors: monitors.json is not applied: \" + monitors.refused"],
+    [layerFile, "an unread document holds the render back", "if (document === null) return null;", "if (document === null) return { lines: [] };"],
+    [layerFile, "a refused document is not rendered", "if (document.rules === null) return { refused: document.error };", "if (document.rules === null) return { lines: [] };"],
     [layerFile, "session lock restore allowed", "misc = { allow_session_lock_restore = true }", "misc = { allow_session_lock_restore = false }"],
     [layerFile, "application window class is the shell's app-id", "match = { class = \" + classLiteral(APP_WINDOW.appId) + \" }", "match = { class = \" + classLiteral(\"org.quickshell\") + \" }"],
     [shellFile, "shell.qml sets the shell's app-id", "//@ pragma AppId org.vgs.shell\n", ""],
