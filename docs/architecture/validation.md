@@ -6,29 +6,11 @@ How the shell's changes are checked: the check selector and its rows. The nested
 
 The shared Jarvis test environment, its private services and its behavior controls are in [validation-jarvis.md](validation-jarvis.md). It belongs to test infrastructure, not the installed shell.
 
-The [Jarvis Session](jarvis-session.md#session) has pure reducer and effect-owner rows in the `logic` area. The protocol row also selects on the Session state judge it imports. The real daemon and nested service rows use the private Jarvis environment.
+The Jarvis suites' row selection is in [validation-jarvis-rows.md](validation-jarvis-rows.md).
 
 The QML unit runner and mutation controls are in [validation-qml-unit.md](validation-qml-unit.md).
 
-The pure Jarvis guidance, speech text and language suites select from their modules, runtime assets and fixtures. Their [voice text contract](jarvis-voice.md) defines the consumer boundary and mutation evidence. The installed consumer runs in the install-tree suite and nested read-only prefix row.
-
-The task record, event-producer and [task runner](jarvis-task-control.md#evidence) rows exercise the [coding-task contract](jarvis-tasks.md) in that environment. Each selects on its owners, the isolation helper and its fixtures.
-
-The [playback rows](jarvis-playback.md#evidence) select on Audio, its child bootstrap, the Session judge and their shared test world. The private PipeWire row also selects on its null-sink configuration. It reads actual monitor PCM after interruption, not bytes sent to the player.
-
-The [Jarvis audit](jarvis-audit.md#evidence) has a redaction row in `logic` and a real-file writer row in `cli`. Both select on the tool schemas, shared fixture and private environment.
-
-The [GPT-Live row](jarvis-live.md#evidence) in `cli` selects on the engine, the Session judge and runner, the shared release, transport, secret and guidance inputs, its pinned scripts and the loopback WebSocket fixture.
-
-The [wire brain rows](jarvis-brain.md#evidence) select both drivers on shared history, release, transport, secret and stream inputs. Each driver's vendor scripts select its own row. The [Messages row](jarvis-anthropic.md#evidence) includes schema-pinned loopback and cancellation controls.
-
-The [Jarvis account suites](jarvis-accounts.md#evidence) select from the account judge, provider declaration, secret owner, terminal and private fixtures. Their CLI rows use the shared isolated world. The nested Jarvis row reads account status and core TUI completion.
-
-The [router](jarvis-approval.md#evidence-and-comparison) shares inputs with the audio daemon; `scripts/test-validate.sh` controls its edges.
-
 The standalone GPU instrument and passive-layer presentation checks are in [validation-shaders.md](validation-shaders.md).
-
-The [local setup contract](jarvis-setup.md#evidence) adds installer controls in `tools` and a nested Settings/TUI row. The installer doubles run inside J09 and never download or install a real runtime.
 
 - `scripts/validate` owns the commands and their input globs. Local runs default to changes from the default branch's merge base, including staged, unstaged and untracked files. `--changed BASE` selects a fix round and its whitespace range; `--full` explicitly selects the whole area. Shared dependencies select every listed consumer; unknown source inputs or a failed diff select the full area. Documentation and harness-only changes run repository checks without the product smoke. A selector change runs its own control rather than every product suite. Each executed row prints `validate: secs=<seconds> exit=<status> row=<label>`, and the final selected line carries total seconds. `scripts/test-validate.sh` checks selection and plants a forbidden import that escapes when its dependency edge is removed.
 - On a readable diff-scoped run, `scripts/validate` exports `VGS_VALIDATE_CHANGED` as the NUL-delimited changed-path file it built for selection. A row may read that file to narrow its own work. The variable is unset on `--full`, an unreadable diff and an unknown input that selects the full area.
