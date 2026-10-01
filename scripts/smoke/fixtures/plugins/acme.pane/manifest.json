@@ -4,4 +4,4 @@
   "defaultSection": "right", "pane": { "group": "Fixtures", "order": 10 },
   "settings": { "label": "pane-default" },
   "schema": { "label": { "type": "string", "label": "Label", "group": "Pane", "allowCustom": true, "presets": [{ "value": "pane-default", "label": "Default" }, { "value": "pane-service", "label": "Service" }, { "value": "pane-edited", "label": "Edited" }] } },
-  "capabilities": ["configure", "surfaces"] }
+  "capabilities": ["configure", "idle", "surfaces"] }

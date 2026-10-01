@@ -296,25 +296,10 @@ Singleton {
     // Enabled plugins of kind pane, as a panes holder lists them. The pane
     // manifest key supplies grouping and order. A row's `placed` applies
     // the same placement rule the manager uses.
-    readonly property var paneRows: {
-        const config = Config.effective;
-        return Object.keys(manifests).filter(id => manifests[id].kinds.indexOf("pane") !== -1 && isEnabled(id)).map(id => {
-            const m = manifests[id];
-            return {
-                id: id,
-                name: m.name,
-                icon: Logic.pluginIcon(m),
-                group: m.pane.group,
-                order: m.pane.order,
-                placed: Logic.isPlaced(config, m),
-                hasWidget: m.kinds.indexOf("bar-widget") !== -1
-            };
-        }).sort((a, b) => a.group < b.group ? -1 : a.group > b.group ? 1 : a.order - b.order || (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    }
+    readonly property var paneRows: Logic.paneRows(Config.effective, manifests, defaultBarId)
 
     function panesHolderId() {
-        const ids = Object.keys(manifests).filter(id => manifests[id].capabilities.indexOf("panes") !== -1 && manifests[id].kinds.indexOf("window") !== -1 && isEnabled(id)).sort();
-        return ids.length === 0 ? "" : ids[0];
+        return Logic.panesHolderId(Config.effective, manifests, defaultBarId);
     }
 
     // Plugin `id`'s manifest as the settings it receives apply it: without

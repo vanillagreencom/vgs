@@ -113,7 +113,7 @@ Singleton {
         },
         configure: ctx => ({
             set: (key, value) => {
-                const targets = ctx.kind === "pane" ? Logic.settingTargets(Config.effective, ctx.manifest) : [Logic.settingTargetOf(ctx.kind)];
+                const targets = Logic.configureTargets(Config.effective, ctx.manifest, ctx.kind);
                 return Plugins.writeSetting(ctx.id, key, value, targets, ctx.locator);
             }
         }),

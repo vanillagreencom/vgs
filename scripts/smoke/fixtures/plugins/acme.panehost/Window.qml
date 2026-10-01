@@ -18,11 +18,16 @@ FocusScope {
         if (payload.pane !== undefined) mountPane(payload.pane, JSON.stringify(payload));
     }
 
-    function close() {
+    function closePane() {
         if (paneDisposer !== null) {
             paneDisposer();
             paneDisposer = null;
+            page = "";
         }
+    }
+
+    function close() {
+        closePane();
     }
 
     function mountPane(id, payloadJson) {
@@ -42,6 +47,13 @@ FocusScope {
     implicitWidth: Theme.size.window.width
     implicitHeight: Theme.size.panel.maxHeight
     focus: true
+    Keys.onEscapePressed: event => {
+        if (paneDisposer !== null) {
+            closePane();
+            openButton.forceActiveFocus(Qt.ShortcutFocusReason);
+            event.accepted = true;
+        }
+    }
 
     Column {
         anchors.fill: parent

@@ -10,9 +10,20 @@ FocusScope {
     readonly property string label: shell === null ? "" : String(shell.settings.label)
     readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
     readonly property Item initialFocus: editButton
+    property var idleDisposer: null
 
-    function open(payloadJson) { payload = payloadJson || ""; }
-    function close() { payload = "closed"; }
+    function open(payloadJson) {
+        payload = payloadJson || "";
+        if (idleDisposer === null) idleDisposer = shell.idle.watch(600, idle => {});
+    }
+
+    function close() {
+        payload = "closed";
+        if (idleDisposer !== null) {
+            idleDisposer();
+            idleDisposer = null;
+        }
+    }
     function setLabel(value) { return shell.configure.set("label", value); }
 
     implicitWidth: Theme.size.window.width

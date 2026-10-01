@@ -659,6 +659,38 @@ function suite(ctx, check) {
         check("settingTargets: " + name, ctx.settingTargets(config, manifest), want);
     }
 
+    const configureTargetRows = [
+        ["a pane writes every entry its plugin reads", ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [], right: [{ id: "acme.pane" }] } } }), manifests["acme.pane"], "pane", ["layout", "plugins"]],
+        ["a placed widget-plus-pane writes layout and plugins", ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [], right: [{ id: "acme.pane" }] } } }), manifests["acme.pane"], "bar-widget", ["layout"]],
+        ["a service writes its own plugins row", shipped, manifests["acme.svc"], "service", ["plugins"]],
+        ["a window writes its own plugins row", shipped, manifests["vgs.widgetpanel"], "panel", ["plugins"]],
+    ];
+    for (const [name, config, manifest, kind, want] of configureTargetRows)
+        check("configureTargets: " + name, ctx.configureTargets(config, manifest, kind), want);
+
+    const paneRowsManifests = {};
+    function paneManifest(id, name, group, order, extra) {
+        return ctx.validateManifest(Object.assign({ schemaVersion: 1, id: id, name: name, version: "1", author: "a", description: "d", kinds: ["pane"], entryPoints: { pane: "Pane.qml" }, pane: { group: group, order: order } }, extra || {}), "/p").manifest;
+    }
+    paneRowsManifests["acme.beta"] = paneManifest("acme.beta", "Beta", "System", 2);
+    paneRowsManifests["acme.alpha"] = paneManifest("acme.alpha", "Alpha", "System", 2);
+    paneRowsManifests["acme.zed"] = paneManifest("acme.zed", "Alpha", "System", 2);
+    paneRowsManifests["acme.user"] = paneManifest("acme.user", "User", "User", 1);
+    paneRowsManifests["acme.widgetpane"] = paneManifest("acme.widgetpane", "Widget Pane", "System", 1, { kinds: ["bar-widget", "pane"], entryPoints: { "bar-widget": "Widget.qml", pane: "Pane.qml" }, defaultSection: "right", icon: "settings" });
+    paneRowsManifests["acme.disabled"] = paneManifest("acme.disabled", "Disabled", "System", 0);
+    const paneConfig = ctx.effectiveConfig(shipped, { bar: { id: "vgs.bar", layout: { left: [], center: [], right: [{ id: "acme.widgetpane" }] } }, plugins: [{ id: "acme.beta" }, { id: "acme.alpha" }, { id: "acme.zed" }, { id: "acme.user" }, { id: "acme.disabled" }], disabledPlugins: ["acme.disabled"] });
+    check("paneRows: enabled panes are grouped, ordered, named and tied by id", ctx.paneRows(paneConfig, paneRowsManifests, "vgs.bar").map(r => [r.id, r.group, r.order, r.placed, r.hasWidget, r.icon]),
+        [["acme.widgetpane", "System", 1, true, true, "settings"], ["acme.alpha", "System", 2, false, false, "package"], ["acme.zed", "System", 2, false, false, "package"], ["acme.beta", "System", 2, false, false, "package"], ["acme.user", "User", 1, false, false, "package"]]);
+    const holderManifests = {
+        "acme.host-b": ctx.validateManifest(Object.assign({}, bar, { id: "acme.host-b", kinds: ["window"], entryPoints: { window: "Window.qml" }, capabilities: ["panes"] }), "/p").manifest,
+        "acme.host-a": ctx.validateManifest(Object.assign({}, bar, { id: "acme.host-a", kinds: ["window"], entryPoints: { window: "Window.qml" }, capabilities: ["panes"] }), "/p").manifest,
+        "acme.disabled-host": ctx.validateManifest(Object.assign({}, bar, { id: "acme.disabled-host", kinds: ["window"], entryPoints: { window: "Window.qml" }, capabilities: ["panes"] }), "/p").manifest,
+        "acme.service-holder": ctx.validateManifest(Object.assign({}, svc, { id: "acme.service-holder", capabilities: ["panes"] }), "/p").manifest,
+    };
+    const holderConfig = { plugins: [{ id: "acme.host-b" }, { id: "acme.host-a" }, { id: "acme.disabled-host" }, { id: "acme.service-holder" }], disabledPlugins: ["acme.disabled-host"] };
+    check("panesHolderId: the enabled window holder is selected by id", ctx.panesHolderId(holderConfig, holderManifests, "vgs.bar"), "acme.host-a");
+    check("panesHolderId: no enabled holder is empty", ctx.panesHolderId({ plugins: [{ id: "acme.service-holder" }] }, holderManifests, "vgs.bar"), "");
+
     // withSetting rows: [name, user, effective, targets, path, want]
     const shippedTune = Object.assign({}, tunePlaced, { plugins: [{ id: "acme.tune", size: 9 }] });
     const twiceTune = { bar: { id: "vgs.bar", layout: { left: [{ id: "acme.tune" }], center: [], right: [{ id: "acme.tune", label: "r" }] } } };
@@ -937,6 +969,9 @@ const CONTROLS = [
     ["pane is a manifest key", "\"defaultSection\", \"pane\", \"appearance\"", "\"defaultSection\", \"appearance\""],
     ["pane key is judged", "var badPane = paneError(raw.pane, raw.kinds);", "var badPane = \"\";"],
     ["kind pane needs pane key", "} else if (raw.kinds.indexOf(\"pane\") !== -1) {", "} else if (false) {"],
+    ["pane configure writes every target", "return kind === \"pane\" ? settingTargets(config, manifest) : [settingTargetOf(kind)];", "return kind === \"pane\" ? [\"plugins\"] : [settingTargetOf(kind)];"],
+    ["pane rows are ordered by group, order, name and id", "    }).sort(function (a, b) {\n        if (a.group !== b.group) return a.group < b.group ? -1 : 1;\n        if (a.order !== b.order) return a.order - b.order;\n        if (a.name !== b.name) return a.name < b.name ? -1 : 1;\n        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;\n    });", "    });"],
+    ["panes holder is an enabled window", "return manifest.capabilities.indexOf(\"panes\") !== -1 && manifest.kinds.indexOf(\"window\") !== -1 && isEnabled(config, manifest, defaultBarId);", "return manifest.capabilities.indexOf(\"panes\") !== -1;"],
     ["window is summonable", "\"menu\", \"window\"];", "\"menu\"];"],
     ["a window is a toplevel", "if (kind === \"window\") return \"window\";", ""],
     ["an anchored window is a toplevel", "if (kind === \"window\") return \"window\";", "if (kind === \"window\" && !anchored) return \"window\";"],

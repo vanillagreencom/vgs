@@ -3142,6 +3142,50 @@ function settingTargets(config, manifest) {
     });
 }
 
+// The configuration entries an instance of KIND writes through the
+// configure capability. A pane writes every entry its plugin reads, the
+// same contract as the manager; other kinds write the one entry they read.
+function configureTargets(config, manifest, kind) {
+    return kind === "pane" ? settingTargets(config, manifest) : [settingTargetOf(kind)];
+}
+
+// Pane rows for the exclusive panes holder: every enabled plugin of kind
+// `pane`, grouped and ordered by its manifest's `pane` key, with placement
+// from the same rule the manager reads. The row is data for the holder; it
+// does not build a pane.
+function paneRows(config, manifests, defaultBarId) {
+    return Object.keys(manifests).filter(function (id) {
+        return manifests[id].kinds.indexOf("pane") !== -1 && isEnabled(config, manifests[id], defaultBarId);
+    }).map(function (id) {
+        var manifest = manifests[id];
+        return {
+            id: id,
+            name: manifest.name,
+            icon: pluginIcon(manifest),
+            group: manifest.pane.group,
+            order: manifest.pane.order,
+            placed: isPlaced(config, manifest),
+            hasWidget: manifest.kinds.indexOf("bar-widget") !== -1
+        };
+    }).sort(function (a, b) {
+        if (a.group !== b.group) return a.group < b.group ? -1 : 1;
+        if (a.order !== b.order) return a.order - b.order;
+        if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+}
+
+// The enabled window plugin that holds the panes capability, or "". The
+// capability is exclusive at build time; this picks the deterministic
+// candidate own-pane summon targets before any holder is built.
+function panesHolderId(config, manifests, defaultBarId) {
+    var ids = Object.keys(manifests).filter(function (id) {
+        var manifest = manifests[id];
+        return manifest.capabilities.indexOf("panes") !== -1 && manifest.kinds.indexOf("window") !== -1 && isEnabled(config, manifest, defaultBarId);
+    }).sort();
+    return ids.length === 0 ? "" : ids[0];
+}
+
 // The user-file change that sets one setting of one plugin in each of
 // `targets`. "layout" sets the key on every layout entry with the plugin's
 // id, or with `locator` { section, nth } on the nth such entry of that
