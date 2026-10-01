@@ -75,7 +75,8 @@ The marker names a present mechanism. It does not exempt a missing mechanism.
 | Requirement notice | The notice dialog opens on its action, traps Tab while modal and closes on Escape. | `scripts/smoke/rows/notices.sh` | Recorded the core notice. |
 | Polkit prompt | The password field opens focused. Enter submits. Escape cancels. | `scripts/smoke/rows/polkit.sh` | Recorded the authentication overlay. |
 | Lock screen | The password field opens focused. Enter unlocks. Escape stays inside the lock surface. | `scripts/smoke/rows/lock.sh` | Recorded the lock surface. |
-| Automations | The plugin has no QML surface. Users reach it through the Settings page and through its launcher TUI entry. | `scripts/smoke/rows/automations.sh` | Recorded as non-surface. |
+| Automations window | The list holds the keys: Up, Down, Home and End move its `ListCursor`, Enter opens the selected automation, Space turns it on or off and Delete asks to remove it. Ctrl+N starts a new automation from any control and Ctrl+S saves the open editor. Escape closes a confirmation, then the editor, then the window. | `scripts/smoke/rows/automations.sh` | The window landed after this audit with its own list key handler in `AutomationListPage.qml`, not `KeyNav`. Its keys meet the standard; moving them onto `KeyNav` is proposed as a follow-up, not done here, so this change does not rework a surface another issue just shipped. |
+| Jarvis bar widget | The bar takes no keyboard focus. The global shortcuts `talk` (held, `SUPER+code:108`), `mute` (`SUPER+SHIFT+code:108`) and `stop` (`SUPER+ALT+PERIOD`) reach the widget's actions. | `scripts/smoke/rows/jarvis-keys.sh` | None. |
 
 ## Decisions
 
