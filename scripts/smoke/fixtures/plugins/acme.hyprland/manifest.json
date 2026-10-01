@@ -13,7 +13,7 @@
         "sensitivity": { "type": "number", "label": "Pointer speed", "min": -1, "max": 1, "step": 0.05 },
         "naturalScroll": { "type": "boolean", "label": "Natural scrolling" },
         "tapToClick": { "type": "boolean", "label": "Tap to click" },
-        "layouts": { "type": "string", "label": "Layouts" },
+        "layouts": { "type": "string", "label": "Layouts", "presets": [{ "value": "us" }, { "value": "us,de" }], "allowCustom": true },
         "repeatRate": { "type": "number", "label": "Repeat rate", "min": 1, "max": 200, "step": 1 },
         "touchpad": { "type": "boolean", "label": "Touchpad" }
     },

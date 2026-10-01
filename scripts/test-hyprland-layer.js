@@ -448,7 +448,7 @@ function verify(logic, layer, shellText) {
             sensitivity: { type: "number", label: "S", min: -1, max: 1, step: 0.05 },
             natural: { type: "boolean", label: "N" },
             tap: { type: "boolean", label: "T" },
-            layouts: { type: "string", label: "L" },
+            layouts: { type: "string", label: "L", presets: [{ value: "us" }, { value: "us,de" }], allowCustom: true },
             rate: { type: "number", label: "R", min: 0, max: 200, step: 1 },
             touchpad: { type: "boolean", label: "P" }
         },

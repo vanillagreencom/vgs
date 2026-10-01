@@ -238,7 +238,7 @@ function suite(ctx, check) {
         rate: { type: "number", label: "R", min: 1, max: 100, step: 1 },
         tap: { type: "boolean", label: "T" },
         natural: { type: "boolean", label: "N" },
-        layouts: { type: "string", label: "L" },
+        layouts: { type: "string", label: "L", presets: [{ value: "us" }, { value: "us,de" }], allowCustom: true },
         profile: { type: "enum", label: "P", options: ["flat", "adaptive"] }
     };
     const optionRows = [
@@ -270,7 +270,7 @@ function suite(ctx, check) {
         check("hyprland.options: " + name, r.ok ? null : r.error.slice(0, want === null ? 0 : want.length), want);
     }
     check("hyprland.options needs the hyprland capability", ctx.validateManifest(Object.assign({}, svc, { settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").error, "hyprland.options needs capability hyprland");
-    check("hyprland.options setting names are schema setting names", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: Object.assign({}, optionSettings, { "bad\nos.exit()": "us" }), schema: Object.assign({}, optionSchema, { "bad\nos.exit()": { type: "string", label: "Bad" } }), hyprland: { options: { "bad\nos.exit()": "input.kb_layout" } } }), "/p").error, "hyprland.options.bad\nos.exit() must be a setting name");
+    check("hyprland.options setting names are schema setting names", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: Object.assign({}, optionSettings, { "bad\nos.exit()": "us" }), schema: Object.assign({}, optionSchema, { "bad\nos.exit()": { type: "string", label: "Bad", presets: [{ value: "us" }] } }), hyprland: { options: { "bad\nos.exit()": "input.kb_layout" } } }), "/p").error, "hyprland.options.bad\nos.exit() must be a setting name");
     check("hyprland is a known capability", ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"] }), "/p").ok, true);
     check("a normalised manifest carries its options", (() => {
         const m = ctx.validateManifest(Object.assign({}, svc, { capabilities: ["hyprland"], settings: optionSettings, schema: optionSchema, hyprland: { options: { sensitivity: "input.sensitivity" } } }), "/p").manifest;
