@@ -16,10 +16,10 @@ Status: final plan for the master, revised after the cross-model challenge (`tmp
 - Architecture docs: overview, plugins, plugin-manifest, capabilities, surfaces, settings-window, status, configuration, hyprland, hyprland-wiring, tui-sudo, runtime-hyprland(-nested).
 - `shell/Core/PluginLogic.js` (setting targets), `shell/Core/Compositor.qml` (dispatch transport), `scripts/smoke/harness.sh` (buses, PATH, auth sentinels).
 - Decisions on `main`: D010, D012, D013, D028, D032, D036, D037, D044, D047, D050, D053, D057, D061, D062, D069.
-- Decisions not on `main` yet: D068 (branch `vgs-597-keyboard-first`), D075/D076 (`vgs-683-slack-photos-owner-only`), D077 (uncommitted in the `vgs-686` worktree).
+- Decisions not on `main` yet: the keyboard-first record (VGS-597, pending) (branch `vgs-597-keyboard-first`), the consumer-setup record (VGS-683, pending)/the migration-runner record (VGS-683, pending) (`vgs-683-slack-photos-owner-only`), the settings-UX record (VGS-686, pending) (uncommitted in the `vgs-686` worktree).
 
 **Assumptions.**
-- D068, D075/D076 and D077 land on `main` before the UI items. VGS-597, VGS-683 and VGS-686 are external prerequisites.
+- the keyboard-first record (VGS-597, pending), the consumer-setup record (VGS-683, pending)/the migration-runner record (VGS-683, pending) and the settings-UX record (VGS-686, pending) land on `main` before the UI items. VGS-597, VGS-683 and VGS-686 are external prerequisites.
 - Quickshell 0.3.1 exposes `Quickshell.Bluetooth`, `Quickshell.Networking` (NetworkManager backend) and `Quickshell.Services.Pipewire`, including `PwNodePeakMonitor`. All are under the allowed `Quickshell` prefix and none is used yet. Read from `/usr/lib/qt6/qml/Quickshell/*` (quickshell-git 0.3.1) and the v0.3.1 web reference. Each item re-verifies its types on Context7.
 - Hyprland v0.56.2 is configured in Lua. The Hyprland layer is the only place VGS writes Hyprland configuration.
 
@@ -61,7 +61,7 @@ The plugin has kind `window`, so it is a Hyprland toplevel (D044) titled "System
 - **Layout.** A `Pane` (D050) with two columns.
   - Sidebar: a search `TextField`, then `ListItem` rows with one `ListCursor` (D054), grouped under `SectionHeader`s and ordered by `pane.order`. At the foot, "Shell & Plugins" opens `vgs.settings` with `run.detached(["vgsh","ipc","call","shell","summon","window","vgs.settings","{}"])`, the path `settings-window.md` § Payload prescribes.
   - Detail: a header (icon, name, "Show in bar" `Switch` through `panes.setPlaced`), then the mounted pane in a `ScrollArea`.
-- **Keyboard (D068).** Up/Down move the sidebar cursor. Enter or Right enter the pane. Type-ahead goes through `KeyNav`. Escape leaves the pane, then closes the window. Ctrl+F focuses search. The `toggle` shortcut's key is Q1.
+- **Keyboard (the keyboard-first record (VGS-597, pending)).** Up/Down move the sidebar cursor. Enter or Right enter the pane. Type-ahead goes through `KeyNav`. Escape leaves the pane, then closes the window. Ctrl+F focuses search. The `toggle` shortcut's key is Q1.
 - **Payload.** `{}` opens the last section, held in memory. `{"pane":"<id>", ...}` opens that section and hands the rest to `pane.open()`. An unknown id opens with a notice.
 - **Relation to `vgs.settings`.** That window stays the plugin manager: list, enable, schema settings, keys, requirements. Both windows write through the multi-target contract (§2.2), so the values agree.
 
@@ -70,7 +70,7 @@ The plugin has kind `window`, so it is a Hyprland toplevel (D044) titled "System
 | Kind | Role |
 |---|---|
 | `service` | Owns every subprocess, poller, watcher and **lease** (discovery, Wi-Fi scanning, agent), each released with its caller (D010, one owner per source). Publishes `status` (D037): `data` entries for structured lists within 64 KiB, and setup entries with one-click `action`s (D061). Registers shortcuts and, for Sound and Displays, the OSD through `layers`. |
-| `bar-widget` | Extends `BarWidget`. Reads status or the in-process Quickshell singleton. Starts no process. Click opens the anchored `panel`; scroll adjusts where it fits. Takes no focus (D068), and the tooltip shows the effective key (D059). |
+| `bar-widget` | Extends `BarWidget`. Reads status or the in-process Quickshell singleton. Starts no process. Click opens the anchored `panel`; scroll adjusts where it fits. Takes no focus (the keyboard-first record (VGS-597, pending)), and the tooltip shows the effective key (D059). |
 | `panel` | The flyout: quick controls plus "<Section> Settings…" (own-pane summon). |
 | `pane` | The full section. |
 
@@ -99,7 +99,7 @@ Enabling places a widget and disabling removes the whole plugin (`manager.md`). 
 |---|---|---|
 | S01 | Kind `pane`; exclusive `panes` (`list`, `mount`, `setPlaced`); own-pane summon; `pane` key; multi-target `configure` for panes | A new kind is a core change. |
 | S02 | `setPlaced` placement rule | Enablement and placement are decided once in `PluginLogic` (invariant 6). |
-| S03 | `qs.Ui` `FormRow`, `DeviceRow`, `LevelOsd`; `vgs.settings` adopts `FormRow` | Pane rows must match Settings rows (D077) without one-offs. |
+| S03 | `qs.Ui` `FormRow`, `DeviceRow`, `LevelOsd`; `vgs.settings` adopts `FormRow` | Pane rows must match Settings rows (the settings-UX record (VGS-686, pending)) without one-offs. |
 | S04 | Manifest `hyprland.options` rendered into the layer when set; capability `hyprland` with `overridden`, `devices`, `foreignBinds` and `switchKeyboardLayout()` on its own top-level `hyprctl` transport | No plugin writes Hyprland configuration (D028). `switchxkblayout` is not a dispatcher, so the `hyprctl dispatch` path cannot carry it. |
 | S05 | Capability `monitors`: `~/.config/vgs/monitors.json`, `MonitorLogic.js`, layer `hl.monitor` rules, `outputs`, `overridden` | Session-wide rules must outlive any plugin. |
 | S06 | Monitor preview, with a **detached core guard** that restores the captured pre-preview state | Recovery must not depend on the QML event loop, the shell, or the runner (§3.5). |
@@ -109,7 +109,7 @@ Enabling places a widget and disabling removes the whole plugin (`manager.md`). 
 
 ## 3. Per-section design
 
-Every number declares `unit` and every string declares `presets` or `optionsFrom` (D077). Short enums draw as `SegmentedControl`. Rows are `FormRow`s at `row.height`.
+Every number declares `unit` and every string declares `presets` or `optionsFrom` (the settings-UX record (VGS-686, pending)). Short enums draw as `SegmentedControl`. Rows are `FormRow`s at `row.height`.
 
 ### 3.1 Sound — `vgs.sound` (S10)
 
@@ -290,7 +290,7 @@ All paths are under `/home/method/dev/.worktrees/vgs/v1`. These lines were read 
 - Core: `panes.sh`, `placement.sh`, `hyprland-options.sh`, `monitors.sh`, `system-steps.sh`, `bluetooth-agent.sh`.
 - Plugins: `system-window.sh`, `sound.sh`, `bluetooth.sh`, `network.sh`, `vpn.sh`, `displays.sh`, `mouse.sh`, `keyboard.sh`.
 
-Each row reads back from instances and probes, walks a keyboard-only path (D068) and carries a must-fail control. The specific proofs the review asked for:
+Each row reads back from instances and probes, walks a keyboard-only path (the keyboard-first record (VGS-597, pending)) and carries a must-fail control. The specific proofs the review asked for:
 - Settings: a value edited in one interface reads the same in all four.
 - Bluetooth power: unblock → confirmed power, persistent off, hard block, failure.
 - Discovery: a start confirmed only after the last release still gets stopped.
@@ -382,7 +382,7 @@ The sections fan out after S09 and S08.
 | `ddcutil` is slow or hangs | One run per bus, latest-wins, 8 s timeout, reads on open only. |
 | A hidraw write fails on one Apple model where v1 relied on `asdcontrol` | S21 checks both displays. If one fails, a follow-up item restores a scoped hiddev path. |
 | The status ceiling for layouts or peers | Bounded lists with the count kept. |
-| In-flight D068/D075–D077 change the APIs used here | ext prerequisites per item. |
+| In-flight the keyboard-first record (VGS-597, pending)/the consumer-setup record (VGS-683, pending)–the settings-UX record (VGS-686, pending) change the APIs used here | ext prerequisites per item. |
 
 **Rollback.** Each item is its own commit series. A section is disabled with one `disabledPlugins` entry. Core items have no consumers until S09, so revert consumers first.
 
