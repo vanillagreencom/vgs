@@ -56,13 +56,15 @@
 # --scale is 1, the default, or 2: at 2 the harness holds the nested
 # output at double its mode and scale 2 before the shell starts
 # (shell_output_scale in scripts/smoke/harness.sh), so the layout keeps its
-# logical size and the shell draws each PNG in device pixels. Each shot at
-# scale 2 checks before and after its capture (shot_held in
-# scripts/smoke/shot.sh) that the output still reads that mode, since a
-# configure the host sends the nested window, such as a resize or a
-# refocus, resets it
-# (held_mode_state in scripts/smoke/mode-hold.sh), and fails when it does
-# not. Another value is refused as
+# logical size and the shell draws each PNG in device pixels. A configure
+# the host sends the nested window, such as a resize or a refocus, resets
+# a held mode (held_mode_state in scripts/smoke/mode-hold.sh), so before
+# each shot and each hover under a held mode, this one or --size's, the
+# run takes the mode again and puts the pointer back where the scene left
+# it (settle_hold), and a shot after whose capture the output no longer
+# reads the mode is taken once more (shot_held in scripts/smoke/shot.sh);
+# a mode that cannot be taken again, or a second reset in that capture,
+# fails the shot. Another value is refused as
 # `sandbox-shots: refused: scale=<value>`.
 # --size WxH holds the nested output at W by H logical pixels, at the run's
 # scale, for every scene, so a shot's width does not depend on the host's
@@ -342,21 +344,47 @@ undrawn=0
 hold_left() {
   echo "${mode_hold[0]} reads $(mode_scale_of "${mode_hold[0]}" || echo unreadable), not the held ${mode_hold[1]}; a host resize or refocus, or another writer, reset it"
 }
-# take NAME: one shot. While the run holds a mode, shot_held refuses it
-# when the output has left that mode, and fails it when the output left it
-# while shot waited for a settled frame, so a PNG never shows a reset
-# output under a held mode's name.
+# settle_hold: the output reads the run's held mode, if it holds one,
+# before a shot or a hover. A host configure of the nested window resets
+# the mode at any moment, and the reset stays until a rule takes the mode
+# again (held_mode_state in scripts/smoke/mode-hold.sh), so every shot and
+# hover after it would meet the reset output. A reset is taken again
+# through hold_restore, and the pointer goes back to pointer_at, where the
+# scene left it, since the reset moved it and the restore does not.
+# Returns 1, printing why, when the mode cannot be taken again or the
+# output cannot be read.
+settle_hold() {
+  local state restored x y
+  [[ ${#mode_hold[@]} -gt 0 ]] || return 0
+  state="$(held_mode_state)"
+  case $state in
+    held) return 0 ;;
+    reset) printf '  reset %s; the held mode is taken again\n' "$(hold_left)" ;;
+    *) printf '  reset %s reads %s\n' "${mode_hold[0]}" "$state"; return 1 ;;
+  esac
+  if ! restored="$(hold_restore)"; then
+    printf '        %s\n' "$restored"
+    return 1
+  fi
+  [[ -n $pointer_at ]] || return 0
+  read -r x y <<<"$pointer_at"
+  hover "$x" "$y" || { echo "        the pointer did not go back to $pointer_at"; return 1; }
+}
+# take NAME: one shot. While the run holds a mode, shot_held settles it
+# first and takes the shot once more when the output left it while shot
+# waited for a settled frame, so a PNG never shows a reset output under a
+# held mode's name.
 take() { # NAME
   local status=0
   if [[ ${#mode_hold[@]} -eq 0 ]]; then
     shot "$1" || status=$?
   else
-    shot_held "$1" held_mode_state || status=$?
+    shot_held "$1" held_mode_state settle_hold || status=$?
   fi
   case $status in
     0) ;;
     2) undrawn=$((undrawn + 1)); fail "grim got no frame from the nested compositor for $1" ;;
-    3) fail "shot $1 not taken: $(hold_left)" ;;
+    3) fail "shot $1 not taken: the held mode could not be taken again" ;;
     4) fail "shot $1 not accepted: $(hold_left)" ;;
     *) fail "shot $1 failed" ;;
   esac
@@ -377,8 +405,12 @@ window_point() {
   rect="$(ipc smoke windowGeometry "$2" "$3" "$4" "$5")" && [[ $rect == \[* ]] || return 1
   at_centre "$1" "$rect"
 }
+# The hover helpers and park_pointer settle the held mode first: an item's
+# position read on a reset output is not where it sits once the mode is
+# taken again for the shot.
 hover_on() {
   local x y i held=0
+  settle_hold || { fail "$1: the held mode could not be taken again"; return 1; }
   if [[ -z ${6:-} ]]; then
     if ! point_item "$2" "$3" "$4" "$5" >/dev/null; then fail "$1: $4 \"$5\" under $2 $3 never reported the pointer"; return 1; fi
     ok "$1"; return 0
@@ -398,6 +430,7 @@ hover_on() {
 # that has no hover state; the caller proves the state the hover drives.
 hover_text() {
   local label="$1" rect at="" x y
+  settle_hold || { fail "$label: the held mode could not be taken again"; return 1; }
   for _ in $(seq 1 25); do
     rect="$(ipc smoke itemGeometry "$2" "$3" "$4" "$5")" && at="$(centre_of "$rect")" && [[ $at != none ]] && break
     at=""; sleep 0.2
@@ -407,7 +440,13 @@ hover_text() {
   if ! hover "$((x - 6))" "$y" || ! hover "$x" "$y"; then fail "$label: the hover failed"; return 1; fi
   ok "$label"
 }
-park_pointer() { hover "$((mon_w - 2))" "$((mon_h - 2))" || fail "parking the pointer failed"; }
+park_pointer() {
+  if settle_hold; then
+    hover "$((mon_w - 2))" "$((mon_h - 2))" || fail "parking the pointer failed"
+  else
+    fail "parking the pointer: the held mode could not be taken again"
+  fi
+}
 # narrow_begin: the nested output holds a mode 480 by 720 logical pixels at
 # the run's scale, and the pointer helpers take that size, until
 # narrow_end gives the run's mode back. At scale 2 the run's mode is the

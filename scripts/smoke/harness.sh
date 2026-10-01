@@ -843,10 +843,16 @@ cpu_some_pct() {
 # keys typed on the nested seat through wtype, so a row can reach a
 # focused input; wtype's own arguments, such as -k Escape, pass through.
 # Each prints nothing on success; a row reads its status.
-click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/null; }
-hover() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" move >/dev/null; }
-right_click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" right >/dev/null; }
-drag() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" drag "$3" "$4" >/dev/null; }
+# pointer_at: `X Y`, the layout position where the last click, hover,
+# right_click or drag that succeeded left the pointer, empty before any.
+# A reset mode shrinks the layout under a pointer it no longer covers, and
+# the mode taken again does not move the pointer back; a caller puts it
+# back from here (settle_hold in scripts/sandbox-shots.sh).
+pointer_at=""
+click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/null && pointer_at="$1 $2"; }
+hover() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" move >/dev/null && pointer_at="$1 $2"; }
+right_click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" right >/dev/null && pointer_at="$1 $2"; }
+drag() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" drag "$3" "$4" >/dev/null && pointer_at="$3 $4"; }
 type_keys() { "${shell_env[@]}" wtype "$@"; }
 # compositor_logs_on: the nested compositor logs from here to the end of
 # the run. The configuration turns its logs on once the flag file exists,

@@ -89,10 +89,13 @@ json.dump([monitor("DP-1", 1, 0), monitor("DP-2", 2, -98)], open(f"{here}/host-m
 json.dump([window(41, 1), window(42, 3), window(43, -98), window(44, -99), window(45, 1, visible=False), unkeyed], open(f"{here}/host-clients.json", "w"))
 PY
 hash_a="$(printf 'image-a' | sha256sum | cut -d' ' -f1)"
-# The hold cases replace shot with a stub that records its name in
-# called, so shot_held is driven alone. Their reader, hold, prints the
-# hold's state, and reads called to tell before the capture from after it.
-held_stubs='shot() { echo "$1" >"$D/called"; }; '
+# The hold cases run the real shot over the stub grim's fixed-b image.
+# Their reader, hold, prints the hold's state, `reset` on the reads named
+# in $D/resets (`1` for the first, `1 2` for the first two), and appends
+# `read` to $D/log; their settle appends `settle` to the same log, so a
+# case reads the order of the two around each capture. image_b_row NAME
+# is the shots.tsv line of a settled fixed-b shot with no shot before it.
+held_stubs='echo fixed-b >"$T/bin/mode"; hold() { local n; n=$(( $(cat "$D/reads" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$D/reads"; echo read >>"$D/log"; if [[ " $(cat "$D/resets" 2>/dev/null) " == *" $n "* ]]; then echo reset; else echo held; fi; }; settle() { echo settle >>"$D/log"; }; image_b_row() { printf "%s\t%s\t-\tsettled\t-" "$1" "$(printf image-b | sha256sum | cut -d" " -f1)"; }; '
 
 # run_case FILE LABEL SNIPPET STATUS LINE: true when the helper FILE gives
 # the status and first stderr line. The snippet runs with the helper
@@ -142,11 +145,17 @@ cases=(
   "grim sees only the nested socket"
   'echo fixed-b >"$T/bin/mode"; shot five >/dev/null; grep -qx WAYLAND_DISPLAY=wayland-1 "$T/bin/env.log"; grep -qx "XDG_RUNTIME_DIR=$RT" "$T/bin/env.log"; ! grep -q HOST_MARKER "$T/bin/env.log"' 0 ""
   "a capture under a hold held before and after is taken"
-  "$held_stubs"'hold() { echo held; }; shot_held six hold; [[ $(cat "$D/called") == six ]]' 0 ""
-  "a hold left before the capture refuses it untaken"
-  "$held_stubs"'hold() { echo reset; }; s=0; shot_held seven hold || s=$?; [[ ! -e $D/called ]] || exit 9; exit "$s"' 3 "shot: refused: reason=hold-left-before value=reset"
-  "a hold reset during the capture refuses it after"
-  "$held_stubs"'hold() { if [[ -e $D/called ]]; then echo reset; else echo held; fi; }; shot_held eight hold' 4 "shot: refused: reason=hold-left-after value=reset"
+  "$held_stubs"'shot_held six hold settle >/dev/null; [[ $(cat "$D/log") == $(printf "settle\nread") && $(cat "$D/shots.tsv") == "$(image_b_row six)" && -e $D/six.png ]]' 0 ""
+  "a held mode is settled before the capture"
+  "$held_stubs"'echo 1 >"$D/resets"; settle() { echo settle >>"$D/log"; : >"$D/settled"; }; hold() { echo read >>"$D/log"; [[ -e $D/settled ]] && echo held || echo reset; }; shot_held seven hold settle >/dev/null; [[ $(cat "$D/log") == $(printf "settle\nread") && -e $D/seven.png ]]' 0 ""
+  "a hold that cannot be settled refuses the shot untaken"
+  "$held_stubs"'settle() { return 1; }; s=0; shot_held eight hold settle || s=$?; [[ ! -e $D/eight.png && ! -e $D/shots.tsv && ! -e $D/log ]] || exit 9; exit "$s"' 3 "shot: refused: reason=hold-not-settled value=eight"
+  "a hold left during the capture is settled and the shot retaken once"
+  "$held_stubs"'echo 1 >"$D/resets"; shot_held eightb hold settle >/dev/null; [[ $(cat "$D/log") == $(printf "settle\nread\nsettle\nread") && $(cat "$D/shots.tsv") == "$(image_b_row eightb)" && -e $D/eightb.png ]]' 0 "shot: refused: reason=hold-left-after value=reset"
+  "a hold left during the retaken capture too refuses the shot"
+  "$held_stubs"'echo "1 2" >"$D/resets"; s=0; shot_held eightc hold settle >/dev/null || s=$?; [[ ! -e $D/eightc.png && ! -e $D/shots.tsv && $(grep -c settle "$D/log") == 2 ]] || exit 9; exit "$s"' 4 "shot: refused: reason=hold-left-after value=reset"
+  "a capture after which the hold reader reads a reset is refused"
+  "$held_stubs"'echo 1 >"$D/resets"; s=0; shot_last_name=before; shot_last_hash=prior; SHOT_HOLD_READER=hold shot eightd >/dev/null || s=$?; [[ ! -e $D/eightd.png && ! -e $D/shots.tsv && $shot_last_name == before && $shot_last_hash == prior ]] || exit 9; exit "$s"' 4 "shot: refused: reason=hold-left-after value=reset"
   "a capture of its own output is taken while another output has no size"
   'echo unsized-layout >"$T/bin/mode"; shot nine >/dev/null; [[ $(cat "$D/nine.png") == image-b ]]' 0 ""
   "a shot with no output named is refused"
@@ -221,10 +230,12 @@ controls=(
   '[[ $status -eq 124 ]] && return 2' 'true' "a grim that never returns reads as no frame"
   "grim inherits the caller's environment"
   'env -i PATH="$PATH"' 'env PATH="$PATH"' "grim sees only the nested socket"
-  "a hold left before the capture is not read"
-  '[[ $state == held ]] || { shot_refuse hold-left-before' 'true || { shot_refuse hold-left-before' "a hold left before the capture refuses it untaken"
-  "a hold reset during the capture is not read"
-  '[[ $state == held ]] || { shot_refuse hold-left-after' 'true || { shot_refuse hold-left-after' "a hold reset during the capture refuses it after"
+  "the hold is not settled before the capture"
+  'if ! "$settle"; then' 'if false; then' "a held mode is settled before the capture"
+  "a capture the hold left is not retaken"
+  '4) [[ $attempt -eq 2 ]] && return 4' '4) return 4' "a hold left during the capture is settled and the shot retaken once"
+  "the hold is not read after the capture"
+  'if [[ $hold != held ]]; then' 'if false; then' "a capture after which the hold reader reads a reset is refused"
   "the capture takes the whole layout"
   '-o "$3" -t png "$4"' '-t png "$4"' "a capture of its own output is taken while another output has no size"
   "an unnamed output goes on to grim"

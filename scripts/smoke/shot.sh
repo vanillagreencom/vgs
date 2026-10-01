@@ -29,7 +29,10 @@
 # `changed` when it does not, `-` when no reader is set. With
 # SHOT_WINDOW_REQUIRE set, a shot whose state is another word is refused
 # after its capture, its PNG removed and no line written, so every line of
-# shots.tsv was taken in that state.
+# shots.tsv was taken in that state. With SHOT_HOLD_READER set, a shot after
+# whose capture that command reads the held output mode as anything but
+# `held` is refused the same way, so no line names a capture of an output
+# that left its held mode (shot_held below).
 
 shot_refuse() { # REASON VALUE
   printf 'shot: refused: reason=%s value=%s\n' "$1" "$2" >&2
@@ -109,9 +112,10 @@ shot_window() {
 # shot NAME: SHOT_DIR/NAME.png, proved current against the previous shot.
 # Needs SHOT_DIR, SHOT_SOCKET, SHOT_RUNTIME_DIR and SHOT_OUTPUT. Returns 1
 # for a stale or failed capture or one refused for its window state, 2 when
-# grim timed out; prints what it wrote.
+# grim timed out, 4 when SHOT_HOLD_READER read the hold left after the
+# capture; prints what it wrote.
 shot() {
-  local name="$1" file part hash stable="" last="" kind="" deadline status window_before window_after window
+  local name="$1" file part hash stable="" last="" kind="" deadline status window_before window_after window hold
   [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { shot_refuse name "$name"; return 1; }
   [[ -n ${SHOT_OUTPUT:-} ]] || { shot_refuse output-unnamed "$name"; return 1; }
   window_before="$(shot_window)"
@@ -152,31 +156,48 @@ shot() {
     printf 'the shot %s needs the nested window %s on the host\n' "$name" "$SHOT_WINDOW_REQUIRE" >&2
     return 1
   fi
+  if [[ -n ${SHOT_HOLD_READER:-} ]]; then
+    hold="$($SHOT_HOLD_READER)" || hold=unreadable
+    if [[ $hold != held ]]; then
+      rm -f -- "${file:?}"
+      shot_refuse hold-left-after "$hold" || true
+      return 4
+    fi
+  fi
   printf '%s\t%s\t%s\t%s\t%s\n' "$name" "${stable:-$last}" "${shot_last_name:--}" "$kind" "$window" >>"$SHOT_DIR/shots.tsv"
   shot_last_name="$name"
   shot_last_hash="${stable:-$last}"
   printf '  shot  %s (%s, window %s)\n' "$file" "$kind" "$window"
 }
 
-# shot_held NAME READER [ARGS...]: `shot NAME` under a held output mode.
-# READER with ARGS prints the hold's state, `held` while the output reads
-# the held mode (held_mode_state in scripts/smoke/mode-hold.sh). A state
-# other than `held`, or a reader that fails, before the capture refuses it
-# untaken. After a capture, such a state means the output left the mode
-# while shot waited for a settled frame: the PNG stays but shows no held
-# output. Returns 0 when taken under the hold, 1 when shot failed, 2 when
-# grim got no frame (shot's 2), 3 when refused before the capture, 4 when
-# refused after it.
+# shot_held NAME READER SETTLE: `shot NAME` under a held output mode.
+# READER prints the hold's state, `held` while the output reads the held
+# mode (held_mode_state in scripts/smoke/mode-hold.sh). SETTLE takes the
+# hold again when the output left it, puts the pointer back where the scene
+# left it, and returns 0 once the output reads the held mode: a host
+# configure of the nested window resets the mode at any moment, and the
+# reset stays until a rule takes the mode again. SETTLE runs before the
+# capture; one that fails refuses the shot untaken. The capture runs with
+# READER as SHOT_HOLD_READER, so `shot` refuses one after which the output
+# left the mode, writing no PNG and no line; that capture runs SETTLE again
+# and is taken once more. Returns 0 when taken under the hold, 1 when shot
+# failed, 2 when grim got no frame (shot's 2), 3 when SETTLE failed, 4
+# when the output left the mode during the retaken capture as well.
 shot_held() {
-  local name="$1" state status=0
-  state="$("${@:2}")" || state=unreadable
-  [[ $state == held ]] || { shot_refuse hold-left-before "$state" || true; return 3; }
-  shot "$name" || status=$?
-  case $status in
-    0) ;;
-    2) return 2 ;;
-    *) return 1 ;;
-  esac
-  state="$("${@:2}")" || state=unreadable
-  [[ $state == held ]] || { shot_refuse hold-left-after "$state" || true; return 4; }
+  local name="$1" reader="$2" settle="$3" attempt status
+  for attempt in 1 2; do
+    if ! "$settle"; then
+      shot_refuse hold-not-settled "$name" || true
+      return 3
+    fi
+    status=0
+    SHOT_HOLD_READER="$reader" shot "$name" || status=$?
+    case $status in
+      0) return 0 ;;
+      2) return 2 ;;
+      4) [[ $attempt -eq 2 ]] && return 4
+         printf '  retake %s (the output left the held mode during the capture)\n' "$name" ;;
+      *) return 1 ;;
+    esac
+  done
 }
