@@ -6,11 +6,12 @@
 **Status**: Active
 **Research**: VGS-596
 **Refines**: [D028](D028-one-generated-hyprland-layer.md)
-**API Contract**: Overlay entries may implement `navigate(direction)`, where direction is `left`, `right`, `up` or `down`.
+**API Contract**: Overlay entries may implement `navigate(direction)`, where direction is `left`, `right`, `up` or `down`. Only the frontmost overlay receives a navigation key; if it has no `navigate`, the key is ignored.
+**Refined by**: [D068](D068-keyboard-first-standard.md)
 
 **Context**: A full-screen overlay can hold Quickshell keyboard focus, but Hyprland runs global binds before the focused layer sees the key. A user's `movefocus` keys can therefore move focus behind the browser instead of moving the browser carousel. Hyprland v0.56.2 reports Lua binds through `hyprctl binds -j` as dispatcher `__lua` with an opaque registry index, so the generated layer cannot learn focus keys by reading binds back.
 
-**Decision**: The generated Hyprland layer owns one capture submap for unanchored `overlay` surfaces. While any mapped layer with namespace `vgs:overlay` exists, the layer enters that submap. When none remain, it resets only if the current submap is the capture submap. The submap includes each enabled plugin shortcut again, so shell shortcuts keep working while an overlay is open. The layer wraps `hl.dsp.focus` and `hl.bind` once. A focus dispatcher built from a `direction` field is recorded in a weak table. A later default-map bind using that dispatcher is also bound inside the capture submap to a core global shortcut for that direction. The core registers the directional global shortcuts and forwards them to the frontmost overlay instance that implements `navigate(direction)`.
+**Decision**: The generated Hyprland layer owns one capture submap for unanchored `overlay` surfaces. While any mapped layer with namespace `vgs:overlay` exists, the layer enters that submap. When none remain, it resets only if the current submap is the capture submap. The submap includes each enabled plugin shortcut again, so shell shortcuts keep working while an overlay is open. The layer wraps `hl.dsp.focus` and `hl.bind` once. A focus dispatcher built from a `direction` field is recorded in a weak table. A later default-map bind using that dispatcher is also bound inside the capture submap to a core global shortcut for that direction. The core registers the directional global shortcuts and forwards them only to the frontmost overlay instance. An overlay without `navigate(direction)` ignores the key and keeps older overlays behind it from receiving the key.
 
 **Rationale**:
 - Hyprland owns bind precedence, so capture must start in Hyprland before a background bind fires.

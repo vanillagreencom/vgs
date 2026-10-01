@@ -31,8 +31,8 @@ One line per architecture document: the change to read it before. [overview.md](
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
 - [design-layout.md](design-layout.md): read before touching a container's inset, the corner-clearing rule, a component's spacing or the notification media tiers.
 - [design-quality.md](design-quality.md): read before judging or changing how a surface looks: its grid, type, control sizes, container class or states.
-- [components.md](components.md), [components-media.md](components-media.md) and [components-overlays.md](components-overlays.md): read before adding or changing a component of `qs.Ui`.
-- [gallery.md](gallery.md): read before changing the gallery window or adding a component to it.
+- [components.md](components.md), [components-controls.md](components-controls.md), [components-media.md](components-media.md), [components-overlays.md](components-overlays.md) and [components-gallery.md](components-gallery.md): read before adding or changing a component of `qs.Ui` or the Gallery.
+- [keyboard.md](keyboard.md): read before adding a pointer action, a focusable control or a keyboard path.
 - [motion.md](motion.md): read before touching a list's highlight, a row's entrance, a `motion.list` token or how hover and keys share a list's selection.
 - [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
 - [theme-apply.md](theme-apply.md) and [theme-reload.md](theme-reload.md): read before touching the apply, a reload hook or `vgsh theme reload`.
@@ -52,6 +52,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [packages.md](packages.md): read before touching the package-manager table or `vgsh pkg`.
 - [requirements.md](requirements.md) and [requirement-notice.md](requirement-notice.md): read before touching a manifest's `requirements`, `config/requirements.json`, the scan's probe, the `missing` lines or the notice.
 - [tui.md](tui.md), [tui-capability.md](tui-capability.md), [tui-records.md](tui-records.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability, its exit records or `vgsh sudo`.
+- [runtime-qml-focus.md](runtime-qml-focus.md): read before touching a layer-shell keyboard focus rule, summoned-surface initial focus or a focus reason.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
 - [runtime-qml-folders.md](runtime-qml-folders.md): read before touching `FolderListModel`, folder pickers or directory listings in QML.
 - [runtime-qml-focus.md](runtime-qml-focus.md): read before touching keyboard focus in QML, a focus scope, or a row that hands a window the keyboard.

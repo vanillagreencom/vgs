@@ -1,6 +1,6 @@
 # Notification card layout
 
-Covers: shell/plugins/vgs.notifications/NotificationCard.qml, shell/plugins/vgs.notifications/MediaSlot.qml
+Covers: shell/plugins/vgs.notifications/NotificationCard.qml, shell/plugins/vgs.notifications/MediaSlot.qml, shell/plugins/vgs.notifications/CardFace.qml, shell/plugins/vgs.notifications/CardScroll.qml
 
 Where a notification card's text and media sit. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees, and [design-layout.md § Component spacing](design-layout.md#component-spacing) holds the corner-clearing rule and the media tiers.
 

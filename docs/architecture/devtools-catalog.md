@@ -4,6 +4,8 @@ Covers: shell/plugins/vgs.devtools/catalog.json, shell/plugins/vgs.devtools/Cata
 
 The format of the `vgs.devtools` catalog and the rules its judge holds it to. The plugin's [README](../../shell/plugins/vgs.devtools/README.md) holds the engine, the window, the service and the launchers.
 
+The Dev Tools window opens on its scrollable body, not on an action button. A keyboard user must Tab to Install, Update or Remove before a TUI can start. `scripts/smoke/rows/devtools.sh` reads that focus state before it runs any fixture TUI.
+
 ## Sections
 
 - `agents`: Coding-agent command-line tools. A row can carry `package`, `command`, `bin`, `exec`, `launch`, `arch`, `channels`, `buildEnv`, `requires`, `present`, `postInstall` and `postRemove`.

@@ -34,6 +34,8 @@ The service publishes these values through the core `status` capability ([status
 
 `WardenLogic.gib` turns a byte count into the figure the plugin's copy shows with "GB": gibibytes, one decimal below 10 and whole from 10.
 
+The service registers `vgs.agent-warden:toggle` through the `shortcut` capability and summons the panel through the `surfaces` capability. The default key is `SUPER+CTRL+Y`, because Omarchy binds `SUPER+CTRL+A` to Audio and `SUPER+SHIFT+CTRL+A` to Agent. The Themes panel uses `SUPER+CTRL+J`, so no shipped VGS manifest shares the Agent Warden key.
+
 ## Notifications
 
 The service sends the desktop notices about agents in place of the warden. The warden stops its own notices while `$XDG_RUNTIME_DIR/agent-warden/notifier` is less than 120 s old ([vsys warden.md § Notifications](https://github.com/vanillagreencom/vsys/blob/main/docs/architecture/warden.md#notifications)). The service writes the time into that file every 60 s. It does so only while it reads a status and the scan finds `notify-send`. A status the plugin cannot read, or a desktop without `notify-send`, gives the notices back to the warden within 120 s. `notify: off` keeps the heartbeat, so the warden stays silent too, as the user asked. The service does not remove the file when it stops, so the warden stays silent for up to 120 s after the plugin is disabled or the shell stops.

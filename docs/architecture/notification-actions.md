@@ -1,12 +1,12 @@
 # Notification actions
 
-Covers: shell/plugins/vgs.notifications/Service.qml, shell/plugins/vgs.notifications/CardSlot.qml
+Covers: shell/plugins/vgs.notifications/Service.qml, shell/plugins/vgs.notifications/CardSlot.qml, shell/plugins/vgs.notifications/Panel.qml
 
-What a choice on a notification in `vgs.notifications` does, which windows it brings into view, which notifications the service keeps holding after their toast leaves, and what the senders it was built for carry. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees. The Quickshell 0.3.1 facts this rests on are in [§ Quickshell 0.3.1](#quickshell-031), and the Hyprland ones in [runtime-hyprland.md](runtime-hyprland.md).
+What a choice on a notification in `vgs.notifications` does, which windows it brings into view, which notifications the service keeps holding after their toast leaves, and what the senders it was built for carry. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees. The Quickshell 0.3.1 facts this rests on are in [§ Quickshell 0.3.1](#quickshell-031), and the Hyprland ones in [runtime-hyprland.md](runtime-hyprland.md). The interactive Inbox and History are the plugin's summoned `panel`; the toast stack stays on the passive layer and takes no keyboard. While that panel is open, the toast stack is hidden and the panel lists the same live notifications, so no toast can draw over a panel control.
 
 ## The open rule
 
-- A choice on a card is one of three, and `NotificationLogic.choicePlan` answers what it does for every sender alike. `open` is a click on a toast or an inbox row, Show and the `invoke-latest` IPC. `action:<identifier>` is a pill of the sender's own. `dismiss` is Dismiss or a right click.
+- A choice on a card is one of three, and `NotificationLogic.choicePlan` answers what it does for every sender alike. `open` is a click on a toast or an inbox row, Enter on the selected inbox row, Show and the `invoke-latest` IPC. `action:<identifier>` is a pill of the sender's own. `dismiss` is Dismiss, Delete on the selected inbox row or a right click.
 - Opening delivers `default`, and a pill its own action, while the service holds the notification and it offers that action. Every action names a place in the sender, so either then brings the sender's window into view, delivered or not. The server gives the sender no activation token, so on Wayland neither Slack nor Chromium can raise its own window after the click.
 - Bringing into view is the core's `shell.compositor.reveal` ([capabilities.md](capabilities.md)), never a dispatch of the plugin's own: after a delivered action it first waits briefly for the sender to raise its own window, and moves nothing when it did. [D051](../decisions/D051-notification-actions-reveal-the-sender.md) records the rule and why it differs from Omarchy.
 - Dismissing delivers and raises nothing.

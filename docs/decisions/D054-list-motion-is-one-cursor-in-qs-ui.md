@@ -6,6 +6,7 @@
 **Status**: Active
 **Research**: VGS-579
 **Refines**: [D023](D023-plugin-owned-appearance.md)
+**Refined by**: [D068](D068-keyboard-first-standard.md)
 
 **Context**: The launcher's list motion, a plate that glides between rows and rows that rise in staggered, lived in the launcher's own files, so no other list had it and each new list would draw its own hover and highlight fills. The launcher owns its look under D023, which takes only the theme's mode, accent and motion scale. D023 names this case as its trigger: a component of `qs.Ui` gains a parameterized form that plugins with their own look share.
 

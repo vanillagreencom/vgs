@@ -50,6 +50,8 @@ A value is a literal, a reference `{group.token}` to a token of the same type, o
 
 What each component of `qs.Ui` guarantees is in [components.md](components.md).
 
+Keyboard support is a component guarantee, not a per-surface exception: [keyboard.md](keyboard.md).
+
 `VoiceOrb` publishes its palette-derived visual values through `Theme.voiceOrb`. Its timing tokens follow `motion.scale`, and its driver also checks that scale before ticking: [components-media.md § VoiceOrb](components-media.md#voiceorb).
 
 ## Setup steps
@@ -101,4 +103,5 @@ The grid, type scale, control sizes, container classes and states every surface 
 - A setup step is automatic or one click, and a command only a "Show command" disclosure: [D061](../decisions/D061-no-manual-commands.md).
 - A plugin may own its look, taking the theme's mode, accent and motion scale alone: [D023](../decisions/D023-plugin-owned-appearance.md).
 - Containers use one inset box, an inner scroll gutter and fitted popup height: [D050](../decisions/D050-container-layout-contract.md).
+- Keyboard support is a first-class standard that components implement by default: [D068](../decisions/D068-keyboard-first-standard.md).
 - Every layout dimension sits on a 4 px grid, and row heights are their own tokens: [D063](../decisions/D063-design-scale-on-the-4-px-grid.md).
