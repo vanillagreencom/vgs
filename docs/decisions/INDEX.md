@@ -78,6 +78,7 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-09-30 | D074 | VGS-636 | Jarvis commands require kernel confinement and the same protected masks | Programs evade token scans; absent roots and aliases need kernel mounts | A command needs another host mount, endpoint or privilege | Active | [Full](D074-jarvis-kernel-sandbox.md) |
 | 2026-09-30 | D075 | VGS-683 | Consumer features need no developer setup; a feature that does is an owner-only `extras` entry the Settings page never shows | Most users cannot create a Slack app, and OAuth needs a server VGS lacks | Slack offers token-free photos, VGS gains a backend, or an extra gets a one-click setup | Active | [Full](D075-consumer-features-need-no-developer-setup.md) |
 | 2026-09-30 | D076 | VGS-683 | One-time migrations run once per user, in order, from `vgsh run` before the shell and from `vgsh self update` | A new version must change a user's file once; every install method reaches `vgsh run` | VGS ships a systemd unit or package hook, or a migration needs a privilege | Active | [Full](D076-one-time-migrations.md) |
+| 2026-09-30 | D079 | VGS-638 | Jarvis brains are wire and harness adapters; subscriptions run only in vendor programs; no npm dependency | One compatible driver serves ten providers; vendor terms and no npm route | A needed provider fits neither kind, or VGS gains an npm route | Active | [Full](D079-brains-wire-and-harness-adapters.md) |
 
 ---
 

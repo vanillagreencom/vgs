@@ -1,0 +1,752 @@
+{
+ "source": "openai-chat.schema.json: openai/openai-openapi 9f25f93610b782cd518d6470ccfafc614d28b079 (info.version 2.3.0), POST /chat/completions, its 200 text/event-stream contract and its error statuses",
+ "date": "2026-09-30",
+ "kind": "Synthetic scripts written against the pinned excerpt, not recordings. Every script in this file has this source and date.",
+ "format": "frames: {delta, finish_reason} is one chunk with one choice; {usage} is a chunk with no choice; {error} is the documented mid-stream failure frame; \"[DONE]\" is the terminator. status and body: an HTTP error reply with an ErrorResponse. hold: keep the stream open after the frames. stall: never answer.",
+ "scripts": {
+  "text": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": ""
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "content": "Hello"
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "content": " there."
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "stop"
+    },
+    {
+     "usage": {
+      "prompt_tokens": 9,
+      "completion_tokens": 2,
+      "total_tokens": 11
+     }
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-calls": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_focus",
+        "type": "function",
+        "function": {
+         "name": "windows_focus",
+         "arguments": ""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": "{\"window\":"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": " \"0x1f\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 1,
+        "id": "call_read",
+        "type": "function",
+        "function": {
+         "name": "files_read",
+         "arguments": "{\"path\":\"/home/user/notes\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "after-tools": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": "The window has focus."
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "stop"
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-call-lost-middle": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_focus",
+        "type": "function",
+        "function": {
+         "name": "windows_focus",
+         "arguments": ""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": " \"0x1f\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 1,
+        "id": "call_read",
+        "type": "function",
+        "function": {
+         "name": "files_read",
+         "arguments": "{\"path\":\"/home/user/notes\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-call-lost-start": {
+   "frames": [
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": "{\"window\":"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": " \"0x1f\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-call-lost-call": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_focus",
+        "type": "function",
+        "function": {
+         "name": "windows_focus",
+         "arguments": ""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": "{\"window\":"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": " \"0x1f\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 2,
+        "id": "call_read",
+        "type": "function",
+        "function": {
+         "name": "files_read",
+         "arguments": "{}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-call-conflict": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_focus",
+        "type": "function",
+        "function": {
+         "name": "windows_focus",
+         "arguments": ""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_other",
+        "function": {
+         "arguments": "{}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-call-duplicate-id": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_focus",
+        "type": "function",
+        "function": {
+         "name": "windows_focus",
+         "arguments": ""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": "{\"window\":"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": " \"0x1f\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 1,
+        "id": "call_focus",
+        "type": "function",
+        "function": {
+         "name": "files_read",
+         "arguments": "{}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-call-unknown": {
+   "frames": [
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_x",
+        "type": "function",
+        "function": {
+         "name": "not_offered",
+         "arguments": "{}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-call-array": {
+   "frames": [
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_x",
+        "type": "function",
+        "function": {
+         "name": "windows_focus",
+         "arguments": "[]"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "tool-calls-without-call": {
+   "frames": [
+    {
+     "delta": {
+      "content": "Done"
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "tool_calls"
+    },
+    "[DONE]"
+   ]
+  },
+  "stop-with-tool-calls": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_focus",
+        "type": "function",
+        "function": {
+         "name": "windows_focus",
+         "arguments": ""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": "{\"window\":"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": " \"0x1f\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "stop"
+    },
+    "[DONE]"
+   ]
+  },
+  "finish-length": {
+   "frames": [
+    {
+     "delta": {
+      "content": "Cut"
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "length"
+    },
+    "[DONE]"
+   ]
+  },
+  "finish-content-filter": {
+   "frames": [
+    {
+     "delta": {},
+     "finish_reason": "content_filter"
+    },
+    "[DONE]"
+   ]
+  },
+  "finish-function-call": {
+   "frames": [
+    {
+     "delta": {},
+     "finish_reason": "function_call"
+    },
+    "[DONE]"
+   ]
+  },
+  "finish-missing": {
+   "frames": [
+    {
+     "delta": {
+      "content": "Unfinished"
+     },
+     "finish_reason": null
+    },
+    "[DONE]"
+   ]
+  },
+  "chunk-after-finish": {
+   "frames": [
+    {
+     "delta": {
+      "content": "One"
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "stop"
+    },
+    {
+     "delta": {
+      "content": "Two"
+     },
+     "finish_reason": null
+    },
+    "[DONE]"
+   ]
+  },
+  "refusal": {
+   "frames": [
+    {
+     "delta": {
+      "refusal": "I cannot help with that."
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "stop"
+    },
+    "[DONE]"
+   ]
+  },
+  "stream-error": {
+   "frames": [
+    {
+     "delta": {
+      "content": "Partial"
+     },
+     "finish_reason": null
+    },
+    {
+     "error": {
+      "message": "provider-private-detail",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": "provider_code"
+     }
+    }
+   ]
+  },
+  "truncated": {
+   "frames": [
+    {
+     "delta": {
+      "content": "Partial"
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  "hold": {
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": "Thinking"
+     },
+     "finish_reason": null
+    }
+   ],
+   "hold": true
+  },
+  "stall": {
+   "stall": true
+  },
+  "not-sse": {
+   "contentType": "application/json",
+   "frames": [
+    {
+     "delta": {
+      "role": "assistant",
+      "content": ""
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "content": "Hello"
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {
+      "content": " there."
+     },
+     "finish_reason": null
+    },
+    {
+     "delta": {},
+     "finish_reason": "stop"
+    },
+    {
+     "usage": {
+      "prompt_tokens": 9,
+      "completion_tokens": 2,
+      "total_tokens": 11
+     }
+    },
+    "[DONE]"
+   ]
+  },
+  "http-400": {
+   "status": 400,
+   "body": {
+    "error": {
+     "message": "provider-private-detail",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "provider_code"
+    }
+   }
+  },
+  "http-401": {
+   "status": 401,
+   "body": {
+    "error": {
+     "message": "provider-private-detail",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "provider_code"
+    }
+   }
+  },
+  "http-403": {
+   "status": 403,
+   "body": {
+    "error": {
+     "message": "provider-private-detail",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "provider_code"
+    }
+   }
+  },
+  "http-404": {
+   "status": 404,
+   "body": {
+    "error": {
+     "message": "provider-private-detail",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "provider_code"
+    }
+   }
+  },
+  "http-429": {
+   "status": 429,
+   "body": {
+    "error": {
+     "message": "provider-private-detail",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "provider_code"
+    }
+   }
+  },
+  "http-500": {
+   "status": 500,
+   "body": {
+    "error": {
+     "message": "provider-private-detail",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "provider_code"
+    }
+   }
+  },
+  "http-503": {
+   "status": 503,
+   "body": {
+    "error": {
+     "message": "provider-private-detail",
+     "type": "invalid_request_error",
+     "param": null,
+     "code": "provider_code"
+    }
+   }
+  }
+ }
+}
