@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state. Jarvis stores provider keys in your desktop keyring and finds account login hints. The installed service has no audio engine, provider connection or desktop actions.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API or local account when you request it. The installed daemon has no speech or conversation engine and performs no desktop actions.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -44,4 +44,4 @@ Select Set up local voice in Settings or the launcher's Jarvis group. Choose a t
 
 Brain account keeps the account you select. This skeleton does not start a brain. Settings retains a saved selection when discovery no longer offers it.
 
-Select Accounts to add a directory, choose an existing keyring item by label or inspect login hints. Verify asks for consent because a real inference request may cost money. Verification is currently unavailable and sends no request.
+Select Accounts to add a directory, choose an existing keyring item by label or inspect login hints. Verify asks for a model and consent because a real inference request may cost money. API and local verification send one small request. Subscription and speech-only verification remain unavailable. A login hint never proves inference access.

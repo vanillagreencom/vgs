@@ -13,7 +13,7 @@ world(async () => {
         env, encoding: "utf8", timeout: 20000 });
     const check = folder => {
         queue(["Add directory", "claude", hand, "my-account", "Use keyring item", "first", "openai", "my-key",
-            "Show accounts", "Verify", "first", "yes", "Close"]);
+            "Show accounts", "Verify", "first", "", "yes", "Close"]);
         const result = run(folder);
         assert.equal(result.error, undefined);
         assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -22,7 +22,7 @@ world(async () => {
         assert.deepEqual(JSON.parse(fs.readFileSync(accountFile)), [{ provider: "claude", directory: hand, label: "my-account" }]);
         assert.deepEqual(JSON.parse(fs.readFileSync(keyFile)), [{ provider: "openai", account: "my-key", origin: "https://api.openai.com",
             attributes: { application: "other-tool", id: "api-key" } }]);
-        assert.match(result.stdout, /"reason":"verification-request-unavailable"/);
+        assert.match(result.stdout, /"reason":"subscription-handoff-unavailable"/);
         assert.match(result.stdout, /my-account/);
         assert.equal((result.stdout + result.stderr).includes("fixture-secret-private"), false);
         for (const file of ["cli-calls", "port-calls", "bus-calls", "gum-calls"]) {
@@ -40,9 +40,9 @@ world(async () => {
         'accounts add "$selected" "$HOME" "$label"', folder => check(folder));
     await mutant("tui/accounts.sh", "tui-no-explicit-verify", 'accounts verify "${selected%% | *}" user',
         'accounts verify "${selected%% | *}" automatic', folder => check(folder));
-    queue(["Verify", "first", "no", "Close"]);
+    queue(["Verify", "first", "", "no", "Close"]);
     const cancelled = run(plugin);
     assert.equal(cancelled.status, 0);
-    assert.doesNotMatch(cancelled.stdout, /verification-request-unavailable/);
+    assert.doesNotMatch(cancelled.stdout, /subscription-handoff-unavailable/);
     console.log("test-jarvis-accounts-tui: ok controls=2");
 });

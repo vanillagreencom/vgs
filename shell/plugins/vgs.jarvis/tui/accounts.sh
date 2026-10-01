@@ -66,11 +66,12 @@ while true; do
       choices="$(menu <<<"$choices")" || exit $?
       [[ -n $choices ]] || { vgs_tui_warn "No account is available."; continue; }
       selected="$(vgs_tui_choose <<<"$choices")" || exit 130
+      model="$(vgs_tui_input --header "Model (blank uses the provider default; Ollama and LM Studio need a model)")" || exit 130
       if vgs_tui_confirm "Send a small inference request? This may cost money."; then
         code=0
-        accounts verify "${selected%% | *}" user || code=$?
+        accounts verify "${selected%% | *}" user "$model" || code=$?
         if [[ $code == 69 ]]; then
-          vgs_tui_warn "Verification is unavailable. No inference request was sent."
+          vgs_tui_warn "Verification did not succeed. The result above names the cause."
         elif [[ $code != 0 ]]; then
           exit "$code"
         fi

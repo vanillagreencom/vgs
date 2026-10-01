@@ -58,7 +58,7 @@
     "audio": { "type": "state", "label": "Audio" },
     "localRuntime": { "type": "state", "label": "Local voice", "hint": "Setup downloads models and verifies the selected runtime without opening audio devices.",
       "action": { "label": "Set up local voice", "tui": "setup-local" } },
-    "accounts": { "type": "presenceList", "label": "Accounts", "hint": "Login hints are not inference proof. Verification is currently unavailable." },
+    "accounts": { "type": "presenceList", "label": "Accounts", "hint": "Login hints are not inference proof. Accounts offers explicit API or local verification, which may cost money." },
     "brains": { "type": "choices", "label": "Brain accounts", "hidden": true }
   },
   "tui": {

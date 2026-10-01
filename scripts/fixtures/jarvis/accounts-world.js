@@ -54,7 +54,7 @@ if(JSON.stringify(args)!==JSON.stringify(["-H","-ltn"])) process.exit(9);
 const selected=mode("ports-mode","present");
 if(selected==="failed"){console.error("fixture-secret-private");process.exit(7);}
 if(selected==="junk"){console.log("fixture-secret-private");process.exit(0);}
-if(selected==="present") console.log("LISTEN 0 4096 127.0.0.1:11434 0.0.0.0:*");
+if(selected==="present") console.log("LISTEN 0 4096 127.0.0.1:11434 0.0.0.0:*\\nLISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*\\nLISTEN 0 4096 127.0.0.1:1234 0.0.0.0:*");
 `, { mode: 0o700 });
     fs.writeFileSync(path.join(directory, "busctl"), prefix + `
 record("bus-calls");
@@ -85,6 +85,7 @@ if(args.includes("SearchItems")){
 `, { mode: 0o700 });
     fs.writeFileSync(path.join(directory, "secret-tool"), prefix + `
 record("secret-calls");
+if(args[0]==="lookup") {process.stdout.write("fixture-secret-private\\n");process.exit(0);}
 console.error("fixture-secret-private");
 process.exit(9);
 `, { mode: 0o700 });
@@ -141,7 +142,8 @@ async function mutant(relative, name, needle, replacement, check) {
     const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "mutation-"));
     fs.mkdirSync(path.join(folder, "backend"));
     fs.mkdirSync(path.join(folder, "tui"));
-    for (const file of ["AccountProviders.js", "backend/Accounts.js", "backend/Secrets.js", "backend/accounts.js", "tui/accounts.sh"])
+    for (const file of ["AccountProviders.js", "backend/Accounts.js", "backend/Secrets.js", "backend/accounts.js", "tui/accounts.sh",
+        "backend/net.js", "backend/Policy.js", "backend/Audit.js", "backend/Redact.js", "backend/Tools.js"])
         fs.copyFileSync(path.join(plugin, file), path.join(folder, file));
     fs.writeFileSync(path.join(folder, relative), changed);
     try { await assert.rejects(async () => check(folder), assert.AssertionError, name + " must turn red"); }

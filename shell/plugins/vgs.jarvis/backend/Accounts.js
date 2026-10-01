@@ -5,9 +5,13 @@ const crypto = require("node:crypto");
 const cp = require("node:child_process");
 const { Secrets, childEnvironment } = require("./Secrets.js");
 const { PROVIDERS, keyPresence, keyProvider } = require("../AccountProviders.js");
+const Net = require("./net.js");
+const Policy = require("./Policy.js");
+const Audit = require("./Audit.js");
 const MAX_ENTRIES = 200;
 const MAX_ROWS = 32; // The core's presenceList and choices ceiling.
 const MAX_BYTES = 64 * 1024;
+const PROBE_TEXT = "Reply OK.";
 
 function fail(reason) { throw new Error("jarvis-accounts: " + reason); }
 function printable(value, max) {
@@ -327,9 +331,10 @@ class Accounts {
     /**
      * Explicit user action only. Each operation names the current discovery
      * epoch. A refresh or a replacement Verify invalidates its late result.
-     * The request port is absent until the origin-bound network door lands.
+     * Production uses the origin-bound door; a caller may supply a transport
+     * port for an isolated state-machine consumer.
      */
-    async verify(id, initiation, request = null) {
+    async verify(id, initiation, request = (account, selectedModel) => this.inference(account, selectedModel), model = "") {
         if (initiation !== "user") fail("verify=explicit-user-required");
         const account = this.accounts.find(item => item.id === id);
         if (!account) fail("verify=account-unavailable");
@@ -343,17 +348,145 @@ class Accounts {
         let state;
         try {
             if (typeof request !== "function") fail("verify=request-unavailable");
-            const answer = await request(structuredClone(account));
+            const answer = await request(structuredClone(account), model);
             if (!answer || answer.kind !== "inference" || typeof answer.text !== "string" || answer.text.trim() === "")
                 fail("verify=no-inference");
             state = { kind: "verified" };
-        } catch {
-            state = { kind: "unavailable", reason: typeof request === "function" ? "verification-failed" : "verification-request-unavailable" };
+        } catch (error) {
+            const keyed = /^jarvis-accounts: verify=([a-z0-9-]+)$/.exec(error.message);
+            const network = /^jarvis: net=([a-z0-9-]+)$/.exec(error.message);
+            const secret = /^jarvis-keys: secret-tool=([a-z-]+)$/.exec(error.message);
+            state = { kind: "unavailable", reason: keyed ? keyed[1] : network ? "network-" + network[1] : secret ? "key-" + secret[1]
+                : typeof request === "function" ? "verification-failed" : "verification-request-unavailable" };
         }
         if (this.epoch !== epoch || account.state.kind !== "verifying" || account.state.operation !== operation)
             return { kind: "superseded" };
         account.state = state;
         return state;
+    }
+
+    /**
+     * One minimal, non-streaming inference request. CLI subscriptions require
+     * the separate mediated harness handoff, not an HTTP credential adapter.
+     */
+    async inference(account, requestedModel = "") {
+        const row = provider(account.provider);
+        if (account.source.kind === "cli") fail("verify=subscription-handoff-unavailable");
+        if (account.source.kind === "variable") fail("verify=key-reference-required");
+        if (!row.probe) fail("verify=speech-inference-unavailable");
+        if (typeof requestedModel !== "string" || requestedModel.length > 120
+            || /[\x00-\x1f\x7f]/.test(requestedModel)) fail("verify=model-invalid");
+        const model = requestedModel || row.probe.model;
+        if (row.probe.driver !== "llama" && !model) fail("verify=model-required");
+        let body;
+        switch (row.probe.driver) {
+        case "chat":
+            body = { model, messages: [{ role: "user", content: PROBE_TEXT }], stream: false,
+                [row.probe.limit]: 1 };
+            break;
+        case "messages":
+            body = { model, max_tokens: 1, messages: [{ role: "user", content: PROBE_TEXT }], stream: false };
+            break;
+        case "ollama":
+            body = { model, prompt: PROBE_TEXT, stream: false, options: { num_predict: 1 } };
+            break;
+        case "llama":
+            if (requestedModel !== "") fail("verify=model-unselectable");
+            body = { prompt: PROBE_TEXT, n_predict: 1, stream: false };
+            break;
+        default: fail("verify=driver-invariant");
+        }
+        const ref = account.source.kind === "keyring" ? account.source.reference : null;
+        const origin = ref === null ? account.source.origin : ref.origin;
+        const target = Net.endpoint(origin + row.probe.path);
+        const selected = Policy.recipients({ conversation: "verify:" + account.id + ":" + account.state.operation,
+            profile: "standard", cloudVision: "never",
+            brain: { kind: "network", provider: row.id, account: account.id, origin: target.origin },
+            speech: [{ kind: "local", provider: "verification-result", account: account.id }] });
+        const item = Policy.item(JSON.stringify(body), ["command"]);
+        // This operation exists only after the user's explicit Verify consent.
+        const grants = [{ recipients: selected, labels: ["command"] }];
+        const decision = Policy.release(item, selected, grants);
+        const door = Net.create(selected);
+        const audit = Audit.create({ state: this.directory });
+        const event = { kind: "release", gen: this.epoch, op: account.state.operation, tool: "release",
+            args: { labels: item.labels, recipients: selected }, effect: "external",
+            decision: decision.kind, confirmed: "physical", outcome: "pending" };
+        let keyBytes, response;
+        const signal = AbortSignal.timeout(30000); // Bound a stalled provider, not a latency budget.
+        try {
+            if (decision.kind !== "send") {
+                const saved = audit.record({ ...event, outcome: "completed" });
+                if (saved.kind !== "recorded") fail("verify=audit-unavailable");
+                fail("verify=release-refused");
+            }
+            let key;
+            if (ref !== null) {
+                keyBytes = this.secrets.lookup(ref);
+                const value = keyBytes.toString("utf8").replace(/\n$/, "");
+                key = { origin: ref.origin, value, header: row.probe.header, prefix: row.probe.prefix };
+            }
+            const headers = { "content-type": "application/json" };
+            if (row.probe.driver === "messages") headers["anthropic-version"] = "2023-06-01";
+            const started = audit.before(event, () => door.request(item, { url: target.url, headers, key, signal }, grants));
+            if (started.kind !== "started") fail("verify=audit-unavailable");
+            response = await started.value;
+            if (response.kind !== "response") fail("verify=release-refused");
+            if (!response.response.ok) fail("verify=http-" + response.response.status);
+            const reader = response.response.body.getReader();
+            const chunks = [];
+            let size = 0;
+            try {
+                for (;;) {
+                    const part = await reader.read();
+                    if (part.done) break;
+                    size += part.value.byteLength;
+                    if (size > MAX_BYTES) fail("verify=reply-limit");
+                    chunks.push(Buffer.from(part.value));
+                }
+            } finally { reader.releaseLock(); }
+            let result;
+            try { result = JSON.parse(Buffer.concat(chunks)); } catch { fail("verify=reply-json"); }
+            let text, tokens;
+            switch (row.probe.driver) {
+            case "chat":
+                if (!Array.isArray(result.choices) || result.choices.length !== 1
+                    || result.choices[0].message?.role !== "assistant") fail("verify=no-inference");
+                text = result.choices[0].message.content;
+                tokens = result.usage?.completion_tokens;
+                break;
+            case "messages":
+                if (result.type !== "message" || result.role !== "assistant" || !Array.isArray(result.content))
+                    fail("verify=no-inference");
+                if (result.content.some(part => !part || (part.type === "text" && typeof part.text !== "string")))
+                    fail("verify=no-inference");
+                text = result.content.filter(part => part.type === "text").map(part => part.text).join("");
+                tokens = result.usage?.output_tokens;
+                break;
+            case "ollama":
+                if (result.done !== true) fail("verify=no-inference");
+                text = result.response; tokens = result.eval_count;
+                break;
+            case "llama":
+                text = result.content; tokens = result.tokens_predicted;
+                break;
+            default: fail("verify=driver-invariant");
+            }
+            if (!(typeof text === "string" && text.trim() !== "") && !(Number.isSafeInteger(tokens) && tokens > 0))
+                fail("verify=no-inference");
+            const saved = audit.record({ ...event, outcome: "completed" });
+            if (saved.kind !== "recorded") fail("verify=audit-unavailable");
+            return { kind: "inference", text: "Inference completed" };
+        } catch (error) {
+            const saved = audit.record({ ...event, outcome: "failed" });
+            if (saved.kind !== "recorded") fail("verify=audit-unavailable");
+            throw error;
+        } finally {
+            response?.close();
+            door.close();
+            audit.close();
+            keyBytes?.fill(0);
+        }
     }
 
     status() {

@@ -1,5 +1,4 @@
-// Public verbs expose account metadata only. Verify has no network port
-// until the origin-bound network owner can supply a real inference request.
+// Public verbs expose metadata only. Explicit Verify uses the outbound door.
 "use strict";
 const path = require("node:path");
 const { Accounts } = require("./Accounts.js");
@@ -41,9 +40,9 @@ async function main() {
         value = { kind: "stored" };
         break;
     case "verify":
-        if (args.length !== 3 || args[2] !== "user") throw new Error("jarvis-accounts: verify=explicit-user-required");
+        if (![3, 4].includes(args.length) || args[2] !== "user") throw new Error("jarvis-accounts: verify=explicit-user-required");
         judge.discover();
-        value = await judge.verify(args[1], "user");
+        value = await judge.verify(args[1], "user", undefined, args[3] || "");
         if (value.kind !== "verified") process.exitCode = 69;
         break;
     default: throw new Error("jarvis-accounts: arguments=verb");

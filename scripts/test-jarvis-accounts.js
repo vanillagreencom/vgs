@@ -197,7 +197,7 @@ world(async () => {
     assert.equal(inferenceCalls, 0);
     await assert.rejects(() => store.verify(chosen, "automatic", request), /explicit-user-required/);
     assert.equal(inferenceCalls, 0);
-    assert.deepEqual(await store.verify(chosen, "user"), { kind: "unavailable", reason: "verification-request-unavailable" });
+    assert.deepEqual(await store.verify(chosen, "user"), { kind: "unavailable", reason: "subscription-handoff-unavailable" });
     assert.equal(inferenceCalls, 0);
     assert.deepEqual(await store.verify(chosen, "user", request), { kind: "verified" });
     assert.equal(inferenceCalls, 1);
@@ -397,7 +397,7 @@ world(async () => {
     goodCli(plugin);
     const refused = cli(plugin, ["verify", chosen, "user"]);
     assert.equal(refused.status, 69);
-    assert.deepEqual(JSON.parse(refused.stdout), { kind: "unavailable", reason: "verification-request-unavailable" });
+    assert.deepEqual(JSON.parse(refused.stdout), { kind: "unavailable", reason: "subscription-handoff-unavailable" });
     const automatic = cli(plugin, ["verify", chosen]);
     assert.equal(automatic.status, 1);
     await mutant("backend/accounts.js", "cli-discovery", "value = judge.discover();", "value = [];",
