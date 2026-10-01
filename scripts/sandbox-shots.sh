@@ -963,10 +963,17 @@ theme_view_count() { ipc smoke readDescendant overlay vgs.themes ThemeView shown
 theme_view_problem() { ipc smoke readDescendant overlay vgs.themes ThemeView problem | py_reply 'import json,sys; print(json.load(sys.stdin) != "")'; }
 theme_view_offer() { ipc smoke readDescendant overlay vgs.themes ThemeView offer | py_reply 'import json,sys; o=json.load(sys.stdin); print(json.dumps(None if o is None else o["name"]))'; }
 wallpaper_selected_kind() { ipc smoke readDescendant overlay vgs.themes WallpaperView selected | py_reply 'import json,sys; s=json.load(sys.stdin); print(json.dumps(None if s is None else s["kind"]))'; }
+# sandbox_vgsh ARGS...: bin/vgsh in the sandbox on the PATH every sandbox
+# shell starts with, so the runner meets the commands the shell meets. The
+# host's PATH can hold the browser-policy writer the run hides from every
+# shell (shell_hidden_commands); the CLI would then judge the chromium
+# target the settings scene ships set up and run its reload hook, which
+# the theme judge refuses under the test-run marker, failing the apply.
+sandbox_vgsh() { "${shell_env[@]}" PATH="$shell_start_path" "$repo/bin/vgsh" "$@"; }
 # themes_restore MODE LABEL: vgs applied, which draws no background, then
 # the mode's theme, after a scene applied another package.
 themes_restore() {
-  "${shell_env[@]}" "$repo/bin/vgsh" theme apply vgs >/dev/null || fail "vgs applies after $2"
+  sandbox_vgsh theme apply vgs >/dev/null || fail "vgs applies after $2"
   expect_poll "no background is drawn after $2" 0 layer_count vgs:background
   set_mode "$1"
 }
@@ -1088,11 +1095,11 @@ scene_wallpaper-browser() { # MODE
   # The runner's install writes the catalog marker, with no wallpapers, so
   # the Theme source ends on the download card.
   rm -rf -- "${theme_dir:?}"
-  "${shell_env[@]}" "$repo/bin/vgsh" theme install nord >/dev/null || fail "nord installs for the wallpaper browser shot"
+  sandbox_vgsh theme install nord >/dev/null || fail "nord installs for the wallpaper browser shot"
   mkdir -p -- "$theme_dir/backgrounds"
   cp -- "$checkout/themes/catalog/thumbnails/nord.jpg" "$theme_dir/backgrounds/a.jpg"
   cp -- "$checkout/themes/catalog/thumbnails/akane.jpg" "$theme_dir/backgrounds/b.jpg"
-  "${shell_env[@]}" "$repo/bin/vgsh" theme apply nord >/dev/null || fail "nord applies for the wallpaper browser shot"
+  sandbox_vgsh theme apply nord >/dev/null || fail "nord applies for the wallpaper browser shot"
   expect_poll "nord is published for the wallpaper browser shot" nord ipc smoke themeName
   expect "the nested compositor adds a monitor for the wallpaper browser shot" ok hypr output create headless "$wallpaper_output"
   expect "vgs.themes enables for the wallpaper browser shot" ok ipc shell setPluginEnabled vgs.themes true
@@ -1117,7 +1124,7 @@ scene_wallpaper-browser() { # MODE
   expect_poll "the wallpaper browser is gone" 0 layer_count vgs:overlay
   expect "the wallpaper browser shot's monitor is removed" ok hypr output remove "$wallpaper_output"
   # vgs has no backgrounds, so applying it removes nord's image.
-  "${shell_env[@]}" "$repo/bin/vgsh" theme apply vgs >/dev/null || fail "vgs applies after the wallpaper browser shot"
+  sandbox_vgsh theme apply vgs >/dev/null || fail "vgs applies after the wallpaper browser shot"
   expect_poll "no background is drawn after the wallpaper browser shot" 0 layer_count vgs:background
   rm -rf -- "${theme_dir:?}"
   set_mode "$1"
