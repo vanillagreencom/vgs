@@ -97,7 +97,6 @@ function end(s, effects, at, reason, stopTool) {
     }
     s.input = { kind: "released" };
     closeCapture(s, effects);
-    dropApproval(s, effects, "thinking-timeout");
     cancelTurn(s, effects, at);
     if (s.turn.kind === "none") closeBrain(s, effects);
     flushPlayback(s, effects);
@@ -188,6 +187,7 @@ function toggle(s, effects, at) {
 
 function expire(s, effects, at) {
     if (s.turn.kind === "thinking" && at >= s.turn.deadline) {
+        dropApproval(s, effects, "thinking-timeout");
         cancelTurn(s, effects, at);
         s.fault = { kind: "error", reason: "thinking-timeout", retry: 0 };
         s.input = { kind: "released" };

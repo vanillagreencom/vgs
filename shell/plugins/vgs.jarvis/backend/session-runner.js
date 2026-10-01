@@ -27,11 +27,16 @@ class SessionRunner {
                 this.state = result.state;
                 this.ports.tools.sync(this.state);
                 // A published mute value must already survive a daemon restart.
-                for (const effect of result.effects)
-                    if (effect.kind === "mute-store") this.consume(effect);
-                this.publish(this.state, this.session.phaseOf(this.state));
+                let persistence = { kind: "stored" };
+                try {
+                    for (const effect of result.effects)
+                        if (effect.kind === "mute-store") this.consume(effect);
+                } catch (error) { persistence = { kind: "failed", error }; }
+                if (persistence.kind === "stored")
+                    this.publish(this.state, this.session.phaseOf(this.state));
                 for (const effect of result.effects)
                     if (effect.kind !== "mute-store") this.consume(effect);
+                if (persistence.kind === "failed") throw persistence.error;
             }
             this.schedule();
         } finally { this.draining = false; }

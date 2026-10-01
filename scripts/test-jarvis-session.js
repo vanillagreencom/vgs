@@ -408,6 +408,43 @@ const table = [
         assert.equal(r.state.turn.deadline, 62030);
         assert.deepEqual(kinds(r), ["brain-cancel"]);
     }],
+    ["thinking-approval-expiry", logic => {
+        for (const entry of ["deadline", "confirm"]) for (const acknowledged of [false, true]) {
+            let s = thinking(logic);
+            s = step(logic, s, callback("approval", s.turn, 10030, { id: "late-hold", digest: "a".repeat(64),
+                physical: true, text: "Delete the fixture", tool: "fixture", timeoutMs: 100, cancellable: true })).state;
+            const approval = copy(s.approval);
+            s = step(logic, s, callback("shown", approval, 10031)).state;
+            assert.equal(s.turn.deadline, 60030);
+            assert.equal(s.approval.deadline, 70030);
+            const expiry = step(logic, s, entry === "deadline" ? callback("deadline", s.turn, 60030)
+                : callback("confirm", approval, 60030, { source: "key" }));
+            assert.equal(expiry.state.approval.kind, "none");
+            assert.equal(expiry.state.turn.kind, "cancelling");
+            assert.equal(expiry.state.fault.reason, "thinking-timeout");
+            assert.equal(expiry.effects.find(e => e.kind === "approval-ended")?.reason, "thinking-timeout");
+            assert.equal(kinds(expiry).includes("tool-start"), false);
+            s = expiry.state;
+            if (acknowledged) s = step(logic, s, callback("cancelled", s.turn, 60030)).state;
+            assert.equal(s.turn.kind, acknowledged ? "none" : "cancelling");
+            const confirmed = step(logic, s, callback("confirm", approval, 60030, { source: "key" }));
+            assert.equal(confirmed.effects.find(e => e.kind === "confirm-refused")?.reason, "no-hold");
+            assert.equal(kinds(confirmed).includes("tool-start"), false);
+            assert.equal(confirmed.state.action.kind, "none");
+        }
+    }],
+    ["approval-end-reasons", logic => {
+        for (const [reason, ending] of [
+            ["stop", event("stop", 50)], ["mute", event("mute-toggle", 50)],
+            ["toggle", event("toggle", 350)], ["lease", event("lease-ended", 50)],
+            ["settings", snapshot({ at: 50, settings: { model: "new" } })],
+            ["gate", snapshot({ at: 50, locked: true })]
+        ]) {
+            const r = step(logic, held(logic), ending);
+            assert.equal(r.effects.find(e => e.kind === "approval-ended")?.reason, reason);
+            assert.equal(r.state.approval.kind, "none");
+        }
+    }],
     ["late-callback", logic => {
         const s = thinking(logic);
         const r = step(logic, s, callback("brain-done", s.turn, s.turn.deadline));
@@ -416,7 +453,8 @@ const table = [
         assert.deepEqual(kinds(r), ["brain-cancel"]);
     }],
     ["approval-timeout", logic => {
-        const s = held(logic);
+        const h = held(logic);
+        const s = step(logic, h, callback("brain-done", h.turn, 41)).state;
         assert.equal(s.approval.deadline, 60040);
         assert.equal(step(logic, s, callback("deadline", s.approval, 60039)).state.approval.kind, "held");
         const shown = step(logic, s, callback("shown", s.approval, 200)).state;
@@ -747,7 +785,8 @@ const createdCallbacks = [
     { effect: "approval-show", type: "deadline", deadline: "approval", check: (s, r, e) => {
         assert.equal(r.state.approval.kind, "none");
         const ended = r.effects.find(e => e.kind === "approval-ended");
-        assert.equal(ended.reason, "timeout");
+        assert.equal(ended.reason, s.turn.kind === "thinking" && s.turn.deadline <= s.approval.deadline
+            ? "thinking-timeout" : "timeout");
         assert.equal(ended.target, e.op);
     } }
 ];
@@ -884,6 +923,10 @@ try {
         ["cancel-bound", "deadline: at + 2000", "deadline: at + 2001", "cancel-timeout"],
         ["think-bound", 's.turn.kind === "thinking" && at >= s.turn.deadline',
             's.turn.kind === "thinking" && false && at >= s.turn.deadline', "thinking-timeout"],
+        ["thinking-approval-expiry", 'dropApproval(s, effects, "thinking-timeout");',
+            'if (false) dropApproval(s, effects, "thinking-timeout");', "thinking-approval-expiry"],
+        ["approval-end-reasons", 'dropApproval(s, effects, reason);',
+            'dropApproval(s, effects, "thinking-timeout");', "approval-end-reasons"],
         ["approval-bound", 's.approval.kind === "held" && at >= s.approval.deadline',
             's.approval.kind === "held" && false && at >= s.approval.deadline', "approval-timeout"],
         ["late-callback", 'if (e.type !== "deadline") expire(s, effects, e.at);',

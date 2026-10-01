@@ -20,15 +20,22 @@ world(() => {
     function make(implementation = Router, session = Session, options = {}) {
         let at = 0, locked = false, transcript;
         const starts = [], answers = [], results = [], records = [];
+        const timers = new Map();
         const directory = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "router-"));
         const audit = Audit.create({ state: directory, now: () => Date.UTC(2026, 9, 1) });
         const rows = () => fs.existsSync(path.join(directory, "audit/2026-10-01.jsonl"))
             ? fs.readFileSync(path.join(directory, "audit/2026-10-01.jsonl"), "utf8").trim().split("\n").map(JSON.parse) : [];
         const ports = { ...unavailable(), mute: { store() {} },
             capture: { open: (e, done) => done(), close: (e, done) => done(), collect: (e, done) => { transcript = done; } },
-            brain: { send() {}, cancel: (e, done) => done(), close() {}, outcome: value => results.push(value) } };
+            brain: { send() {}, cancel: (e, done) => {
+                if (options.ackCancel !== false) done();
+            }, close() {}, outcome: value => results.push(value) } };
         const runner = new SessionRunner(session, ports,
-            { now: () => at, set: () => ({}), clear() {} }, () => {});
+            { now: () => at, set: (fn, ms) => {
+                const timer = {};
+                timers.set(timer, { fn, deadline: at + ms });
+                return timer;
+            }, clear: timer => timers.delete(timer) }, () => {});
         const denied = () => Denied.create(fixtures.roots);
         let target = { kind: "application", id: "editor" };
         const router = implementation.create({ session, state: () => runner.state,
@@ -63,6 +70,13 @@ world(() => {
         cleanups.push(() => audit.close());
         return { runner, router, audit, directory, rows, starts, answers, results, records,
             call, show, confirm, dispatch, refusal, newTurn,
+            tick: value => {
+                at = value;
+                const due = [...timers].find(([, timer]) => timer.deadline <= at);
+                assert.ok(due, "the runner owns the due deadline");
+                timers.delete(due[0]);
+                due[1].fn();
+            },
             time: value => { at = value; }, lock: value => { locked = value; }, target: value => { target = value; } };
     }
     const shell = { argv: ["fixture"], cwd: fixtures.project, network: false };
@@ -212,6 +226,34 @@ world(() => {
             assert.equal(w.runner.state.approval.kind, "none");
             assert.equal(w.rows().at(-1).decision, "refuse");
         }],
+        ...["deadline", "confirm"].map(entry => ["thinking-" + entry + "-approval", (implementation, session = Session) => {
+            for (const acknowledged of [false, true]) {
+                const w = make(implementation, session, { profile: "cautious", ackCancel: acknowledged });
+                assert.equal(w.runner.state.turn.deadline, 60000);
+                w.time(10000);
+                const approval = w.call("windows.close", { window: "0x123" });
+                assert.equal(approval.kind, "held");
+                assert.equal(w.runner.state.approval.deadline, 70000);
+                w.show();
+                w.time(59999);
+                w.dispatch({ type: "deadline", gen: w.runner.state.turn.gen, op: w.runner.state.turn.op });
+                assert.equal(w.runner.state.approval.kind, "held", "hold survives before the thinking deadline");
+                assert.equal(w.runner.state.turn.kind, "thinking");
+                const identity = { id: approval.id, digest: approval.digest, gen: w.runner.state.gen };
+                if (entry === "deadline") w.tick(60000);
+                else { w.time(60000); w.confirm(identity); }
+                w.confirm(identity);
+                assert.equal(w.starts.length, 0, entry + " expiry cannot start the executor");
+                assert.equal(w.runner.state.fault.reason, "thinking-timeout");
+                assert.equal(w.runner.state.turn.kind, acknowledged ? "none" : "cancelling");
+                assert.equal(w.runner.state.approval.kind, "none");
+                assert.equal(w.refusal().reason, "thinking-timeout");
+                assert.equal(w.rows().some(row => row.tool === "windows.close"
+                    && row.decision === "refuse" && row.outcome === "cancelled"), true);
+                assert.equal(w.runner.state.action.kind, "none");
+                assert.equal(w.rows().at(-1).decision, "refuse");
+            }
+        }]),
         ["replay", (implementation, session = Session) => {
             const w = make(implementation, session); held(w);
             const approval = w.runner.state.approval;
@@ -451,6 +493,16 @@ world(() => {
             ['s.approval.kind === "held" && at >= s.approval.deadline', 'false && s.approval.kind === "held" && at >= s.approval.deadline']
         ], session => assert.throws(() => byName("expired")(Router, session), assert.AssertionError));
         controls++; console.log("control=deadline detected");
+        for (const [name, needle, replacement, row] of [
+            ["thinking-retirement", 'dropApproval(s, effects, "thinking-timeout");',
+                'if (false) dropApproval(s, effects, "thinking-timeout");', "thinking-deadline-approval"],
+            ["delayed-thinking-expiry", 'if (e.type !== "deadline") expire(s, effects, e.at);',
+                'if (false && e.type !== "deadline") expire(s, effects, e.at);', "thinking-confirm-approval"]
+        ]) {
+            qmlCopy(sessionFile, [[needle, replacement]], session =>
+                assert.throws(() => byName(row)(Router, session), assert.AssertionError, name + " must turn red"));
+            controls++; console.log("control=" + name + " detected");
+        }
         qmlCopy(sessionFile, [['if (!canPropose(s)) break;', 'if (false) break;', 2]], session =>
             mutant(routerFile, "serial", "!session.canPropose(s) || pending !== null", "false",
                 implementation => byName("serial")(implementation, session)));

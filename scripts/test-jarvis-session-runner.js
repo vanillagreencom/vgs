@@ -96,6 +96,35 @@ const tests = [
         w.dispatch("mute-toggle");
         w.dispatch("mute-toggle");
     }],
+    ...["capture", "playback"].map(resource => ["failed-mute-" + resource, impl => {
+        const w = world(impl);
+        let active = false, released = 0;
+        if (resource === "capture") {
+            w.runner.ports.capture.open = (e, done) => { active = true; done(); };
+            w.runner.ports.capture.close = (e, done) => { active = false; released++; done(); };
+            w.dispatch("talk-down");
+        } else {
+            thinking(w);
+            w.runner.ports.playback.start = () => { active = true; };
+            w.runner.ports.playback.flush = (e, done) => { active = false; released++; done(); };
+            w.pending.send("play", { interruptible: true });
+        }
+        assert.equal(active, true, resource + " acquires its inert resource");
+        const failure = new Error("jarvis: mute=fixture-write-failed");
+        w.runner.ports.mute.store = () => { throw failure; };
+        const publications = w.published.length;
+        assert.throws(() => w.dispatch("mute-toggle"), error => error === failure,
+            "the actual storage error propagates after cleanup");
+        assert.equal(w.published.length, publications, "failed storage cannot publish changed mute");
+        assert.equal(active, false, resource + " releases before failure reaches the daemon");
+        assert.equal(released, 1);
+        if (resource === "playback") assert.equal(w.calls.some(c => c.name === "cancel"), true);
+        w.runner.close();
+        assert.equal(active, false, resource + " remains released after daemon-style close");
+        assert.equal(released, 1, "close does not become a second cleanup owner");
+        assert.equal(w.timers.size, 0);
+        assert.equal(w.runner.state[resource].kind, resource === "capture" ? "closed" : "idle");
+    }]),
     ["router-ports", impl => {
         const w = world(impl);
         const syncs = [];
@@ -301,6 +330,16 @@ try {
     const mutants = [
         ["durable-mute", 'if (effect.kind === "mute-store") this.consume(effect);',
             'if (false) this.consume(effect);', "durable-mute"],
+        ["mute-cleanup-order", 'catch (error) { persistence = { kind: "failed", error }; }',
+            'catch (error) { throw error; }', "failed-mute-capture"],
+        ["mute-capture-close", 'this.ports.capture.close(e, () => done("capture-closed"));',
+            'if (false) this.ports.capture.close(e, () => done("capture-closed"));', "failed-mute-capture"],
+        ["mute-playback-flush", 'this.ports.playback.flush(e, () => done("flushed"));',
+            'if (false) this.ports.playback.flush(e, () => done("flushed"));', "failed-mute-playback"],
+        ["mute-failure-publication", 'if (persistence.kind === "stored")',
+            'if (true)', "failed-mute-capture"],
+        ["mute-failure-propagation", 'if (persistence.kind === "failed") throw persistence.error;',
+            'if (false) throw persistence.error;', "failed-mute-capture"],
         ["router-sync", 'this.ports.tools.sync(this.state);', 'void this.state;', "router-ports"],
         ["confirmation-refusal", 'this.ports.approval.refused(e);', 'void e;', "router-ports"],
         ["router-close", 'this.ports.tools.close();', 'void this.ports.tools;', "router-ports"],
