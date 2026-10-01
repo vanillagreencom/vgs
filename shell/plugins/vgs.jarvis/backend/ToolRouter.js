@@ -56,17 +56,41 @@ function create({ session, state, dispatch, context, audit, result }) {
             decision, confirmed: value.confirmed ?? "none", outcome });
     }
 
+    // One result item shape for every answer a brain receives for a call.
+    function answer(content, source) {
+        const bytes = Buffer.from(content);
+        const bounded = bytes.length <= RESULT_BYTES ? content
+            : new TextDecoder().decode(bytes.subarray(0, RESULT_BYTES - 32), { stream: true }) + "\n[result clipped]";
+        return Policy.item(bounded, [source ?? "desktop"]);
+    }
+
     // final is false only while Session still holds a timed-out action, whose
     // actual completion delivers again under the same call id.
     function deliver(value, outcome, content, source = null, final = true) {
         const s = state();
         if (source !== null && s.gen === value.turn.gen && s.turn.kind === "thinking" && s.turn.op === value.turn.op)
             taint = Policy.observe(taint, source);
-        const bytes = Buffer.from(content);
-        const bounded = bytes.length <= RESULT_BYTES ? content
-            : new TextDecoder().decode(bytes.subarray(0, RESULT_BYTES - 32), { stream: true }) + "\n[result clipped]";
         result({ gen: value.turn.gen, op: value.turn.op, outcome, final, kind: "tool-results",
-            results: [{ id: value.request, item: Policy.item(bounded, [source ?? "desktop"]) }] });
+            results: [{ id: value.request, item: answer(content, source) }] });
+    }
+
+    /**
+     * Content the live thinking turn's request carries, by its source labels.
+     * History can hold an earlier turn's web, file, screen or agent content.
+     */
+    function observe(turn, labels) {
+        const s = state();
+        if (s.gen !== turn.gen || s.turn.kind !== "thinking" || s.turn.op !== turn.op) return;
+        for (const label of labels) taint = Policy.observe(taint, label);
+    }
+
+    /**
+     * Answer a brain call an interruption left without a result: "not-started"
+     * never reached route; "running" started and reports its outcome later.
+     */
+    function interrupted(request, progress) {
+        if (progress !== "not-started" && progress !== "running") throw new Error("jarvis: router=interrupted");
+        return { id: request.id, item: answer(JSON.stringify({ kind: "interrupted", outcome: progress }), null) };
     }
 
     function refuse(value, reason, final = true) {
@@ -242,7 +266,7 @@ function create({ session, state, dispatch, context, audit, result }) {
             }
         }
     };
-    return Object.freeze({ register, offer, route, ports });
+    return Object.freeze({ register, offer, route, observe, interrupted, ports });
 }
 
 module.exports = { create };

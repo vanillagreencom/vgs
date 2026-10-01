@@ -23,6 +23,8 @@ function provider(id) {
     // but unavailable; an unknown label must never select another driver.
     return row || { id, label: id, kind: "unsupported" };
 }
+// A brain choice is any account but a speech-only key.
+function brainRow(row) { return row.kind !== "speech-key"; }
 function identity(kind, values) {
     const canonical = JSON.stringify(values, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
         ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) : value);
@@ -281,8 +283,8 @@ class Accounts {
     localAccounts() {
         const result = this.run("ss", ["-H", "-ltn"]);
         try {
-            if (result.error || result.status !== 0) return PROVIDERS.filter(row => row.kind === "local")
-                .map(row => this.account(row, "local", { kind: "unavailable", reason: "ports-unavailable" }, { kind: "local", origin: row.origin }));
+            if (result.error || result.status !== 0) return this.localRows()
+                .map(({ row, label, source }) => this.account(row, label, { kind: "unavailable", reason: "ports-unavailable" }, source));
             const ports = new Set();
             for (const line of result.stdout.toString("utf8").split("\n").filter(Boolean)) {
                 const fields = line.trim().split(/\s+/);
@@ -290,9 +292,24 @@ class Accounts {
                 const match = /^(127\.0\.0\.1|\[::1\]|0\.0\.0\.0|\*|\[::\]):([0-9]+)$/.exec(fields[3]);
                 if (match) ports.add(Number(match[2]));
             }
-            return PROVIDERS.filter(row => row.kind === "local" && ports.has(row.port))
-                .map(row => this.account(row, "local", { kind: "found" }, { kind: "local", origin: row.origin }));
+            return this.localRows().filter(({ row }) => ports.has(row.port))
+                .map(({ row, label, source }) => this.account(row, label, { kind: "found" }, source));
         } finally { result.stdout?.fill(0); result.stderr?.fill(0); }
+    }
+
+    // The keyring and local rows discovery and resolution share. A vendor
+    // login item refuses both: it is never an API key.
+    keyringRows() {
+        return this.secrets.references().map(reference => {
+            if (this.vendorLogin({ label: reference.account, attributes: reference.attributes }))
+                fail("reference=vendor-login-or-provider");
+            return { row: provider(reference.provider), label: reference.account, source: { kind: "keyring", reference } };
+        });
+    }
+
+    localRows() {
+        return PROVIDERS.filter(row => row.kind === "local")
+            .map(row => ({ row, label: "local", source: { kind: "local", origin: row.origin } }));
     }
 
     account(row, label, state, source) {
@@ -308,19 +325,15 @@ class Accounts {
         const result = candidates.map(item => this.cliAccount(item)).filter(Boolean);
         for (const row of PROVIDERS) if (keyProvider(row) && this.presence[row.variable])
             result.push(this.account(row, "environment", { kind: "found" }, { kind: "variable", name: row.variable, origin: row.origin }));
-        for (const ref of this.secrets.references()) {
-            const row = provider(ref.provider);
-            if (this.vendorLogin({ label: ref.account, attributes: ref.attributes }))
-                fail("reference=vendor-login-or-provider");
+        for (const { row, label, source } of this.keyringRows()) {
             if (!keyProvider(row)) {
-                result.push(this.account(row, ref.account, { kind: "unavailable", reason: "provider-unsupported" },
-                    { kind: "keyring", reference: ref }));
+                result.push(this.account(row, label, { kind: "unavailable", reason: "provider-unsupported" }, source));
                 continue;
             }
-            const present = this.secrets.presence(ref);
+            const present = this.secrets.presence(source.reference);
             const state = present.value === "present" ? { kind: "found" } : present.value === "locked"
                 ? { kind: "locked" } : { kind: "unavailable", reason: present.value === "absent" ? "key-absent" : "keyring-unavailable" };
-            result.push(this.account(row, ref.account, state, { kind: "keyring", reference: ref }));
+            result.push(this.account(row, label, state, source));
         }
         result.push(...this.localAccounts());
         if (result.length > MAX_ROWS) fail("discovery=account-limit");
@@ -330,18 +343,16 @@ class Accounts {
 
     /**
      * The daemon's brain selection: a saved Brain account id among keyring
-     * references and local servers, with the declaration's default model.
-     * It runs no vendor command and reads no port, so it proves neither
-     * login nor a listening server. A subscription or unknown id is null.
+     * references and local servers, with the declaration's Verify probe
+     * model. It runs no vendor command and reads no port, so it proves
+     * neither login nor a listening server. A subscription, a speech-only
+     * key, an unsupported label or an unknown id is null.
      */
     resolve(id) {
-        const rows = this.secrets.references().map(reference => [provider(reference.provider), reference.account,
-            { kind: "keyring", reference }]).concat(PROVIDERS.filter(row => row.kind === "local")
-            .map(row => [row, "local", { kind: "local", origin: row.origin }]));
-        for (const [row, label, source] of rows) {
-            if (row.kind !== "key" && row.kind !== "local") continue;
-            const account = identity(source.kind, [row.id, source, label]);
-            if (account === id) return { id, provider: row.id, label, source, model: row.probe.model };
+        for (const { row, label, source } of [...this.keyringRows(), ...this.localRows()]) {
+            if (this.account(row, label, { kind: "found" }, source).id !== id) continue;
+            if ((source.kind === "keyring" && !keyProvider(row)) || !brainRow(row)) return null;
+            return { id, provider: row.id, label, source, model: row.probe.model };
         }
         return null;
     }
@@ -521,7 +532,7 @@ class Accounts {
                 item.identity.kind === "mismatch" ? "Identity mismatch" : ""].filter(Boolean);
             return { label: (row.label + " / " + item.label).slice(0, 60), value, hint: facts.join("; ").slice(0, 240) };
         });
-        const brains = this.accounts.filter(item => provider(item.provider).kind !== "speech-key"
+        const brains = this.accounts.filter(item => brainRow(provider(item.provider))
             && ["found", "signed-in", "verified"].includes(item.state.kind))
             .map(item => ({ value: item.id, label: (provider(item.provider).label + " / " + item.label).slice(0, 60) }));
         return { accounts, brains };

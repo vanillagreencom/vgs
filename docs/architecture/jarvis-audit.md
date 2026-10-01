@@ -26,11 +26,11 @@ The writer does not decide whether an action is allowed or whether confirmation 
 
 | Event field | Producer and meaning |
 |---|---|
-| `kind` | Router: `action`. Tool bridge and network door: `release`. |
+| `kind` | Router: `action`. Tool bridge, chained engine and Accounts Verify: `release`. |
 | `gen`, `op` | Non-negative generation and positive operation integers from the owning conversation. They link the decision and later outcome. |
 | `tool` | Router's reserved tool id from `Tools.TABLE`. Other names become `unknown`. A release record uses `release`. |
 | `args` | Original argument envelope. Values never enter the store. Release metadata uses fields `labels` and `recipients`, never the transferred item. |
-| `effect` | Policy's effect, or `null` when a refused call has no classified effect. |
+| `effect` | Policy's effect, or `null` when a refused call has no classified effect. A release record uses `external`. |
 | `decision` | Action: `allow`, `confirm`, `refuse`. Release: `send`, `ask`, `withhold`. |
 | `confirmed` | Approval owner's observation: `none`, `physical`, `voice`. It contains no name, transcript or model text. |
 | `outcome` | `pending`, `completed`, `failed`, `unknown`, `cancelled`. No executor output or exception body enters it. |

@@ -234,6 +234,7 @@ world(async () => {
         });
     controls++;
     cases++;
+    references.remember(ownReference("elevenlabs", "voice", "https://api.elevenlabs.io"));
     // The daemon resolves a saved choice without discovery's vendor commands.
     const resolution = Judge => {
         const judge = new Judge(directory, env);
@@ -246,16 +247,18 @@ world(async () => {
             { kind: "local", origin: "http://127.0.0.1:11434" });
         assert.deepEqual(judge.resolve(local.id), { id: local.id, provider: "ollama", label: "local",
             source: local.source, model: "" });
-        for (const other of [found.find(item => item.source.kind === "cli").id, unknown.id, "", "keyring:0"]) {
+        const speech = found.find(item => item.provider === "elevenlabs");
+        assert.ok(speech, "a speech-only key reference exists");
+        for (const other of [found.find(item => item.source.kind === "cli").id, unknown.id, speech.id, "", "keyring:0"]) {
             let value;
             assert.doesNotThrow(() => { value = judge.resolve(other); }, "resolution judges every saved reference");
-            assert.equal(value, null, "a subscription, unsupported or unknown id selects nothing");
+            assert.equal(value, null, "a subscription, speech-only, unsupported or unknown id selects nothing");
         }
         assert.deepEqual([calls("cli-calls").length, calls("port-calls").length, calls("secret-calls").length], before,
             "resolution runs no vendor command, port read or key lookup");
     };
     resolution(Accounts);
-    await mutant("backend/Accounts.js", "resolve-unsupported", 'if (row.kind !== "key" && row.kind !== "local") continue;', "",
+    await mutant("backend/Accounts.js", "resolve-unsupported", 'if ((source.kind === "keyring" && !keyProvider(row)) || !brainRow(row)) return null;', "",
         folder => resolution(require(path.join(folder, "backend/Accounts.js")).Accounts));
     controls++;
     cases++;

@@ -44,6 +44,23 @@ function pinned(logic) {
 }
 pinned(Providers);
 
+// The chained engine joins an account declaration to its brain row by id.
+// Every key and local declaration has a row at the declared origin, and every
+// row but custom, whose base is a setting, has a declaration.
+const { PROVIDERS } = require(path.join(backend, "../AccountProviders.js"));
+function joined(logic) {
+    const declared = PROVIDERS.filter(row => row.kind === "key" || row.kind === "local");
+    assert.ok(declared.length >= 10, "the declaration filter found the key and local rows");
+    for (const row of declared) {
+        let selected;
+        assert.doesNotThrow(() => { selected = logic.select(row.id); }, row.id + " has a brain row");
+        assert.equal(new URL(selected.base).origin, row.origin, row.id + " shares its declared origin");
+    }
+    for (const id of [...Object.keys(documented), "anthropic"])
+        assert.ok(declared.some(row => row.id === id), id + " has an account declaration");
+}
+joined(Providers);
+
 // [customBaseUrl, resolved base or keyed refusal]. Only the custom row reads it.
 const custom = [
     ["http://localhost:9000/v1/", "http://127.0.0.1:9000/v1"],
@@ -92,6 +109,7 @@ world("providers", root => {
         ["custom-slash", '.replace(/\\/$/, "")', "", logic => resolves(logic, custom[0])],
         ["unknown", "!Object.hasOwn(ROWS, id)", "!(id in ROWS)",
             logic => assert.throws(() => logic.select("constructor"), { message: "jarvis: provider=unknown" })],
+        ["account-join", '"lm-studio": { driver', '"lmstudio": { driver', joined],
         ["registered", 'if (!rows.has(value)) fail("row");', "",
             logic => assert.throws(() => logic.assertRow({ ...logic.select("openai") }), { message: "jarvis: provider=row" })]
     ];

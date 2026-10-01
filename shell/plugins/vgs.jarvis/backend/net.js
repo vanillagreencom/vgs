@@ -1,6 +1,7 @@
 // The outbound door for daemon adapters. No adapter gets the raw WebSocket.
-// Session owns create/close. Approval and the pre-transfer audit stay with their
-// owners; this installed interface is not connected to the skeleton daemon.
+// The chained engine creates one owner per conversation and closes it when
+// the conversation ends. Approval and the pre-transfer audit stay with their
+// owners.
 "use strict";
 const { isIP } = require("node:net");
 

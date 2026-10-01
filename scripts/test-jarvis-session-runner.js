@@ -173,6 +173,16 @@ const tests = [
         w.pending.close();
         assert.equal(w.runner.state.capture.kind, "closed");
     }],
+    ["collect-failure", impl => {
+        const w = world(impl);
+        w.dispatch("talk-down");
+        w.pending.open();
+        const turn = w.runner.state.turn;
+        w.pending["collect-failed"]("speech=fixture");
+        assert.equal(w.runner.state.turn.kind, "none", "the failure reaches the collection's turn");
+        assert.equal(w.runner.state.fault.reason, "speech=fixture");
+        assert.equal(turn.kind, "collecting");
+    }],
     ["completed-connection", (impl, session = Session) => {
         for (const boundary of ["lease", "stop", "settings"]) {
             const w = world(impl, false, session);
@@ -353,6 +363,7 @@ try {
         ["timer-replace", 'if (this.timer !== null) this.clock.clear(this.timer);', 'if (false && this.timer !== null) this.clock.clear(this.timer);', "timer-release"],
         ["closed-clock", 'if (this.lifetime.kind === "closed") return;', 'if (false && this.lifetime.kind === "closed") return;', "closed-clock"],
         ["outcome", 'this.ports.tools.outcome(e);', 'void this.ports.tools.outcome;', "approval-and-tool"],
+        ["collect-failure", 'reason => done("collect-failed", { reason })', 'reason => void reason', "collect-failure"],
         ["completed-connection", 'this.ports.brain.close(e);', 'if (false) this.ports.brain.close(e);', "completed-connection"],
         ["speech-release", 'this.ports.speech.release();', 'void this.ports.speech;', "timer-release"],
         ["unavailable", 'function refuse() { throw new Error("jarvis: session=adapter-unavailable"); }',

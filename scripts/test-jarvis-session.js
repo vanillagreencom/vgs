@@ -11,8 +11,8 @@ const file = path.resolve(__dirname, "../shell/plugins/vgs.jarvis/Session.js");
 const Session = load(file);
 const copy = value => JSON.parse(JSON.stringify(value));
 const events = ["snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle", "stop",
-    "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial", "final", "brain-done",
-    "brain-failed", "cancelled", "play", "played", "flushed", "tool", "tool-done", "approval",
+    "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial", "final", "collect-failed", "brain-done",
+    "brain-failed", "brain-ended", "cancelled", "play", "played", "flushed", "tool", "tool-done", "approval",
     "shown", "confirm", "approval-cancel", "deadline", "lease-ended", "speak", "transcript", "speech-idle", "speech-failed"];
 assert.deepEqual(copy(Session.EVENTS), events, "every supported event enters the pair matrix");
 const snapshot = extra => ({ type: "snapshot", at: 0, locked: false, engine: "chained", configured: true,
@@ -353,6 +353,27 @@ const table = [
         const ack = step(logic, r.state, callback("capture-closed", r.state.capture));
         assert.equal(ack.state.mute.kind, "on");
         assert.equal(step(logic, ack.state, event("unmute")).state.mute.kind, "off");
+    }],
+    ["collect-failed", logic => {
+        let s = listening(logic);
+        s = step(logic, s, event("talk-up", 30)).state;
+        s = step(logic, s, callback("capture-closed", s.capture, 31)).state;
+        assert.equal(s.turn.kind, "collecting", "a hold release leaves the utterance to its final");
+        const r = step(logic, s, callback("collect-failed", s.turn, 32, { reason: "speech=failed" }));
+        assert.equal(r.state.turn.kind, "none");
+        assert.deepEqual(r.state.fault, { kind: "error", reason: "speech=failed", retry: 0 });
+        const stale = step(logic, r.state, callback("collect-failed", s.turn, 33, { reason: "late" }));
+        assert.equal(stale.state.stale, r.state.stale + 1, "a retired collection's failure is stale");
+    }],
+    ["brain-ended", logic => {
+        const s = thinking(logic);
+        const r = step(logic, s, callback("brain-ended", s.turn, 40, { reason: "brain=context-limit" }));
+        assert.equal(r.state.turn.kind, "none");
+        assert.equal(r.state.fault.kind, "none", "a clean end leaves no fault");
+        assert.equal(r.state.conversation.kind, "ended");
+        assert.deepEqual(kinds(r), ["brain-close"]);
+        const next = step(logic, r.state, event("talk-down", 41));
+        assert.equal(next.state.capture.kind, "opening", "the next conversation starts");
     }],
     ["cancel-ack", logic => {
         const s = thinking(logic);
@@ -752,8 +773,8 @@ const pairEvents = events.map(type => ({ type, extra: {} })).concat([
 function fixtureEvent(type, s, at) {
     const regions = {
         "capture-opened": "capture", "capture-closed": "capture", "capture-failed": "capture",
-        "playback-failed": "playback", partial: "turn", final: "turn",
-        "brain-done": "turn", "brain-failed": "turn", cancelled: "turn", play: "turn",
+        "playback-failed": "playback", partial: "turn", final: "turn", "collect-failed": "turn",
+        "brain-done": "turn", "brain-failed": "turn", "brain-ended": "turn", cancelled: "turn", play: "turn",
         played: "playback", flushed: "playback", tool: "turn", "tool-done": "action",
         approval: "turn", shown: "approval", confirm: "approval", "approval-cancel": "approval", deadline: "turn",
         speak: "speech", transcript: "speech", "speech-idle": "speech", "speech-failed": "speech"
@@ -817,6 +838,17 @@ const createdCallbacks = [
     { effect: "collect", type: "final", check: (s, r) => {
         assert.equal(r.state.turn.kind, "thinking");
         assert.equal(r.effects.find(e => e.kind === "brain-send").text, "fixture");
+    } },
+    { effect: "collect", type: "collect-failed", check: (s, r) => {
+        assert.equal(r.state.turn.kind, "none");
+        assert.equal(r.state.fault.reason, "fixture");
+        assert.equal(r.state.conversation.kind, "ended");
+    } },
+    { effect: "brain-send", type: "brain-ended", check: (s, r) => {
+        assert.equal(r.state.turn.kind, "none");
+        assert.equal(r.state.fault.kind, "none");
+        assert.equal(r.state.conversation.kind, "ended");
+        assert.equal(r.state.brain.kind, "closed");
     } },
     { effect: "brain-send", type: "brain-done", check: (s, r) => {
         assert.ok(["none", "collecting"].includes(r.state.turn.kind));
@@ -937,7 +969,7 @@ function createdPairMatrix(logic) {
     // table. Omitting one row cannot shrink the coverage claim with it.
     assert.deepEqual([...seen].sort(), [
         "capture-open:capture-opened", "capture-open:capture-failed", "capture-close:capture-closed",
-        "collect:partial", "collect:final",
+        "collect:partial", "collect:final", "collect:collect-failed", "brain-send:brain-ended",
         "brain-send:brain-done", "brain-send:brain-failed", "brain-send:play",
         "brain-send:tool", "brain-send:approval", "brain-send:deadline",
         "brain-cancel:cancelled", "brain-cancel:deadline",
@@ -1037,6 +1069,12 @@ try {
         ["cancel-ack-ended", 'if (s.conversation.kind === "ended") closeBrain(s, effects);\n        s.turn',
             'if (false) closeBrain(s, effects);\n        s.turn', "cancel-ack"],
         ["cancel-bound", "deadline: at + 2000", "deadline: at + 2001", "cancel-timeout"],
+        ["collect-failure", 's.fault = { kind: "error", reason: e.reason, retry: 0 };\n        end(s, effects, e.at, "collect-failed", false);',
+            'end(s, effects, e.at, "collect-failed", false);', "collect-failed"],
+        ["collect-failure-live", 'if (!live(s, e, "turn", ["collecting"])) { stale(s); break; }\n        s.turn = { kind: "none" };\n        s.fault',
+            'if (false) { stale(s); break; }\n        s.turn = { kind: "none" };\n        s.fault', "collect-failed"],
+        ["brain-ended-clean", 's.turn = { kind: "none" };\n        end(s, effects, e.at, e.reason, false);',
+            's.turn = { kind: "none" };\n        s.fault = { kind: "error", reason: e.reason, retry: 0 };\n        end(s, effects, e.at, e.reason, false);', "brain-ended"],
         ["think-bound", 's.turn.kind === "thinking" && at >= s.turn.deadline',
             's.turn.kind === "thinking" && false && at >= s.turn.deadline', "thinking-timeout"],
         ["thinking-approval-expiry", 'dropApproval(s, effects, "thinking-timeout");',

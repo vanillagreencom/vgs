@@ -14,7 +14,8 @@ function standins(folder) {
             JSON.stringify(path.join(__dirname, "audio-tool.py")) + " " + command + ' "$@"\n', { mode: 0o700 });
 }
 
-async function world(main) {
+// timeout bounds a hung world, not a latency; a long suite passes its own.
+async function world(main, timeout = 120000) {
     if (process.argv[2] === "--inside") {
         for (const name of ["sudo", "pkexec", "pamtester", "secret-tool", "faillock"])
             assert.equal(cp.spawnSync("bash", ["-c", "command -v " + name], {
@@ -30,7 +31,7 @@ async function world(main) {
         const result = cp.spawnSync("/bin/bash", [path.join(tree, "scripts/lib/jarvis-env.sh"),
             path.join(root, "standins"), "--", "node", process.argv[1], "--inside"], {
             env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: parent },
-            encoding: "utf8", timeout: 120000
+            encoding: "utf8", timeout
         });
         process.stdout.write(result.stdout || "");
         process.stderr.write(result.stderr || "");
@@ -40,8 +41,9 @@ async function world(main) {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
-async function until(check, message) {
-    const deadline = performance.now() + 5000;
+// ms bounds a missing observation, not a latency budget.
+async function until(check, message, ms = 5000) {
+    const deadline = performance.now() + ms;
     while (!check()) {
         assert.ok(performance.now() < deadline, message);
         // Observe child pipe/lock state. This is not a latency measurement.

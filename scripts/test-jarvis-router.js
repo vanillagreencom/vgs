@@ -390,6 +390,27 @@ world(() => {
             w.newTurn();
             assert.equal(w.call("files.write", { path: path.join(fixtures.project, "new"), text: "write" }).kind, "proposed");
         }],
+        ["history-taint", implementation => {
+            const w = make(implementation);
+            const write = () => w.call("files.write", { path: path.join(fixtures.project, "new"), text: "write" });
+            const old = w.runner.state.turn;
+            w.router.observe(old, ["speech", "web"]);
+            assert.equal(write().kind, "held", "web content in the request taints its turn");
+            w.dispatch({ type: "cancel" });
+            w.newTurn();
+            w.router.observe(old, ["web"]);
+            assert.equal(write().kind, "proposed", "an old turn's labels cannot taint a newer turn");
+        }],
+        ["interrupted-answers", implementation => {
+            const w = make(implementation);
+            for (const progress of ["not-started", "running"]) {
+                const answer = w.router.interrupted({ id: "call-" + progress, tool: "windows.list", arguments: {} }, progress);
+                assert.equal(answer.id, "call-" + progress);
+                assert.deepEqual(JSON.parse(answer.item.content), { kind: "interrupted", outcome: progress });
+                assert.deepEqual(answer.item.labels, ["desktop"]);
+            }
+            assert.throws(() => w.router.interrupted({ id: "x" }, "unknown"), { message: "jarvis: router=interrupted" });
+        }],
         ["stale-turn", implementation => {
             const w = make(implementation);
             const old = w.runner.state.turn;
@@ -463,6 +484,10 @@ world(() => {
             ["turn-identity", "s.gen !== turn.gen || s.turn.kind !== \"thinking\" || s.turn.gen !== turn.gen || s.turn.op !== turn.op",
                 "false", "stale-turn"],
             ["observe", "taint = Policy.observe(taint, source);", "void source;", "taint"],
+            ["history-observe", "for (const label of labels) taint = Policy.observe(taint, label);", "void labels;", "history-taint"],
+            ["history-turn", "if (s.gen !== turn.gen || s.turn.kind !== \"thinking\" || s.turn.op !== turn.op) return;\n        for (const label",
+                "for (const label", "history-taint"],
+            ["interrupted-outcome", "outcome: progress }", "outcome: \"unknown\" }", "interrupted-answers"],
             ["reset-turn", 'taint = { kind: "clean" };\n        }', 'void turnOp;\n        }', "taint"],
             ["outcomes", "record(value, value.decision.kind, e.outcome)", 'record(value, value.decision.kind, "unknown")', "outcome-lifetime"],
             ["grants", "grants.add(prior.scope);", "void prior.scope;", "grants"],

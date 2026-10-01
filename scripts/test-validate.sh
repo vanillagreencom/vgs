@@ -391,6 +391,10 @@ cases=(
   "task-event-suite|scripts/test-task-event.js|offline|node scripts/test-task-event.js"$'\n'"$repo_plan"
   "task-event-prefix|scripts/test-task-event.js|all|node scripts/test-task-event.js"$'\n'"$repo_plan"$'\nscripts/qml-smoke.sh'
   "jarvis-audio-suite|scripts/test-jarvis-audio.js|offline|node scripts/test-jarvis-audio.js"$'\n'"$repo_plan"
+  "jarvis-engine-suite|scripts/test-jarvis-engine.js|offline|node scripts/test-jarvis-engine.js"$'\n'"$repo_plan"
+  "jarvis-engine-input|shell/plugins/vgs.jarvis/backend/ChainedEngine.js|cli|node scripts/test-jarvis-daemon.js"$'\nnode scripts/test-jarvis-audio-daemon.js\nnode scripts/test-jarvis-engine.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-engine-fixture|scripts/fixtures/jarvis/engine.js|offline|node scripts/test-jarvis-daemon.js"$'\nnode scripts/test-jarvis-engine.js\n'"$repo_plan"
+  "jarvis-brain-frames|scripts/fixtures/jarvis-brain/openai-chat-frames.js|offline|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-engine.js\n'"$repo_plan"
   "jarvis-audio-daemon-suite|scripts/test-jarvis-audio-daemon.js|offline|node scripts/test-jarvis-audio-daemon.js"$'\n'"$repo_plan"
   "jarvis-playback-suite|scripts/test-jarvis-playback.js|offline|node scripts/test-jarvis-playback.js"$'\n'"$repo_plan"
   "jarvis-pipewire-suite|scripts/test-jarvis-playback-pipewire.js|offline|node scripts/test-jarvis-playback-pipewire.js"$'\n'"$repo_plan"

@@ -20,14 +20,16 @@ const CHUNK_FRAMES = 24000; // Below Audio's 64 KiB chunk bound.
 const control = {};
 function reset(options = {}) {
     Object.assign(control, { ready: true, recipients: [{ kind: "local", provider: "scripted-speech", account: "" }],
-        utterances: [], spoken: [], opened: [], closed: 0, aborted: 0, frames: 0, ...options });
+        utterances: [], spoken: [], labels: new Set(), opened: [], closed: 0, aborted: 0, frames: 0, ...options });
 }
 reset();
 
 // A scripted utterance: partials after successive capture frames, then the
 // final once Audio closes the sink. events replaces the scripted sequence.
-function utterance(final, partials = [], events = null) {
-    return { final, partials, events };
+// afterFrames ends the utterance early, as a provider's turn detection does;
+// failAfterClose throws once the capture has closed.
+function utterance(final, partials = [], events = null, options = {}) {
+    return { final, partials, events, afterFrames: options.afterFrames ?? null, failAfterClose: options.failAfterClose === true };
 }
 
 // Alignment at whole words: each word ends WORD_FRAMES after the previous.
@@ -64,20 +66,30 @@ function adapter(net, recipients) {
             const input = frames[Symbol.asyncIterator]();
             let index = 0;
             let ended = false;
+            let counted = 0;
+            const take = frame => {
+                counted++;
+                control.frames += frame.content.length;
+                for (const label of frame.labels) control.labels.add(label);
+            };
             return { [Symbol.asyncIterator]() { return this; },
                 async next() {
                     if (ended || index >= events.length) return { value: undefined, done: true };
                     if (index < events.length - 1) {
                         const frame = await input.next();
                         if (!frame.done) {
-                            control.frames += frame.value.length;
+                            take(frame.value);
                             return { value: events[index++], done: false };
                         }
                         index = events.length - 1;
                     }
-                    for (let frame = await input.next(); !frame.done; frame = await input.next())
-                        control.frames += frame.value.length;
+                    while (script.afterFrames === null || counted < script.afterFrames) {
+                        const frame = await input.next();
+                        if (frame.done) break;
+                        take(frame.value);
+                    }
                     if (ended) return { value: undefined, done: true };
+                    if (script.failAfterClose) throw new Error("jarvis: speech=fixture-failed");
                     return { value: events[index++], done: false };
                 },
                 async return() {
@@ -89,8 +101,9 @@ function adapter(net, recipients) {
         },
         async *speak(sentences) {
             for await (const sentence of sentences) {
-                control.spoken.push(sentence);
-                yield* synthesized(sentence);
+                control.spoken.push(sentence.content);
+                for (const label of sentence.labels) control.labels.add(label);
+                yield* synthesized(sentence.content);
             }
         },
         close() { control.closed++; }

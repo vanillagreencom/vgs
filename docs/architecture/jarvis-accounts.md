@@ -20,7 +20,7 @@ Local-server discovery reads listening-port metadata through `ss`. It makes no c
 
 Remembered references use the same `Secrets::presence` result as the key status reader. A locked item produces Locked. Missing and failed presence checks produce Unavailable. Discovery does not call lookup or `secret-tool search`.
 
-`Accounts::resolve` serves the [chained engine's](jarvis-engine.md) brain selection. It maps a saved Brain account id to a keyring reference or a local server, with the declaration's default model. It runs no vendor command and reads no port, so it proves neither login nor a listening server. A subscription or unknown id resolves to nothing.
+`Accounts::resolve` serves the [chained engine's](jarvis-engine.md) brain selection. It maps a saved Brain account id to a keyring reference or a local server, with the declaration's Verify probe model. It builds those rows and their ids with discovery's own code. It runs no vendor command and reads no port, so it proves neither login nor a listening server. A subscription or unknown id resolves to nothing.
 
 Add key permits a custom provider label. Accounts keeps an unsupported label visible as Unavailable and offers no brain choice for it. Verify refuses it before the request port. It never assigns a known driver's origin or behavior to that reference. Labels and attribute values can contain Unicode; control characters remain invalid.
 

@@ -12,7 +12,7 @@ var APPROVAL_DRAW_MS = 700;
 var EVENTS = [
     "snapshot", "indicator", "talk-down", "talk-up", "toggle", "mute", "unmute", "mute-toggle",
     "stop", "cancel", "interrupt", "capture-opened", "capture-closed", "capture-failed", "playback-failed", "partial",
-    "final", "brain-done", "brain-failed", "cancelled", "play", "played",
+    "final", "collect-failed", "brain-done", "brain-failed", "brain-ended", "cancelled", "play", "played",
     "flushed", "tool", "tool-done", "approval", "shown", "confirm", "approval-cancel", "deadline", "lease-ended",
     "speak", "transcript", "speech-idle", "speech-failed"
 ];
@@ -365,6 +365,19 @@ function reduce(state, e) {
         brain.owner = s.brain.op;
         s.turn = { kind: "thinking", gen: brain.gen, op: brain.op, deadline: e.at + RESPONSE_TIMEOUT_MS };
         break;
+    // A transcription that fails after its capture closed still owns the turn.
+    case "collect-failed":
+        if (!live(s, e, "turn", ["collecting"])) { stale(s); break; }
+        s.turn = { kind: "none" };
+        s.fault = { kind: "error", reason: e.reason, retry: 0 };
+        end(s, effects, e.at, "collect-failed", false);
+        break;
+    // The brain ends the conversation without a fault: the next one may start.
+    case "brain-ended":
+        if (!live(s, e, "turn", ["thinking"])) { stale(s); break; }
+        s.turn = { kind: "none" };
+        end(s, effects, e.at, e.reason, false);
+        break;
     case "brain-done":
     case "brain-failed":
         if (!live(s, e, "turn", ["thinking"])) { stale(s); break; }
@@ -377,7 +390,7 @@ function reduce(state, e) {
     case "cancelled":
         if (!live(s, e, "turn", ["cancelling"])) { stale(s); break; }
         // An acknowledged cancel leaves the adapter idle. A live conversation
-        // keeps it, so the next turn keeps its history and heard prefix.
+        // keeps it, so the next turn keeps the brain's history.
         if (s.conversation.kind === "ended") closeBrain(s, effects);
         s.turn = { kind: "none" };
         break;

@@ -49,7 +49,8 @@ class SessionRunner {
         case "capture-open": this.ports.capture.open(e, () => done("capture-opened"),
             reason => done("capture-failed", { reason })); break;
         case "capture-close": this.ports.capture.close(e, () => done("capture-closed")); break;
-        case "collect": this.ports.capture.collect(e, (type, text) => done(type, { text })); break;
+        case "collect": this.ports.capture.collect(e, (type, text) => done(type, { text }),
+            reason => done("collect-failed", { reason })); break;
         case "brain-send": this.ports.brain.send(e, (type, values) => done(type, values)); break;
         case "brain-cancel":
             this.ports.brain.cancel(e, () => this.dispatch({ type: "cancelled", gen: e.gen, op: e.target }));

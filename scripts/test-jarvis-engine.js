@@ -3,13 +3,17 @@
 // release gate and wire brain, with scripted speech adapters and a loopback
 // brain inside the J09 world. Every request body is read at the server.
 "use strict";
-const { assert, fs, path, tree, world, until } = require("./fixtures/jarvis/audio.js");
+const { assert, fs, path, tree, world, until: wait } = require("./fixtures/jarvis/audio.js");
 const { clock, turn } = require("./fixtures/jarvis/playback.js");
 const Fixture = require("./fixtures/jarvis/engine.js");
 const { load } = require("../bin/lib/qml-library.js");
 const { utterance, text, calls, control } = Fixture;
 // The ollama row's default port: free inside the private network namespace.
 const PORT = 11434;
+// Bounds a missing observation, not a latency: each rig runs real capture and
+// player children, which a loaded host can delay.
+const OBSERVE_MS = 15000;
+const until = (check, message) => wait(check, message, OBSERVE_MS);
 const INTERRUPTED = "[interrupted] The user heard none of your last reply.";
 const heardOnly = prefix => "[interrupted] The user heard only this part of your last reply: \"" + prefix + "\"";
 // A reply that opens its stream, then waits for the case's gate.
@@ -28,8 +32,15 @@ function rig(kit, server, options = {}) {
     const Audit = backend("Audit.js");
     const Router = backend("ToolRouter.js");
     const audioClock = clock();
-    // The runner's deadlines never fire: no case here waits 60 s of thinking.
-    const runnerClock = { now: () => 0, set: () => ({}), clear: () => {} };
+    // Session deadlines run on an injected clock that only the case advances.
+    let at = 0;
+    const timers = new Map();
+    const runnerClock = { now: () => at, set: (fn, ms) => { const key = {}; timers.set(key, { fn, at: at + ms }); return key; },
+        clear: key => timers.delete(key) };
+    const advanceRunner = ms => {
+        at += ms;
+        for (const [key, timer] of [...timers]) if (timer.at <= at) { timers.delete(key); timer.fn(); }
+    };
     const state = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "state-"));
     const audit = Audit.create({ state, now: () => Date.UTC(2026, 9, 1) });
     const faults = [], executions = [], held = [], partials = [];
@@ -59,6 +70,10 @@ function rig(kit, server, options = {}) {
         executions.push(call);
         done({ outcome: "completed", content: "clipboard words" });
     } });
+    router.register("vision", { commands: ["grim"], timeoutMs: 30000, cancellable: false, start(call, done) {
+        executions.push(call);
+        done({ outcome: "completed", content: "screen text" });
+    } });
     // Accounts.resolve has its own suite; this stand-in names a loopback row.
     const accounts = () => ({ secrets: null, resolve: id => ({ id, provider: "ollama", label: "local",
         source: { kind: "local", origin: "http://127.0.0.1:" + PORT }, model: "fixture-model" }) });
@@ -74,13 +89,13 @@ function rig(kit, server, options = {}) {
         runner.dispatch({ type: "snapshot", locked: false, configured: answer.kind === "ready", settings });
         return answer;
     };
-    assert.deepEqual(configure({ mode: "hold", microphone: "", speaker: "", brain: "fixture-account" }), { kind: "ready" });
+    assert.deepEqual(configure({ mode: options.mode ?? "hold", microphone: "", speaker: "", brain: "fixture-account" }), { kind: "ready" });
     runner.dispatch({ type: "indicator", shown: true });
     const rows = () => {
         const file = path.join(state, "audit/2026-10-01.jsonl");
         return fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim().split("\n").map(line => JSON.parse(line)) : [];
     };
-    return { runner, audio, audioClock, engine, faults, executions, held, partials, rows, configure, state, server,
+    return { runner, audio, audioClock, engine, faults, executions, held, partials, rows, configure, state, server, advanceRunner,
         s: () => runner.state,
         async close() {
             runner.close();
@@ -163,8 +178,9 @@ async function cases(kit, server, only = null) {
         "a fully played reply adds no heard context");
         await until(() => w.s().turn.kind === "none", "the empty reply completes");
         const releases = w.rows().filter(row => row.kind === "release");
-        assert.ok(releases.length >= 5 && releases.every(row => row.decision === "send" && row.outcome === "pending"),
-            "each utterance, request and sentence is audited before transfer");
+        assert.ok(releases.length >= 5 && releases.every(row => row.decision === "send" && row.outcome === "pending"
+            && row.effect === "external"), "each utterance, request and sentence is audited before transfer");
+        assert.deepEqual([...control.labels], ["speech"], "frames and sentences reach the adapter as labelled items");
     });
 
     // Barge-in during speech, after the reply completed: the next request
@@ -188,6 +204,12 @@ async function cases(kit, server, only = null) {
             ["user", "What time is it?"], ["assistant", "Hello there. The time is noon."],
             ["user", heardOnly("Hello") + "\n\nStop there."]], "the brain is told exactly the heard prefix");
         assert.deepEqual(control.spoken.slice(0, 2), ["Hello there.", "The time is noon."]);
+        await until(() => w.s().turn.kind === "none" && w.s().playback.kind !== "idle", "the answer speaks");
+        await playOut(w);
+        const third = await say(w, utterance("Next."));
+        server.replies.push(text(""));
+        const later = await requested(w, third + 1, "the turn after");
+        assert.equal(user(later).at(-1), "Next.", "the heard prefix is told once");
     });
 
     // Barge-in mid-stream: the cancelled turn stays unanswered and its
@@ -247,12 +269,14 @@ async function cases(kit, server, only = null) {
         assert.deepEqual(w.faults, []);
     });
 
-    // Stale callbacks: a tool outcome for an interrupted turn cannot reach
-    // the next turn, and the interrupted calls get a truthful answer.
+    // An interrupted call that runs on is answered "running" and its real
+    // outcome reaches the next user turn, never the turn it interrupted; a
+    // call that never started is answered "not-started".
     await run("stale-outcome", async w => {
-        const first = await say(w, utterance("Focus the editor."));
-        server.replies.push(calls({ id: "call_1", name: "windows_focus", arguments: { window: "0x1f" } }));
-        await until(() => w.held.length === 1, "the stand-in executor holds the call");
+        const first = await say(w, utterance("Focus the editors."));
+        server.replies.push(calls({ id: "call_1", name: "windows_focus", arguments: { window: "0x1f" } },
+            { id: "call_2", name: "windows_focus", arguments: { window: "0x2b" } }));
+        await until(() => w.held.length === 1, "the stand-in executor holds the first call");
         control.utterances.push(utterance("Wait."));
         w.runner.dispatch({ type: "talk-down" });
         await until(() => w.s().capture.kind === "open", "capture reopens while the tool runs");
@@ -261,8 +285,9 @@ async function cases(kit, server, only = null) {
         w.runner.dispatch({ type: "talk-up" });
         const body = await requested(w, first + 2, "the request after the interruption");
         assert.deepEqual(body.messages.slice(2).map(message => [message.role, message.content]), [
-            ["assistant", null], ["tool", "{\"kind\":\"interrupted\",\"outcome\":\"unknown\"}"],
-            ["user", INTERRUPTED + "\n\nWait."]]);
+            ["assistant", null], ["tool", "{\"kind\":\"interrupted\",\"outcome\":\"running\"}"],
+            ["tool", "{\"kind\":\"interrupted\",\"outcome\":\"not-started\"}"],
+            ["user", INTERRUPTED + "\n\nWait."]], "a running call and an unstarted one get distinct answers");
         w.held[0]({ outcome: "completed", content: "focused late" });
         await turn();
         later.open();
@@ -270,11 +295,77 @@ async function cases(kit, server, only = null) {
         await playOut(w);
         assert.deepEqual(w.faults, []);
         assert.equal(w.s().fault.kind, "none", "the late outcome reached no live turn");
+        assert.equal(w.executions.length, 1, "the unrouted call never started");
         const third = await say(w, utterance("Thanks."));
         server.replies.push(text(""));
         const last = await requested(w, third + 1, "the third request");
-        assert.equal(JSON.stringify(last).includes("focused late"), false, "a stale result never reaches the brain");
+        assert.equal(user(last).at(-1), "[late result] Your interrupted call windows.focus ended completed: focused late\n\nThanks.",
+            "the real outcome reaches the next user turn once");
+        const fourth = await say(w, utterance("Bye."));
+        server.replies.push(text(""));
+        assert.equal(user(await requested(w, fourth + 1, "the fourth request")).at(-1), "Bye.");
     }, { holdTools: true });
+
+    // History taints later turns: a screen read in one turn makes the next
+    // turn's persistent call ask for approval.
+    await run("history-taint", async w => {
+        const first = await say(w, utterance("What is on screen?"));
+        server.replies.push(calls({ id: "call_1", name: "vision_screen", arguments: {} }), text(""));
+        await requested(w, first + 2, "the tool-results request");
+        await until(() => w.s().turn.kind === "none", "the first turn completes");
+        const second = await say(w, utterance("Close it."));
+        server.replies.push(calls({ id: "call_2", name: "windows_close", arguments: { window: "0x2a" } }));
+        await requested(w, second + 1, "the second request");
+        await until(() => w.s().approval.kind === "held" || w.executions.length > 1, "the router judges the call");
+        assert.equal(w.s().approval.kind, "held", "earlier screen content still taints the conversation");
+        assert.deepEqual(w.executions.map(call => call.id), ["vision.screen"]);
+    });
+
+    // Toggle mode: capture reopens while thinking; that utterance is not the
+    // next turn's, so the second turn binds its own capture.
+    await run("toggle-turns", async w => {
+        control.utterances.push(utterance("First turn.", [], null, { afterFrames: 3 }),
+            utterance("unbound while thinking", [], null, { afterFrames: 1 }),
+            utterance("Second turn.", [], null, { afterFrames: 3 }),
+            utterance("never ends", [], null, { afterFrames: 100000 }));
+        const before = server.requests.length;
+        const thinkingCapture = gate();
+        server.replies.push([...pause(thinkingCapture), ...text("One.").slice(1)], text("Two."));
+        w.runner.dispatch({ type: "talk-down" });
+        const body = await requested(w, before + 1, "the first toggle turn");
+        assert.deepEqual(user(body), ["First turn."]);
+        await until(() => control.utterances.length === 2, "capture reopens while the brain thinks");
+        thinkingCapture.open();
+        await until(() => w.s().playback.kind === "playing", "the first reply speaks");
+        await playOut(w);
+        const next = await requested(w, before + 2, "the second toggle turn");
+        assert.equal(user(next).at(-1), "Second turn.");
+    }, { mode: "toggle" });
+
+    // A transcription that fails after its capture closed ends its turn.
+    await run("transcribe-failure", async w => {
+        control.utterances.push(utterance("lost", [], null, { failAfterClose: true }));
+        const before = server.requests.length;
+        w.runner.dispatch({ type: "talk-down" });
+        await until(() => w.s().capture.kind === "open", "capture opens");
+        w.runner.dispatch({ type: "talk-up" });
+        await until(() => w.s().turn.kind !== "collecting", "the failure reaches the turn");
+        assert.deepEqual({ ...w.s().fault }, { kind: "error", reason: "speech=fixture-failed", retry: 0 });
+        assert.equal(server.requests.length, before);
+    });
+
+    // The thinking deadline bounds the brain, not speech: a reply that plays
+    // longer than it leaves no timeout.
+    await run("long-speech", async w => {
+        const first = await say(w, utterance("Read a long list."));
+        await requested(w, first + 1, "first request");
+        server.replies.push(text("One. ", "Two. ", "Three."));
+        await until(() => w.s().turn.kind === "none", "the brain finishes while speech still waits on playback");
+        assert.equal(w.s().playback.kind, "playing");
+        w.advanceRunner(120000);
+        assert.equal(w.s().fault.kind, "none", "no thinking timeout fires during speech");
+        await playOut(w);
+    });
 
     // Conversation end closes brain, transport and speech adapters; the next
     // conversation starts with fresh history and a new recipient set.
@@ -341,9 +432,14 @@ async function cases(kit, server, only = null) {
         w.runner.dispatch({ type: "talk-up" });
         await until(() => w.s().fault.kind === "error", "the turn fails");
         assert.equal(w.s().fault.reason, "engine=audit-write");
-        // The request would cross a pipe; a turn of the loop shows none left.
-        await new Promise(resolve => setTimeout(resolve, 50));
-        assert.equal(server.requests.length, before, "no request leaves without its audit record");
+        // The next request to arrive must be a later turn's: none left first.
+        fs.rmSync(path.join(w.state, "audit"));
+        fs.renameSync(path.join(w.state, "audit-saved"), path.join(w.state, "audit"));
+        assert.deepEqual(w.configure({ mode: "hold", microphone: "", speaker: "", brain: "other-account" }), { kind: "ready" });
+        await say(w, utterance("Again."));
+        server.replies.push(text(""));
+        assert.deepEqual(user(await requested(w, before + 1, "the next turn")), ["Again."],
+            "no request left without its audit record");
     });
     await run("audit-refusal-speech", async w => {
         const first = await say(w, utterance("Hello."));
@@ -367,9 +463,12 @@ async function cases(kit, server, only = null) {
             await until(() => w.s().turn.kind === "none", "turn " + index + " completes");
         }
         const before = await say(w, utterance("one more"));
-        await until(() => w.s().fault.kind === "error", "the bound fails the turn");
-        assert.equal(w.s().fault.reason, "brain=context-limit");
+        await until(() => w.s().conversation.kind === "ended", "the bound ends the conversation");
+        assert.equal(w.s().fault.kind, "none", "the bound leaves no fault");
         assert.equal(server.requests.length, before, "no request past the bound");
+        const fresh = await say(w, utterance("A new start."));
+        server.replies.push(text(""));
+        assert.deepEqual(user(await requested(w, fresh + 1, "the next conversation")), ["A new start."]);
     });
 
     // Playback backpressure pauses the brain stream; no sentence is dropped.
@@ -378,12 +477,13 @@ async function cases(kit, server, only = null) {
         await requested(w, first + 1, "first request");
         const sentences = Array.from({ length: 40 }, (_, index) => "Item number " + (index + 1) + ".");
         server.replies.push(text(...sentences.map(sentence => sentence + " ")));
-        await until(() => control.spoken.length > 0, "speech starts");
-        // Let the stalled pipeline settle; nothing advances the playback clock.
-        await new Promise(resolve => setTimeout(resolve, 300));
-        assert.ok(control.spoken.length <= 22, "a stalled player pauses synthesis: " + control.spoken.length);
-        const released = w.rows().filter(row => row.kind === "release").length;
-        assert.ok(released <= 26, "a stalled player pauses the brain stream: " + released);
+        // Nothing advances the playback clock: the source fills to its mark.
+        await until(() => w.audio.playbackFeed !== null
+            && w.audio.playbackFeed.readableLength >= w.audio.playbackFeed.readableHighWaterMark, "the source fills");
+        await until(() => w.s().turn.kind === "none", "the brain is read to its end");
+        // Audio holds one chunk and the adapter one sentence beyond the mark.
+        const bound = w.audio.playbackFeed.readableHighWaterMark + 2;
+        assert.ok(control.spoken.length <= bound, "a stalled player pauses synthesis: " + control.spoken.length);
         await playOut(w);
         assert.equal(control.spoken.length, 40);
         assert.deepEqual(w.faults, []);
@@ -431,9 +531,14 @@ function selection(Engine) {
         [{}, () => resolved, false, "speech=fixture-off"],
         [{ brain: "" }, () => resolved, true, "brain=unselected"],
         [{}, () => null, true, "brain=account-unavailable"],
-        [{}, () => { throw new Error("jarvis-keys: references=json"); }, true, "brain=accounts-unreadable"],
         [{}, () => ({ ...resolved, model: "" }), true, "brain=model-required"]])
         assert.deepEqual(configure(settings, resolve, ready), { kind: "unconfigured", cause }, cause);
+    assert.deepEqual(configure({}, () => { throw new Error("jarvis-keys: references=json"); }, true),
+        { kind: "unconfigured", cause: "brain=accounts-unreadable", detail: "jarvis-keys: references=json" },
+        "a reader's keyed failure keeps its cause");
+    Fixture.reset();
+    assert.throws(() => Engine.create({ accounts: () => ({ resolve: () => { throw new TypeError("defect"); } }) })
+        .configure({ brain: "a" }), TypeError, "a defect is not a configuration cause");
     assert.deepEqual(configure({}, () => resolved, true), { kind: "ready" });
 }
 
@@ -448,10 +553,14 @@ world(async () => {
     try {
         selection(Fixture.copy(root).Engine);
         for (const [name, needle] of [
+            ["speech-not-ready", 'if (speech.kind !== "ready") return speech;'],
+            ["first-speech-cause", 'if (speech.cause === "speech=no-adapter") speech = answer;'],
+            ["accounts-unreadable", 'return unconfigured("brain=accounts-unreadable", error.message);'],
             ["unselected", 'if (settings.brain === "") return unconfigured("brain=unselected");'],
             ["account-unavailable", 'if (account === null) return unconfigured("brain=account-unavailable");'],
             ["model-required", 'if (account.model === "") return unconfigured("brain=model-required");']]) {
-            assert.throws(() => selection(Fixture.copy(root, [[needle, ""]]).Engine), assert.AssertionError, name + " must turn red");
+            const { Engine } = Fixture.copy(root, [[needle, ""]]);
+            assert.throws(() => selection(Engine), assert.AssertionError, name + " must turn red");
             console.log("control=" + name + " detected");
             controls++;
         }
@@ -460,27 +569,43 @@ world(async () => {
         // Each control plants one defect in a disposable engine copy.
         const plants = [
             ["heard-omitted", "if (c.heard !== null) items.push(heardItem(c.heard));", "", "barge-in"],
-            ["full-reply-heard", 'heard(c, t, report === null ? "" : report.heardText);', 'heard(c, t, t.spoken.join(" "));', "barge-in"],
-            ["cancel-heard", '            heard(c, t, "");\n', "", "cancel-thinking"],
-            ["partial-to-brain", 'deliver(t, "partial", event.text);', 'deliver(t, "final", event.text);', "turn-loop"],
-            ["speakable-bypass", "for (const sentence of text.push(event.text)) await say(c, t, sentence);",
-                "text.push(event.text); await say(c, t, event.text);", "turn-loop"],
-            ["result-identity", "if (!t || c.gen !== value.gen || t.op !== value.op || t.phase !== \"routing\"\n                    || value.results.length !== 1 || value.results[0].id !== t.routing) return;",
-                "if (!t || c.gen !== value.gen) return;", "stale-outcome"],
+            ["heard-once", "            c.heard = null;\n", "", "barge-in"],
+            ["full-reply-heard", 'heard(c, turn, report === null ? "" : report.heardText);',
+                'heard(c, turn, "Hello there. The time is noon.");', "barge-in"],
+            ["cancel-heard", '            heard(c, turn, "");\n', "", "cancel-thinking"],
+            ["partial-to-brain", 'utterance.collection?.done("partial", event.text);', 'utterance.collection?.done("final", event.text);', "turn-loop"],
+            ["speakable-bypass", "for (const sentence of text.push(event.text)) say(c, turn, sentence);",
+                "text.push(event.text); say(c, turn, event.text);", "turn-loop"],
+            ["unlabelled-frames", 'return { value: Policy.item(chunk, ["speech"]), done: false };',
+                'return { value: Policy.item(chunk, ["desktop"]), done: false };', "turn-loop"],
+            ["result-identity", 'if (turn !== null && turn.op === value.op && turn.phase === "routing" && turn.routing?.id === id) {',
+                "if (turn !== null) {", "stale-outcome"],
             ["interrupted-answers", "if (routing && c.brain !== null) c.brain.record(", "if (false) c.brain.record(", "stale-outcome"],
+            ["not-started", 'return router.interrupted(call, "not-started");', 'return router.interrupted(call, "running");', "stale-outcome"],
+            ["late-result", "c.results.push(lateItem(late.call, value.outcome, item));", "void lateItem;", "stale-outcome"],
+            ["history-taint", "router.observe(turn, reply.release.labels);", "void reply;", "history-taint"],
+            ["toggle-adoption", 'c.unbound !== null && c.unbound.state === "running" ? c.unbound : null',
+                "c.unbound", "toggle-turns"],
+            ["collect-failure", "else if (collecting(c, utterance.collection)) utterance.collection.failed(keyed(error));",
+                "else if (false) utterance.collection.failed(keyed(error));", "transcribe-failure"],
+            ["speech-gates-brain", 'turn.speech?.end();\n                        turn.done("brain-done");',
+                'turn.speech?.end();\n                        await new Promise(resolve => turn.speech.readable.once("close", resolve));\n                        turn.done("brain-done");', "long-speech"],
             ["net-not-closed", "        c.net.close();\n", "", "conversation-end"],
             ["observe-teardown", "observe(s) { if (conversation !== null && s.gen !== conversation.gen) end(); },", "observe(s) {},", "settings-change"],
-            ["audit-skipped", '}, start);\n        if (result.kind !== "started") fail("audit-write");\n        return result.value;',
-                '}, () => {});\n        return start();', "audit-refusal"],
+            ["audit-skipped", '"pending"), start);\n        if (result.kind !== "started") fail("audit-write");\n        return result.value;',
+                '"pending"), () => {});\n        void result;\n        return start();', "audit-refusal"],
             ["after-tool-rule", "...(after === null ? {} : { instructions: after }),", "", "tool-round"],
+            ["context-clean-end", 'turn.done(reason === "brain=context-limit" ? "brain-ended" : "brain-failed", { reason });',
+                'turn.done("brain-failed", { reason });', "context-bound"],
             ["readable-backpressure", "if (!readable.push(step.value)) await wanted.wait();", "readable.push(step.value);", "backpressure"],
-            ["brain-pause", "        await t.speech.room();\n", "", "backpressure"],
             ["partial-revision", "event.rev <= rev", "false", "partial-revision"],
-            ["end-aborts-transcription", "            if (transcription) transcription.abort();", "            void transcription;", "mute-capture"]
+            ["end-aborts-transcription", "            if (utterance) utterance.abort();", "            void utterance;", "mute-capture"]
         ];
         for (const [name, needle, replacement, scenario] of plants) {
+            // The copy asserts its match outside the measured run.
+            const kit = Fixture.copy(root, [[needle, replacement]]);
             let failure = null;
-            try { await cases(Fixture.copy(root, [[needle, replacement]]), server, scenario); }
+            try { await cases(kit, server, scenario); }
             catch (error) { failure = error; }
             assert.ok(failure instanceof assert.AssertionError, name + " must turn an assertion red: " + failure);
             console.log("control=" + name + " detected: " + failure.message.split("\n")[0]);
@@ -488,4 +613,5 @@ world(async () => {
         }
         console.log("test-jarvis-engine: ok requests=" + server.requests.length + " controls=" + controls);
     } finally { await server.close(); }
-}).catch(error => { console.error(error); process.exitCode = 1; });
+// Bounds a hung world: each control reruns a case with real children.
+}, 900000).catch(error => { console.error(error); process.exitCode = 1; });

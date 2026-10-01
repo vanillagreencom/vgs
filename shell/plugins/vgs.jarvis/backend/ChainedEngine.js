@@ -22,13 +22,16 @@ const DRIVERS = Object.freeze({ "openai-chat": OpenAIChat, "anthropic-messages":
 const LANGUAGE = "";
 // Object-mode chunks queued toward Audio, below its playback allowance.
 const SPEECH_CHUNKS = 16;
-// Released sentences waiting for synthesis before the brain stream pauses.
-const SENTENCES = 2;
+// Released sentence text waiting for synthesis, in UTF-16 code units. One
+// response is bounded at its source; this bounds the text Speakable made.
+const SENTENCE_TEXT = 8 * 1024 * 1024;
 // Capture bytes held for transcription before Audio sees backpressure.
 const CAPTURE_BYTES = 16 * 1024;
+// Release records name the transfer leaving the machine.
+const RELEASE_EFFECT = "external";
 
 function fail(code) { throw new Error("jarvis: engine=" + code); }
-function unconfigured(cause) { return { kind: "unconfigured", cause }; }
+function unconfigured(cause, detail) { return detail === undefined ? { kind: "unconfigured", cause } : { kind: "unconfigured", cause, detail }; }
 // Session's fault carries the producer's keyed cause, never other text.
 function keyed(error) {
     const message = error?.message ?? "";
@@ -48,7 +51,7 @@ function signal() {
 /**
  * Choose the conversation plan from snapshot settings. The first ready speech
  * row wins; the brain comes from the saved account through Accounts, its
- * declared default model, the provider table and the key reference.
+ * declaration's Verify probe model, the provider table and the key reference.
  */
 function select(settings, accounts) {
     let speech = unconfigured("speech=no-adapter");
@@ -64,7 +67,11 @@ function select(settings, accounts) {
     try {
         judge = accounts();
         account = judge.resolve(settings.brain);
-    } catch { return unconfigured("brain=accounts-unreadable"); }
+    } catch (error) {
+        // Only the account and key readers' keyed failures are a cause here.
+        if (!/^jarvis-(?:accounts|keys): /.test(error?.message ?? "")) throw error;
+        return unconfigured("brain=accounts-unreadable", error.message);
+    }
     if (account === null) return unconfigured("brain=account-unavailable");
     if (account.model === "") return unconfigured("brain=model-required");
     const provider = Providers.select(account.provider);
@@ -79,10 +86,10 @@ function select(settings, accounts) {
 /**
  * create({session, state, audit, router, accounts, policy, fault}) owns the
  * daemon's chained conversations. session is the Session judge and state
- * returns its current record;
- * audit is the daemon's writer; router supplies offer and route; accounts
- * returns an Accounts judge; policy returns {profile, cloudVision}; fault
- * reports a speech failure no capture owner remains to carry.
+ * returns its current record; audit is the daemon's writer; router supplies
+ * offer, route, observe and interrupted; accounts returns an Accounts judge;
+ * policy returns {profile, cloudVision}; fault reports a speech failure that
+ * no capture or turn remains to carry.
  */
 function create({ session, state, audit, router, accounts, policy, fault }) {
     let plan = unconfigured("engine=starting");
@@ -90,17 +97,18 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
     let retired = null;
     let closed = false;
 
+    function releaseEvent(c, identity, labels, decision, outcome) {
+        return { kind: "release", gen: identity.gen, op: identity.op, tool: "release",
+            args: { labels, recipients: c.recipients }, effect: RELEASE_EFFECT, decision, confirmed: "none", outcome };
+    }
     // An asked or withheld item travels as its marker; its decision is kept.
     function record(c, identity, labels, decision) {
-        const result = audit.record({ kind: "release", gen: identity.gen, op: identity.op, tool: "release",
-            args: { labels, recipients: c.recipients }, effect: null, decision, confirmed: "none", outcome: "completed" });
-        if (result.kind !== "recorded") fail("audit-write");
+        if (audit.record(releaseEvent(c, identity, labels, decision, "completed")).kind !== "recorded") fail("audit-write");
     }
-    // Every transfer to the conversation's recipients is audited first.
-    function transfer(c, identity, labels, start) {
-        const result = audit.before({ kind: "release", gen: identity.gen, op: identity.op, tool: "release",
-            args: { labels, recipients: c.recipients }, effect: null, decision: "send", confirmed: "none",
-            outcome: "pending" }, start);
+    // Every transfer is judged against the whole set, then audited first.
+    function transfer(c, identity, item, start) {
+        if (Policy.release(item, c.recipients, c.grants).kind !== "send") fail("release-" + item.labels.join("-"));
+        const result = audit.before(releaseEvent(c, identity, item.labels, "send", "pending"), start);
         if (result.kind !== "started") fail("audit-write");
         return result.value;
     }
@@ -115,8 +123,9 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
         let speech;
         try { speech = plan.speech.open({ net, recipients }); }
         catch (error) { net.close(); throw error; }
+        // late holds at most one call: the router runs one action at a time.
         return { gen, plan, recipients, net, speech, brain: null, owner: null, grants: [], heard: null,
-            turn: null, last: null, collection: null, unbound: null };
+            late: new Map(), results: [], turn: null, last: null, collection: null, unbound: null };
     }
     // observe() ends a conversation before any effect of a newer generation.
     function current(gen) {
@@ -133,8 +142,8 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
         conversation = null;
         if (c.turn !== null) stop(c.turn);
         if (c.last !== null) c.last.speech?.end();
-        for (const transcription of [c.collection?.transcription, c.unbound])
-            if (transcription) transcription.abort();
+        for (const utterance of [c.collection?.utterance, c.unbound])
+            if (utterance) utterance.abort();
         const brain = c.brain;
         c.brain = null;
         const quiet = brain === null ? Promise.resolve() : brain.cancel();
@@ -143,22 +152,23 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
         c.net.close();
         retired = { gen: c.gen, closed: quiet };
     }
-    function live(gen, op, region, kinds) {
-        return session.live(state(), { gen, op }, region, kinds);
+    function collecting(c, collection) {
+        return collection !== null && session.live(state(), { gen: c.gen, op: collection.op }, "turn", ["collecting"]);
     }
 
     // Speech to text. The capture sink exists while Audio holds the
-    // recorder; one transcription yields partials and one final.
+    // recorder; one utterance yields partials and one final.
     function transcription(c, e) {
         let held = null;
         let finished = false;
-        let aborted = false;
         let released = false;
         let output = null;
         const wake = signal();
-        const t = { collection: null, sink: null, abort() {
-            if (aborted) return;
-            aborted = true;
+        // running: transcribing; concluded: final delivered or failed;
+        // aborted: abandoned by the conversation or by its replacement.
+        const utterance = { state: "running", collection: null, sink: null, abort() {
+            if (utterance.state !== "running") return;
+            utterance.state = "aborted";
             held = null;
             wake.notify();
             void output?.return?.();
@@ -167,13 +177,13 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
             highWaterMark: CAPTURE_BYTES,
             // Frames after the adapter stopped reading have no consumer.
             write(chunk, encoding, done) {
-                if (released || aborted) { done(); return; }
+                if (released || utterance.state !== "running") { done(); return; }
                 held = { chunk, done };
                 wake.notify();
             },
             final(done) { finished = true; wake.notify(); done(); },
             // Audio's teardown ends the utterance. A conversation that ended
-            // with it, as by mute or stop, aborts the transcription in end().
+            // with it, as by mute or stop, aborts the utterance in end().
             destroy(error, done) {
                 finished = true;
                 held = null;
@@ -181,15 +191,17 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
                 done(error);
             }
         });
-        t.sink = sink;
+        utterance.sink = sink;
+        // Each frame reaches the adapter as a speech-labelled item, so a
+        // network adapter's own send re-judges what it carries.
         const frames = { [Symbol.asyncIterator]() { return { async next() {
             for (;;) {
-                if (aborted) return { value: undefined, done: true };
+                if (utterance.state !== "running") return { value: undefined, done: true };
                 if (held !== null) {
                     const { chunk, done } = held;
                     held = null;
                     done();
-                    return { value: chunk, done: false };
+                    return { value: Policy.item(chunk, ["speech"]), done: false };
                 }
                 if (finished) return { value: undefined, done: true };
                 await wake.wait();
@@ -203,54 +215,59 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
         async function run() {
             let rev = 0;
             try {
-                transfer(c, e, ["speech"], () => { output = c.speech.transcribe(frames)[Symbol.asyncIterator](); });
+                transfer(c, e, Policy.item("", ["speech"]), () => {
+                    output = c.speech.transcribe(frames)[Symbol.asyncIterator]();
+                });
                 for (;;) {
                     const step = await output.next();
-                    if (aborted) return;
+                    if (utterance.state !== "running") return;
                     if (step.done) fail("transcript-unfinished");
                     const event = step.value;
                     if (event === null || typeof event !== "object" || typeof event.text !== "string") fail("transcript");
                     if (event.kind === "partial") {
                         if (!Number.isSafeInteger(event.rev) || event.rev <= rev) fail("transcript-revision");
                         rev = event.rev;
-                        deliver(t, "partial", event.text);
+                        utterance.collection?.done("partial", event.text);
                     } else if (event.kind === "final") {
-                        deliver(t, "final", event.text);
+                        utterance.state = "concluded";
+                        utterance.collection?.done("final", event.text);
                         void output.return?.();
                         return;
                     } else fail("transcript");
                 }
             } catch (error) {
-                if (aborted) return;
-                aborted = true;
+                if (utterance.state !== "running") return;
+                utterance.state = "concluded";
+                // An open capture carries the failure; after it closed, the
+                // collection's turn does; unbound, only the service hears it.
                 if (!sink.destroyed) sink.destroy(error);
+                else if (collecting(c, utterance.collection)) utterance.collection.failed(keyed(error));
                 else fault("speech-transcribe: " + keyed(error));
             }
         }
         void run();
-        return t;
-    }
-    function deliver(t, kind, text) {
-        if (t.collection !== null) t.collection.done(kind, text);
+        return utterance;
     }
 
     // Text to speech for one brain turn: one Readable for Audio, fed by the
-    // adapter from released sentences. Each stage waits on the next one.
+    // adapter from released sentences. Synthesis waits on Audio; the brain
+    // is read to its end, so its deadline never waits on speech.
     function speech(c) {
         const sentences = [];
-        const input = signal(), room = signal(), wanted = signal();
+        let queued = 0;
+        const input = signal(), wanted = signal();
         let ended = false;
         const readable = new Readable({ objectMode: true, highWaterMark: SPEECH_CHUNKS,
             read() { wanted.notify(); } });
         // Audio reports a failed source as a failed playback, including one
         // destroyed before Audio attached its own listener.
         readable.on("error", () => {});
-        readable.once("close", () => { ended = true; input.notify(); room.notify(); wanted.notify(); });
+        readable.once("close", () => { ended = true; input.notify(); wanted.notify(); });
         const sentenceInput = { [Symbol.asyncIterator]() { return { async next() {
             for (;;) {
                 if (sentences.length !== 0) {
                     const value = sentences.shift();
-                    room.notify();
+                    queued -= value.content.length;
                     return { value, done: false };
                 }
                 if (ended) return { value: undefined, done: true };
@@ -271,105 +288,117 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
         void pump();
         return {
             readable, handed: false,
-            queue(sentence) { sentences.push(sentence); input.notify(); },
-            async room() {
-                while (sentences.length >= SENTENCES && !ended && !readable.destroyed) await room.wait();
+            queue(item) {
+                if (queued + item.content.length > SENTENCE_TEXT) fail("speech-queue");
+                queued += item.content.length;
+                sentences.push(item);
+                input.notify();
             },
             end() { ended = true; input.notify(); }
         };
     }
 
-    async function say(c, t, sentence) {
-        if (t.stopped) return;
-        const item = Policy.item(sentence, [...t.labels]);
-        // A reply carries only labels its request sent to this same set.
-        if (Policy.release(item, c.recipients, c.grants).kind !== "send") fail("speech-release");
-        transfer(c, t, item.labels, () => {
-            if (t.speech === null) {
-                t.speech = speech(c);
-                t.done("play", { interruptible: true });
+    function say(c, turn, sentence) {
+        if (turn.stopped) return;
+        const item = Policy.item(sentence, [...turn.labels]);
+        transfer(c, turn, item, () => {
+            if (turn.speech === null) {
+                turn.speech = speech(c);
+                turn.done("play", { interruptible: true });
             }
-            t.speech.queue(sentence);
+            turn.speech.queue(item);
         });
-        t.spoken.push(sentence);
-        await t.speech.room();
     }
 
-    function stop(t) {
-        t.stopped = true;
-        t.speech?.end();
+    function stop(turn) {
+        turn.stopped = true;
+        turn.speech?.end();
     }
-    function failed(c, t, error) {
-        if (t.stopped) return;
-        stop(t);
-        if (c.turn === t) c.turn = null;
-        t.done("brain-failed", { reason: keyed(error) });
+    function failed(c, turn, error) {
+        if (turn.stopped) return;
+        stop(turn);
+        if (c.turn === turn) c.turn = null;
+        const reason = keyed(error);
+        // The history bound ends the conversation cleanly; any other failure
+        // is a fault.
+        turn.done(reason === "brain=context-limit" ? "brain-ended" : "brain-failed", { reason });
     }
 
-    async function respond(c, t, turn) {
+    async function respond(c, turn, request) {
         try {
-            const reply = c.brain.send(turn, c.grants);
-            if (reply.release.needed.length !== 0) record(c, t, reply.release.needed, "ask");
-            if (reply.release.withheld.length !== 0) record(c, t, reply.release.withheld, "withhold");
-            for (const label of reply.release.labels) t.labels.add(label);
+            const reply = c.brain.send(request, c.grants);
+            if (reply.release.needed.length !== 0) record(c, turn, reply.release.needed, "ask");
+            if (reply.release.withheld.length !== 0) record(c, turn, reply.release.withheld, "withhold");
+            for (const label of reply.release.labels) turn.labels.add(label);
+            // History can carry an earlier turn's untrusted content.
+            router.observe(turn, reply.release.labels);
             const events = reply.events[Symbol.asyncIterator]();
             const text = Speakable.create(LANGUAGE);
             const calls = [];
             // A request with no released content refuses before it is sent.
             let step = await (reply.release.labels.length === 0 ? events.next()
-                : transfer(c, t, reply.release.labels, () => events.next()));
+                : transfer(c, turn, Policy.item("", reply.release.labels), () => events.next()));
             for (; !step.done; step = await events.next()) {
-                if (t.stopped) return;
+                if (turn.stopped) return;
                 const event = step.value;
                 switch (event.kind) {
                 case "text":
-                    for (const sentence of text.push(event.text)) await say(c, t, sentence);
+                    for (const sentence of text.push(event.text)) say(c, turn, sentence);
                     break;
                 case "tool-call": calls.push(event); break;
                 case "done":
-                    for (const sentence of text.finish()) await say(c, t, sentence);
-                    if (t.stopped) return;
+                    // History holds the calls once done is read: an interrupt
+                    // from here on must answer them.
                     if (event.reason === "tool-calls") {
-                        t.calls = calls;
-                        t.phase = "routing";
-                        next(c, t);
-                    } else {
-                        t.phase = "done";
+                        turn.calls = calls;
+                        turn.phase = "routing";
+                    }
+                    for (const sentence of text.finish()) say(c, turn, sentence);
+                    if (turn.stopped) return;
+                    if (event.reason === "tool-calls") next(c, turn);
+                    else {
+                        turn.phase = "done";
                         c.turn = null;
-                        t.speech?.end();
-                        t.done("brain-done");
+                        turn.speech?.end();
+                        turn.done("brain-done");
                     }
                     return;
                 default: fail("brain-event");
                 }
             }
             fail("brain-unfinished");
-        } catch (error) { failed(c, t, error); }
+        } catch (error) { failed(c, turn, error); }
     }
 
     // Route a reply's calls one at a time through the router; their results
     // return through outcome() and answer the reply in one tool-results turn.
-    function next(c, t) {
-        if (t.stopped) return;
-        const call = t.calls.find(value => !t.answers.has(value.id));
+    function next(c, turn) {
+        if (turn.stopped) return;
+        const call = turn.calls.find(value => !turn.answers.has(value.id));
         if (call === undefined) {
-            t.phase = "streaming";
+            turn.phase = "streaming";
             const after = c.plan.brain.guidance.afterToolResult;
-            void respond(c, t, { kind: "tool-results", ...(after === null ? {} : { instructions: after }),
-                results: t.calls.map(value => ({ id: value.id, item: t.answers.get(value.id) })) });
+            void respond(c, turn, { kind: "tool-results", ...(after === null ? {} : { instructions: after }),
+                results: turn.calls.map(value => ({ id: value.id, item: turn.answers.get(value.id) })) });
             return;
         }
-        t.routing = call.id;
-        router.route(call, { gen: t.gen, op: t.op });
+        turn.routing = call;
+        router.route(call, { gen: turn.gen, op: turn.op });
     }
 
-    function heard(c, t, text) {
-        c.heard = { op: t.op, labels: [...t.labels], text };
+    function heard(c, turn, text) {
+        c.heard = { labels: [...turn.labels], text };
     }
     function heardItem(value) {
         return Policy.item(value.text === ""
             ? "[interrupted] The user heard none of your last reply."
             : "[interrupted] The user heard only this part of your last reply: \"" + value.text + "\"", value.labels);
+    }
+    // An interrupted call's real outcome reaches the next user turn, labelled
+    // as its result is.
+    function lateItem(call, outcome, item) {
+        return Policy.summary("[late result] Your interrupted call " + call.tool + " ended " + outcome + ": "
+            + item.content, [item]);
     }
 
     const brain = {
@@ -382,19 +411,21 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
                 c.owner = e.owner;
             } else if (c.owner !== e.owner) fail("brain-owner");
             if (c.turn !== null) fail("brain-busy");
-            const t = { gen: e.gen, op: e.op, done, labels: new Set(), spoken: [], speech: null, stopped: false,
+            const turn = { gen: e.gen, op: e.op, done, labels: new Set(), speech: null, stopped: false,
                 phase: "streaming", calls: [], answers: new Map(), routing: null };
             if (e.text.trim() === "") {
                 done("brain-done");
                 return;
             }
-            c.turn = t;
-            c.last = t;
+            c.turn = turn;
+            c.last = turn;
             const items = [];
             if (c.heard !== null) items.push(heardItem(c.heard));
             c.heard = null;
+            items.push(...c.results);
+            c.results = [];
             items.push(Policy.item(e.text, ["speech"]));
-            void respond(c, t, { kind: "user", items });
+            void respond(c, turn, { kind: "user", items });
         },
         cancel(e, done) {
             const c = conversation;
@@ -402,18 +433,23 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
                 (retired !== null && retired.gen === e.gen ? retired.closed : Promise.resolve()).then(() => done());
                 return;
             }
-            const t = c.turn;
-            if (t === null || t.op !== e.target) { done(); return; }
+            const turn = c.turn;
+            if (turn === null || turn.op !== e.target) { done(); return; }
             c.turn = null;
-            stop(t);
-            heard(c, t, "");
-            const routing = t.phase === "routing";
+            stop(turn);
+            heard(c, turn, "");
+            const routing = turn.phase === "routing";
             void c.brain.cancel().then(() => {
-                // Calls the user interrupted keep a truthful answer, so the
-                // next request is valid. A late outcome is dropped.
-                if (routing && c.brain !== null) c.brain.record({ kind: "tool-results", results: t.calls.map(call => ({
-                    id: call.id, item: t.answers.get(call.id)
-                        ?? Policy.item("{\"kind\":\"interrupted\",\"outcome\":\"unknown\"}", ["desktop"]) })) });
+                // Every call in history gets an answer, so the next request is
+                // valid. A running call's real outcome follows on a later turn.
+                if (routing && c.brain !== null) c.brain.record({ kind: "tool-results", results: turn.calls.map(call => {
+                    if (turn.answers.has(call.id)) return { id: call.id, item: turn.answers.get(call.id) };
+                    if (turn.routing === call) {
+                        c.late.set(call.id, { call, op: turn.op });
+                        return router.interrupted(call, "running");
+                    }
+                    return router.interrupted(call, "not-started");
+                }) });
                 done();
             });
         },
@@ -426,12 +462,19 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
         },
         outcome(value) {
             const c = conversation;
-            const t = c?.turn;
-            if (!t || c.gen !== value.gen || t.op !== value.op || t.phase !== "routing"
-                    || value.results.length !== 1 || value.results[0].id !== t.routing) return;
-            t.answers.set(t.routing, value.results[0].item);
-            t.routing = null;
-            next(c, t);
+            if (c === null || c.gen !== value.gen || value.results.length !== 1) return;
+            const { id, item } = value.results[0];
+            const turn = c.turn;
+            if (turn !== null && turn.op === value.op && turn.phase === "routing" && turn.routing?.id === id) {
+                turn.answers.set(id, item);
+                turn.routing = null;
+                next(c, turn);
+                return;
+            }
+            const late = c.late.get(id);
+            if (late === undefined || late.op !== value.op) return;
+            c.late.delete(id);
+            c.results.push(lateItem(late.call, value.outcome, item));
         }
     };
 
@@ -443,9 +486,9 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
             flush(e, done) {
                 return port.flush(e, report => {
                     const c = conversation;
-                    const t = c?.last;
-                    if (t && (report === null || report.source === t.op))
-                        heard(c, t, report === null ? "" : report.heardText);
+                    const turn = c?.last;
+                    if (turn && (report === null || report.source === turn.op))
+                        heard(c, turn, report === null ? "" : report.heardText);
                     done(report);
                 });
             }
@@ -459,27 +502,36 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
             return plan.kind === "ready" ? { kind: "ready" } : plan;
         },
         observe(s) { if (conversation !== null && s.gen !== conversation.gen) end(); },
+        // A live collection adopts the new utterance; otherwise it waits
+        // unbound, replacing and abandoning any earlier unbound one.
         captureSink(e) {
             const c = current(e.gen);
-            const t = transcription(c, e);
-            if (c.collection !== null && c.collection.transcription === null
-                    && live(c.gen, c.collection.op, "turn", ["collecting"])) {
-                t.collection = c.collection;
-                c.collection.transcription = t;
-            } else c.unbound = t;
-            return t.sink;
+            const utterance = transcription(c, e);
+            const collection = c.collection;
+            if (collecting(c, collection) && collection.utterance === null) {
+                utterance.collection = collection;
+                collection.utterance = utterance;
+            } else {
+                c.unbound?.abort();
+                c.unbound = utterance;
+            }
+            return utterance.sink;
         },
-        collect(e, done) {
+        // Only a running unbound utterance answers a new collection; one that
+        // already concluded spoke before the collection existed.
+        collect(e, done, failed) {
             const c = current(e.gen);
-            c.collection = { op: e.op, done, transcription: c.unbound };
-            if (c.unbound !== null) c.unbound.collection = c.collection;
+            const adopted = c.unbound !== null && c.unbound.state === "running" ? c.unbound : null;
+            if (adopted === null) c.unbound?.abort();
+            c.collection = { op: e.op, done, failed, utterance: adopted };
+            if (adopted !== null) adopted.collection = c.collection;
             c.unbound = null;
         },
         playbackSource(op) {
-            const t = conversation?.last;
-            if (!t || t.op !== op || t.speech === null || t.speech.handed) return null;
-            t.speech.handed = true;
-            return t.speech.readable;
+            const turn = conversation?.last;
+            if (!turn || turn.op !== op || turn.speech === null || turn.speech.handed) return null;
+            turn.speech.handed = true;
+            return turn.speech.readable;
         },
         playback, brain,
         close() {
