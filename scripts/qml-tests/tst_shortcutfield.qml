@@ -7,8 +7,11 @@ import qs.Unit
 
 // ShortcutField: a click, Enter, Return or Space asks the capture to begin;
 // while it holds the field, held modifiers show as caps, the first other
-// key commits the combo the judge names, Escape and a focus loss end it,
-// and an unnamed key keeps it with a notice; the keyboard button types a
+// key commits the combo the judge names unless it is the key in effect,
+// Escape, Tab and a focus loss end it, a held key's repeat does nothing, an
+// unnamed key and a bare text key keep it with a notice, a refused
+// pass-through and a timeout say so, the caps clear a rounded corner as a
+// text field does; the keyboard button types a
 // combo instead, the clear button unbinds, a read-only field asks nothing,
 // and the field is one Tab stop. The capture here records what the field
 // asks and names keys with the core's own judge.
@@ -21,8 +24,11 @@ Item {
         id: capture
         property Item holder: null
         property var calls: []
+        property bool failed: false
+        property var ended: ({ item: null, reason: "" })
+        readonly property int timeoutMs: 10000
         function begin(item) { calls = calls.concat(["begin"]); holder = item; return "ok"; }
-        function end(item, reason) { if (item !== holder) return; calls = calls.concat(["end " + reason]); holder = null; }
+        function end(item, reason) { if (item !== holder) return; calls = calls.concat(["end " + reason]); ended = { item: item, reason: reason }; holder = null; }
         function keyFor(key, modifiers) { return PluginLogic.capturedKey(key, modifiers); }
     }
 
@@ -53,6 +59,8 @@ Item {
             UnitTheme.reset();
             capture.holder = null;
             capture.calls = [];
+            capture.failed = false;
+            capture.ended = { item: null, reason: "" };
             root.events = [];
             field.notice = "";
             field.conflict = "";
@@ -79,7 +87,7 @@ Item {
             mouseClick(button);
         }
         function arm() {
-            field.forceActiveFocus(Qt.TabFocusReason);
+            box(field).forceActiveFocus(Qt.TabFocusReason);
             keyClick(Qt.Key_Return);
             compare(field.capturing, true);
         }
@@ -201,13 +209,99 @@ Item {
             arm();
             press(field, "Type the keys");
             compare(field.capturing, false);
-            compare(capture.calls.length, 2);
+            compare(JSON.stringify(capture.calls), '["begin","end focus"]');
             compare(field.typing, true);
         }
 
         function test_clear_unbinds() {
             press(field, "Unbind");
             compare(JSON.stringify(root.events), '["cleared"]');
+        }
+
+        function test_the_key_in_effect_changes_nothing() {
+            arm();
+            keyClick(Qt.Key_M, Qt.MetaModifier);
+            compare(JSON.stringify(capture.calls), '["begin","end commit"]');
+            compare(JSON.stringify(root.events), "[]");
+        }
+
+        function test_a_bare_text_key_keeps_capturing() {
+            for (const row of [{ key: Qt.Key_T, modifiers: Qt.NoModifier }, { key: Qt.Key_T, modifiers: Qt.ShiftModifier }, { key: Qt.Key_Space, modifiers: Qt.NoModifier }, { key: Qt.Key_Backspace, modifiers: Qt.NoModifier }]) {
+                capture.holder = null;
+                field.notice = "";
+                arm();
+                keyClick(row.key, row.modifiers);
+                compare(field.capturing, true);
+                verify(field.notice.indexOf("Hold Super, Ctrl or Alt") === 0, field.notice);
+                compare(JSON.stringify(root.events), "[]");
+            }
+        }
+
+        function test_tab_and_shift_tab_end_the_capture_and_move_on() {
+            const b = box(field);
+            const next = b.nextItemInFocusChain(true);
+            const previous = b.nextItemInFocusChain(false);
+            arm();
+            keyClick(Qt.Key_Tab);
+            compare(JSON.stringify(capture.calls), '["begin","end tab"]');
+            verify(next.activeFocus, "Tab moves to the next item in the focus chain");
+            capture.calls = [];
+            arm();
+            keyClick(Qt.Key_Backtab, Qt.ShiftModifier);
+            compare(JSON.stringify(capture.calls), '["begin","end tab"]');
+            verify(previous.activeFocus, "Shift+Tab moves to the item before");
+            compare(JSON.stringify(root.events), "[]");
+        }
+
+        function test_a_combo_with_tab_is_captured() {
+            arm();
+            keyClick(Qt.Key_Tab, Qt.AltModifier);
+            compare(JSON.stringify(root.events), '["committed ALT+TAB"]');
+        }
+
+        function test_a_held_key_repeat_does_nothing() {
+            arm();
+            const repeat = { key: Qt.Key_Return, modifiers: Qt.NoModifier, isAutoRepeat: true, accepted: false };
+            field.pressed(repeat);
+            compare(repeat.accepted, true);
+            compare(field.capturing, true);
+            compare(field.notice, "");
+            compare(JSON.stringify(root.events), "[]");
+        }
+
+        function test_a_refused_pass_through_is_named() {
+            arm();
+            capture.failed = true;
+            verify(field.hint.indexOf("Hyprland's own shortcuts still run") === 0, field.hint);
+            const shown = descendant(field, item => item.text === field.hint && item.visible);
+            verify(shown !== null);
+            compare(Qt.colorEqual(shown.color, Theme.color.danger), true);
+            keyClick(Qt.Key_Escape);
+            compare(field.hint, "");
+        }
+
+        function test_a_timeout_is_named() {
+            arm();
+            capture.ended = { item: field, reason: "timeout" };
+            capture.holder = null;
+            compare(field.notice, "Listening stopped after 10 s. Press Return or click the field to listen again.");
+            arm();
+            compare(field.notice, "");
+            capture.ended = { item: readOnly, reason: "timeout" };
+            capture.holder = null;
+            compare(field.notice, "");
+        }
+
+        // Under a pill theme with a small pad, the first cap starts where a
+        // text field's text would: past the pad, by Theme.controlPadding.
+        function test_the_caps_clear_a_rounded_corner() {
+            compare(UnitTheme.override({ radius: { sm: 4096 }, textField: { paddingX: 4 } }), "ok");
+            const b = box(field);
+            tryVerify(() => b.leftPadding > 4, 1000, "padding " + b.leftPadding);
+            compare(b.leftPadding, field.sidePadding);
+            compare(b.rightPadding, field.sidePadding);
+            const cap = descendant(b, item => item.text === "SUPER" && item.radius !== undefined);
+            compare(cap.mapToItem(b, 0, 0).x, b.leftPadding);
         }
 
         function test_a_conflict_is_a_hint_that_blocks_nothing() {

@@ -11,7 +11,14 @@ import qs.Ui
 // `shell.shortcut.capture`, which owns the capture and the Hyprland
 // pass-through that lets a combo a bind holds reach the box; the field asks
 // it to begin and end and asks it what each key names, and never reaches
-// Hyprland itself. With no `capture` the box only types. The keyboard
+// Hyprland itself. A held key's repeats do nothing; a key that types or
+// edits text with no modifier but Shift would stop typing everywhere, so it
+// shows a notice and the capture goes on; Tab and Shift+Tab end the capture
+// and move the focus, as everywhere else. A combo equal to the key in
+// effect ends the capture and changes nothing. A capture whose
+// pass-through Hyprland refused says Hyprland's own shortcuts still run, and
+// one Hyprland ended after its timeout says so. With no `capture` the box
+// only types. The keyboard
 // button swaps the box for a text field that takes the combo as `MOD+KEY`,
 // for a key the capture cannot name, the key in effect selected so typing
 // replaces it; Enter there types it and Escape goes back. `committed(key)` reports a captured combo, written as the text
@@ -33,6 +40,13 @@ FocusScope {
     // The modifiers held while capturing, in the order a key writes them.
     property var held: []
     property string notice: ""
+    // What the line under the box says: the notice, else the failed
+    // pass-through while it captures, else the conflict.
+    readonly property string hint: notice !== "" ? notice
+        : capturing && capture.failed ? "Hyprland's own shortcuts still run, so a combo they hold does not reach this field. Type it with the keyboard button instead."
+        : conflict
+    readonly property bool hintIsNotice: notice !== "" || (capturing && capture.failed)
+    readonly property real sidePadding: Theme.controlPadding(Theme.textField.paddingX, Theme.textField.radius, Math.max(Theme.textField.height, box.height), box.implicitContentHeight)
     readonly property var caps: capturing ? held : key === "" ? [] : key.split("+")
     signal committed(string key)
     signal typed(string text)
@@ -53,7 +67,13 @@ FocusScope {
     }
 
     function pressed(event) {
+        if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & ~Qt.ShiftModifier) === Qt.NoModifier) {
+            stop("tab");
+            event.accepted = false;
+            return;
+        }
         event.accepted = true;
+        if (event.isAutoRepeat) return;
         if (event.key === Qt.Key_Escape) {
             stop("cancel");
             return;
@@ -67,12 +87,15 @@ FocusScope {
         case "unnamed":
             notice = "This key has no name here; type it with the keyboard button.";
             return;
+        case "text":
+            notice = "Hold Super, Ctrl or Alt with this key: alone it types text, so a shortcut on it would stop typing everywhere.";
+            return;
         case "key":
             stop("commit");
-            committed(read.key);
+            if (read.key !== key) committed(read.key);
             return;
         }
-        throw new Error("ShortcutField: key kind " + JSON.stringify(read.kind) + " is not one of held, unnamed, key");
+        throw new Error("ShortcutField: key kind " + JSON.stringify(read.kind) + " is not one of held, unnamed, text, key");
     }
 
     function released(event) {
@@ -94,7 +117,12 @@ FocusScope {
         box.forceActiveFocus(Qt.TabFocusReason);
     }
 
-    onCapturingChanged: if (!capturing) held = []
+    onCapturingChanged: {
+        if (capturing) return;
+        held = [];
+        if (capture !== null && capture.ended.item === root && capture.ended.reason === "timeout")
+            notice = "Listening stopped after " + Math.round(capture.timeoutMs / 1000) + " s. Press Return or click the field to listen again.";
+    }
 
     Column {
         id: column
@@ -112,6 +140,8 @@ FocusScope {
                 focus: true
                 width: line.width - tools.width - line.spacing
                 implicitHeight: Theme.textField.height
+                leftPadding: root.sidePadding
+                rightPadding: root.sidePadding
                 enabled: root.editable
                 focusPolicy: root.editable ? Qt.StrongFocus : Qt.NoFocus
                 hoverEnabled: true
@@ -140,11 +170,10 @@ FocusScope {
                     FocusRing { target: box; offset: 0 }
                 }
 
-                contentItem: Item {
-                    implicitHeight: Theme.textField.height
+                contentItem: Row {
+                    spacing: root.caps.length === 0 ? 0 : Theme.space.sm
                     Row {
                         id: capRow
-                        x: Theme.textField.paddingX
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: Theme.space.xs
                         Repeater {
@@ -154,8 +183,7 @@ FocusScope {
                     }
                     Label {
                         role: "item"
-                        x: root.caps.length === 0 ? Theme.textField.paddingX : capRow.x + capRow.width + Theme.space.sm
-                        width: parent.width - x - Theme.textField.paddingX
+                        width: box.availableWidth - capRow.width - parent.spacing
                         anchors.verticalCenter: parent.verticalCenter
                         elide: Text.ElideRight
                         color: Theme.textField.placeholder
@@ -207,8 +235,8 @@ FocusScope {
             role: "hint"
             width: parent.width
             wrapMode: Text.Wrap
-            color: root.notice !== "" ? Theme.color.danger : Theme.color.warning
-            text: root.notice !== "" ? root.notice : root.conflict
+            color: root.hintIsNotice ? Theme.color.danger : Theme.color.warning
+            text: root.hint
             visible: text !== ""
         }
     }

@@ -12,7 +12,8 @@ import qs.Ui
 // something. The field then shows what the configuration holds again, so
 // a refused key leaves the old one in place. Under the field, a hint names
 // every other plugin shortcut and user Hyprland bind that holds the same
-// key; it never stops the key being set.
+// key, and says so when Hyprland's binds could not be read; it never stops
+// the key being set.
 Field {
     id: root
 
@@ -22,8 +23,9 @@ Field {
     property bool editable: true
     // The `shortcut` capability's key capture member, or null.
     property var capture: null
-    // The manager's plugin rows, which name a plugin holding the same key.
-    property var plugins: []
+    // The Settings window's row for a plugin id, or null: the hint names a
+    // plugin holding the same key by its row's name.
+    property var rowOf: id => null
     signal applyKey(var key)
 
     readonly property string shown: bind.key === null || bind.key === undefined ? "" : String(bind.key)
@@ -32,12 +34,14 @@ Field {
         const found = capture.conflicts(shown, pluginId, String(bind.shortcut));
         const holders = found.plugins.map(p => nameOf(p.id) + " (" + p.shortcut + ")")
             .concat(found.user.map(d => d === "" ? "your Hyprland config" : "your Hyprland config (" + d + ")"));
-        return holders.length === 0 ? "" : "Also bound to " + holders.join(", ") + ".";
+        const held = holders.length === 0 ? "" : "Also bound to " + holders.join(", ") + ".";
+        const unread = found.binds === "failed" ? "Your Hyprland binds could not be read, so another bind may hold this key." : "";
+        return [held, unread].filter(line => line !== "").join(" ");
     }
 
     function nameOf(id) {
-        const row = plugins.find(p => p.id === id);
-        return row === undefined ? id : row.name;
+        const row = rowOf(id);
+        return row === null ? id : row.name;
     }
 
     label: String(bind.shortcut)

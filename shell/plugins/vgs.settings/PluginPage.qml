@@ -381,7 +381,7 @@ FocusScope {
                         bind: modelData
                         editable: page.editable
                         capture: page.panel.capture
-                        plugins: page.panel.plugins
+                        rowOf: id => page.panel.rowOf(id)
                         onApplyKey: key => { if (page !== null && page.row !== null) page.panel.writeKey(pluginId, modelData.shortcut, key); }
                     }
                 }
