@@ -6,7 +6,7 @@ const path = require("node:path");
 /** @typedef {"read"|"reversible"|"input"|"persistent"|"exec"|"external"|"destructive"} Effect */
 /** @typedef {{id: string, args: Record<string, unknown>}} Call */
 
-// JSON Schema descriptors remain serializable for the planned tool bridge.
+// JSON Schema descriptors remain serializable: the tool bridge offers them as is.
 // The URI validator additionally excludes userinfo; credentials cannot enter
 // a URL argument. Object envelopes are closed and require every declared key.
 const text = { type: "string", minLength: 1, pattern: "^[^\\u0000]*$" };
@@ -166,6 +166,28 @@ function refine(call) {
         command: row.command, paths: row.paths || [], input: refined.input || null, source: refined.source || null };
 }
 
+// The one model-facing spelling of a tool id, shared by the wire brains and
+// the MCP bridge: dots become underscores, and providers accept only letters,
+// digits, underscores and dashes, at most 64 of them.
+const WIRE_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Map each tool id to its model-facing name, in the order given. Returns
+ * null when a name is invalid or two ids share one, so a caller refuses the
+ * whole offer rather than drop a tool.
+ * @param {string[]} ids
+ * @returns {Map<string, string>|null} name to id
+ */
+function wireNames(ids) {
+    const names = new Map();
+    for (const id of ids) {
+        const name = id.replaceAll(".", "_");
+        if (!WIRE_NAME.test(name) || names.has(name)) return null;
+        names.set(name, id);
+    }
+    return names;
+}
+
 function freeze(value) {
     Object.values(value).forEach(child => { if (child !== null && typeof child === "object") freeze(child); });
     return Object.freeze(value);
@@ -179,4 +201,4 @@ for (const row of Object.values(TABLE)) {
 }
 freeze(TABLE);
 freeze(BROWSER);
-module.exports = { TABLE, BROWSER, refine };
+module.exports = { TABLE, BROWSER, refine, wireNames };

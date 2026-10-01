@@ -10,7 +10,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 - `Policy.summary` retains the union of all contributing labels. The session keeps those labels for the conversation, including across repeated summaries.
 - `Policy.recipients` copies and freezes the whole brain and speech set. `Policy.release` judges that set, not just the adapter's destination.
 - `net.create` owns transport handles for that immutable set. The session closes it when the conversation ends. The daemon and adapters must use this door rather than create their own sockets.
-- Session owns ending the conversation. J33 connects context and transport teardown when provider, account or policy changes. [The action router](jarvis-approval.md) owns application and site grants only. Recipient-labelled release grants remain the release-consent integration's responsibility. Each release must use [Audit.before](jarvis-audit.md) before transfer. That integration is not present in the skeleton.
+- Session owns ending the conversation. J33 connects context and transport teardown when provider, account or policy changes. [The action router](jarvis-approval.md) owns application and site grants only. Recipient-labelled release grants remain the release-consent integration's responsibility. Each release must use [Audit.before](jarvis-audit.md) before transfer. The [tool bridge](jarvis-bridge.md#calls-and-results) does so for each harness tool result; the brain and speech integrations are not present in the skeleton.
 - A harness brain still needs release consent for its cloud provider. Its vendor owns its sockets. The harness integration must enforce that handoff boundary; `net.js` does not intercept another program's networking.
 
 ## Recipient and item contract

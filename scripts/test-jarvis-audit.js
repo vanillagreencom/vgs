@@ -5,6 +5,7 @@ const { assert, fs, path, tree, world, mutant, fsFault } = require("./fixtures/j
 const file = path.join(tree, "shell/plugins/vgs.jarvis/backend/Audit.js");
 const Audit = require(file);
 const RedactFile = path.join(tree, "shell/plugins/vgs.jarvis/backend/Redact.js");
+const PrivateFile = path.join(tree, "shell/plugins/vgs.jarvis/backend/Private.js");
 
 world(() => {
     const base = process.env.XDG_STATE_HOME;
@@ -282,7 +283,6 @@ world(() => {
         ["short write refusal", 'if (written !== line.length) {', 'if (false && written !== line.length) {', checkShort],
         ["short write rollback", "fs.ftruncateSync(fd, stat.size);", "/* omitted rollback */", checkShort],
         ["file permissions", "fs.fchmodSync(fd, 0o600);", "/* omitted private file mode */", checkModes],
-        ["directory permissions", "fs.chmodSync(directory, 0o700);", "/* omitted private directory mode */", checkModes],
         ["retention age", "date <= today - auditDays * DAY_MS", "false && date <= today - auditDays * DAY_MS", checkAge],
         ["retention size", "inventory.total + line.length + LINE_BYTES > STORE_BYTES", "false && inventory.total + line.length + LINE_BYTES > STORE_BYTES", checkSize],
         ["oldest first", "date < oldest.date", "date > oldest.date", checkSize],
@@ -291,8 +291,6 @@ world(() => {
         ["closed owner", 'if (lifetime !== "open") fail("writer-closed");', 'if (false && lifetime !== "open") fail("writer-closed");', checkClosed],
         ["partial line", 'tail[0] !== 10', 'false && tail[0] !== 10',
             logic => checkUnsafe(logic, hazards[4][1], "partial-line")],
-        ["state links", 'if (!fs.lstatSync(current).isDirectory()) fail("directory-type");', 'if (!fs.statSync(current).isDirectory()) fail("directory-type");',
-            logic => checkUnsafe(logic, hazards[0][1], "directory-type")],
         ["file links", 'if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid()) fail("file-type");',
             'if (!stat.isFile() || stat.uid !== process.getuid()) fail("file-type");',
             logic => checkUnsafe(logic, hazards[3][1], "file-type")],
@@ -333,6 +331,11 @@ world(() => {
     ];
     for (const [name, needle, replacement, check] of controls)
         mutant(file, name, needle, replacement, check);
+    // The private directory owner is shared; these controls reach it through the writer.
+    mutant(PrivateFile, "directory permissions", "fs.chmodSync(target, 0o700);", "/* omitted private directory mode */", checkModes, "Audit.js");
+    mutant(PrivateFile, "state links", 'if (!fs.lstatSync(current).isDirectory()) fail("directory-type");',
+        'if (!fs.statSync(current).isDirectory()) fail("directory-type");',
+        logic => checkUnsafe(logic, hazards[0][1], "directory-type"), "Audit.js");
     // Start before record, but retain both calls and the record's matched text.
     mutant(file, "decision before action", "const audit = record(event);",
         "start(); const audit = record(event);", logic => {
@@ -353,6 +356,6 @@ world(() => {
     for (const kind of ["stop", "mute", "teardown"])
         mutant(file, "privacy shutdown " + kind, 'return { kind: "started", audit, value: start() };\n        },\n        close()',
             'if (kind === "' + kind + '" && audit.kind === "refuse") return audit;\n            return { kind: "started", audit, value: start() };\n        },\n        close()', checkRefusal);
-    console.log("jarvis-audit: acceptance=passed controls=" + (controls.length + 7)
+    console.log("jarvis-audit: acceptance=passed controls=" + (controls.length + 9)
         + " planted-keys=absent failed-write=refused");
 });

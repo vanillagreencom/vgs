@@ -1,0 +1,812 @@
+{
+ "source": {
+  "repository": "https://github.com/modelcontextprotocol/modelcontextprotocol",
+  "commit": "3098fe94caa1b9e0afaaa6d30e040b61d5802471",
+  "committed": "2026-10-01T12:55:32Z",
+  "path": "schema/2025-11-25/schema.json",
+  "sha256": "268a5f82ba70fd7e4b6dc4aa1e64f116f74b4d0edcb69dc046829c79dd4e97e7",
+  "protocolVersion": "2025-11-25",
+  "fetched": "2026-10-01"
+ },
+ "rule": [
+  "Schemas are copied from $defs with $ref rewritten from #/$defs/ to #/schemas/.",
+  "Annotation keywords are removed: description, title and format. A property named title stays.",
+  "const is rewritten as a one-member enum, which the checker implements.",
+  "ContentBlock keeps its TextContent branch only; the bridge writes text content alone.",
+  "TextContent loses its optional annotations property, whose Annotations schema uses minimum and maximum.",
+  "Tool.inputSchema gains additionalProperties: true. It is a JSON Schema object, which carries keywords the published schema does not name."
+ ],
+ "omitted": [
+  "Annotations",
+  "AudioContent",
+  "EmbeddedResource",
+  "ImageContent",
+  "ResourceLink"
+ ],
+ "schemas": {
+  "RequestId": {
+   "type": [
+    "string",
+    "integer"
+   ]
+  },
+  "ProgressToken": {
+   "type": [
+    "string",
+    "integer"
+   ]
+  },
+  "Result": {
+   "additionalProperties": {},
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "EmptyResult": {
+   "$ref": "#/schemas/Result"
+  },
+  "Error": {
+   "properties": {
+    "code": {
+     "type": "integer"
+    },
+    "data": {},
+    "message": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "code",
+    "message"
+   ],
+   "type": "object"
+  },
+  "JSONRPCResultResponse": {
+   "properties": {
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    },
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ],
+     "type": "string"
+    },
+    "result": {
+     "$ref": "#/schemas/Result"
+    }
+   },
+   "required": [
+    "id",
+    "jsonrpc",
+    "result"
+   ],
+   "type": "object"
+  },
+  "JSONRPCErrorResponse": {
+   "properties": {
+    "error": {
+     "$ref": "#/schemas/Error"
+    },
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    },
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "error",
+    "jsonrpc"
+   ],
+   "type": "object"
+  },
+  "InitializeRequest": {
+   "properties": {
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    },
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ],
+     "type": "string"
+    },
+    "method": {
+     "enum": [
+      "initialize"
+     ],
+     "type": "string"
+    },
+    "params": {
+     "$ref": "#/schemas/InitializeRequestParams"
+    }
+   },
+   "required": [
+    "id",
+    "jsonrpc",
+    "method",
+    "params"
+   ],
+   "type": "object"
+  },
+  "InitializeRequestParams": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "properties": {
+      "progressToken": {
+       "$ref": "#/schemas/ProgressToken"
+      }
+     },
+     "type": "object"
+    },
+    "capabilities": {
+     "$ref": "#/schemas/ClientCapabilities"
+    },
+    "clientInfo": {
+     "$ref": "#/schemas/Implementation"
+    },
+    "protocolVersion": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "capabilities",
+    "clientInfo",
+    "protocolVersion"
+   ],
+   "type": "object"
+  },
+  "ClientCapabilities": {
+   "properties": {
+    "elicitation": {
+     "properties": {
+      "form": {
+       "additionalProperties": true,
+       "properties": {},
+       "type": "object"
+      },
+      "url": {
+       "additionalProperties": true,
+       "properties": {},
+       "type": "object"
+      }
+     },
+     "type": "object"
+    },
+    "experimental": {
+     "additionalProperties": {
+      "additionalProperties": true,
+      "properties": {},
+      "type": "object"
+     },
+     "type": "object"
+    },
+    "roots": {
+     "properties": {
+      "listChanged": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "sampling": {
+     "properties": {
+      "context": {
+       "additionalProperties": true,
+       "properties": {},
+       "type": "object"
+      },
+      "tools": {
+       "additionalProperties": true,
+       "properties": {},
+       "type": "object"
+      }
+     },
+     "type": "object"
+    },
+    "tasks": {
+     "properties": {
+      "cancel": {
+       "additionalProperties": true,
+       "properties": {},
+       "type": "object"
+      },
+      "list": {
+       "additionalProperties": true,
+       "properties": {},
+       "type": "object"
+      },
+      "requests": {
+       "properties": {
+        "elicitation": {
+         "properties": {
+          "create": {
+           "additionalProperties": true,
+           "properties": {},
+           "type": "object"
+          }
+         },
+         "type": "object"
+        },
+        "sampling": {
+         "properties": {
+          "createMessage": {
+           "additionalProperties": true,
+           "properties": {},
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       },
+       "type": "object"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "Implementation": {
+   "properties": {
+    "description": {
+     "type": "string"
+    },
+    "icons": {
+     "items": {
+      "$ref": "#/schemas/Icon"
+     },
+     "type": "array"
+    },
+    "name": {
+     "type": "string"
+    },
+    "title": {
+     "type": "string"
+    },
+    "version": {
+     "type": "string"
+    },
+    "websiteUrl": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "name",
+    "version"
+   ],
+   "type": "object"
+  },
+  "Icon": {
+   "properties": {
+    "mimeType": {
+     "type": "string"
+    },
+    "sizes": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "src": {
+     "type": "string"
+    },
+    "theme": {
+     "enum": [
+      "dark",
+      "light"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "src"
+   ],
+   "type": "object"
+  },
+  "InitializeResult": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "capabilities": {
+     "$ref": "#/schemas/ServerCapabilities"
+    },
+    "instructions": {
+     "type": "string"
+    },
+    "protocolVersion": {
+     "type": "string"
+    },
+    "serverInfo": {
+     "$ref": "#/schemas/Implementation"
+    }
+   },
+   "required": [
+    "capabilities",
+    "protocolVersion",
+    "serverInfo"
+   ],
+   "type": "object"
+  },
+  "ServerCapabilities": {
+   "properties": {
+    "completions": {
+     "additionalProperties": true,
+     "properties": {},
+     "type": "object"
+    },
+    "experimental": {
+     "additionalProperties": {
+      "additionalProperties": true,
+      "properties": {},
+      "type": "object"
+     },
+     "type": "object"
+    },
+    "logging": {
+     "additionalProperties": true,
+     "properties": {},
+     "type": "object"
+    },
+    "prompts": {
+     "properties": {
+      "listChanged": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "resources": {
+     "properties": {
+      "listChanged": {
+       "type": "boolean"
+      },
+      "subscribe": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "tasks": {
+     "properties": {
+      "cancel": {
+       "additionalProperties": true,
+       "properties": {},
+       "type": "object"
+      },
+      "list": {
+       "additionalProperties": true,
+       "properties": {},
+       "type": "object"
+      },
+      "requests": {
+       "properties": {
+        "tools": {
+         "properties": {
+          "call": {
+           "additionalProperties": true,
+           "properties": {},
+           "type": "object"
+          }
+         },
+         "type": "object"
+        }
+       },
+       "type": "object"
+      }
+     },
+     "type": "object"
+    },
+    "tools": {
+     "properties": {
+      "listChanged": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "InitializedNotification": {
+   "properties": {
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ],
+     "type": "string"
+    },
+    "method": {
+     "enum": [
+      "notifications/initialized"
+     ],
+     "type": "string"
+    },
+    "params": {
+     "$ref": "#/schemas/NotificationParams"
+    }
+   },
+   "required": [
+    "jsonrpc",
+    "method"
+   ],
+   "type": "object"
+  },
+  "NotificationParams": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "PingRequest": {
+   "properties": {
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    },
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ],
+     "type": "string"
+    },
+    "method": {
+     "enum": [
+      "ping"
+     ],
+     "type": "string"
+    },
+    "params": {
+     "$ref": "#/schemas/RequestParams"
+    }
+   },
+   "required": [
+    "id",
+    "jsonrpc",
+    "method"
+   ],
+   "type": "object"
+  },
+  "RequestParams": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "properties": {
+      "progressToken": {
+       "$ref": "#/schemas/ProgressToken"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "ListToolsRequest": {
+   "properties": {
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    },
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ],
+     "type": "string"
+    },
+    "method": {
+     "enum": [
+      "tools/list"
+     ],
+     "type": "string"
+    },
+    "params": {
+     "$ref": "#/schemas/PaginatedRequestParams"
+    }
+   },
+   "required": [
+    "id",
+    "jsonrpc",
+    "method"
+   ],
+   "type": "object"
+  },
+  "PaginatedRequestParams": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "properties": {
+      "progressToken": {
+       "$ref": "#/schemas/ProgressToken"
+      }
+     },
+     "type": "object"
+    },
+    "cursor": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ListToolsResult": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "nextCursor": {
+     "type": "string"
+    },
+    "tools": {
+     "items": {
+      "$ref": "#/schemas/Tool"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "tools"
+   ],
+   "type": "object"
+  },
+  "Tool": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "annotations": {
+     "$ref": "#/schemas/ToolAnnotations"
+    },
+    "description": {
+     "type": "string"
+    },
+    "execution": {
+     "$ref": "#/schemas/ToolExecution"
+    },
+    "icons": {
+     "items": {
+      "$ref": "#/schemas/Icon"
+     },
+     "type": "array"
+    },
+    "inputSchema": {
+     "properties": {
+      "$schema": {
+       "type": "string"
+      },
+      "properties": {
+       "additionalProperties": {
+        "additionalProperties": true,
+        "properties": {},
+        "type": "object"
+       },
+       "type": "object"
+      },
+      "required": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "type": {
+       "enum": [
+        "object"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object",
+     "additionalProperties": true
+    },
+    "name": {
+     "type": "string"
+    },
+    "outputSchema": {
+     "properties": {
+      "$schema": {
+       "type": "string"
+      },
+      "properties": {
+       "additionalProperties": {
+        "additionalProperties": true,
+        "properties": {},
+        "type": "object"
+       },
+       "type": "object"
+      },
+      "required": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "type": {
+       "enum": [
+        "object"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    "title": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "inputSchema",
+    "name"
+   ],
+   "type": "object"
+  },
+  "ToolAnnotations": {
+   "properties": {
+    "destructiveHint": {
+     "type": "boolean"
+    },
+    "idempotentHint": {
+     "type": "boolean"
+    },
+    "openWorldHint": {
+     "type": "boolean"
+    },
+    "readOnlyHint": {
+     "type": "boolean"
+    },
+    "title": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "ToolExecution": {
+   "properties": {
+    "taskSupport": {
+     "enum": [
+      "forbidden",
+      "optional",
+      "required"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "CallToolRequest": {
+   "properties": {
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    },
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ],
+     "type": "string"
+    },
+    "method": {
+     "enum": [
+      "tools/call"
+     ],
+     "type": "string"
+    },
+    "params": {
+     "$ref": "#/schemas/CallToolRequestParams"
+    }
+   },
+   "required": [
+    "id",
+    "jsonrpc",
+    "method",
+    "params"
+   ],
+   "type": "object"
+  },
+  "CallToolRequestParams": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "properties": {
+      "progressToken": {
+       "$ref": "#/schemas/ProgressToken"
+      }
+     },
+     "type": "object"
+    },
+    "arguments": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "name": {
+     "type": "string"
+    },
+    "task": {
+     "$ref": "#/schemas/TaskMetadata"
+    }
+   },
+   "required": [
+    "name"
+   ],
+   "type": "object"
+  },
+  "TaskMetadata": {
+   "properties": {
+    "ttl": {
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "CallToolResult": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "content": {
+     "items": {
+      "$ref": "#/schemas/ContentBlock"
+     },
+     "type": "array"
+    },
+    "isError": {
+     "type": "boolean"
+    },
+    "structuredContent": {
+     "additionalProperties": {},
+     "type": "object"
+    }
+   },
+   "required": [
+    "content"
+   ],
+   "type": "object"
+  },
+  "ContentBlock": {
+   "anyOf": [
+    {
+     "$ref": "#/schemas/TextContent"
+    }
+   ]
+  },
+  "TextContent": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "text": {
+     "type": "string"
+    },
+    "type": {
+     "enum": [
+      "text"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "text",
+    "type"
+   ],
+   "type": "object"
+  }
+ }
+}

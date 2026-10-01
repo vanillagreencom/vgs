@@ -33,6 +33,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const ShellRequests = require("./ShellRequests.js");
     const Desktop = require("./Desktop.js");
     const TaskRunner = require("./TaskRunner.js");
+    const ToolBridge = require("./ToolBridge.js");
     const { load } = require(path.join(process.argv[3], "bin/lib/qml-library.js"));
     const { onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
@@ -51,8 +52,11 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let desktop = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
+    let bridge = null;
 
     function teardown() {
+        // The bridge ends its connections while the router can still drop their results.
+        if (bridge !== null) bridge.close();
         runner.close();
         if (desktop !== null) desktop.close();
         if (requests !== null) requests.close();
@@ -268,7 +272,10 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         dispatch: event => runner.dispatch(event), audit,
                         context: () => ({ profile: runner.state.settings.policy ?? "standard",
                             locked: context.locked, denied: null }),
-                        result: value => runner.ports.brain.outcome(value) });
+                        result: value => bridge.deliver(value) || runner.ports.brain.outcome(value) });
+                    // No harness brain exists yet, so no bridge session opens and no socket exists.
+                    bridge = ToolBridge.create({ router, state: () => runner.state, audit,
+                        directory: context.directories.runtime });
                     // Executor owners register only after their real probes.
                     Object.assign(runner.ports, router.ports);
                     requests = ShellRequests.create({ Protocol, clock, write: fields =>

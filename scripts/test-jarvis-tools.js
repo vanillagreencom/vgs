@@ -117,6 +117,23 @@ world(() => {
     original.args.text = "changed";
     assert.equal(narrowed.call.args.text, "old");
 
+    // Model-facing names: the one spelling the wire brains and the MCP bridge share.
+    const wireRows = [
+        ["dots", ["windows.list", "help"], [["windows_list", "windows.list"], ["help", "help"]]],
+        ["empty", [], []],
+        ["at-bound", ["x".repeat(64)], [["x".repeat(64), "x".repeat(64)]]],
+        ["past-bound", ["x".repeat(65)], null],
+        ["space", ["bad tool"], null],
+        ["shared-name", ["a.b", "a_b"], null]
+    ];
+    const names = logic => {
+        for (const [name, ids, expected] of wireRows) {
+            const actual = logic.wireNames(ids);
+            assert.deepEqual(actual === null ? null : [...actual], expected, "wire names " + name);
+        }
+    };
+    names(Tools);
+
     let controls = 0;
     function control(name, needle, replacement, assertion) {
         mutant(file, name, needle, replacement, assertion);
@@ -225,6 +242,11 @@ world(() => {
         assert.equal(Object.isFrozen(result.call.args.argv), true);
     };
     frozen(Tools);
+    control("wire-name-pattern", "!WIRE_NAME.test(name) || ", "", names);
+    control("wire-name-unique", " || names.has(name)", "", names);
+    control("wire-name-bound-low", "{1,64}", "{1,63}", names);
+    control("wire-name-bound-high", "{1,64}", "{1,65}", names);
+    control("wire-name-spelling", 'id.replaceAll(".", "_")', "id", names);
     control("immutable-call", "call: freeze(structuredClone(call))", "call: structuredClone(call)", frozen);
     console.log("test-jarvis-tools: ok calls=" + cases.length + " controls=" + controls);
 });

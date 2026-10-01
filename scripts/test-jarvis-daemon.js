@@ -175,7 +175,7 @@ async function inside() {
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/session-runner.js"), path.join(copyDir, "backend/session-runner.js"));
         for (const filename of ["Tasks.js", "task-event", "Audio.js", "audio-child.py",
             "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "ShellRequests.js", "Desktop.js",
-            "TaskRunner.js", "AgentProfiles.js", "task-run.py"])
+            "TaskRunner.js", "AgentProfiles.js", "task-run.py", "ToolBridge.js", "Mcp.js", "Private.js"])
             fs.copyFileSync(path.join(path.dirname(daemon), filename), path.join(copyDir, "backend", filename));
         const copy = path.join(copyDir, "backend/jarvisd.js");
         fs.writeFileSync(copy, source.replace(needle, replacement));
@@ -253,7 +253,8 @@ async function inside() {
             "backend/Audio.js", "backend/audio-child.py", "backend/ToolRouter.js",
             "backend/Audit.js", "backend/Redact.js", "backend/Tools.js", "backend/Policy.js",
             "backend/ShellRequests.js", "backend/Desktop.js",
-            "backend/TaskRunner.js", "backend/AgentProfiles.js", "backend/task-run.py"])
+            "backend/TaskRunner.js", "backend/AgentProfiles.js", "backend/task-run.py",
+            "backend/ToolBridge.js", "backend/Mcp.js", "backend/Private.js"])
             fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis", relative), path.join(directory, relative));
         return path.join(directory, "backend/jarvisd.js");
     }
@@ -349,6 +350,15 @@ async function inside() {
         });
     };
     await muteCheck(daemon);
+    // No harness brain exists, so startup opens no tool bridge session.
+    const noBridge = file => conversation(file, async () => {
+        assert.equal(fs.existsSync(path.join(hello.directories.runtime, "tools.sock")), false, "startup creates no tools.sock");
+    });
+    await noBridge(daemon);
+    await control("no-bridge-session", "// Executor owners register only after their real probes.",
+        'void bridge.open({ gen: 0, recipients: require("./Policy.js").recipients({ conversation: "planted",'
+        + ' profile: "standard", cloudVision: "ask", brain: { kind: "local", provider: "planted", account: "" },'
+        + ' speech: [{ kind: "local", provider: "planted", account: "" }] }) });', noBridge);
     const restoreCheck = file => conversation(file, async w => {
         assert.equal(w.last().state.mute.kind, "on");
         await w.wait(m => m.state.mute.kind === "on" && w.messages.some(message =>

@@ -4,6 +4,7 @@
 "use strict";
 const Policy = require("./Policy.js");
 const Providers = require("./Providers.js");
+const Tools = require("./Tools.js");
 const Net = require("./net.js");
 const Sse = require("./Sse.js");
 
@@ -12,7 +13,6 @@ const REQUEST_BYTES = 20 * 1024 * 1024;
 const SSE_LIMITS = Object.freeze({ line: 1024 * 1024, event: 1024 * 1024, total: 8 * 1024 * 1024 });
 const TOOLS = 64;
 const IMAGE_TYPES = ["image/png", "image/jpeg"];
-const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 function fail(code) { throw new Error("jarvis: brain=" + code); }
 function plain(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function textItem(item) {
@@ -41,13 +41,9 @@ function create({ provider, model, net, recipients, key }, protocol) {
         usable();
         if (typeof value.instructions !== "string") fail("instructions");
         if (value.tools.length > TOOLS) fail("tools");
-        const names = new Map();
-        const tools = value.tools.map(tool => {
-            const name = tool.id.replaceAll(".", "_");
-            if (!NAME.test(name) || names.has(name)) fail("tool-name");
-            names.set(name, tool.id);
-            return protocol.tool(name, tool);
-        });
+        const names = Tools.wireNames(value.tools.map(tool => tool.id));
+        if (names === null) fail("tool-name");
+        const tools = [...names.keys()].map((name, index) => protocol.tool(name, value.tools[index]));
         context = { instructions: value.instructions, tools, names };
         history = [];
     }

@@ -1,0 +1,65 @@
+#!/usr/bin/env node
+// mcp-shim: the stdio MCP server a harness brain starts. It authenticates to
+// jarvisd's tools.sock and relays bytes both ways; the daemon owns every MCP
+// decision, so this file parses no MCP. The socket path and token come only
+// from VGS_JARVIS_TOOLS_SOCKET and VGS_JARVIS_TOOLS_TOKEN, never argv.
+// Exit 0: stdin EOF. 1: the daemon refused the hello. 64: a variable is
+// missing. 69: the socket is unavailable or the connection dropped. 74: stdout
+// failed. Every nonzero exit writes one keyed stderr line, "mcp-shim: key=value".
+// Contract: docs/architecture/jarvis-bridge.md.
+"use strict";
+const net = require("node:net");
+
+// The daemon's first line: this exact acceptance, or a refusal naming a reason.
+const READY = JSON.stringify({ v: 1, type: "ready" });
+const REPLY_BYTES = 1024;
+
+function exit(code, line) {
+    process.stderr.write("mcp-shim: " + line + "\n");
+    process.exit(code);
+}
+
+const socketPath = process.env.VGS_JARVIS_TOOLS_SOCKET;
+const token = process.env.VGS_JARVIS_TOOLS_TOKEN;
+if (!socketPath) exit(64, "environment=VGS_JARVIS_TOOLS_SOCKET");
+if (!token) exit(64, "environment=VGS_JARVIS_TOOLS_TOKEN");
+
+let phase = "hello";
+let reply = "";
+const socket = net.createConnection(socketPath);
+socket.on("connect", () => socket.write(JSON.stringify({ v: 1, type: "hello", token }) + "\n"));
+socket.on("error", error => {
+    if (phase === "hello") exit(69, "bridge=unavailable cause=" + (error.code ?? "unknown"));
+});
+socket.on("close", () => {
+    if (phase === "ending") process.exit(0);
+    exit(69, "bridge=closed");
+});
+process.stdout.on("error", error => exit(74, "stdout=" + (error.code ?? "unknown")));
+
+function onReply(chunk) {
+    reply += chunk.toString("latin1");
+    const end = reply.indexOf("\n");
+    if (end < 0) {
+        if (reply.length > REPLY_BYTES) exit(1, "bridge=refused reason=unknown");
+        return;
+    }
+    const first = reply.slice(0, end);
+    if (first !== READY) {
+        let reason = "unknown";
+        try {
+            const value = JSON.parse(first);
+            if (typeof value?.reason === "string" && /^[a-z-]{1,32}$/.test(value.reason)) reason = value.reason;
+        } catch { /* An unreadable refusal keeps reason=unknown. */ }
+        exit(1, "bridge=refused reason=" + reason);
+    }
+    // Accepted: everything after the acceptance line is MCP, relayed as is.
+    phase = "relay";
+    socket.off("data", onReply);
+    const rest = Buffer.from(reply.slice(end + 1), "latin1");
+    if (rest.length !== 0) process.stdout.write(rest);
+    socket.pipe(process.stdout, { end: false });
+    process.stdin.on("end", () => { phase = "ending"; });
+    process.stdin.pipe(socket);
+}
+socket.on("data", onReply);

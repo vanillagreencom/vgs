@@ -20,6 +20,8 @@ The [action router suite](jarvis-approval.md#evidence-and-comparison) uses this 
 
 The [task control suite](jarvis-task-control.md#evidence) runs the real launcher, a stand-in agent and real signals in this world. Production names its tmux socket with `-S`, which the PATH wrapper refuses, so the suite runs the bootstrap tmux with `-S` on a socket under the world's runtime directory. Every signal it sends targets a group it recorded.
 
+The [tool bridge suite](jarvis-bridge.md#evidence) adds the real `mcp-shim` as a child with an explicit environment. Its socket lives under the world's scratch runtime directory, inside the same network namespace. The suite speaks MCP itself; no harness program, account or network is involved. An injected clock fires the hello deadline. Its MCP fixtures name their schema, commit and date and pass the shared schema checker.
+
 ## Ownership
 
 - `scripts/lib/jarvis-env.sh::jarvis_env_run` owns one scratch world per invocation. Its header defines the caller contract. A suite starts its fixture servers, daemon and children inside that invocation, so they share the same loopback network.

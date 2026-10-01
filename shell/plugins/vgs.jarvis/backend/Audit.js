@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Tools = require("./Tools.js");
 const Redact = require("./Redact.js");
+const Private = require("./Private.js");
 
 const LINE_BYTES = 4 * 1024;
 const STORE_BYTES = 64 * 1024 * 1024;
@@ -24,20 +25,6 @@ function dateOf(name) {
     const time = Date.parse(date + "T00:00:00.000Z");
     if (!Number.isFinite(time) || new Date(time).toISOString().slice(0, 10) !== date) fail("entry-date");
     return time;
-}
-
-function privateDirectory(directory) {
-    // State comes from the shell's trusted XDG snapshot. Refuse links in the
-    // complete path rather than writing through a configured state alias.
-    let current = "/";
-    for (const component of directory.split("/").filter(Boolean)) {
-        current = path.join(current, component);
-        try { fs.mkdirSync(current, { mode: 0o700 }); }
-        catch (error) { if (error.code !== "EEXIST") throw error; }
-        if (!fs.lstatSync(current).isDirectory()) fail("directory-type");
-    }
-    if (fs.lstatSync(directory).uid !== process.getuid()) fail("directory-owner");
-    fs.chmodSync(directory, 0o700);
 }
 
 function regular(stat) {
@@ -132,8 +119,8 @@ function create({ state, auditDays = 30, now = Date.now }) {
     }
 
     function persist(record, stamp) {
-        privateDirectory(state);
-        privateDirectory(directory);
+        Private.directory(state);
+        Private.directory(directory);
         const line = encode(record);
         let inventory = scan(stamp.today);
         // Keep only the next oldest candidate, not an unbounded filename list.

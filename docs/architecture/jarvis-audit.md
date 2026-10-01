@@ -43,7 +43,7 @@ Each JSON line adds `time` in UTC. The store uses `audit/<UTC date>.jsonl`. The 
 
 This conservative rule avoids a credential-pattern list. Such a list cannot recognize arbitrary credentials or private file text. Images, audio, transcripts, raw keys and executor outputs do not enter the record. Fixed event metadata and bounded argument names keep encoding bounded. The writer also refuses a line above the plan's ceiling.
 
-State and audit directories use mode 0700. Daily files use mode 0600, including existing files. Links, non-regular files, hard links and other owners refuse. The directory scan retains only total bytes and the next oldest candidates. It does not retain a list proportional to the number of files.
+State and audit directories use mode 0700. `Private.js::directory` owns that rule, shared with the [tool bridge's runtime directory](jarvis-bridge.md#socket-and-runtime-directory). Daily files use mode 0600, including existing files. Links, non-regular files, hard links and other owners refuse. The directory scan retains only total bytes and the next oldest candidates. It does not retain a list proportional to the number of files.
 
 Before appending, the writer removes expired daily files. The cutoff uses UTC days. With the default setting it retains today and the preceding days inside the retention period. The byte ceiling reserves room for the event and a removal record. Size pruning removes the oldest daily file, including today's file when it alone fills the store. Each removal appends a `prune` record with date, byte count and `age` or `size`. An unexpected filename refuses instead of deleting unrelated data.
 
