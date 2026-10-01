@@ -14,10 +14,11 @@
 #   every sandbox shell's PATH for the whole run: each records its argv
 #   and answers from files a row plants, never the host's command
 #   (scripts/smoke/fixtures/devices/stand-in.py). device_reply plants an
-#   answer, device_transcript a bluetoothctl session, device_calls reads
-#   the record. A row that needs a stand-in to answer its own way stands
-#   over it with sentinel_stand_over and puts it back with
-#   sentinel_restore, as with the authentication sentinels.
+#   answer, device_reply_clear removes a stand-in's planted answers,
+#   device_transcript a bluetoothctl session, device_calls reads the
+#   record. A row that needs a stand-in to answer its own way stands over
+#   it with sentinel_stand_over and puts it back with sentinel_restore,
+#   as with the authentication sentinels.
 # - devices_up starts the fakes once per run, on a row's first call, and
 #   leaves them up: python-dbusmock's bluez5 and networkmanager templates
 #   on the sandbox system bus with one adapter, one device and one Wi-Fi
@@ -29,7 +30,8 @@
 # - devices_ready ROW, a device row's first line: devices_up, then
 #   devices_guard over the running shell. A missing prerequisite or a
 #   guard that reads a leak records ROW not measured and returns 1, and
-#   the row returns; a fake that fails to start fails the row.
+#   the row returns; an unreadable shell environment or a fake that fails
+#   to start fails the row.
 devices_dir="$sandbox/devices"
 devices_dev_root="$devices_dir/dev"
 devices_sysfs_root="$devices_dir/sys"
@@ -58,18 +60,22 @@ devices_write_stand_ins() {
 
 # device_reply NAME STATUS STDOUT ARGV...: NAME's stand-in answers the call
 # whose argv is ARGV with STDOUT, a newline added when it lacks one, and
-# STATUS. A later reply for the same argv is never read: the first row
-# answers.
+# STATUS. A later reply for the same argv replaces the earlier reply.
 device_reply() { # NAME STATUS STDOUT ARGV...
   python3 - "$devices_dir/replies/$1.json" "$2" "$3" "${@:4}" <<'PY'
 import json, os, sys
 path, status, stdout, argv = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4:]
 rows = json.load(open(path)) if os.path.exists(path) else []
+rows = [row for row in rows if row["argv"] != argv]
 rows.append({"argv": argv, "stdout": stdout if stdout == "" or stdout.endswith("\n") else stdout + "\n", "status": status})
 with open(path + ".next", "w") as out:
     json.dump(rows, out)
 os.replace(path + ".next", path)
 PY
+}
+# device_reply_clear NAME: removes all planted replies for NAME.
+device_reply_clear() { # NAME
+  rm -f -- "$devices_dir/replies/$1.json"
 }
 # device_transcript STEPS_JSON: the session bluetoothctl with no argument
 # replays, steps as stand-in.py reads them; `-` removes it.
@@ -136,8 +142,10 @@ devices_up() {
   devices_pid[hid]="$spawn_pid"
   for _ in $(seq 1 50); do [[ -S $devices_hid_socket ]] && break; sleep 0.1; done
   if [[ ! -S $devices_hid_socket ]]; then devices_failed hid-fake "$devices_dir/hid-fake.log"; return 1; fi
-  for name in wireplumber bluez network; do
-    if ! kill -0 "${devices_pid[$name]}" 2>/dev/null; then devices_failed "$name" "$devices_dir/$name.log"; return 1; fi
+  for name in pipewire wireplumber bluez network hid; do
+    local log="$devices_dir/$name.log"
+    [[ $name == hid ]] && log="$devices_dir/hid-fake.log"
+    if ! kill -0 "${devices_pid[$name]}" 2>/dev/null; then devices_failed "$name" "$log"; return 1; fi
   done
   devices_state=up
 }
@@ -149,8 +157,8 @@ devices_failed() { # KEY LOG
 
 # devices_guard PID: `inside` when process PID's environment keeps every
 # device it can reach inside the sandbox, else the first rule it breaks as
-# `leak=<rule> value=<value>`, or `leak=unreadable` when its environment
-# cannot be read. The rules, one table: system-bus, its
+# `leak=<rule> value=<value>`. It exits non-zero with a reason on stderr
+# when its environment cannot be read. The rules, one table: system-bus, its
 # DBUS_SYSTEM_BUS_ADDRESS is the sandbox's system bus; pipewire-runtime,
 # PIPEWIRE_RUNTIME_DIR lies in the sandbox runtime dir; hardware-root,
 # VGS_DEV_ROOT, VGS_SYSFS_ROOT and VGS_HID_FAKE each lie in the sandbox
@@ -163,8 +171,8 @@ pid, rt, sandbox, shim, names = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[
 try:
     raw = open(f"/proc/{pid}/environ", "rb").read()
 except OSError:
-    print("leak=unreadable value=" + pid)
-    sys.exit()
+    print("devices_guard: environ=unreadable pid=" + pid, file=sys.stderr)
+    sys.exit(1)
 env = dict(item.split("=", 1) for item in raw.decode(errors="replace").split("\0") if "=" in item)
 def within(path, roots):
     real = os.path.realpath(path)
@@ -193,7 +201,8 @@ PY
 }
 # devices_ready ROW: devices_up, then devices_guard over the running
 # shell, shell_qs_pid. Returns 0 with both in order; otherwise ROW is not
-# measured, or failed when a fake did not start, and it returns 1.
+# measured for missing prerequisites or a leak, or failed when no shell
+# pid can be checked, a guard cannot read it, or a fake did not start.
 devices_ready() { # ROW
   local status=0 reading
   devices_up || status=$?
@@ -202,6 +211,10 @@ devices_ready() { # ROW
     77) not_measured "$1" "$devices_state"; return 1 ;;
     *) return 1 ;;
   esac
+  if [[ -z ${shell_qs_pid:-} ]]; then
+    fail "$1: the device guard has no shell pid to read"
+    return 1
+  fi
   reading="$(devices_guard "$shell_qs_pid")" || { fail "$1: the device guard could not read pid $shell_qs_pid"; return 1; }
   if [[ $reading != inside ]]; then not_measured "$1" "$reading"; return 1; fi
   ok "$1: the shell (pid $shell_qs_pid) reaches the sandbox's buses, PipeWire, device roots and stand-ins only"

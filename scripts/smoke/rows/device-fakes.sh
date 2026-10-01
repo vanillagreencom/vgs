@@ -5,25 +5,23 @@
 # device, the NetworkManager mock's Wi-Fi device and the private PipeWire's
 # null nodes through Quickshell's singletons, and runs rfkill through the
 # shell's own PATH. It reads that neither the sandbox PipeWire nor its
-# WirePlumber holds a sound or camera node, that the rfkill block changed
+# WirePlumber holds a sound or camera node after WirePlumber has loaded
+# its profile, that the rfkill block changed
 # the stand-in's state file alone, that a stand-in answers only what a row
 # planted, and the HID fake's answers. Its controls: each guard rule
 # turns red on a process given the shell's environment words with one
 # host value after them, as a harness edit that leaked it would hand the
-# shell; the fd reader finds the /dev/null each fake holds; a stand-in
-# copy that drops its state write leaves the radio unblocked; and a host
-# without python-dbusmock reads not measured. The host's radios are read
-# before and after the block, never written; no edit here could make
-# that reading differ without a hardware write, so it has no control. The
-# row leaves the fakes up and the fixture disabled for the System rows.
+# shell; devices_ready maps a guard leak to not measured and fails an
+# unreadable shell pid; the fd reader finds the /dev/null PipeWire holds;
+# a stand-in copy that drops its state write leaves the radio unblocked;
+# and a host without python-dbusmock reads not measured through
+# devices_ready. The host's radios are read before and after the block,
+# never written; no edit here could make that reading differ without a
+# hardware write, so it has no control. The row leaves the fakes up,
+# clears the reply it plants, and leaves the fixture disabled for the
+# System rows.
 set -euo pipefail
 devices_ready device-fakes || return 0
-
-# The private PipeWire and WirePlumber hold no sound or camera node.
-for name in pipewire wireplumber; do
-  expect "the sandbox $name holds no /dev/snd or /dev/video node" '[]' device_fds "${devices_pid[$name]}" '^/dev/(snd/|video)'
-done
-expect "control: the fd reader finds the /dev/null the sandbox pipewire holds" '["/dev/null"]' device_fds "${devices_pid[pipewire]}" '^/dev/(snd/|video|null$)'
 
 devices_fixture="$home/.config/vgs/plugins/acme.devices"
 mkdir -p "$devices_fixture"
@@ -41,12 +39,19 @@ expect_poll "Quickshell's Pipewire lists the two null sinks and the filter-chain
   '["vgs-smoke-equalizer","vgs-smoke-headphones","vgs-smoke-speakers"]' devices_read sinks
 expect_poll "Quickshell's Pipewire lists the one source" '["vgs-smoke-microphone"]' devices_read sources
 expect_poll "WirePlumber's defaults are the speakers and the source" '["vgs-smoke-speakers","vgs-smoke-microphone"]' devices_read defaults
+# The private PipeWire and WirePlumber hold no sound or camera node after
+# WirePlumber has loaded its profile and monitors.
+for name in pipewire wireplumber; do
+  expect "the sandbox $name holds no /dev/snd or /dev/video node" '[]' device_fds "${devices_pid[$name]}" '^/dev/(snd/|video)'
+done
+expect "control: the fd reader finds the /dev/null the sandbox pipewire holds" '["/dev/null"]' device_fds "${devices_pid[pipewire]}" '^/dev/(snd/|video|null$)'
 # A member Quickshell reads that the templates lack would log here.
 devices_gaps() { log_lines 'missing from property set|Failed to get (devices|all access points|device type)'; }
 expect "Quickshell read every member it needs from the mocks" 0 devices_gaps
 
 # rfkill through the shell's PATH: the stand-in's state file changes, the
 # host's radios do not.
+through_shell() { PATH="$shell_start_path" "$@"; }
 host_radios() { cat /sys/class/rfkill/rfkill*/soft /sys/class/rfkill/rfkill*/hard 2>/dev/null | tr '\n' ' ' || true; }
 radios_before="$(host_radios)"
 expect "the fixture's rfkill block starts" started ipc acme.devices invoke rfkill "block bluetooth"
@@ -58,6 +63,15 @@ expect "the host's radios read as before the block" "$radios_before" host_radios
 expect "the fixture's rfkill unblock starts" started ipc acme.devices invoke rfkill "unblock all"
 expect_poll "the fixture's rfkill unblock exits 0" '[["unblock","all"],0]' devices_read rfkillRun
 expect "the unblock cleared both soft blocks" '[["bluetooth", "unblocked", "unblocked"], ["wlan", "unblocked", "unblocked"]]' rfkill_state
+expect "rfkill accepts wifi as the wlan alias" "" through_shell rfkill block wifi
+expect "the wifi alias soft-blocked wlan only" \
+  '[["bluetooth", "unblocked", "unblocked"], ["wlan", "blocked", "unblocked"]]' rfkill_state
+expect "rfkill accepts several selectors in one call" "" through_shell rfkill unblock wifi bluetooth
+expect "the multi-selector unblock cleared both soft blocks" \
+  '[["bluetooth", "unblocked", "unblocked"], ["wlan", "unblocked", "unblocked"]]' rfkill_state
+expect "the stand-in recorded each rfkill selector shape" \
+  '[["block", "bluetooth"], ["unblock", "all"], ["block", "wifi"], ["unblock", "wifi", "bluetooth"]]' device_calls rfkill
+expect "the host's radios still read as before the blocks" "$radios_before" host_radios
 rfkill_control="$sandbox/devices-control"
 mkdir -p "$rfkill_control"
 cp -- "$repo/scripts/smoke/fixtures/devices/rfkill.json" "$rfkill_control/rfkill.json"
@@ -79,13 +93,18 @@ fi
 
 # Every other stand-in answers only what a row planted, through the PATH
 # every sandbox shell starts with.
-through_shell() { PATH="$shell_start_path" "$@"; }
 answer_of() { local status=0 out; out="$(through_shell "$@" 2>&1)" || status=$?; printf '%s status=%s\n' "$out" "$status"; }
 expect "an unplanted systemctl call answers no reply and exits 1" \
   'stand-in: name=systemctl reply=none argv=["is-active", "bluetooth.service"] status=1' answer_of systemctl is-active bluetooth.service
+device_reply systemctl 3 inactive is-active bluetooth.service
+expect "a planted reply answers its argv" "inactive status=3" answer_of systemctl is-active bluetooth.service
 device_reply systemctl 0 active is-active bluetooth.service
-expect "a planted reply answers its argv" "active status=0" answer_of systemctl is-active bluetooth.service
-expect "the stand-in recorded both calls" '[["is-active", "bluetooth.service"], ["is-active", "bluetooth.service"]]' device_calls systemctl
+expect "a newer planted reply replaces the earlier one" "active status=0" answer_of systemctl is-active bluetooth.service
+device_reply_clear systemctl
+expect "a cleared planted reply answers no reply again" \
+  'stand-in: name=systemctl reply=none argv=["is-active", "bluetooth.service"] status=1' answer_of systemctl is-active bluetooth.service
+expect "the stand-in recorded every reply lookup" \
+  '[["is-active", "bluetooth.service"], ["is-active", "bluetooth.service"], ["is-active", "bluetooth.service"], ["is-active", "bluetooth.service"]]' device_calls systemctl
 device_transcript '[{"out": "Agent registered\n"}, {"in": "default-agent"}, {"out": "Default agent request successful\n"}]'
 transcript_run() { local status=0 out; out="$(printf '%s\n' "$1" | through_shell bluetoothctl 2>&1)" || status=$?; printf '%s status=%s\n' "$(tr '\n' '|' <<<"$out")" "$status"; }
 expect "bluetoothctl replays its transcript" "Agent registered|Default agent request successful| status=0" transcript_run default-agent
@@ -109,13 +128,61 @@ expect "the fake logged every request" 6 bash -c 'wc -l <"$1"' _ "$devices_hid_l
 
 # The guard's controls: a process given the shell's own environment words
 # with one host value after them, which win, reads as that leak.
-guard_control() { # LABEL WORD WANT
-  local pid
-  spawn "$sandbox/devices-guard.log" "${shell_env[@]}" "${shell_start_words[@]}" "$2" sleep 30
+ready_probe_control() { # PID
+  (
+    failures=0
+    behaviour_failures=0
+    not_measured_rows=()
+    shell_qs_pid="$1"
+    status=0
+    devices_ready probe >"$sandbox/devices-ready-control.log" 2>&1 || status=$?
+    printf '%s %s\n' "$status" "$(IFS=,; echo "${not_measured_rows[*]}")"
+  )
+}
+guard_control() { # LABEL WANT ENV_OR_COMMAND...
+  local pid label="$1" want="$2"
+  shift 2
+  spawn "$sandbox/devices-guard.log" "${shell_env[@]}" "${shell_start_words[@]}" "$@" sleep 30
   pid="$spawn_pid"
   for _ in $(seq 1 50); do [[ $(cat -- "/proc/$pid/comm" 2>/dev/null) == sleep ]] && break; sleep 0.05; done
-  expect "control: $1" "$3" devices_guard "$pid"
+  expect "control: $label" "$want" devices_guard "$pid"
+  expect "control: devices_ready maps $label to not measured" "1 probe:$want" ready_probe_control "$pid"
   kill "$pid" 2>/dev/null || true
+}
+dead_pid_control() {
+  local pid status=0 out err="$sandbox/devices-guard-unreadable.err" err_text
+  spawn "$sandbox/devices-guard-dead.log" "${shell_env[@]}" "${shell_start_words[@]}" true
+  pid="$spawn_pid"
+  wait "$pid" 2>/dev/null || true
+  out="$(devices_guard "$pid" 2>"$err")" || status=$?
+  err_text="$(sed 's/pid=[0-9][0-9]*/pid=<pid>/' "$err")"
+  printf 'status=%s stdout=%s stderr=%s\n' "$status" "$out" "$err_text"
+}
+ready_dead_pid_control() {
+  local pid
+  spawn "$sandbox/devices-ready-dead.log" "${shell_env[@]}" "${shell_start_words[@]}" true
+  pid="$spawn_pid"
+  wait "$pid" 2>/dev/null || true
+  (
+    failures=0
+    behaviour_failures=0
+    not_measured_rows=()
+    shell_qs_pid="$pid"
+    status=0
+    devices_ready probe >"$sandbox/devices-ready-dead-control.log" 2>&1 || status=$?
+    printf 'status=%s failures=%s not_measured=%s\n' "$status" "$failures" "$(IFS=,; echo "${not_measured_rows[*]}")"
+  )
+}
+ready_empty_pid_control() {
+  (
+    failures=0
+    behaviour_failures=0
+    not_measured_rows=()
+    shell_qs_pid=""
+    status=0
+    devices_ready probe >"$sandbox/devices-ready-empty-control.log" 2>&1 || status=$?
+    printf 'status=%s failures=%s not_measured=%s\n' "$status" "$failures" "$(IFS=,; echo "${not_measured_rows[*]}")"
+  )
 }
 if ! host_rfkill="$(command -v rfkill)"; then
   host_rfkill="$sandbox/host-bin/rfkill"
@@ -123,18 +190,42 @@ if ! host_rfkill="$(command -v rfkill)"; then
   printf '#!/bin/sh\nexit 0\n' >"$host_rfkill"
   chmod 755 "$host_rfkill"
 fi
-guard_control "a shell on the host's system bus reads as a leak" DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket \
-  "leak=system-bus value=DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"
-guard_control "a shell on the host's PipeWire dir reads as a leak" "PIPEWIRE_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
-  "leak=pipewire-runtime value=PIPEWIRE_RUNTIME_DIR=$XDG_RUNTIME_DIR"
-guard_control "a shell on the host's /dev reads as a leak" VGS_DEV_ROOT=/dev "leak=hardware-root value=VGS_DEV_ROOT=/dev"
-guard_control "a shell whose PATH finds the host's rfkill first reads as a leak" "PATH=${host_rfkill%/*}:$shell_start_path" \
-  "leak=path-shim value=rfkill=$host_rfkill"
+guard_control "a shell on the host's system bus reads as a leak" \
+  "leak=system-bus value=DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket" \
+  DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+guard_control "a shell on the host's PipeWire dir reads as a leak" \
+  "leak=pipewire-runtime value=PIPEWIRE_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
+  "PIPEWIRE_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+guard_control "a shell on the host's /dev reads as a leak" \
+  "leak=hardware-root value=VGS_DEV_ROOT=/dev" \
+  VGS_DEV_ROOT=/dev
+guard_control "a shell without the HID fake socket reads as a leak" \
+  "leak=hardware-root value=VGS_HID_FAKE=unset" \
+  env -u VGS_HID_FAKE
+guard_control "a shell whose PATH finds the host's rfkill first reads as a leak" \
+  "leak=path-shim value=rfkill=$host_rfkill" \
+  "PATH=${host_rfkill%/*}:$shell_start_path"
+expect "control: devices_guard fails an exited shell pid" \
+  "status=1 stdout= stderr=devices_guard: environ=unreadable pid=<pid>" dead_pid_control
+expect "control: devices_ready fails an exited shell pid" \
+  "status=1 failures=1 not_measured=" ready_dead_pid_control
+expect "control: devices_ready fails an empty shell pid" \
+  "status=1 failures=1 not_measured=" ready_empty_pid_control
 dbusmock_hidden="$sandbox/dbusmock-hidden"
 mkdir -p -- "$dbusmock_hidden/dbusmock"
 printf 'raise ImportError("hidden by the device-fakes control")\n' >"$dbusmock_hidden/dbusmock/__init__.py"
-missing_control() { (devices_state=down; status=0; PYTHONPATH="$dbusmock_hidden" devices_up || status=$?; echo "$status $devices_state"); }
-expect "control: a host without python-dbusmock reads not measured" "77 missing=python-dbusmock" missing_control
+missing_control() {
+  (
+    devices_state=down
+    failures=0
+    behaviour_failures=0
+    not_measured_rows=()
+    status=0
+    PYTHONPATH="$dbusmock_hidden" devices_ready probe >"$sandbox/devices-ready-missing-control.log" 2>&1 || status=$?
+    printf '%s %s\n' "$status" "$(IFS=,; echo "${not_measured_rows[*]}")"
+  )
+}
+expect "control: a host without python-dbusmock reads not measured" "1 probe:missing=python-dbusmock" missing_control
 
 expect "disabling the device reader is allowed" ok ipc shell setPluginEnabled acme.devices false
 expect_poll "the device reader is gone" False record_exists acme.devices

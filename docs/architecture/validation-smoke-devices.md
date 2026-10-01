@@ -9,7 +9,7 @@ The fakes a System row reads instead of the host's audio, radios, network, VPN, 
 - `scripts/smoke/devices.sh`, sourced by the harness, owns every fake, stand-in and guard. A System row builds on its helpers and adds no fake of its own: its header states each helper's arguments and answers.
 - Every sandbox process gets `devices_env_words`: `PIPEWIRE_RUNTIME_DIR` is the sandbox runtime dir, and `VGS_DEV_ROOT`, `VGS_SYSFS_ROOT` and `VGS_HID_FAKE` name the brightness helper's device tree, sysfs tree and feature-report socket inside the sandbox.
 - `devices_up` starts the fakes once per run, on the first row that calls it, and leaves them up until the teardown. Quickshell's Bluetooth, Networking and Pipewire singletons look for their service once, when a plugin first reads them, so a row calls it before it enables a plugin that reads one.
-- `devices_ready ROW` is a device row's first line. It runs `devices_up`, then `devices_guard` over the running shell. A missing prerequisite or a leak records the row as not measured through `not_measured` in `scripts/smoke/verdict.sh` and the row returns; every other row still runs, and a run with no failure and a not-measured row exits 77 with `rows=<row>:<reason>`. A fake that fails to start fails the row.
+- `devices_ready ROW` is a device row's first line. It runs `devices_up`, then `devices_guard` over the running shell. A missing prerequisite or a leak records the row as not measured through `not_measured` in `scripts/smoke/verdict.sh` and the row returns; every other row still runs, and a run with no failure and a not-measured row exits 77 with `rows=<row>:<reason>`. A fake that fails to start, an empty shell pid, or an unreadable shell environment fails the row.
 - The smoke set's user file lists the System family's ids, `vgs.system`, `vgs.sound`, `vgs.bluetooth`, `vgs.network`, `vgs.vpn`, `vgs.displays`, `vgs.mouse` and `vgs.keyboard`, in `disabledPlugins`, so a section's own row enables it over the fakes and no earlier row, lending record or first-bar reading counts it. The configuration keeps an id no plugin has, and `vgsh plugin list` reports it as unknown. The default set lists none of them: it starts every first-party plugin, as a live session does.
 
 ## Fakes
@@ -21,14 +21,14 @@ The fakes a System row reads instead of the host's audio, radios, network, VPN, 
 ## Stand-ins
 
 - `rfkill`, `tailscale`, `ddcutil`, `brightnessctl`, `nmcli`, `pactl`, `bluetoothctl`, `systemctl`, `udevadm`, `modprobe`, `xdg-open` and `gum` stand in the shell's own PATH directory for the whole run, written before the first shell starts. Each runs `fixtures/devices/stand-in.py`, which records the argv and never runs the host's command.
-- `rfkill` keeps its radios in the sandbox's `rfkill.json`, a Bluetooth and a Wi-Fi radio unblocked at start. Block, unblock and toggle change the soft state alone; a hard block never changes.
+- `rfkill` keeps its radios in the sandbox's `rfkill.json`, a Bluetooth and a Wi-Fi radio unblocked at start. Block, unblock and toggle accept one or more ids, types, aliases or `all`, and change the soft state alone; a hard block never changes.
 - `bluetoothctl` with no argument replays the transcript `device_transcript` plants and ends with status 1 on a line it does not expect.
-- Every other call answers from a reply `device_reply` planted for its exact argv. A call no reply answers prints `stand-in: name=<name> reply=none argv=<json>` on stderr and exits 1.
+- Every other call answers from a reply `device_reply` planted for its exact argv. A later reply for the same argv replaces the earlier reply. `device_reply_clear NAME` removes one stand-in's planted replies. A call no reply answers prints `stand-in: name=<name> reply=none argv=<json>` on stderr and exits 1.
 - A row that needs a stand-in to answer its own way stands over it with `sentinel_stand_over` and puts it back with `sentinel_restore`, as `scripts/smoke/rows/agent-warden.sh` does for `systemctl`. `scripts/smoke/rows/auth-sentinel.sh` reads that list empty at the end.
 
 ## Guards
 
-`devices_guard PID` reads a process's environment from `/proc/<pid>/environ` and answers `inside` or the first rule it breaks, as `leak=<rule> value=<value>`:
+`devices_guard PID` reads a process's environment from `/proc/<pid>/environ` and answers `inside` or the first rule it breaks, as `leak=<rule> value=<value>`. It exits non-zero with the unreadable pid on stderr when `/proc/<pid>/environ` cannot be read:
 
 | Rule | Holds when |
 |---|---|
@@ -41,4 +41,4 @@ An unset variable breaks its rule.
 
 ## Validation
 
-`scripts/smoke/rows/device-fakes.sh` reads each fake through the shell with the `acme.devices` fixture, from `/proc/<pid>/fd` that neither the sandbox PipeWire nor its WirePlumber holds `/dev/snd/*` or `/dev/video*`, that a fixture `rfkill block` changes the stand-in's state file alone while the host's `/sys/class/rfkill` reads as before, and the stand-ins' and the HID fake's answers. Its controls: each guard rule turns red on a process given the shell's environment words with the host's system bus, the host's PipeWire dir, `/dev` or a PATH that finds the host's `rfkill` first after them; the fd reader finds the `/dev/null` each fake holds; a stand-in copy that drops its state write leaves the radio unblocked; a dbusmock import that fails reads `missing=python-dbusmock`. `scripts/test-smoke-verdict.sh` holds the not-measured verdict's controls.
+`scripts/smoke/rows/device-fakes.sh` reads each fake through the shell with the `acme.devices` fixture, from `/proc/<pid>/fd` that neither the sandbox PipeWire nor its WirePlumber holds `/dev/snd/*` or `/dev/video*` after WirePlumber reports its defaults, that a fixture `rfkill block` changes the stand-in's state file alone while the host's `/sys/class/rfkill` reads as before, and the stand-ins' and the HID fake's answers. Its controls: each guard rule turns red on a process given the shell's environment words with the host's system bus, the host's PipeWire dir, `/dev`, an unset HID fake socket or a PATH that finds the host's `rfkill` first after them; `devices_ready` maps a guard leak and a missing dbusmock import to not measured, and fails an empty or exited shell pid; the fd reader finds the `/dev/null` PipeWire holds; a stand-in copy that drops its state write leaves the radio unblocked; `scripts/test-smoke-verdict.sh` holds the not-measured verdict's controls.

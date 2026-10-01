@@ -14,15 +14,17 @@ from files a row plants under STATE.
 - rfkill keeps STATE/rfkill.json, {"devices": [{"id", "type", "device",
   "soft", "hard"}]} with "blocked" or "unblocked", as its only state: it
   lists it as util-linux's rfkill does and block, unblock and toggle
-  change the soft state of the devices an ID, a TYPE or `all` selects.
-  A hard block is never changed, as on real hardware.
+  change the soft state of the devices that one or more IDs, TYPEs,
+  aliases or `all` select. A hard block is never changed, as on real
+  hardware.
 - bluetoothctl with no argument replays STATE/replies/bluetoothctl
   .transcript.json, a list of {"out": TEXT}, printed at once, and
   {"in": LINE}, which reads one stdin line and ends with status 1 when it
   differs; past the last step it records stdin until EOF.
 - Any other call answers from STATE/replies/NAME.json, a list of
-  {"argv", "stdout", "stderr", "status"} rows, the first whose argv
-  equals the call's. A call no row answers prints the line
+  {"argv", "stdout", "stderr", "status"} rows, the row whose argv equals
+  the call's. device_reply keeps one row per argv and replaces older rows.
+  A call no row answers prints the line
   `stand-in: name=NAME reply=none argv=<json>` on stderr and exits 1, so
   a caller never reads an answer no row planted.
 """
@@ -34,6 +36,7 @@ import sys
 # util-linux rfkill's type names and the label `rfkill list` prints.
 RFKILL_LABELS = {"wlan": "Wireless LAN", "bluetooth": "Bluetooth", "uwb": "Ultra-Wideband", "wimax": "WiMAX",
                  "wwan": "Wireless WAN", "gps": "GPS", "fm": "FM", "nfc": "NFC"}
+RFKILL_ALIASES = {"wifi": "wlan", "ultrawideband": "uwb"}
 
 
 def append(path, value):
@@ -64,6 +67,7 @@ def save_rfkill(state, doc):
 def rfkill_selected(devices, selector):
     if selector.isdigit():
         return [d for d in devices if d["id"] == int(selector)]
+    selector = RFKILL_ALIASES.get(selector, selector)
     if selector != "all" and selector not in RFKILL_LABELS:
         return None
     return [d for d in devices if selector == "all" or d["type"] == selector]
@@ -90,10 +94,18 @@ def rfkill(state, argv):
             print(f"\tSoft blocked: {'yes' if d['soft'] == 'blocked' else 'no'}")
             print(f"\tHard blocked: {'yes' if d['hard'] == 'blocked' else 'no'}")
         return
-    if verb in ("block", "unblock", "toggle") and len(rest) == 1:
-        chosen = rfkill_selected(devices, rest[0])
-        if chosen is None:
-            refuse("rfkill", f"selector={rest[0]} reason=unknown")
+    if verb in ("block", "unblock", "toggle") and rest:
+        chosen = []
+        seen = set()
+        for selector in rest:
+            selected = rfkill_selected(devices, selector)
+            if selected is None:
+                refuse("rfkill", f"selector={selector} reason=unknown")
+            for device in selected:
+                if device["id"] in seen:
+                    continue
+                seen.add(device["id"])
+                chosen.append(device)
         for d in chosen:
             blocked = {"block": True, "unblock": False, "toggle": d["soft"] != "blocked"}[verb]
             d["soft"] = "blocked" if blocked else "unblocked"
