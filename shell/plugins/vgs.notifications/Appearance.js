@@ -160,9 +160,11 @@ var TOKENS = {
         glyphStroke: length(2),
         lineGap: length(2),
         summaryLines: number(2, 1, 8),
-        panelEnterScale: share(0.97),
-        fadeScale: share(0.96),
         exitScale: share(0.3)
+    },
+
+    panel: {
+        rowCap: number(6, 1, 20)
     },
 
     // The slot a card's image, people or application icon sits in, square

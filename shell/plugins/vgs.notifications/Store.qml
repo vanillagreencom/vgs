@@ -177,6 +177,13 @@ Item {
         changed();
     }
 
+    function dropHistory(key) {
+        const next = history.filter(e => e.key !== key);
+        if (next.length === history.length) return;
+        history = next;
+        changed();
+    }
+
     // A copy the helper could not make leaves its entries without that
     // image, so a card drawn from the store falls back to the application
     // icon instead of pointing at nothing.

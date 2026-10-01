@@ -16,6 +16,10 @@ import "SetupLogic.js" as SetupLogic
 //   shortcut vgs.themes:themes              SUPER+T from the manifest's
 //                                            `hyprland` binds (README)
 //   shortcut vgs.themes:wallpapers          SUPER+W, the same way
+//   shortcut vgs.themes:panel               SUPER+CTRL+J from the manifest's
+//                                            `hyprland` binds; Omarchy leaves
+//                                            it unbound and uses
+//                                            SUPER+CTRL+T
 // A shortcut summons rather than toggles: the overlay's `open` closes it
 // when it already shows that view and switches to the view otherwise, so a
 // second view's key moves an open browser to it instead of closing it.
@@ -38,6 +42,7 @@ Item {
         registeredWith = shell;
         for (const view of BrowserLogic.VIEWS)
             shell.shortcut.register(view.name, view.description, () => root.summon(view.name));
+        shell.shortcut.register("panel", "Open or close the Themes panel", () => root.togglePanel());
         checkSetup();
     }
     onPolicyEndChanged: if (registeredWith !== null) checkSetup()
@@ -83,6 +88,12 @@ Item {
     function summon(view) {
         const reply = shell.surfaces.summon("overlay", JSON.stringify({ view: view }));
         if (reply !== "ok") console.warn("themes: summon " + view + " " + reply);
+        return reply;
+    }
+
+    function togglePanel() {
+        const reply = shell.surfaces.toggle("panel", "{}");
+        if (reply !== "ok") console.warn("themes: panel " + reply);
         return reply;
     }
 }

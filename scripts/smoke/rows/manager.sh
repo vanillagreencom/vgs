@@ -130,6 +130,23 @@ list_complete() {
   listed_names | py_reply 'import json,sys; print(len(json.load(sys.stdin)) == int(sys.argv[1]))' "$plugins"
 }
 expect_poll "the cleared search lists every plugin again" True list_complete
+
+# Keyboard-only path: printable text reaches the search field from the
+# list page, Return opens the highlighted plugin, the back button takes the
+# keyboard focus, and Escape returns to the list. A query with no row is
+# the control: Return must not open a page.
+type_keys probe || fail "typing the keyboard path filter failed"
+expect_poll "the keyboard path filters to the probe plugin" '["Probe"]' listed_names
+type_keys -k Return || fail "Return on the filtered Settings list failed"
+expect_poll "Return opens the highlighted plugin page" '"acme.probe"' settings_page
+expect_poll "the page's back button shows keyboard focus" '["IconButton","Back to the plugin list",true,true,true]' ipc smoke focused window vgs.settings
+type_keys -k Escape || fail "Escape from the keyboard-opened page failed"
+expect_poll "Escape returns from the keyboard-opened page" '""' settings_page
+type_keys -k BackSpace -k BackSpace -k BackSpace -k BackSpace -k BackSpace || fail "clearing the keyboard path filter failed"
+type_keys zzzzz -k Return || fail "typing the empty keyboard path control failed"
+expect_poll "the empty Settings search has no listed rows" '[]' listed_names
+expect "control: Return on an empty Settings result opens no page" '""' settings_page
+type_keys -k BackSpace -k BackSpace -k BackSpace -k BackSpace -k BackSpace || fail "clearing the empty keyboard path control failed"
 # The list page: the content box's left and right insets match
 # `inset.window`; the search field, every row and the heading span that
 # content box; the scroll bar is in the right inset; the placeholder and
@@ -435,6 +452,108 @@ settings_show() {
 # The rows above scrolled the page; a new window opens it at its top.
 expect "the scrolled window hides" ok ipc shell hide window vgs.settings
 expect_poll "the scrolled window is gone" 0 window_count Settings
+settings_show acme.probe
+settings_keyboard_update() {
+  local focus label seen=()
+  for _ in $(seq 1 80); do
+    type_keys -k Tab || return 1
+    focus="$(ipc smoke focused window vgs.settings)" || return 1
+    if [[ $focus != \[* ]]; then printf 'focus=%s\n' "$focus"; return; fi
+    if ! python3 - "$focus" <<'PY'
+import json, sys
+row = json.loads(sys.argv[1])
+if len(row) != 5 or not (row[2] and row[3] and row[4]):
+    print("bad-focus=" + json.dumps(row))
+    sys.exit(1)
+PY
+    then return 1; fi
+    label="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])[1])' "$focus")" || return 1
+    seen+=("$label")
+    if [[ $label == Update ]]; then
+      type_keys -k Return || return 1
+      printf 'ok\n'
+      return 0
+    fi
+  done
+  printf 'missing-update seen=%s\n' "$(IFS=,; echo "${seen[*]}")"
+}
+forget_record
+hold_runs
+expect "the Settings Tab tour reaches Update with its ring in view and Return runs it" ok settings_keyboard_update
+expect_poll "Return opens vgsh plugin update for the plugin in the wide floating TUI" \
+  "$(core_words core/plugin-update "Update a plugin" org.vgs.tui.wide plugin update acme.probe)" recorded
+expect "the keyboard Update leaves the Settings window open behind the terminal" 1 window_count Settings
+release_runs
+expect_run_end "the keyboard update's run ends" core/plugin-update
+expect_poll "the keyboard update's terminal closes" 0 tui_windows
+expect_poll "the Settings window takes the focus back after keyboard Update" "$settings_focused" active_window
+settings_show acme.probe
+mkdir -p "$repo/shell/Core/DisabledUpdateControl"
+cat >"$repo/shell/Core/DisabledUpdateControl/Item.qml" <<'QML'
+import QtQuick
+import qs.Ui
+
+Item {
+    id: root
+    width: 200
+    height: 140
+    Column {
+        anchors.fill: parent
+        Button {
+            property string focusExample: "Before disabled Update"
+            text: "Before"
+        }
+        Button {
+            property string focusExample: "Disabled Update"
+            text: "Update"
+            enabled: false
+        }
+        Button {
+            property string focusExample: "After disabled Update"
+            text: "After"
+        }
+    }
+}
+QML
+expect "the disabled Update control builds" ok ipc smoke popupLoad settings-disabled-update "$repo/shell/Core/DisabledUpdateControl/Item.qml" window vgs.settings '{}'
+expect "the enabled button before disabled Update takes focus" focused ipc smoke popupFocusExample settings-disabled-update "Before disabled Update"
+type_keys -k Tab || fail "Tab from the enabled button before disabled Update failed"
+expect "control: Tab skips a disabled Update button" '["Button","After disabled Update",true,true,true]' ipc smoke focused window vgs.settings
+forget_record
+type_keys -k Return || fail "Return on the disabled Update control path failed"
+expect "control: Return on a disabled Update button runs no TUI" absent recorded
+expect "the disabled Update control is released" ok ipc smoke popupDrop settings-disabled-update
+rm -r -- "${repo:?}/shell/Core/DisabledUpdateControl" || fail "removing the disabled Update control failed"
+mkdir -p "$repo/shell/Core/EnabledUpdateControl"
+cat >"$repo/shell/Core/EnabledUpdateControl/Item.qml" <<'QML'
+import QtQuick
+import qs.Ui
+
+Item {
+    id: root
+    width: 200
+    height: 140
+    Column {
+        anchors.fill: parent
+        Button {
+            property string focusExample: "Before enabled Update"
+            text: "Before"
+        }
+        Button {
+            text: "Update"
+        }
+        Button {
+            text: "After"
+        }
+    }
+}
+QML
+expect "the enabled Update control builds" ok ipc smoke popupLoad settings-enabled-update "$repo/shell/Core/EnabledUpdateControl/Item.qml" window vgs.settings '{}'
+expect "the enabled control starts before Update" focused ipc smoke popupFocusExample settings-enabled-update "Before enabled Update"
+type_keys -k Tab || fail "Tab from the enabled button before enabled Update failed"
+expect "control: the same row reaches an enabled Update button" '["Button","Update",true,true,true]' ipc smoke focused window vgs.settings
+expect "the enabled Update control is released" ok ipc smoke popupDrop settings-enabled-update
+rm -r -- "${repo:?}/shell/Core/EnabledUpdateControl" || fail "removing the enabled Update control failed"
 settings_show acme.probe
 forget_record
 hold_runs

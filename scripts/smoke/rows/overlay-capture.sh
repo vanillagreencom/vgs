@@ -165,7 +165,7 @@ start_capture_tree() {
   start_shell "$1" "$2" || fail "the overlay capture control shell starts"
   expect "the overlay capture control shell is guarded" true ipc shell guarded
   expect "enabling vgs.themes for the overlay capture control is allowed" ok ipc shell setPluginEnabled vgs.themes true
-  expect_poll "the overlay capture control service registers shortcuts" '["vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
+  expect_poll "the overlay capture control service registers shortcuts" '["vgs.themes:panel", "vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
   restore_hypr_lua || fail "the overlay capture control restores harness hyprland.lua before appending binds"
   append_capture_binds "$3"
 }
@@ -264,14 +264,14 @@ cp -p -- "$hypr_lua" "$sandbox/overlay-capture-hyprland.lua"
 stop_shell
 start_shell "$repo" "$sandbox/overlay-capture-qs.log" || fail "the overlay capture row starts the normal shell"
 expect "enabling vgs.themes for overlay capture is allowed" ok ipc shell setPluginEnabled vgs.themes true
-expect_poll "the overlay capture service registers shortcuts" '["vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
+expect_poll "the overlay capture service registers shortcuts" '["vgs.themes:panel", "vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
 append_capture_binds "$sandbox/overlay-capture-marker" no-focus
 capture_nominal "overlay capture" "$sandbox/overlay-capture-marker"
 control_bind_wrapper
 stop_shell
 start_shell "$repo" "$sandbox/overlay-capture-restart.log" || fail "the normal shell restarts after the overlay capture nominal row"
 expect "enabling vgs.themes for focus row is allowed" ok ipc shell setPluginEnabled vgs.themes true
-expect_poll "the focus row service registers shortcuts" '["vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
+expect_poll "the focus row service registers shortcuts" '["vgs.themes:panel", "vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
 restore_hypr_lua || fail "the focus row restores harness hyprland.lua before appending binds"
 append_capture_binds "$sandbox/overlay-capture-focus-marker"
 capture_focus_row "overlay capture"

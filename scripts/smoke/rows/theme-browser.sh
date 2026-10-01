@@ -149,7 +149,7 @@ fi"
 
 # The service registers the shortcut and the layer binds SUPER+T.
 expect "enabling vgs.themes for the browser rows is allowed" ok ipc shell setPluginEnabled vgs.themes true
-expect_poll "the themes service registered its shortcuts" '["vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
+expect_poll "the themes service registered its shortcuts" '["vgs.themes:panel", "vgs.themes:themes", "vgs.themes:wallpapers"]' lent_themes
 expect_poll "the nested instance binds SUPER+T to the theme browser" '[[64, "T"]]' themes_bind
 expect_poll "the nested instance binds SUPER+W to the wallpaper browser" '[[64, "W"]]' themes_bind wallpapers
 themes_global() { hypr globalshortcuts | python3 -c 'import sys; print(sum(1 for line in sys.stdin if "vgs.themes:themes" in line))'; }
@@ -295,10 +295,29 @@ type_keys -k Left || fail "sending Left failed"
 expect_poll "Left selects the first card again" "\"$first_card\"" view_value selectedName
 type_keys -k End || fail "sending End failed"
 expect_poll "End selects the last card" "\"$(card_at -1)\"" view_value selectedName
+type_keys -k Home || fail "sending Home for Up and Down failed"
+expect_poll "Home selects the first card before Up and Down" "\"$first_card\"" view_value selectedName
+type_keys -k Down || fail "sending Down failed"
+expect_poll "Down selects the second card" "\"$(card_at 1)\"" view_value selectedName
+type_keys -k Up || fail "sending Up failed"
+expect_poll "Up selects the first card again" "\"$first_card\"" view_value selectedName
+type_keys -M ctrl -k Page_Down -m ctrl || fail "sending Ctrl+PageDown failed"
+expect_poll "Ctrl+PageDown switches to the wallpaper view" '"wallpapers"' ipc smoke readInstance overlay vgs.themes view
+type_keys -M ctrl -k Page_Up -m ctrl || fail "sending Ctrl+PageUp failed"
+expect_poll "Ctrl+PageUp switches back to the theme view" '"themes"' ipc smoke readInstance overlay vgs.themes view
 
 # The filter and the scope.
 type_keys "nor" || fail "typing the filter failed"
 expect_poll "typing reaches the filter" '"nor"' view_value filterText
+type_keys -M ctrl -k u -m ctrl || fail "sending Ctrl+U failed"
+expect_poll "Ctrl+U clears the filter" '""' view_value filterText
+type_keys "gruvy " || fail "typing a two-word theme filter failed"
+expect_poll "Space in the theme filter stays text" '"gruvy "' view_value filterText
+expect_poll "the two-word theme filter keeps the browser on the filter match" '["gruvy-glass"]' view_names
+type_keys -M ctrl -k u -m ctrl || fail "clearing the two-word theme filter failed"
+expect_poll "Ctrl+U clears the two-word filter" '""' view_value filterText
+type_keys "nor" || fail "typing the filter after Ctrl+U failed"
+expect_poll "typing reaches the filter after Ctrl+U" '"nor"' view_value filterText
 type_keys -k BackSpace || fail "sending BackSpace failed"
 expect_poll "BackSpace erases a character" '"no"' view_value filterText
 type_keys "rd" || fail "typing the rest of the filter failed"
@@ -329,11 +348,11 @@ expect_poll "the offer follows the apply" nord offer_name
 expect "the browser stays open for the offer" 1 layer_count vgs:overlay
 expect "nord is installed as a catalog package" True bash -c '[[ -f $1/nord/.vgs-catalog.json ]] && echo True' _ "$installed"
 expect "the Dialog names the theme and the archive's size" True dialog_has "Download wallpapers for Nord (1 MB)?"
-click_in vgs:overlay overlay vgs.themes Button "Not now" || fail "the click on Not now failed"
-expect_poll "Not now withdraws the offer" none offer_name
-expect "Not now leaves the browser open" 1 layer_count vgs:overlay
-expect "Not now downloads nothing" False catalog_imagery nord
-browser_focused "the rail takes the keyboard back after Not now"
+type_keys -k Escape || fail "sending Escape to the wallpaper offer failed"
+expect_poll "Escape withdraws the wallpaper offer" none offer_name
+expect "Escape from the wallpaper offer leaves the browser open" 1 layer_count vgs:overlay
+expect "Escape from the wallpaper offer downloads nothing" False catalog_imagery nord
+browser_focused "the rail takes the keyboard back after Escape from the offer"
 
 # Enter again applies nord and offers again; Download runs on the lane,
 # shows its progress, holds the browser open, and applies nord again.
@@ -647,6 +666,10 @@ type_keys -k Tab || fail "sending Tab failed"
 expect_poll "Tab switches to the theme view" '"themes"' ipc smoke readInstance overlay vgs.themes view
 type_keys -M shift -k Tab -m shift || fail "sending Shift+Tab failed"
 expect_poll "Shift+Tab switches back to the wallpaper view" '"wallpapers"' ipc smoke readInstance overlay vgs.themes view
+type_keys -M ctrl -k Tab -m ctrl || fail "sending Ctrl+Tab in the wallpaper view failed"
+expect_poll "Ctrl+Tab switches to the theme view" '"themes"' ipc smoke readInstance overlay vgs.themes view
+type_keys -M ctrl -M shift -k Tab -m shift -m ctrl || fail "sending Ctrl+Shift+Tab in the theme view failed"
+expect_poll "Ctrl+Shift+Tab switches back to the wallpaper view" '"wallpapers"' ipc smoke readInstance overlay vgs.themes view
 type_keys -M alt -k m -m alt || fail "sending Alt+M failed"
 expect_poll "Alt+M flips the scope to this monitor" '"this"' wall_value scope
 expect_poll "Alt+M moves no card while the scope shows" "$nord_a" wall_selected
@@ -655,11 +678,11 @@ expect_poll "Alt+M flips the scope back" '"every"' wall_value scope
 type_keys -M alt -k m -m alt || fail "sending Alt+M for this monitor failed"
 expect_poll "Alt+M flips the scope to this monitor again" '"this"' wall_value scope
 
-# This monitor: Enter sets b.jpg on the browser's screen alone and closes.
+# This monitor: Space sets b.jpg on the browser's screen alone and closes.
 type_keys -k Right || fail "sending Right failed"
 expect_poll "Right selects b.jpg" "$nord_b" wall_selected
-type_keys -k Return || fail "sending Return for this monitor failed"
-expect_poll "a set for this monitor closes the browser" 0 layer_count vgs:overlay
+type_keys -k space || fail "sending Space for this monitor failed"
+expect_poll "Space sets this monitor and closes the browser" 0 layer_count vgs:overlay
 expect_poll "the browser's screen draws b.jpg" "$nord_b ready" background_image_on "$this_screen"
 expect "the other screen keeps nord's first image" "$nord_a ready" background_image_on "$other_screen"
 expect "a set for this monitor keeps the current image" "\"$nord_a\"" bg_current

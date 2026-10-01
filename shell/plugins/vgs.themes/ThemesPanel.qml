@@ -54,9 +54,20 @@ Item {
     // A refused Add from URL TUI launch, "" when the last launch started.
     property string tuiProblem: ""
     readonly property bool canStep: wallpaper.path !== "" && !stepping
+    property string currentKey: ""
+    property Item initialFocus: themeList
+    readonly property var installedKeys: packages.map(p => keyOf("installed", p))
+    readonly property var catalogKeys: catalogEntries.map(e => keyOf("catalog", e))
+    readonly property var rowKeys: installedKeys.concat(catalogKeys)
+    readonly property var rowLabels: packages.map(p => p.name).concat(catalogEntries.map(e => e.name))
 
     // The panel takes no payload; what a summoner passes is ignored.
-    function open(payloadJson) { refresh(); }
+    function open(payloadJson) {
+        refresh();
+        Qt.callLater(() => {
+            ensureCurrentKey();
+        });
+    }
     function close() {}
 
     // Read `last` and ask for the list. A list asked for while an apply
@@ -68,6 +79,7 @@ Item {
             root.listReason = result.reason === null ? "" : result.reason;
             root.packages = result.reason === null ? result.packages : [];
             root.file = result.file;
+            root.ensureCurrentKey();
             root.readLast();
         });
         refreshCatalog();
@@ -77,6 +89,7 @@ Item {
         shell.theme.catalog(result => {
             root.catalogReason = result.reason === null ? "" : result.reason;
             root.catalogEntries = result.reason === null ? result.entries : [];
+            root.ensureCurrentKey();
             root.readLast();
         });
     }
@@ -148,6 +161,51 @@ Item {
         if ((catalogAction === entry.name && catalogActionKind === "wallpapers") || (last.downloading !== null && last.downloading.name === entry.name))
             return downloadProgress === "" ? "Downloading wallpapers" : downloadProgress;
         return "";
+    }
+
+
+    function displayedKey() {
+        for (const p of packages)
+            if (p.state === "ok" && p.name === Theme.name) return keyOf("installed", p);
+        for (const e of catalogEntries)
+            if (e.installed && e.name === Theme.name) return keyOf("catalog", e);
+        return "";
+    }
+
+    function keyOf(section, row) {
+        if (section === "installed") return "installed:" + row.source + "/" + row.name;
+        if (section === "catalog") return "catalog:" + row.name;
+        throw new Error("themes panel: section=" + section);
+    }
+
+    function keyIndex(key) {
+        return rowKeys.indexOf(key);
+    }
+
+    function ensureCurrentKey() {
+        if (rowKeys.length === 0) {
+            currentKey = "";
+            return;
+        }
+        if (keyIndex(currentKey) >= 0) return;
+        const displayed = displayedKey();
+        currentKey = displayed !== "" ? displayed : rowKeys[0];
+    }
+
+    function rowItemAt(index) {
+        if (index < 0 || index >= rowKeys.length) return null;
+        if (index < packages.length) return installedRows.itemAt(index);
+        return catalogRows.itemAt(index - packages.length);
+    }
+
+    function activateRow(index) {
+        const item = rowItemAt(index);
+        if (item !== null) item.activate();
+    }
+
+    function secondaryRow(index) {
+        const item = rowItemAt(index);
+        return item !== null && item.requestAction();
     }
 
     function installCatalog(name) {
@@ -262,7 +320,47 @@ Item {
             }
         ]
 
-        Section {
+        ListCursor {
+            id: themeCursor
+            parent: layout.scrollArea.contentItem
+        }
+
+        // focus-indicator: the ListCursor plate marks the selected theme row.
+        Item {
+            id: themeList
+            width: layout.contentWidth
+            implicitHeight: themeBody.implicitHeight
+            activeFocusOnTab: true
+            focus: true
+            Keys.onPressed: event => {
+                if (event.modifiers === Qt.AltModifier && event.key === Qt.Key_D) {
+                    event.accepted = root.secondaryRow(themeNav.currentIndex);
+                    return;
+                }
+                event.accepted = themeNav.handle(event);
+            }
+
+            KeyNav {
+                id: themeNav
+                count: root.rowKeys.length
+                currentIndex: root.keyIndex(root.currentKey)
+                wrap: false
+                viewHeight: layout.scrollArea.height
+                rowHeight: Theme.listItem.height
+                labelAt: index => root.rowLabels[index] || ""
+                cursor: themeCursor
+                flickable: layout.scrollArea
+                itemAt: index => root.rowItemAt(index)
+                onMoved: index => root.currentKey = root.rowKeys[index]
+                onActivated: index => root.activateRow(index)
+            }
+
+            Column {
+                id: themeBody
+                width: parent.width
+                spacing: layout.bodySpacing
+
+                Section {
             id: wallpaperSection
             title: "Wallpaper"
             description: "The applied theme's background image; the buttons step through its package's images"
@@ -342,6 +440,7 @@ Item {
             }
 
             Repeater {
+                id: installedRows
                 model: ScriptModel {
                     values: root.packages.map(p => Object.assign({ key: p.source + "/" + p.name }, p))
                     objectProp: "key"
@@ -352,6 +451,10 @@ Item {
                     // The section, not `parent`, which is null while the
                     // repeater tears the row down.
                     width: installedSection.width
+                    rowKey: root.keyOf("installed", modelData)
+                    currentKey: root.currentKey
+                    cursor: themeCursor
+                    listActiveFocus: themeList.activeFocus
                     name: modelData.name
                     source: modelData.source
                     packageState: modelData.state
@@ -362,6 +465,7 @@ Item {
                     applying: modelData.state === "ok" && root.last.applying === modelData.name
                     applicable: modelData.state === "ok" && root.last.applying === null
                     lines: modelData.state === "shadowed" ? [] : root.linesFor(modelData.name)
+                    onPointed: key => root.currentKey = key
                     onActivated: root.apply(modelData.name)
                 }
             }
@@ -382,6 +486,7 @@ Item {
             }
 
             Repeater {
+                id: catalogRows
                 model: ScriptModel {
                     values: root.catalogEntries.map(e => Object.assign({ key: e.name }, e))
                     objectProp: "key"
@@ -390,11 +495,16 @@ Item {
                 ThemeRow {
                     required property var modelData
                     width: catalogSection.width
+                    rowKey: root.keyOf("catalog", modelData)
+                    currentKey: root.currentKey
+                    cursor: themeCursor
+                    listActiveFocus: themeList.activeFocus
                     name: modelData.name
                     source: modelData.mode + ", " + root.wallpaperText(modelData)
                     packageState: "catalog"
                     swatch: root.catalogSwatch(modelData)
                     installed: modelData.installed
+                    displayed: modelData.installed && modelData.name === Theme.name
                     definitionUpdate: modelData.definitionUpdate
                     imageryUpdate: modelData.imageryUpdate
                     applicable: modelData.installed && root.last.applying === null
@@ -404,9 +514,13 @@ Item {
                     actionEnabled: root.catalogAction === "" && root.last.applying === null
                     lines: root.catalogLines(modelData)
                     busyText: root.catalogBusyLabel(modelData)
+                    onPointed: key => root.currentKey = key
                     onActivated: root.apply(modelData.name)
                     onActionRequested: modelData.installed ? root.downloadCatalogWallpapers(modelData.name) : root.installCatalog(modelData.name)
                 }
+            }
+        }
+
             }
         }
 

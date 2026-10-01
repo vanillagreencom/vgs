@@ -1,4 +1,5 @@
 .pragma library
+.import qs.Ui 1.0 as Ui
 
 // The browsers' decisions, with no QML object and no I/O, so
 // scripts/test-themes-browser.js runs every function under node: the
@@ -272,40 +273,49 @@ var EVERY_SCREEN = "*";
 // to no package.
 var USER_FOLDER_LABEL = "User folder";
 
-// Qt's key codes the wallpaper view reads (Qt::Key in qnamespace.h), so
-// the key table below runs under node.
+// Letter key codes the browsers read (Qt::Key in qnamespace.h). The
+// standard navigation keys come from qs.Ui KeyNavLogic.
 var KEY = {
-    Escape: 0x01000000,
-    Tab: 0x01000001,
-    Backtab: 0x01000002,
-    Return: 0x01000004,
-    Enter: 0x01000005,
-    Home: 0x01000010,
-    End: 0x01000011,
-    Left: 0x01000012,
-    Up: 0x01000013,
-    Right: 0x01000014,
-    Down: 0x01000015,
     I: 0x49,
     M: 0x4d,
     S: 0x53,
     W: 0x57
 };
+var ESCAPE_KEY = 0x01000000;
 
 var TAB_ACTIONS = { next: "tab-next", previous: "tab-previous" };
+
+function tabAction(key, shift, control, alt, meta) {
+    if (alt || meta) return "";
+    const K = Ui.KeyNavLogic.KEY;
+    if (control) {
+        if (key === K.Tab || key === K.PageDown) return shift ? TAB_ACTIONS.previous : TAB_ACTIONS.next;
+        if (key === K.Backtab || key === K.PageUp) return TAB_ACTIONS.previous;
+        return "";
+    }
+    if (key === K.Tab || key === K.Backtab) return (shift || key === K.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;
+    return "";
+}
 
 // The theme browser's control keys. Letter shortcuts use Alt so they never
 // collide with type-to-filter.
 function themeAction(key, shift, control, alt, meta) {
-    if (control || meta) return "";
-    if (key === KEY.Tab || key === KEY.Backtab) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;
+    if (meta) return "";
+    const tab = tabAction(key, shift, control, alt, meta);
+    if (tab !== "") return tab;
+    if (control) return "";
     if (alt) return key === KEY.I ? "scope" : "";
+    const K = Ui.KeyNavLogic.KEY;
     switch (key) {
-    case KEY.Up: return "back";
-    case KEY.Down: return "forward";
-    case KEY.Return:
-    case KEY.Enter: return "activate";
-    case KEY.Escape: return "close";
+    case K.Left:
+    case K.Up: return "back";
+    case K.Right:
+    case K.Down: return "forward";
+    case K.Home: return "first";
+    case K.End: return "last";
+    case K.Return:
+    case K.Enter: return "activate";
+    case ESCAPE_KEY: return "close";
     default: return "";
     }
 }
@@ -313,23 +323,26 @@ function themeAction(key, shift, control, alt, meta) {
 // The wallpaper view's keys. Letter shortcuts use Alt so the same rule
 // holds beside the theme view's filter.
 var WALLPAPER_KEYS = [
-    { key: KEY.Left, action: "back" },
-    { key: KEY.Up, action: "back" },
-    { key: KEY.Right, action: "forward" },
-    { key: KEY.Down, action: "forward" },
-    { key: KEY.Home, action: "first" },
-    { key: KEY.End, action: "last" },
-    { key: KEY.Return, action: "activate" },
-    { key: KEY.Enter, action: "activate" },
-    { key: KEY.Escape, action: "close" }
+    { key: Ui.KeyNavLogic.KEY.Left, action: "back" },
+    { key: Ui.KeyNavLogic.KEY.Up, action: "back" },
+    { key: Ui.KeyNavLogic.KEY.Right, action: "forward" },
+    { key: Ui.KeyNavLogic.KEY.Down, action: "forward" },
+    { key: Ui.KeyNavLogic.KEY.Home, action: "first" },
+    { key: Ui.KeyNavLogic.KEY.End, action: "last" },
+    { key: Ui.KeyNavLogic.KEY.Return, action: "activate" },
+    { key: Ui.KeyNavLogic.KEY.Enter, action: "activate" },
+    { key: Ui.KeyNavLogic.KEY.Space, action: "activate" },
+    { key: ESCAPE_KEY, action: "close" }
 ];
 
 // The action of KEY, a Qt key code. One of `back`, `forward`, `first`,
 // `last`, `activate`, `close`, `source`, `scope`, `tab-next`,
 // `tab-previous`, or "" for a key that passes on.
 function wallpaperAction(key, shift, control, alt, meta, scoped) {
-    if (meta || control) return "";
-    if (key === KEY.Backtab || key === KEY.Tab) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;
+    if (meta) return "";
+    const tab = tabAction(key, shift, control, alt, meta);
+    if (tab !== "") return tab;
+    if (control) return "";
     if (alt) {
         if (key === KEY.S) return "source";
         if (key === KEY.M) return scoped ? "scope" : "";

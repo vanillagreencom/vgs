@@ -780,24 +780,6 @@ Item {
         return Math.max(1, Math.floor((resultList.height + look.row.spacing) / (height + look.row.spacing)));
     }
 
-    function select(delta) {
-        if (displayModel.count === 0) return;
-        cursorPlate.disarm();
-        if (!cursorActive) {
-            cursorActive = true;
-            selectedIndex = delta < 0 ? displayModel.count - 1 : 0;
-        } else if (Math.abs(delta) === 1) {
-            // Single steps wrap around; the plate glides unless it wrapped.
-            const next = (selectedIndex + delta + displayModel.count) % displayModel.count;
-            if (Math.abs(next - selectedIndex) !== 1) cursorPlate.snap();
-            selectedIndex = next;
-        } else {
-            cursorPlate.snap();
-            selectedIndex = Math.max(0, Math.min(displayModel.count - 1, selectedIndex + delta));
-        }
-        revealCursor();
-    }
-
     // Hover moves the cursor only once the pointer has moved since the
     // list last changed under it, so a resting pointer steals nothing; the
     // list's ListCursor judges a motion.
@@ -805,20 +787,6 @@ Item {
         if (!cursorPlate.hoverTakes(item.mapToItem(null, mouse.x, mouse.y))) return;
         cursorActive = true;
         selectedIndex = index;
-    }
-
-    // Super with W, A, S and D moves as the arrows do, for a keyboard
-    // whose compositor passes them through.
-    function superNavigate(key) {
-        if (key === Qt.Key_W) select(-1);
-        else if (key === Qt.Key_S) select(1);
-        else if (key === Qt.Key_A) {
-            if (openWithTarget) leaveOpenWith();
-            else if (!filterText) goBack();
-        } else if (key === Qt.Key_D) {
-            if (cursorActive && displayModel.count > 0) activateIndex(selectedIndex);
-        } else return false;
-        return true;
     }
 
     // ------------------------------------------------------------ geometry
@@ -877,6 +845,7 @@ Item {
 
     // A click outside the card closes it.
     // pointer-cursor-exempt: a press here is a click away from the card, not a control
+    // keyboard-path: Escape closes the launcher when no search or user-opened submenu must close first
     MouseArea {
         anchors.fill: parent
         onClicked: root.cancel()
@@ -936,11 +905,13 @@ Item {
         }
 
         // pointer-cursor-exempt: it holds the presses on the card, so they never reach the click-away area
+        // keyboard-path: the card itself has no action; keyCatcher owns the launcher keys
         MouseArea {
             anchors.fill: parent
             onClicked: {}
         }
 
+        // focus-indicator: the search caret and the ListCursor plate show the launcher focus
         Item {
             id: keyCatcher
             anchors.fill: parent
@@ -1009,6 +980,8 @@ Item {
                 IconButton {
                     id: menuButton
                     look: root.look
+                    label: "Categories"
+                    shortcut: "CTRL+B"
                     visible: root.spotlightRoot
                     anchors.right: parent.right
                     anchors.rightMargin: root.look.header.buttonInset
@@ -1137,16 +1110,76 @@ Item {
 
     // ------------------------------------------------------------ keys
 
+    Ui.KeyNav {
+        id: listNav
+        count: displayModel.count
+        currentIndex: root.selectedIndex
+        wrap: true
+        spaceActivates: false
+        pageSize: root.pageRows()
+        cursor: cursorPlate
+        onMoved: index => {
+            root.cursorActive = true;
+            root.selectedIndex = index;
+            root.revealCursor();
+        }
+        onActivated: index => root.activateIndex(index)
+        onMenuRequested: index => root.openSelectedFileFlyout()
+        onRemoved: index => root.requestRemove()
+    }
+
+    function activateMenuLike(index) {
+        if (index < 0 || index >= displayModel.count) return false;
+        const row = displayModel.get(index);
+        if (row.kind === "menu" || row.kind === "link" || row.kind === "openwith") {
+            activateIndex(index);
+            return true;
+        }
+        return false;
+    }
+
+    function selectedFileRow() {
+        if (!cursorActive || selectedIndex < 0 || selectedIndex >= displayModel.count) return null;
+        const row = displayModel.get(selectedIndex);
+        return row.kind === "file" || row.kind === "folder" ? row : null;
+    }
+
+    function openSelectedFileFlyout() {
+        const row = selectedFileRow();
+        if (row === null) return false;
+        const item = resultList.itemAtIndex(selectedIndex);
+        if (!item) return false;
+        const at = item.mapToItem(root, item.width - root.look.flyout.margin, item.height);
+        openFileFlyout(row.path, row.label, at.x, at.y);
+        return true;
+    }
+
+    function navigate(direction) {
+        switch (direction) {
+        case "up":
+            listNav.moveBy(-1);
+            return;
+        case "down":
+            listNav.moveBy(1);
+            return;
+        case "left":
+            if (openWithTarget) leaveOpenWith();
+            else if (!filterText) goBack();
+            return;
+        case "right":
+            if (cursorActive && displayModel.count > 0) activateMenuLike(selectedIndex);
+            return;
+        default:
+            throw new Error("launcher: direction=" + direction);
+        }
+    }
+
     // One key press, answered true when the launcher took it.
     function handleKey(event) {
         const key = event.key;
         const plain = event.modifiers === Qt.NoModifier;
         const enter = key === Qt.Key_Return || key === Qt.Key_Enter;
-        if ((event.modifiers & Qt.MetaModifier) && superNavigate(key)) return true;
-        if (fileFlyout.opened && key === Qt.Key_Escape) {
-            fileFlyout.close();
-            return true;
-        }
+        if (fileFlyout.opened) return fileFlyout.handleKey(event);
         if (openWithTarget && (key === Qt.Key_Escape || key === Qt.Key_Left || (key === Qt.Key_Backspace && plain))) {
             leaveOpenWith();
             return true;
@@ -1160,12 +1193,9 @@ Item {
             if (spotlightRoot) toggleCategories();
             return true;
         }
-        if (key === Qt.Key_Delete) {
-            requestRemove();
-            return true;
-        }
         if (key === Qt.Key_Escape) {
             if (filterText) setFilter("");
+            else if (navStack.length > 0) goBack();
             else cancel();
             return true;
         }
@@ -1187,11 +1217,13 @@ Item {
             goBack();
             return true;
         }
-        if (key === Qt.Key_Up) { select(-1); return true; }
-        if (key === Qt.Key_Down) { select(1); return true; }
-        if (key === Qt.Key_PageUp) { select(-pageRows()); return true; }
-        if (key === Qt.Key_PageDown) { select(pageRows()); return true; }
-        if (enter || key === Qt.Key_Right) {
+        if (key === Qt.Key_Right && plain) {
+            if (cursorActive && displayModel.count > 0) activateMenuLike(selectedIndex);
+            if (displayModel.count > 0) cursorActive = true;
+            return true;
+        }
+        if (listNav.handle(event)) return true;
+        if (enter) {
             if (mode === "input") finishAndDismiss(filterText);
             else if (requestMode) {
                 if (displayModel.count > 0) activateIndex(cursorActive ? selectedIndex : 0);

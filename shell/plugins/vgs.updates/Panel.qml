@@ -23,8 +23,11 @@ Item {
     readonly property var rows: Logic.panelRows(values)
     // The refusal the last action was answered with, "" for none.
     property string problem: ""
+    property Item initialFocus: sections.firstFocus
 
-    function open(payloadJson) { problem = ""; }
+    function open(payloadJson) {
+        problem = "";
+    }
     function close() {}
 
     // The time of MS in the locale's short format, with the date when
@@ -108,10 +111,12 @@ Item {
         // The sources, one group of rows.
         Column {
             id: sections
+            property Item firstFocus: null
             width: layout.contentWidth
             spacing: Theme.stack.row
 
             Repeater {
+                id: rowsRepeater
                 model: ScriptModel {
                     values: root.rows
                     objectProp: "key"
@@ -120,6 +125,7 @@ Item {
                 Disclosure {
                     id: source
                     required property var modelData
+                    required property int index
                     // The column, not `parent`, which is null while the
                     // repeater tears the row down.
                     width: sections.width
@@ -127,6 +133,7 @@ Item {
                     secondary: modelData.secondary
                     iconName: modelData.icon
                     expandable: modelData.lines.length > 0 || modelData.more !== ""
+                    Component.onCompleted: if (index === 0) sections.firstFocus = focusItem
                     // The count stands in one column whatever the row
                     // offers: the Update button keeps its room while hidden.
                     trailing: [

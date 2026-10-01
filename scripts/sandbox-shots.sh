@@ -13,20 +13,22 @@
 # or started on the live desktop. It needs the smoke's prerequisites,
 # WAYLAND_DISPLAY and XDG_RUNTIME_DIR included, plus grim.
 #
-# SCENE is gallery, settings, plugin-pages, manager, launcher, notifications, bar,
-# panels, devtools, dialog, lock, polkit, narrow, theme-browser,
-# wallpaper-browser or automations. settings takes the automations' and
-# the Jarvis pages among the plugin pages, each when the tree ships its
-# plugin. plugin-pages, taken only when named, opens every plugin the
-# Settings window lists, in that window's order, and captures every screen
-# of an overflowing page. bar is the bar with every first-party widget and each widget's tooltip or
+
+# SCENE is gallery, settings, focus, plugin-pages, manager, launcher,
+# notifications, bar, panels, devtools, dialog, lock, polkit, narrow,
+# theme-browser, wallpaper-browser or automations. settings takes the
+# automations' and the Jarvis pages among the plugin pages, each when the
+# tree ships its plugin. plugin-pages, taken only when named, opens every
+# plugin the Settings window lists, in that window's order, and captures
+# every screen of an overflowing page. bar is the bar with every
+# first-party widget and each widget's tooltip or
 # hover; panels is the Agent Warden panel, the updates flyout and the
 # themes panel, each opened from its widget over planted status or
 # packages, the themes panel's apply held and answered by a stand-in
-# runner that changes no theme; devtools is the
-# Dev Tools window; dialog is the core's requirement notice; lock is the
-# vgs.lock screen, locked and after wrong attempts; polkit is the
-# vgs.polkit prompt, asking and after a failed attempt; narrow holds a
+# runner that changes no theme; devtools is the Dev Tools window; focus is
+# the keyboard focus proof set; dialog is the core's requirement notice;
+# lock is the vgs.lock screen, locked and after wrong attempts; polkit is
+# the vgs.polkit prompt, asking and after a failed attempt; narrow holds a
 # monitor 480 by 720 logical pixels and takes the bar, panels, devtools,
 # dialog, lock, launcher, notifications and the first gallery pages again, each
 # shot named <scene>-<mode>-narrow-*; theme-browser and wallpaper-browser
@@ -140,7 +142,8 @@ while [[ $# -gt 0 ]]; do
     --timeout) timeout_s="$2"; shift 2 ;;
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
-    gallery|settings|plugin-pages|manager|launcher|notifications|bar|panels|devtools|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser|automations) scenes+=("$1"); shift ;;
+
+    gallery|settings|focus|plugin-pages|manager|launcher|notifications|bar|panels|devtools|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser|automations) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -212,6 +215,7 @@ scene_ships() {
     settings|manager) [[ $1 == "$manager_scene" ]] ;;
     plugin-pages) [[ $manager_scene == settings ]] ;;
     gallery) ships_plugin vgs.gallery ;;
+    focus) ships_plugin vgs.gallery vgs.settings ;;
     launcher|notifications) ships_plugin "vgs.$1" ;;
     automations) ships_plugin vgs.automations ;;
     bar) ships_plugin vgs.bar vgs.launcher vgs.agent-warden vgs.updates vgs.themes ;;
@@ -230,7 +234,7 @@ if [[ ${#scenes[@]} -eq 0 ]]; then
     scenes=(gallery)
     [[ -z $manager_scene ]] || scenes+=("$manager_scene")
   else
-    for scene in gallery settings launcher notifications bar panels devtools dialog lock polkit narrow; do
+    for scene in gallery settings focus launcher notifications bar panels devtools dialog lock polkit automations narrow; do
       if scene_ships "$scene"; then scenes+=("$scene"); fi
     done
   fi
@@ -915,6 +919,7 @@ scene_settings() { # MODE
   narrow_end
 }
 
+
 plugin_pages_list() {
   ipc smoke readInstance "$settings_kind" vgs.settings plugins | python3 -c 'import json,sys; print("\n".join(p["id"] for p in json.load(sys.stdin)))'
 }
@@ -955,6 +960,7 @@ scene_plugin-pages() { # MODE
   done
   settings_close
 }
+
 
 # The browsers' readings: the theme view's shown card count, whether it
 # names a problem, the card it offers wallpapers for, and the wallpaper
@@ -1008,6 +1014,38 @@ hover_card() {
   fail "$1: no card reported the pointer"
   return 1
 }
+
+scene_focus() { # MODE
+  local start surfaces focus_box
+  expect "the gallery summons for focus shots" ok ipc shell summon "$gallery_kind" vgs.gallery '{}'
+  expect_poll "the gallery maps for focus shots" 1 surface_count "$gallery_surface"
+  expect_poll "the gallery focus examples are complete" '[]' ipc smoke galleryFocusMissing "$gallery_kind" vgs.gallery
+  start="$(ipc smoke windowGeometry "$gallery_kind" vgs.gallery SectionHeader Focus)" || start=""
+  if [[ $start == \[* ]]; then
+    ipc smoke scrollTo "$gallery_kind" vgs.gallery "$(python3 -c 'import json,sys; print(max(0, int(json.loads(sys.argv[1])[1]) - 80))' "$start")" >/dev/null || fail "the gallery did not scroll to the Focus section"
+    take "focus-$1-gallery"
+  else
+    fail "the Gallery Focus section is unreadable: ${start:-}"
+  fi
+  expect "the gallery hides after focus shots" ok ipc shell hide "$gallery_kind" vgs.gallery
+  expect_poll "the gallery focus window is gone" 0 surface_count "$gallery_surface"
+
+  expect "the Settings window opens for focus shots" ok ipc shell summon "$settings_kind" vgs.settings '{}'
+  expect_poll "the Settings focus window maps" 1 settings_count
+  expect_poll "the Settings search holds the keyboard" true ipc smoke activeFocusIn "$settings_kind" vgs.settings
+  type_keys -k Tab || fail "sending Tab to Settings for focus shots failed"
+  focus_box="$(ipc smoke focused "$settings_kind" vgs.settings)" || focus_box=""
+  if [[ $(python3 -c 'import json,sys; row=json.loads(sys.argv[1]); print(len(row) >= 4 and row[3] is True)' "$focus_box" 2>/dev/null || echo False) == True ]]; then
+    take "focus-$1-settings-ring"
+  else
+    fail "the Settings focused control has no focus ring: ${focus_box:-}"
+  fi
+  type_keys -k Down || fail "moving the Settings list cursor for focus shots failed"
+  expect_poll "the Settings list cursor is shown after keys" true ipc smoke readShownDescendant "$settings_kind" vgs.settings ListCursor shown
+  take "focus-$1-settings-list-cursor"
+  settings_close
+}
+
 scene_theme-browser() { # MODE
   local selected preview_path
   selected_path() { ipc smoke readDescendant overlay vgs.themes ThemeView selected | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("sharpenedImage") or d.get("image") or d.get("previewImage") or "")'; }
@@ -1614,6 +1652,7 @@ scene_automations() { # MODE
 for scene in "${scenes[@]}"; do
   case $scene in
     bar) need_setup launcher; need_setup panels; need_setup bar ;;
+    focus) need_setup settings ;;
     narrow) for s in launcher panels bar devtools dialog notifications gallery; do need_setup "$s"; done
       ! scene_ships lock || need_setup lock ;;
     *) need_setup "$scene" ;;

@@ -1,66 +1,72 @@
 import QtQuick
+import QtQuick.Templates as T
 import qs.Ui
+import qs.Ui as Ui
 
 // An on and off switch on the glass: a translucent track that fills with
 // the theme's accent while on, and a white knob with a soft shadow.
-Item {
+T.Switch {
     id: control
 
     required property var look
-    property bool checked: false
-    signal toggled(bool checked)
+    property bool focusPreview: false
 
     implicitWidth: look.toggle.width
-    implicitHeight: look.toggle.height
+    implicitHeight: Math.max(look.toggle.height, look.toggle.hitHeight)
+    hoverEnabled: true
+    PointerCursor {}
+    Accessible.name: text
+    Keys.onReturnPressed: Ui.KeyNavLogic.activate(control)
+    Keys.onEnterPressed: Ui.KeyNavLogic.activate(control)
 
-    property real position: checked ? 1 : 0
-    Behavior on position { Anim { duration: control.look.motion.duration.medium1; curve: control.look.motion.curve.emphasizedDecel } }
-
-    Rectangle {
-        anchors.fill: parent
-        radius: control.look.radius.full
-        color: control.look.toggle.track
-        border.width: control.look.toggle.borderWidth
-        border.color: control.look.toggle.border
-
-        // The accent over the track, as much as the switch is on.
-        Rectangle {
-            anchors.fill: parent
-            radius: control.look.radius.full
-            color: control.look.palette.accent
-            opacity: control.position
-        }
-    }
-
-    Rectangle {
-        readonly property real inset: control.look.toggle.inset
-        width: parent.height - inset * 2
-        height: width
-        radius: control.look.radius.full
-        x: inset + (parent.width - width - inset * 2) * control.position
-        y: inset
-        color: control.look.toggle.knob
-        scale: mouse.pressed ? control.look.toggle.pressScale : 1
-        Behavior on scale { Anim { duration: control.look.motion.duration.short4; curve: control.look.motion.curve.standard } }
+    indicator: Item {
+        implicitWidth: control.look.toggle.width
+        implicitHeight: Math.max(control.look.toggle.height, control.look.toggle.hitHeight)
 
         Rectangle {
-            z: -1
+            id: track
             anchors.centerIn: parent
-            anchors.verticalCenterOffset: control.look.toggle.knobShadowDrop
-            width: parent.width + control.look.toggle.knobShadowGrow
-            height: width
+            width: control.look.toggle.width
+            height: control.look.toggle.height
             radius: control.look.radius.full
-            color: control.look.toggle.knobShadow
+            color: control.look.toggle.track
+            border.width: control.look.toggle.borderWidth
+            border.color: control.look.toggle.border
+
+            Rectangle {
+                anchors.fill: parent
+                radius: control.look.radius.full
+                color: control.look.palette.accent
+                opacity: control.checked ? 1 : 0
+                Behavior on opacity { Anim { duration: control.look.motion.duration.medium1; curve: control.look.motion.curve.emphasizedDecel } }
+            }
+
+            Rectangle {
+                readonly property real inset: control.look.toggle.inset
+                width: track.height - inset * 2
+                height: width
+                radius: control.look.radius.full
+                x: inset + control.visualPosition * (track.width - width - inset * 2)
+                y: inset
+                color: control.look.toggle.knob
+                scale: control.down ? control.look.toggle.pressScale : 1
+                Behavior on x { Anim { duration: control.look.motion.duration.medium1; curve: control.look.motion.curve.emphasizedDecel } }
+                Behavior on scale { Anim { duration: control.look.motion.duration.short4; curve: control.look.motion.curve.standard } }
+
+                Rectangle {
+                    z: -1
+                    anchors.centerIn: parent
+                    anchors.verticalCenterOffset: control.look.toggle.knobShadowDrop
+                    width: parent.width + control.look.toggle.knobShadowGrow
+                    height: width
+                    radius: control.look.radius.full
+                    color: control.look.toggle.knobShadow
+                }
+            }
         }
+
+        FocusRing { target: control }
     }
 
-    // Taller than the track, centred on it: the pills' height.
-    MouseArea {
-        id: mouse
-        anchors.centerIn: parent
-        width: parent.width
-        height: Math.max(parent.height, control.look.toggle.hitHeight)
-        PointerCursor {}
-        onClicked: control.toggled(!control.checked)
-    }
+    contentItem: Item {}
 }

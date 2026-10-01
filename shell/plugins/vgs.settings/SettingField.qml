@@ -114,6 +114,9 @@ Column {
             width: parent.width
             text: root.value === undefined ? "" : String(root.value)
             readOnly: !root.editable
+            focusPolicy: root.editable ? Qt.StrongFocus : Qt.NoFocus
+            escapeReverts: true
+            committedText: String(root.value)
             onEditingFinished: {
                 const typed = text;
                 text = Qt.binding(() => root.value === undefined ? "" : String(root.value));

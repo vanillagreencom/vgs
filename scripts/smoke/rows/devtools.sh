@@ -91,6 +91,51 @@ expect "IPC open summons the window" ok devtools open
 app_window_rows "Dev Tools" vgs.devtools
 expect "IPC open summons the window again" ok devtools open
 expect_poll "the window is shown" shown window_shown
+expect_poll "the window opens on its scrollable body with a visible ring" '["ScrollArea","",true,true,true]' ipc smoke focused window vgs.devtools
+forget_record
+type_keys -k Return || fail "Return on the Dev Tools body failed"
+expect "control: Return on the Dev Tools body runs no TUI" absent recorded
+devtools_keyboard_install() {
+  local seen=() focus label
+  for _ in $(seq 1 80); do
+    type_keys -k Tab || return 1
+    focus="$(ipc smoke focused window vgs.devtools)" || return 1
+    if [[ $focus != \[* ]]; then printf 'focus=%s\n' "$focus"; return; fi
+    if python3 - "$focus" <<'PY'
+import json, sys
+row = json.loads(sys.argv[1])
+sys.exit(0 if row[0] == "ScrollArea" and not row[3] else 1)
+PY
+    then continue; fi
+    if ! python3 - "$focus" <<'PY'
+import json, sys
+row = json.loads(sys.argv[1])
+if len(row) != 5 or not (row[2] and row[3] and row[4]):
+    print("bad-focus=" + json.dumps(row))
+    sys.exit(1)
+PY
+    then return 1; fi
+    label="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])[1])' "$focus")" || return 1
+    seen+=("$label")
+    if [[ $label == Install ]]; then
+      type_keys -k Return || return 1
+      printf 'ok\n'
+      return 0
+    fi
+  done
+  printf 'missing-install seen=%s\n' "$(IFS=,; echo "${seen[*]}")"
+}
+install_before="$(ended_record vgs.devtools/install)"
+forget_record
+expect "the Dev Tools Tab tour reveals each focused action and Return reaches Install" ok devtools_keyboard_install
+expect_poll "Return on the focused Install hands the install TUI the row's id" "$(words vgs.devtools/install tui/install.sh "$agent_id")" recorded_tail
+expect_poll "the keyboard install run's presenter exits" moved ended_record_moved vgs.devtools/install "$install_before"
+expect_run_end "the keyboard install run ends" vgs.devtools/install
+type_keys -k Escape || fail "Escape after the Dev Tools keyboard path failed"
+expect "Escape closes the Dev Tools window after the keyboard path" hidden window_shown
+expect_poll "the Dev Tools window is gone after Escape-equivalent hide" hidden window_shown
+expect "IPC open summons the window again after the keyboard path" ok devtools open
+expect_poll "the window is shown again after the keyboard path" shown window_shown
 expect_poll "the window draws the VGS section and every catalog section in order" \
   '["VGS", "Agents", "Apps", "CLI tools", "Languages", "Editors", "Databases", "Terminals", "Other mise tools"]' section_titles
 # The error line is longer than the row: it shows one elided line and a

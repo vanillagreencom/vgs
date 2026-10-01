@@ -71,9 +71,16 @@ Item {
         if (shell === null) return;
         if (registeredWith === null) {
             registeredWith = shell;
+            shell.shortcut.register("toggle", "Open or close Agent Warden", () => root.togglePanel());
             shell.ipc.handle("status", () => JSON.stringify(root.shell.status.values));
         }
         derive();
+    }
+
+    function togglePanel() {
+        const reply = shell.surfaces.toggle("panel", "{}");
+        if (reply !== "ok") console.warn("agent-warden: panel " + reply);
+        return reply;
     }
     onStatusChanged: derive()
     onLegacyChanged: derive()

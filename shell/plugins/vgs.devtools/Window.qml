@@ -40,6 +40,7 @@ Item {
     readonly property var drawn: ViewLogic.sections(catalog, updateKey, writeLaunchers)
     // The refusal the last action was answered with, "" for none.
     property string problem: ""
+    property Item initialFocus: pane.scrollArea.focusProxy
 
     function open(payloadJson) {
         if (look === null) throw new Error("devtools: refused: appearance");
@@ -83,6 +84,7 @@ Item {
         cornerRadius: root.look.window.radius
         gap: root.look.window.gap
         bodySpacing: root.look.window.sectionGap
+        Component.onCompleted: scrollArea.keyboardScroll = true
 
         header: Column {
             width: pane.contentWidth

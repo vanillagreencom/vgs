@@ -354,6 +354,7 @@ scene_cases=(
   "a checkout without the Dev Tools plugin refuses the devtools scene" 2 "sandbox-shots: refused: scene=devtools tree=checkout" devtools
   "a checkout with the polkit plugin takes the polkit scene" 77 "qml-smoke: status=not-measured" polkit
   "a revision without the polkit plugin refuses the polkit scene" 2 "sandbox-shots: refused: scene=polkit tree=$old_rev" --rev "$old_rev" polkit
+  "a checkout without the Gallery plugin refuses the focus scene" 2 "sandbox-shots: refused: scene=focus tree=checkout" focus
 )
 # Each case is label, status, line, then its arguments up to the next case,
 # counted by the arguments each row above carries.

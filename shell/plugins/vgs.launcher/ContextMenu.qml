@@ -25,7 +25,7 @@ Item {
     function openAt(px, py) {
         anchorPoint = Qt.point(px, py);
         reclamp();
-        hovered = -1;
+        hovered = firstReachable();
         state = "open";
     }
 
@@ -41,11 +41,56 @@ Item {
 
     function close() { state = ""; }
 
-    onItemsChanged: if (opened) Qt.callLater(reclamp)
+    function firstReachable() {
+        for (let i = 0; i < items.length; i++) if (reachable(i)) return i;
+        return -1;
+    }
+
+    function reachable(index) {
+        return index >= 0 && index < items.length && !items[index].separator;
+    }
+
+    function labelAt(index) {
+        return reachable(index) ? (items[index].label || "") : "";
+    }
+
+    function triggerIndex(index) {
+        if (!reachable(index)) return false;
+        close();
+        triggered(items[index].id);
+        return true;
+    }
+
+    function handleKey(event) {
+        if (event.key === Qt.Key_Escape) {
+            close();
+            return true;
+        }
+        nav.handle(event);
+        return true;
+    }
+
+    onItemsChanged: if (opened) Qt.callLater(() => {
+        reclamp();
+        if (!reachable(hovered)) hovered = firstReachable();
+    })
+
+    KeyNav {
+        id: nav
+        count: menu.items.length
+        currentIndex: menu.hovered
+        wrap: false
+        reachable: index => menu.reachable(index)
+        labelAt: index => menu.labelAt(index)
+        cursor: plate
+        onMoved: index => menu.hovered = index
+        onActivated: index => menu.triggerIndex(index)
+    }
 
     // The click-away catcher also takes hover, so nothing behind the flyout
     // reacts to the pointer while it is open.
     // pointer-cursor-exempt: a press here is a click away from the flyout, not a control
+    // keyboard-path: Escape closes the flyout
     MouseArea {
         anchors.fill: parent
         enabled: menu.opened
@@ -73,6 +118,7 @@ Item {
 
         // The whole flyout owns the pointer, gaps and separators included.
         // pointer-cursor-exempt: it holds the presses on the flyout's gaps, where nothing is clickable
+        // keyboard-path: the flyout handles every key while open
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
@@ -177,6 +223,7 @@ Item {
                             font.pixelSize: menu.look.text.flyout.detail
                         }
 
+                        // keyboard-path: the flyout's KeyNav moves to this entry and Enter triggers it
                         MouseArea {
                             anchors.fill: parent
                             enabled: !entry.separator

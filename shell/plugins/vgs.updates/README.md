@@ -164,9 +164,9 @@ The count badge shows at most `99+`.
 
 The tooltip lists the state, each source's count and the time of the last check.
 
-A left click opens or closes the flyout under the widget. A middle click opens the `update` TUI for every source.
+A left click opens or closes the flyout under the widget. The global shortcut `vgs.updates:toggle`, bound to `SUPER+CTRL+U` by default, opens the same flyout at the plugin's `placement`. A middle click opens the `update` TUI for every source; the flyout's Update everything button is its keyboard path.
 
-The flyout has one row per source, in the order the service publishes them. Each row shows its count badge and its error, if it has one. A source with updates has its own **Update**, which opens `update-source` with the row's source. A click on a row lists its packages as `name old → new`, or `name: N commits behind` for a plugin or theme. The list holds the twelve packages the shared status keeps and a `+N more` line for the rest.
+The flyout has one row per source, in the order the service publishes them. It opens with keyboard focus on the first source row. Each row shows its count badge and its error, if it has one. A source with updates has its own **Update**, which opens `update-source` with the row's source. A click or Space on a row lists its packages as `name old → new`, or `name: N commits behind` for a plugin or theme. The list holds the twelve packages the shared status keeps and a `+N more` line for the rest.
 
 **Update everything** opens `update`. The footer has **Refresh**, the time of the last check, and **Open last log**. **Open last log** opens the `log` TUI, `tui/log.sh`. It shows the last run's log in `less -R`, from its end, and names the path when no run has written a log. The flyout has no command text field.
 

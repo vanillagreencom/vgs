@@ -112,6 +112,37 @@ categories() {
   type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
   expect_poll "the categories show for $1" True has_row menu System
 }
+
+# Keyboard-only path: the list cursor moves by edges, Escape backs out of a
+# user-opened submenu, and Right opens only menus.
+row_count() { launcher_rows | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
+categories "keyboard-only list"
+last_index="$(row_count)"
+last_index="$((last_index - 1))"
+type_keys -k End || fail "sending End in the launcher failed"
+expect_poll "End moves to the last launcher row" "$last_index" read_launcher selectedIndex
+type_keys -k Home || fail "sending Home in the launcher failed"
+expect_poll "Home moves to the first launcher row" 0 read_launcher selectedIndex
+system_index="$(row_index menu System)" || system_index=none
+if [[ $system_index =~ ^[0-9]+$ ]]; then
+  keys=()
+  for ((n = 0; n < system_index; n++)); do keys+=(-k Down); done
+  if ((system_index > 0)); then type_keys "${keys[@]}" || fail "moving to System failed"; fi
+  type_keys -k Return || fail "opening System from the keyboard failed"
+  expect_poll "Return opens the user-selected submenu" '"system"' read_launcher activeMenu
+  type_keys -k Escape || fail "sending Escape from the submenu failed"
+  expect_poll "Escape leaves the user-selected submenu open launcher" '"root"' read_launcher activeMenu
+  expect "Escape from a user-selected submenu keeps the launcher open" 1 layer_count vgs:overlay
+  type_keys -k Escape || fail "closing after the submenu keyboard path failed"
+  expect_poll "the launcher closes after the submenu keyboard path" 0 layer_count vgs:overlay
+else
+  fail "System row was not found for the launcher keyboard-only path"
+fi
+expect "a direct menu payload opens for Escape control" ok ipc shell summon overlay vgs.launcher '{"menu":"power-menu"}'
+expect_poll "the direct payload opens the system menu" '"system"' read_launcher activeMenu
+type_keys -k Escape || fail "sending Escape for the direct payload control failed"
+expect_poll "Escape closes a direct payload menu" 0 layer_count vgs:overlay
+
 # pick_tui LABEL: in the open list, move the cursor to the tui row LABEL
 # and press Return. The pointer rests over the list, which opens and
 # animates under it, so Qt delivers the rows hover with no motion; the
@@ -211,6 +242,16 @@ write_menu "{ \"schemaVersion\": 1, \"items\": { \"system\": { \"label\": \"Powe
 expect "a route naming an action runs it" ok ipc shell summon overlay vgs.launcher '{"menu":"smoke-run"}'
 expect_poll "the action ran" True bash -c '[[ -f $1 ]] && echo True' _ "$home/ran-action"
 expect_poll "an action route leaves no surface" 0 layer_count vgs:overlay
+rm -f -- "$home/ran-action"
+expect "the launcher summons with the action row as a search result" ok ipc shell summon overlay vgs.launcher '{"query":"Smoke run"}'
+focused
+expect_poll "the action row is selected by the query" '["action", "Smoke run"]' first_row
+type_keys -k Right || fail "sending Right on an action row failed"
+expect "Right on an action row does not run it" absent file_text "$home/ran-action"
+expect "Right on an action row keeps the launcher open" 1 layer_count vgs:overlay
+type_keys -k Return || fail "sending Return on an action row failed"
+expect_poll "Return on the action row runs it" True bash -c '[[ -f $1 ]] && echo True' _ "$home/ran-action"
+expect_poll "Return on the action row closes the launcher" 0 layer_count vgs:overlay
 expect "the launcher summons with the categories" ok ipc shell summon overlay vgs.launcher '{}'
 focused
 type_keys -M ctrl -k b -m ctrl || fail "sending Ctrl+B failed"
@@ -376,6 +417,18 @@ expect_poll "the hidden select holds no surface" 0 layer_count vgs:overlay
 expect "the launcher summons for files" ok ipc shell summon overlay vgs.launcher '{"query":"f:smoke-report"}'
 expect_poll "f: lists both files of one name, newest first" '[["smoke-report.txt", "~/launcher-files"], ["smoke-report.txt", "~/launcher-files/older"]]' rows_of file
 expect "the file index lives in the launcher's cache" True bash -c '[[ -s $1 ]] && echo True' _ "$home/.cache/vgs/launcher/f.idx"
+selected_before_flyout="$(read_launcher selectedIndex)"
+type_keys -k Menu || fail "opening the file flyout with the Menu key failed"
+expect_poll "Menu opens the selected file's flyout" true ipc smoke readShownDescendant overlay vgs.launcher ContextMenu opened
+expect_poll "the file flyout has a keyboard selection" 0 ipc smoke readShownDescendant overlay vgs.launcher ContextMenu hovered
+type_keys -k Down || fail "sending Down in the file flyout failed"
+expect "Down in the file flyout leaves the launcher list selection alone" "$selected_before_flyout" read_launcher selectedIndex
+expect_poll "Down in the file flyout moves its own selection" 1 ipc smoke readShownDescendant overlay vgs.launcher ContextMenu hovered
+type_keys -k Escape || fail "closing the file flyout with Escape failed"
+expect_poll "Escape closes the file flyout and keeps the launcher open" false ipc smoke readShownDescendant overlay vgs.launcher ContextMenu opened
+type_keys -M shift -k F10 -m shift || fail "opening the file flyout with Shift+F10 failed"
+expect_poll "Shift+F10 opens the selected file's flyout" true ipc smoke readShownDescendant overlay vgs.launcher ContextMenu opened
+type_keys -k Escape || fail "closing the Shift+F10 flyout failed"
 expect "F: searches folders" ok ipc shell summon overlay vgs.launcher '{"query":"F:launcher-files"}'
 expect_poll "F: lists the folder" '[["launcher-files", "~"]]' rows_of folder
 focused

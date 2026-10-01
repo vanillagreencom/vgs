@@ -43,14 +43,33 @@ Column {
     property string busyText: ""
     // Danger lines under the row.
     property var lines: []
+    // The row's stable key in its owning list.
+    property string rowKey: ""
+    // The owning list's current keyboard selection.
+    property string currentKey: ""
+    property ListCursor cursor: null
+    property bool listActiveFocus: false
+    readonly property bool selected: rowKey !== "" && rowKey === currentKey
+    readonly property bool secondaryShortcutShown: selected && listActiveFocus && actionLabel !== "" && applicable
 
     // Emitted when a row click applies the package.
     signal activated()
     // Emitted when the trailing action button, or an action row click,
     // requests the row's action.
     signal actionRequested()
+    signal pointed(string key)
 
     spacing: Theme.stack.row
+    function activate() {
+        if (root.applicable) root.activated();
+        else if (root.actionLabel !== "" && root.actionEnabled) root.actionRequested();
+    }
+
+    function requestAction() {
+        if (!root.secondaryShortcutShown) return false;
+        root.actionRequested();
+        return true;
+    }
 
     ListItem {
         id: row
@@ -58,12 +77,11 @@ Column {
         text: root.name
         secondary: root.reason === "" ? root.source : root.source + ", " + root.reason
         iconName: "palette"
-        highlighted: root.displayed
+        highlighted: root.selected
+        cursor: root.cursor
         enabled: root.applicable || (root.actionLabel !== "" && root.actionEnabled)
-        onClicked: {
-            if (root.applicable) root.activated();
-            else if (root.actionLabel !== "" && root.actionEnabled) root.actionRequested();
-        }
+        onPointed: root.pointed(root.rowKey)
+        onClicked: root.activate()
         trailing: [
             Badge { visible: root.displayed; text: "Displayed"; tone: "accent" },
             Badge { visible: root.installed; text: "Installed"; tone: "accent" },
@@ -85,6 +103,15 @@ Column {
                 }
             },
             Row {
+                visible: root.secondaryShortcutShown
+                spacing: Theme.space.xxs
+                anchors.verticalCenter: parent.verticalCenter
+                KeyCaps {
+                    anchors.verticalCenter: parent.verticalCenter
+                    shortcut: "ALT+D"
+                }
+            },
+            Row {
                 visible: root.swatch !== null
                 spacing: Theme.stack.row
                 anchors.verticalCenter: parent.verticalCenter
@@ -102,6 +129,7 @@ Column {
         ]
     }
 
+    // keyboard-path: the owning list runs this secondary action with Alt+D on the selected row
     Button {
         visible: root.actionLabel !== ""
         x: row.textStart
@@ -112,6 +140,7 @@ Column {
         size: "sm"
         variant: "secondary"
         enabled: root.actionEnabled
+        focusPolicy: Qt.NoFocus
         onClicked: root.actionRequested()
     }
 

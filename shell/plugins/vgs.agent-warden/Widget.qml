@@ -10,7 +10,7 @@ import "ViewLogic.js" as View
 // while no agent runs and all is good. It is one BarItem, the count drawn
 // beside the shield in its tone.
 BarWidget {
-    id: root
+    id: widget
 
     // The service's last derived state, null before it published one.
     readonly property var detail: shell === null || shell.status.values.detail === undefined ? null : shell.status.values.detail
@@ -18,6 +18,9 @@ BarWidget {
     readonly property bool hidden: setting("hideWhenIdle", false) && View.idle(detail)
     readonly property string wardenState: detail === null ? "" : detail.state
     readonly property color tone: Theme.badge.tone[view.tone].foreground
+    readonly property string shortcut: shell !== null && shell.shortcut !== undefined && shell.shortcut.keys !== undefined
+        ? (shell.shortcut.keys.toggle || "")
+        : ""
 
     visible: !hidden
     implicitWidth: hidden ? 0 : item.implicitWidth
@@ -28,7 +31,7 @@ BarWidget {
     // Open or close the flyout under this widget; answers the panel host's
     // reply.
     function toggle() {
-        const reply = shell.surfaces.toggle("panel", "{}", root);
+        const reply = shell.surfaces.toggle("panel", "{}", widget);
         if (reply !== "ok") console.warn("agent-warden: widget panel " + reply);
         return reply;
     }
@@ -37,12 +40,12 @@ BarWidget {
         id: item
         anchors.centerIn: parent
         label: "Agent Warden"
-        iconName: root.view.icon
-        count: root.view.count
-        tone: root.tone
-        onClicked: root.toggle()
-
-        Tooltip { text: root.view.tooltip }
+        iconName: widget.view.icon
+        count: widget.view.count
+        tone: widget.tone
+        tooltip: widget.view.tooltip
+        shortcut: widget.shortcut
+        onClicked: widget.toggle()
     }
 
     SequentialAnimation {

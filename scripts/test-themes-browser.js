@@ -200,7 +200,7 @@ function verify(logic, files) {
 }
 
 // Qt::Key codes, from qnamespace.h.
-const K = { Escape: 0x01000000, Tab: 0x01000001, Backtab: 0x01000002, Return: 0x01000004, Enter: 0x01000005, Home: 0x01000010, End: 0x01000011, Left: 0x01000012, Up: 0x01000013, Right: 0x01000014, Down: 0x01000015, A: 0x41, D: 0x44, I: 0x49, M: 0x4d, S: 0x53, W: 0x57, Q: 0x51, Space: 0x20 };
+const K = { Escape: 0x01000000, Tab: 0x01000001, Backtab: 0x01000002, Return: 0x01000004, Enter: 0x01000005, Home: 0x01000010, End: 0x01000011, Left: 0x01000012, Up: 0x01000013, Right: 0x01000014, Down: 0x01000015, PageUp: 0x01000016, PageDown: 0x01000017, A: 0x41, D: 0x44, I: 0x49, M: 0x4d, S: 0x53, W: 0x57, Q: 0x51, Space: 0x20 };
 
 // Theme keys: [label, key, shift, control, alt, meta, action].
 const THEME_KEYS = [
@@ -211,6 +211,10 @@ const THEME_KEYS = [
     ["Tab switches to the next top tab", K.Tab, false, false, false, false, "tab-next"],
     ["Shift+Tab switches to the previous top tab", K.Tab, true, false, false, false, "tab-previous"],
     ["Backtab switches to the previous top tab", K.Backtab, false, false, false, false, "tab-previous"],
+    ["Ctrl+Tab switches to the next top tab", K.Tab, false, true, false, false, "tab-next"],
+    ["Ctrl+Shift+Tab switches to the previous top tab", K.Tab, true, true, false, false, "tab-previous"],
+    ["Ctrl+PageDown switches to the next top tab", K.PageDown, false, true, false, false, "tab-next"],
+    ["Ctrl+PageUp switches to the previous top tab", K.PageUp, false, true, false, false, "tab-previous"],
     ["Alt+I flips All and Installed", K.I, false, false, true, false, "scope"],
     ["plain I passes to the filter", K.I, false, false, false, false, ""],
     ["a Meta chord passes on", K.I, false, false, true, true, ""]
@@ -238,11 +242,15 @@ const WALLPAPER_KEYS = [
     ["Tab switches to the next top tab", K.Tab, false, false, false, false, false, "tab-next"],
     ["Shift+Tab switches to the previous top tab", K.Tab, true, false, false, false, false, "tab-previous"],
     ["Backtab switches to the previous top tab", K.Backtab, false, false, false, false, true, "tab-previous"],
+    ["Ctrl+Tab switches to the next top tab", K.Tab, false, true, false, false, false, "tab-next"],
+    ["Ctrl+Shift+Tab switches to the previous top tab", K.Tab, true, true, false, false, false, "tab-previous"],
+    ["Ctrl+PageDown switches to the next top tab", K.PageDown, false, true, false, false, false, "tab-next"],
+    ["Ctrl+PageUp switches to the previous top tab", K.PageUp, false, true, false, false, true, "tab-previous"],
     ["Left steps back beside the scope", K.Left, false, false, false, false, true, "back"],
     ["a control chord passes on", K.S, false, true, true, false, true, ""],
     ["a meta chord passes on", K.Return, false, false, false, true, false, ""],
     ["Q passes on", K.Q, false, false, false, false, true, ""],
-    ["Space passes on", K.Space, false, false, false, false, false, ""]
+    ["Space activates", K.Space, false, false, false, false, false, "activate"]
 ];
 
 // The wallpaper view: sources, scopes, cards, the offer card, the keys
@@ -321,7 +329,20 @@ function verifyWallpapers(logic) {
 }
 
 const files = load(path.join(dir, "Files.js"));
-verify(load(file), files);
+const source = fs.readFileSync(file, "utf8");
+const scratchRoot = path.join(__dirname, "..", "tmp");
+fs.mkdirSync(scratchRoot, { recursive: true });
+const temp = fs.mkdtempSync(path.join(scratchRoot, "themes-browser-control-"));
+const keyNavLogic = path.join(__dirname, "..", "shell", "Ui", "foundation", "KeyNavLogic.js");
+function writeLogicCopy(text, name) {
+    const out = path.join(temp, name);
+    fs.writeFileSync(out, text
+        .replace('.import qs.Ui 1.0 as Ui', `.import "${keyNavLogic}" as KeyNavLogic`)
+        .replace(/Ui\.KeyNavLogic/g, "KeyNavLogic"));
+    return out;
+}
+const logicCopy = writeLogicCopy(source, "BrowserLogic.js");
+verify(load(logicCopy), files);
 
 // Each control removes one rule from a copy of the logic and keeps the
 // text around it. The suite must fail on every copy.
@@ -341,10 +362,10 @@ const CONTROLS = [
     ["rail key holds the generation", "return JSON.stringify([generation, key]);", "return JSON.stringify([key]);"],
     ["key holds the preview inputs", "return JSON.stringify([card.name, card.label, card.previewImage, card.palette, card.tokens, card.terminal]);", "return JSON.stringify([card.name, card.label]);"],
     ["partial names the panel", 'if (result.state === "partial") return', 'if (false) return'],
-    ["theme tab switches top tabs", "if (key === KEY.Tab || key === KEY.Backtab) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;", "if (false) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;"],
+    ["shared Ctrl+Tab switches top tabs", "if (key === K.Tab || key === K.PageDown) return shift ? TAB_ACTIONS.previous : TAB_ACTIONS.next;", "if (false) return shift ? TAB_ACTIONS.previous : TAB_ACTIONS.next;"],
+    ["plain Tab switches top tabs", "if (key === K.Tab || key === K.Backtab) return (shift || key === K.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;", "if (false) return (shift || key === K.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;"],
     ["theme toggle uses Alt", "if (alt) return key === KEY.I ? \"scope\" : \"\";", "if (true) return key === KEY.I ? \"scope\" : \"\";"],
-    ["wallpaper control and meta chords pass on", 'if (meta || control) return "";', ""],
-    ["wallpaper tab switches top tabs", "if (key === KEY.Backtab || key === KEY.Tab) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;", "if (false) return (shift || key === KEY.Backtab) ? TAB_ACTIONS.previous : TAB_ACTIONS.next;"],
+    ["wallpaper meta chords pass on", 'function wallpaperAction(key, shift, control, alt, meta, scoped) {\n    if (meta) return "";', 'function wallpaperAction(key, shift, control, alt, meta, scoped) {'],
     ["wallpaper source uses Alt", "if (key === KEY.S) return \"source\";", "if (false) return \"source\";"],
     ["wallpaper scope uses Alt+M", "if (key === KEY.M) return scoped ? \"scope\" : \"\";", "if (false) return scoped ? \"scope\" : \"\";"],
     ["scope needs two screens", "return screenCount >= 2;", "return screenCount >= 1;"],
@@ -358,15 +379,10 @@ const CONTROLS = [
     ["user folder label", "image.theme === null ? USER_FOLDER_LABEL : label(image.theme)", "label(image.theme)"]
 ];
 
-const source = fs.readFileSync(file, "utf8");
-const scratchRoot = path.join(__dirname, "..", "tmp");
-fs.mkdirSync(scratchRoot, { recursive: true });
-const temp = fs.mkdtempSync(path.join(scratchRoot, "themes-browser-control-"));
 try {
     for (const [label, needle, replacement] of CONTROLS) {
         assert.equal(source.split(needle).length, 2, `control "${label}": the text to replace must occur once`);
-        const mutant = path.join(temp, "BrowserLogic.js");
-        fs.writeFileSync(mutant, source.replace(needle, () => replacement));
+        const mutant = writeLogicCopy(source.replace(needle, () => replacement), "BrowserLogic-" + label.replace(/[^A-Za-z0-9]+/g, "-") + ".js");
         let failed = false;
         try {
             verify(load(mutant), files);
@@ -383,7 +399,7 @@ try {
     fs.writeFileSync(filesMutant, filesSource.replace(stampNeedle, () => "return fileUrl(path);"));
     let stampFailed = false;
     try {
-        verify(load(file), load(filesMutant));
+        verify(load(logicCopy), load(filesMutant));
     } catch (e) {
         stampFailed = true;
     }

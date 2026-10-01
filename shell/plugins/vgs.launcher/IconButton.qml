@@ -6,6 +6,8 @@ Item {
     id: button
 
     required property var look
+    property string label: ""
+    property string shortcut: ""
     property bool checked: false
     readonly property bool hovered: mouse.containsMouse
     default property alias content: inner.data
@@ -37,11 +39,17 @@ Item {
         }
     }
 
+    // keyboard-path: the launcher binds Ctrl+B to the categories action this button shows
     MouseArea {
         id: mouse
         anchors.fill: parent
         hoverEnabled: true
         PointerCursor {}
         onClicked: button.clicked()
+    }
+
+    Tooltip {
+        text: button.label
+        shortcut: button.shortcut
     }
 }

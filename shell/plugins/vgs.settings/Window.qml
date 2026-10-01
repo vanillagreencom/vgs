@@ -54,6 +54,7 @@ FocusScope {
     property bool sliding: false
 
     readonly property var current: rowOf(drawn)
+    property Item initialFocus: page === "" ? list.initialFocus : detail.initialFocus
 
     implicitWidth: Math.floor(Math.min(Theme.size.window.width, OverlayState.room(screen).width))
     implicitHeight: screen === null ? Theme.size.panel.maxHeight : Math.floor(Theme.size.window.heightShare * screen.height)
@@ -100,34 +101,34 @@ FocusScope {
             throw new Error("payload plugin must be a plugin id, got " + JSON.stringify(payload.plugin));
         sliding = false;
         notice = "";
-        if (payload.plugin === undefined) showList();
+        if (payload.plugin === undefined) showList(Qt.ShortcutFocusReason);
         else if (rowOf(payload.plugin) === null) {
-            showList();
+            showList(Qt.ShortcutFocusReason);
             notice = "No plugin named " + payload.plugin + "; every plugin is listed below.";
-        } else openPlugin(payload.plugin);
+        } else openPlugin(payload.plugin, Qt.ShortcutFocusReason);
         Qt.callLater(() => { root.sliding = true; });
     }
 
     function close() {}
 
-    function showList() {
+    function showList(reason) {
         page = "";
-        list.focusSearch();
+        list.focusSearch(reason);
     }
 
     // Open the page of plugin `id`; answers `ok` or `unknown: <id>`.
-    function openPlugin(id) {
+    function openPlugin(id, reason) {
         if (rowOf(id) === null) return "unknown: " + id;
         notice = "";
         drawn = id;
         page = id;
-        detail.focusBack();
+        detail.focusBack(reason === undefined ? Qt.TabFocusReason : reason);
         return "ok";
     }
 
     // Pop the plugin page to the list; answers `ok`.
     function back() {
-        showList();
+        showList(Qt.TabFocusReason);
         return "ok";
     }
 

@@ -8,10 +8,12 @@
   "license": "MIT",
   "icon": "bell",
   "kinds": [
-    "service"
+    "service",
+    "panel"
   ],
   "entryPoints": {
-    "service": "Service.qml"
+    "service": "Service.qml",
+    "panel": "Panel.qml"
   },
   "capabilities": [
     "compositor",
@@ -19,6 +21,7 @@
     "layers",
     "notifications",
     "shortcut",
+    "surfaces",
     "status",
     "toasts",
     "tui",
@@ -27,7 +30,8 @@
   "settings": {
     "duration": 8,
     "customEmoji": true,
-    "slackPhotos": false
+    "slackPhotos": false,
+    "placement": "top"
   },
   "schema": {
     "duration": {
@@ -47,6 +51,11 @@
     }
   },
   "status": {
+    "panelRevision": {
+      "type": "count",
+      "label": "Panel revision",
+      "hidden": true
+    },
     "slackTokens": {
       "type": "presenceList",
       "label": "Slack tokens",

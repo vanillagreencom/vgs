@@ -19,11 +19,18 @@ BarWidget {
         return reply;
     }
 
+    function shortcut() {
+        return root.shell !== null && root.shell.shortcut !== undefined && root.shell.shortcut.keys !== undefined
+            ? (root.shell.shortcut.keys.panel || "")
+            : "";
+    }
+
     BarItem {
         id: button
         anchors.centerIn: parent
         iconName: "palette"
         label: "Themes"
+        shortcut: root.shortcut()
         tone: root.bar ? root.bar.foreground : "transparent"
         onClicked: root.toggle()
     }

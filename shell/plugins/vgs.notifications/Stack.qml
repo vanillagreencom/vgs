@@ -1,15 +1,12 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
-import qs.Ui
 import "Appearance.js" as Appearance
 
 // The stack on one screen, the content the service hands its layer: the
-// panel's header, and under it the toasts and the panel's rows, centred at
-// the top of the screen below the space the bar reserves. The layer host
-// builds one per screen and assigns `screen`. Presses reach only the stack
-// while no panel is open; with one open the whole screen takes them, so a
-// press outside the stack closes the panel. It keeps no keyboard. The host
+// toasts, centred at the top of the screen below the space the bar
+// reserves. The layer host builds one per screen and assigns `screen`.
+// Presses reach only the toast cards. It keeps no keyboard. The host
 // destroys a copy a moment after the service that declared it can already
 // be gone, so every binding on the service checks it for null, and the look is
 // the stack's own reading of the same table.
@@ -19,29 +16,8 @@ Item {
     property var screen: null
     required property var service
     readonly property var look: Theme.appearance(Appearance.TOKENS, Appearance.LIGHT)
-    // The one column every card's text and the header's title start on, so
-    // they line up: the clearing inset of the tallest card the stack draws,
-    // with its text `pad` from the top. The inset grows with the card's
-    // height, so the tallest card's clears every shorter card too.
-    readonly property real textColumn: Math.ceil(Inset.clearing(look.card.pad, look.radius.full, look.card.width, look.card.maxHeight, look.radius.clearance, look.card.pad))
-    readonly property bool panelOpen: service !== null && service.panelOpen
-    readonly property bool panelClosing: service !== null && service.panelClosing
-    readonly property bool inputAll: panelOpen
+    readonly property bool inputAll: false
     readonly property var inputItems: [column]
-
-    // One animation step on the look's motion, in the shape ListAnimation
-    // takes: a duration token and a curve token.
-    function motionStep(duration, curve) {
-        return { duration: duration, easing: Easing.BezierSpline, curve: [curve.x1, curve.y1, curve.x2, curve.y2, 1, 1] };
-    }
-
-    // pointer-cursor-exempt: a press here is a click away from the open panel, not a control
-    MouseArea {
-        anchors.fill: parent
-        enabled: stack.panelOpen
-        acceptedButtons: Qt.AllButtons
-        onPressed: stack.service.closePanel()
-    }
 
     ColumnLayout {
         id: column
@@ -52,67 +28,22 @@ Item {
         // close up smoothly when one goes.
         spacing: 0
 
-        InboxHeader {
-            id: header
+        CardScroll {
+            id: scroll
             look: stack.look
-            host: stack
-            textColumn: stack.textColumn
-            shown: stack.panelOpen
+            maxHeight: stack.height - column.y - stack.look.stack.bottom
+            scrollObjectName: "notificationScrollBar"
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: implicitWidth
-            // Keeps its height until the closing rows are gone, then folds.
-            property real room: stack.panelOpen || stack.panelClosing ? 1 : 0
-            Behavior on room { Anim { duration: stack.look.motion.duration.medium2; curve: stack.look.motion.curve.standard } }
-            Layout.preferredHeight: implicitHeight * room
-            Layout.bottomMargin: stack.look.header.gap * room
-        }
+            Layout.preferredHeight: implicitHeight
 
-        // The stack scrolls once it outgrows the screen, as a full panel does.
-        Flickable {
-            id: view
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: cards.implicitWidth + stack.look.stack.pad * 2
-            Layout.preferredHeight: Math.min(cards.implicitHeight + stack.look.stack.tail, stack.height - column.y - header.height - stack.look.stack.bottom)
-            contentWidth: width
-            contentHeight: cards.implicitHeight + stack.look.stack.tail
-            boundsBehavior: Flickable.StopAtBounds
-            interactive: contentHeight > height
-            clip: true
-
-            ColumnLayout {
-                id: cards
-                x: stack.look.stack.pad
-                spacing: 0
-
-                Repeater {
-                    model: stack.service !== null ? stack.service.rows : null
-                    CardSlot {
-                        host: stack
-                        look: stack.look
-                        textColumn: stack.textColumn
-                    }
+            Repeater {
+                model: stack.service !== null ? stack.service.rows : null
+                CardSlot {
+                    host: stack
+                    look: stack.look
+                    textColumn: scroll.textColumn
                 }
-            }
-
-            // A slim bar in the side room while the stack overflows, thin
-            // at rest and wide under the pointer; it drags the stack.
-            SlimScrollBar {
-                id: scrollbar
-                objectName: "notificationScrollBar"
-                parent: view
-                flickable: view
-                x: cards.x + cards.width + stack.look.scrollbar.gap
-                width: stack.look.scrollbar.width
-                thin: stack.look.scrollbar.thin
-                wide: stack.look.scrollbar.wide
-                minLength: stack.look.scrollbar.minHeight
-                color: stack.look.text.foreground
-                radius: stack.look.radius.full
-                idleOpacity: stack.look.scrollbar.idle
-                movingOpacity: stack.look.scrollbar.moving
-                activeOpacity: stack.look.scrollbar.active
-                widthStep: stack.motionStep(stack.look.motion.duration.short4, stack.look.motion.curve.standard)
-                opacityStep: stack.motionStep(stack.look.motion.duration.medium2, stack.look.motion.curve.standard)
             }
         }
     }

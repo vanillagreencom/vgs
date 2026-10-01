@@ -3,20 +3,23 @@ import qs.Commons
 
 // The panel's header over the stack while the Inbox or the History is open:
 // its title and subtitle, the Silence switch, Mark read (Inbox) or Clear
-// history (History), and the switch between the two. It reads and drives
-// the service through the stack; it holds no state of its own.
+// history (History), and the switch between the two. Its caller supplies
+// state and handles each request.
 Item {
     id: header
 
     required property var look
-    required property var host
-    // Null once the service or the stack is gone, while the host destroys
-    // this copy; every binding on it checks for that.
-    readonly property var service: host ? host.service : null
+    property string mode: "inbox"
+    property string subtitle: ""
+    property bool silenced: false
     property bool shown: false
-    readonly property bool history: service !== null && service.panelMode === "history"
+    readonly property bool history: mode === "history"
     // The stack's text column, which the cards' text starts on.
     required property real textColumn
+    signal silenceRequested(bool on)
+    signal clearRequested()
+    signal markReadRequested()
+    signal modeRequested(string mode)
     // The title starts on the cards' column, and never under the header's
     // own rounded end: the controls inset is the square-corner floor.
     readonly property real titleInset: Math.max(textColumn, Math.ceil(Inset.clearing(look.header.controlsInset, look.radius.full, width, height, look.radius.clearance, titles.y)))
@@ -55,7 +58,7 @@ Item {
             objectName: "notificationHeaderSubtitleText"
             textFormat: Text.PlainText
             visible: text.length > 0
-            text: header.service !== null ? header.service.panelSubtitle : ""
+            text: header.subtitle
             color: header.look.text.foreground
             opacity: header.look.text.subtitle.opacity
             font.family: header.look.font.family
@@ -83,9 +86,11 @@ Item {
             }
             Toggle {
                 anchors.verticalCenter: parent.verticalCenter
+                height: header.look.toggle.hitHeight
                 look: header.look
-                checked: header.service !== null && header.service.silenced
-                onToggled: checked => header.service.setSilence(checked)
+                checked: header.silenced
+                text: "Silence"
+                onClicked: header.silenceRequested(!header.silenced)
             }
         }
 
@@ -93,7 +98,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             look: header.look
             text: header.history ? "Clear history" : "Mark read"
-            onClicked: header.history ? header.service.clearHistoryPanel() : header.service.markRead()
+            onClicked: header.history ? header.clearRequested() : header.markReadRequested()
         }
 
         PillButton {
@@ -101,7 +106,7 @@ Item {
             look: header.look
             text: header.history ? "Unread" : "History"
             emphasized: header.history
-            onClicked: header.service.openPanel(header.history ? "inbox" : "history")
+            onClicked: header.modeRequested(header.history ? "inbox" : "history")
         }
     }
 }

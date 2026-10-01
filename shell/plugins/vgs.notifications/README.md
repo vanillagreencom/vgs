@@ -17,7 +17,7 @@ Screenshots made with `scripts/readme-shots.sh` in the nested sandbox, with the 
 | Shortcut | The service registers `vgs.notifications:inbox`, and the manifest binds it to `SUPER+N` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, edit it under Keys on the plugin's Settings page, or give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.notifications", "keys": { "inbox": "SUPER+SHIFT+N" } }`; `null` in place of the key unbinds it. |
 | IPC | `vgsh ipc call vgs.notifications invoke <name> <arg>`, names below. |
 
-While a panel is open the toasts stay and do not expire, a press outside the stack closes it, and the header holds Silence, Mark read (the Inbox) or Clear history (the History), and the switch between the two. Mark read marks everything so far read and closes the panel; Clear history removes the kept notifications and leaves the panel open. The panel takes no keyboard.
+The panel opens on the list. While it has the keyboard, the toasts stay and do not expire. The toast layer hides while the panel is open, and the panel closes when the keyboard moves to another window. Escape closes it through the summoned-panel host. Tab reaches the header controls. The list is one tab stop: arrows, Home, End, PageUp and PageDown move the selected card; Enter opens it; Delete dismisses it; Left and Right move through the selected card's action pills, and Enter or Space presses the selected pill. Mark read marks everything so far read and closes the panel; Clear history removes the kept notifications and leaves the panel open.
 
 | IPC name | Argument | Reply |
 |---|---|---|
@@ -77,7 +77,7 @@ The glass, the edge light, the pills and the switch are the plugin's own files, 
 
 Where a card's text and media sit, and how the media slot's tier is chosen: [notification-layout.md](../../../docs/architecture/notification-layout.md).
 
-The stack draws on the core's passive layer, `vgs:layer` ([docs/architecture/layers.md](../../../docs/architecture/layers.md)). Hyprland blurs what is behind the glass only when a layer rule asks it to. The manifest declares that rule, and the Hyprland layer writes it as:
+The toast stack draws on the core's passive layer, `vgs:layer` ([docs/architecture/layers.md](../../../docs/architecture/layers.md)). The Inbox and History draw as the plugin's summoned `panel`, because the passive layer does not take keyboard focus. Hyprland blurs what is behind the glass only when a layer rule asks it to. The manifest declares that rule, and the Hyprland layer writes it as:
 
 ```lua
 hl.layer_rule({ name = "vgs.notifications:layer", match = { namespace = "^vgs:layer$" }, blur = true, ignore_alpha = 0.6 })

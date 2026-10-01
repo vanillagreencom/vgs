@@ -14,11 +14,14 @@ import "UpdatesLogic.js" as Logic
 // each source's count and when the last check ran. It is one BarItem, the
 // count drawn beside the icon in the icon's tone.
 BarWidget {
-    id: root
+    id: widget
 
     readonly property var values: shell === null ? ({}) : shell.status.values
     readonly property var view: Logic.widgetView(values, setting("hideWhenCurrent", false))
     readonly property string tooltip: Logic.widgetTooltip(values, Time.now.getTime(), formatWhen)
+    readonly property string shortcut: shell !== null && shell.shortcut !== undefined && shell.shortcut.keys !== undefined
+        ? (shell.shortcut.keys.toggle || "")
+        : ""
 
     visible: !view.hidden
     implicitWidth: button.implicitWidth
@@ -43,7 +46,7 @@ BarWidget {
     // Open or close the flyout under this widget; answers the panel host's
     // reply.
     function toggle() {
-        const reply = shell.surfaces.toggle("panel", "{}", root);
+        const reply = shell.surfaces.toggle("panel", "{}", widget);
         if (reply !== "ok") console.warn("updates widget: panel " + reply);
         return reply;
     }
@@ -61,17 +64,19 @@ BarWidget {
         id: button
         anchors.centerIn: parent
         label: "Updates"
-        iconName: root.view.icon
-        spinning: root.view.spinning
-        count: root.view.badge
-        tone: root.toneColor(root.view.tone)
-        onClicked: root.toggle()
+        iconName: widget.view.icon
+        spinning: widget.view.spinning
+        count: widget.view.badge
+        tone: widget.toneColor(widget.view.tone)
+        tooltip: widget.tooltip
+        shortcut: widget.shortcut
+        onClicked: widget.toggle()
 
+        // keyboard-path: the flyout's Update everything button runs the same TUI as the middle click
         // pointer-cursor-exempt: it adds the middle click to the Button it sits in, whose own PointerCursor shows the hand
         TapHandler {
             acceptedButtons: Qt.MiddleButton
-            onTapped: root.updateAll()
+            onTapped: widget.updateAll()
         }
-        Tooltip { text: root.tooltip }
     }
 }

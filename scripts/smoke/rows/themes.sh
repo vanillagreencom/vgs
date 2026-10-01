@@ -280,8 +280,10 @@ click_row() {
   local _
   for _ in $(seq 1 25); do
     [[ $(ipc smoke itemGeometry panel vgs.themes ListItem "$1") != absent ]] && break
+    ipc smoke revealText panel vgs.themes ListItem "$1" >/dev/null || true
     sleep 0.2
   done
+  ipc smoke revealText panel vgs.themes ListItem "$1" >/dev/null || true
   click_item panel vgs.themes ListItem "$1"
 }
 # Whether the panel draws a label reading TEXT: True or False.
@@ -312,6 +314,8 @@ expect "vgsh plugin enable places the themes widget" ok "${shell_env[@]}" "$repo
 expect_poll "the themes widget lands in its default section" right layout_section_of vgs.themes
 themes_key="$(bar_key)"
 expect_poll "the themes widget is built on the bar" '"vgs.themes"' ipc smoke readInstance "$themes_key" vgs.themes moduleName
+themes_panel_bind() { hypr -j binds | py_reply 'import json,sys; print(json.dumps([[b["modmask"], b["key"]] for b in json.load(sys.stdin) if b["description"] == "vgs.themes:panel" and b.get("submap", "") in ("", "default")]))'; }
+expect_poll "the nested instance binds SUPER+CTRL+J to the themes panel" '[[68, "J"]]' themes_panel_bind
 # Every vgs.themes instance a rescan rebuilds with the panel closed: the
 # background and the placed widget on every screen, and the service.
 themes_instances=$((2 * monitors + 1))
@@ -322,6 +326,7 @@ if [[ "$(lent tui.launcher)" == '"missing"' ]]; then
   expect "a setup theme-add open answers launcher-missing" "refused: tui=core/theme-add reason=launcher-missing" ipc shell openTui core/theme-add
 fi
 expect_poll "the themes TUI launcher is present" '"present"' lent tui.launcher
+
 
 # Install browser theming, D061: the service publishes what `vgsh theme
 # setup` says of the Chromium-family writer. The sandbox tree ships no
@@ -426,6 +431,23 @@ esac
 unlink -- "${shim:?}/chromium"
 rm -r -- "${repo:?}/themes/targets/chromium"
 settings_page_close vgs.themes
+
+# ---- vgs.themes panel keyboard-only path ----------------------------------
+expect "the themes panel opens from its global shortcut" ok hypr dispatch 'hl.dsp.global("vgs.themes:panel")'
+expect_poll "the shortcut opens the themes panel" open panel_open
+expect_poll "the panel list takes the keyboard" true ipc smoke activeFocusIn panel vgs.themes
+expect_poll "the panel starts on the displayed row" '"installed:shipped/vgs"' ipc smoke readInstance panel vgs.themes currentKey
+type_keys -k Up || fail "sending Up in the themes panel failed"
+expect_poll "Up moves the theme panel cursor to smoke" '"installed:installed/smoke"' ipc smoke readInstance panel vgs.themes currentKey
+expect_poll "the displayed badge stays on vgs while the cursor moves" '[["vgs", "shipped", "Displayed"]]' theme_row vgs
+type_keys -k Space || fail "sending Space on the selected theme row failed"
+expect_poll "Space applies the selected theme row" '"smoke"' lent theme.last.result.theme
+expect_poll "the shell displays the keyboard-applied theme" smoke ipc smoke themeName
+type_keys -k Escape || fail "closing the themes panel from the keyboard failed"
+expect_poll "Escape closes the keyboard-opened themes panel" closed panel_open
+expect "the keyboard-applied theme ends" idle theme_idle
+expect "the fixture applies vgs after the panel keyboard path" "ok theme=vgs state=applied shell=applied" "${shell_env[@]}" "$repo/bin/vgsh" theme apply vgs
+expect "the vgs apply after the panel keyboard path ends" idle theme_idle
 
 cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real"
 catalog_installed="$sandbox/catalog-smoke-installed"
@@ -563,8 +585,22 @@ else
 fi
 
 scroll_themes 10000
-click_button "Download wallpapers" || fail "the click on the catalog wallpaper button failed"
-expect_poll "the catalog wallpaper download shows the browser progress text" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke
+click_button "Download wallpapers" || fail "the click on the catalog Download wallpapers button failed"
+expect_poll "the clicked catalog wallpaper download shows the browser progress text" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Download wallpapers"]]' theme_row catalog-smoke
+touch -- "$catalog_wallpapers_gate"
+expect "the clicked catalog Download wallpapers button reaches the theme capability" installed wait_catalog_wallpapers
+expect_poll "the clicked catalog wallpaper download removes the download action" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed"]]' theme_row catalog-smoke
+rm -f -- "$catalog_wallpapers" "$catalog_wallpapers_gate"
+click_outside || fail "the click closing the themes panel after clicked wallpaper download failed"
+expect_poll "the themes panel closes after clicked wallpaper download" closed panel_open
+click_centre "$themes_key" vgs.themes || fail "the click reopening the themes panel after clicked wallpaper download failed"
+expect_poll "the themes panel reopens after removing the clicked wallpaper fixture" open panel_open
+expect_poll "the catalog wallpaper row offers Download wallpapers again" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Download wallpapers"]]' theme_row catalog-smoke
+scroll_themes 10000
+type_keys "catalog-smoke" || fail "typing to the catalog wallpaper row failed"
+expect_poll "type-ahead selects the catalog wallpaper row" '"catalog:catalog-smoke"' ipc smoke readInstance panel vgs.themes currentKey
+type_keys -M alt -k d -m alt || fail "sending Alt+D on the catalog wallpaper row failed"
+expect_poll "the catalog wallpaper download shows the browser progress text" '[["catalog-smoke", "dark, wallpapers 13 MB", "Installed", "Downloading 3 of 13 MB", "Alt", "D", "Download wallpapers"]]' theme_row catalog-smoke
 click_outside || fail "the click closing the themes panel during wallpaper download failed"
 expect_poll "the themes panel closes during wallpaper download" closed panel_open
 click_centre "$themes_key" vgs.themes || fail "the click reopening the themes panel during wallpaper download failed"

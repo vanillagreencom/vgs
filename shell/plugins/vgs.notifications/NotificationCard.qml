@@ -22,6 +22,7 @@ Item {
     property string app: ""
     property string appIcon: ""
     property string summary: ""
+    readonly property string text: summary
     property string body: ""
     property string image: ""
     property string desktopEntry: ""
@@ -47,6 +48,7 @@ Item {
     // [{ id, label }] shown as pills at the right edge while `showActions`.
     property var actions: []
     property bool showActions: false
+    property int actionIndex: -1
     readonly property bool hovered: hoverTracker.hovered
     readonly property real radius: look.radius.full
     signal actionTriggered(string id)
@@ -112,6 +114,7 @@ Item {
 
     HoverHandler { id: hoverTracker }
 
+    // keyboard-path: the inbox panel's KeyNav selects this card, Enter opens it and Delete dismisses it; toasts take no keyboard
     MouseArea {
         anchors.fill: parent
         PointerCursor {}
@@ -288,9 +291,12 @@ Item {
                 model: card.actions
                 PillButton {
                     required property var modelData
+                    required property int index
                     look: card.look
                     text: modelData.label
                     emphasized: modelData.id !== "dismiss"
+                    focusPreview: card.showActions && card.actionIndex === index
+                    tabFocusable: false
                     onClicked: card.actionTriggered(modelData.id)
                 }
             }

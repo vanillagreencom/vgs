@@ -68,13 +68,16 @@
 # which read 12 to 15 ms.
 # VGSH_SMOKE_EMOJI_TOAST_BUDGET_MS: ceiling on the time from the notify
 # call for a Slack card with six custom emoji to its body naming the
-# images on every screen, and VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS on the time
-# from the history call to forty such cards naming theirs
-# (rows/notifications.sh), each counted by the probe and polled back to
-# back, one reading per IPC round trip of about 22 ms. The defaults are
-# twice the highest reading of 14 runs of that row in the nested sandbox on
-# the same machine on 2026-09-30, at load average 4 to 8, one toast and one
-# inbox reading a run: 43 to 50 ms and 79 to 95 ms.
+# images on every screen. VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS is the time
+# from the history call to forty summoned-panel rows naming their emoji
+# images on the visible cards (rows/notifications.sh), counted by a probe
+# readback and polled back to back. Each polling turn pays about 22 ms of
+# smoke IPC round-trip cost. The toast default is twice the highest reading
+# of 14 runs of that row in the nested sandbox on the owner's machine on
+# 2026-09-30, at load average 4 to 8, one toast and one inbox reading a
+# run: toast 43 to 50 ms, inbox 79 to 95 ms. The inbox default is twice the
+# highest reading of the summoned-panel image-count reader on the same
+# machine on 2026-10-01, at load average 5.58 to 8.80: 651 to 688 ms.
 set -euo pipefail
 
 timeout_s=60
@@ -108,7 +111,7 @@ first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-620}"
 default_first_bar_budget_ms="${VGSH_SMOKE_DEFAULT_FIRST_BAR_BUDGET_MS:-542}"
 reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"
 emoji_toast_budget_ms="${VGSH_SMOKE_EMOJI_TOAST_BUDGET_MS:-100}"
-emoji_inbox_budget_ms="${VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS:-190}"
+emoji_inbox_budget_ms="${VGSH_SMOKE_EMOJI_INBOX_BUDGET_MS:-1376}"
 
 # The measurement mode. Each run sources the harness in its own subshell,
 # so its teardown runs when the subshell exits, and the harness's output

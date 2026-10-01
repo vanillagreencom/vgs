@@ -71,7 +71,9 @@ hover "$((mon_w / 2))" "$((mon_h / 2))" || fail "moving the pointer away failed"
 # A menu takes the arrow keys and Enter, and Escape closes it.
 expect "the widget opens its menu" ok ovw openMenu
 expect_poll "the menu is open" true ovr menuOpen
-type_keys -k Down -k Down -k Return || fail "sending keys to the menu failed"
+type_keys -k Down -k Return || fail "sending keys to the menu failed"
+# A menu opens with its first reachable entry highlighted, so one Down key
+# reaches the second entry.
 expect_poll "the keys trigger the second entry" 1 ovr triggered
 expect_poll "a triggered entry closes the menu" false ovr menuOpen
 expect "the widget opens its menu again" ok ovw openMenu

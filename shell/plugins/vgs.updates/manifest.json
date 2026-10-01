@@ -9,7 +9,7 @@
   "icon": "refresh-cw",
   "kinds": ["service", "bar-widget", "panel"],
   "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml", "panel": "Panel.qml" },
-  "capabilities": ["ipc", "status", "surfaces", "tui"],
+  "capabilities": ["ipc", "shortcut", "status", "surfaces", "tui"],
   "defaultSection": "right",
   "requirements": [
     { "command": "checkupdates", "packages": { "pacman": "pacman-contrib" }, "optional": true, "purpose": "Counts Arch repository updates without root" },
@@ -48,6 +48,11 @@
     "snapshot": { "type": "enum", "label": "Snapshot", "description": "Automatic snapshots when the update TUI can find a snapshot tool", "options": ["auto", "off"], "group": "Update TUI" },
     "trustPluginUpdates": { "type": "boolean", "label": "Trust plugin updates", "description": "Let the update TUI pass --yes to plugin and theme updates, so it shows their diffs without asking", "group": "Update TUI" },
     "placement": { "type": "enum", "label": "Flyout placement", "description": "Where the updates flyout opens when summoned without its bar icon", "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"], "group": "Display" }
+  },
+  "hyprland": {
+    "binds": [
+      { "shortcut": "toggle", "key": "SUPER+CTRL+U" }
+    ]
   },
   "status": {
     "pending": { "type": "count", "label": "Updates waiting" },

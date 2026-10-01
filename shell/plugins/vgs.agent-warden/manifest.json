@@ -21,6 +21,7 @@
     "ipc",
     "requirements",
     "run",
+    "shortcut",
     "status",
     "surfaces",
     "toasts",
@@ -104,6 +105,11 @@
       "type": "data",
       "label": "Detail"
     }
+  },
+  "hyprland": {
+    "binds": [
+      { "shortcut": "toggle", "key": "SUPER+CTRL+Y" }
+    ]
   },
   "tui": {
     "vsys": {

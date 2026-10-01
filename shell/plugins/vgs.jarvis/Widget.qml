@@ -41,10 +41,7 @@ BarWidget {
         label: "Jarvis"
         iconName: root.view.icon
         tone: root.toneColor(root.view.tone)
+        tooltip: root.view.tooltip
         onClicked: root.toggleMute()
-        Keys.onReturnPressed: root.toggleMute()
-        Keys.onEnterPressed: root.toggleMute()
-
-        Tooltip { text: root.view.tooltip }
     }
 }

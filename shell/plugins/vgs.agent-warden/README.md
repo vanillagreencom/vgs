@@ -31,7 +31,7 @@ The bar widget draws one shield in the tone of the service's state, with the Luc
 | `not-set-up` | `shield-question-mark` | neutral | none | Agent Warden isn't set up |
 | `update-warden` | `shield-alert` | warning | none | Agent Warden needs an update |
 
-A count of zero is not drawn. A click opens or closes the panel under the shield.
+A count of zero is not drawn. A click opens or closes the panel under the shield. The global shortcut `vgs.agent-warden:toggle`, bound to `SUPER+CTRL+Y` by default, opens the same panel at the plugin's placement. VGS does not use `SUPER+CTRL+A` because Omarchy binds that key to Audio.
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -41,7 +41,7 @@ A count of zero is not drawn. A click opens or closes the panel under the shield
 
 ## The panel
 
-The panel shows the heading Agents, one sentence for the state, at most three items, most serious first, and the agent group's memory against its slowdown point. The meter is hidden when the warden did not report the memory or a limit. No text names a process id or a scope unit, because the published `detail` holds neither. A footer shows the time of the last check and Open vsys, which opens the `vsys` TUI: the vsys dashboard in a wide floating terminal. While vsys is missing, the link is Get vsys.
+The panel shows the heading Agents, one sentence for the state, at most three items, most serious first, and the agent group's memory against its slowdown point. It opens with keyboard focus on its primary button when one is shown. The meter is hidden when the warden did not report the memory or a limit. No text names a process id or a scope unit, because the published `detail` holds neither. A footer shows the time of the last check and Open vsys, which opens the `vsys` TUI: the vsys dashboard in a wide floating terminal. While vsys is missing, the link is Get vsys.
 
 When vsys is installed, each open runs `vsys --once --summary` once, and the panel shows vsys's verdict on the whole computer as one line: nothing wrong, the number of things worth a look, or the number of problems. It reads only the verdict's levels ([vsys verdict.md § Summary JSON](https://github.com/vanillagreencom/vsys/blob/main/docs/architecture/verdict.md#summary-json)) and never shows a verdict's subject. A run that fails, or a summary of another schema, is logged as `agent-warden: summary=...` and shows no line.
 

@@ -16,7 +16,16 @@ print(json.dumps(v))' "$1"; }
 read_notes() { ipc smoke readInstance service vgs.notifications "$1"; }
 # The rows the service holds, as [summary, origin, leaving] triples, newest first.
 note_rows() { ipc smoke modelRows vgs.notifications rows summary,origin,leaving | py_reply 'import json,sys; print(json.dumps([r for r in json.load(sys.stdin) if r[2] == ""]))'; }
-row_summaries() { note_rows | py_reply 'import json,sys; print(json.dumps([r[0] for r in json.load(sys.stdin) if r[1] == sys.argv[1]]))' "$1"; }
+panel_rows() { ipc smoke readInstance panel vgs.notifications rows; }
+row_summaries() {
+  if [[ $1 == panel ]]; then
+    local raw
+    raw="$(panel_rows)" || return
+    if [[ $raw == absent ]]; then echo '[]'; else python3 -c 'import json,sys; print(json.dumps([r["summary"] for r in json.loads(sys.argv[1])]));' "$raw"; fi
+  else
+    note_rows | py_reply 'import json,sys; print(json.dumps([r[0] for r in json.load(sys.stdin) if r[1] == sys.argv[1]]))' "$1"
+  fi
+}
 # The store writes its state file whole through FileView's atomicWrites, a
 # temporary file renamed over it, so a file that exists is complete.
 # note_state_py PROGRAM [ARG...]: python3 -c PROGRAM with the file's path
@@ -178,12 +187,46 @@ clock_of() { read_notes clocks | py_reply 'import json,sys; c=json.load(sys.stdi
 # rest_on_card SUMMARY: the pointer left on the centre of the card
 # SUMMARY once the card reports it, through point_item.
 rest_on_card() { point_item vgs:layer vgs.notifications NotificationCard summary "$1" >/dev/null; }
-# click_pill TEXT: one click_item on the shown pill TEXT in the layer.
-click_pill() { click_item vgs:layer vgs.notifications PillButton text "$1"; }
+# click_pill TEXT: one click_item on the shown pill TEXT in the panel or layer.
+click_pill() {
+  if [[ $(ipc smoke readInstance panel vgs.notifications rows) != absent ]]; then
+    click_panel_item PillButton "$1"
+  else
+    click_item vgs:layer vgs.notifications PillButton text "$1"
+  fi
+}
+panel_point() { # RECT DX DY
+  local layer
+  layer="$(surface_box vgs:panel)" || return 1
+  python3 -c 'import json,sys; l=json.loads(sys.argv[1]); r=json.loads(sys.argv[2]); dx,dy=sys.argv[3:]; print(int(l[0] + r[0] + (r[2] / 2 if dx == "-" else float(dx))), int(l[1] + r[1] + (r[3] / 2 if dy == "-" else float(dy))))' "$layer" "$1" "$2" "$3"
+}
+click_panel_item() { # TYPE TEXT
+  local rect x y
+  rect="$(ipc smoke itemGeometry panel vgs.notifications "$1" "$2")" || return 1
+  [[ $rect == \[* ]] || return 1
+  read -r x y < <(panel_point "$rect" - -) || return 1
+  hover "$((x + 1))" "$y" || return 1
+  click "$x" "$y"
+}
 shown_pills() { ipc smoke layerItems vgs.notifications CardSlot summary,actions | py_reply 'import json,sys; print(json.dumps(next(([a["label"] for a in v["actions"]] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None)))' "$1"; }
 has_row() { row_summaries "$1" | py_reply 'import json,sys; print(sys.argv[1] in json.load(sys.stdin))' "$2"; }
 in_history() { history_summaries | py_reply 'import json,sys; print(sys.argv[1] in json.load(sys.stdin))' "$1"; }
-panel_count() { row_summaries panel | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
+panel_count() { ipc smoke readInstance panel vgs.notifications rowCount; }
+panel_subtitle() { ipc smoke readInstance panel vgs.notifications subtitle; }
+panel_key_of() { panel_rows | py_reply 'import json,sys; t=sys.stdin.read().strip(); print(next((r["key"] for r in ([] if t == "absent" else json.loads(t)) if r["summary"] == sys.argv[1]), "none"))' "$1"; }
+panel_selected_key() { ipc smoke readInstance panel vgs.notifications selectedKey; }
+panel_selected_summary() {
+  local key rows
+  key="$(panel_selected_key)" || return
+  rows="$(panel_rows)" || return
+  python3 -c 'import json,sys
+key = json.loads(sys.argv[1])
+rows = [] if sys.argv[2] == "absent" else json.loads(sys.argv[2])
+print(next((row["summary"] for row in rows if row["key"] == key), "none"))' "$key" "$rows"
+}
+panel_focused_summary() { ipc smoke focused panel vgs.notifications | py_reply 'import json,sys; t=sys.stdin.read().strip(); print(t if not t.startswith("[") else json.dumps([json.loads(t)[1], json.loads(t)[2], json.loads(t)[3], json.loads(t)[4]]))'; }
+panel_focus_on_list() { ipc smoke activeFocusIn panel vgs.notifications | py_reply 'import sys; print("True" if sys.stdin.read().strip() == "true" else "False")'; }
+panel_focus_name() { ipc smoke focused panel vgs.notifications | py_reply 'import json,sys; row=json.load(sys.stdin); print(row[1] if isinstance(row, list) and len(row) > 1 else row)'; }
 clock_state() { clock_of "$(key_of "$1")" | cut -d' ' -f1; }
 test_file() { if [[ -f $1 ]]; then echo True; else echo False; fi; }
 # wait_for LABEL WANT SECONDS CMD...: expect_poll with its own bound, for a
@@ -406,8 +449,19 @@ focus_other() {
 # a click there. act_on LABEL SUMMARY PILL: the same on the card's pill
 # PILL, once the hover shows the sender's actions.
 open_card() { # LABEL SUMMARY
-  local at x y
-  at="$(point_item vgs:layer vgs.notifications NotificationCard summary "$2" 30 -)" || { fail "$1: the pointer never rested on the card $2"; return; }
+  local at x y panel_state
+  panel_state="$(ipc smoke readInstance panel vgs.notifications rows)" || panel_state=absent
+  if [[ $panel_state != absent ]]; then
+    click_panel_item NotificationCard "$2" || fail "$1: the click failed"
+    return
+  elif [[ $(has_row live "$2") == True ]]; then
+    at="$(point_item vgs:layer vgs.notifications NotificationCard summary "$2" 30 -)" || { fail "$1: the pointer never rested on the card $2"; return; }
+  else
+    notes inbox >/dev/null || { fail "$1: reopening the panel failed"; return; }
+    expect_poll "$1: the panel row is present after reopen" True has_row panel "$2"
+    click_panel_item NotificationCard "$2" || fail "$1: the click failed"
+    return
+  fi
   read -r x y <<<"$at"
   expect "$1: the pointer on the card leaves the focus where it was" "$other_focused" active_window
   click "$x" "$y" || fail "$1: the click failed"
@@ -517,7 +571,13 @@ expect_poll "the stored entry points at its copy" "\"file://$note_images/$pictur
 expected_errors+=('MediaSlot\.qml.*Cannot open: file://.*/missing\.png')
 notify smoke-chat 0 "Unpictured" "" '[]' "{\"image-path\": <\"$home/missing.png\">}" 0 >/dev/null
 expect_poll "a toast whose image file is missing shows" True has_row live "Unpictured"
-shows_slot() { ipc smoke layerItems vgs.notifications NotificationCard summary,showsSlot | py_reply 'import json,sys; print(next((v["showsSlot"] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None))' "$1"; }
+shows_slot() {
+  if [[ $(ipc smoke readInstance panel vgs.notifications rows) != absent ]]; then
+    panel_rows | py_reply 'import json,sys; t=sys.stdin.read().strip(); print(next((str(bool(r.get("image"))).lower().title() for r in ([] if t == "absent" else json.loads(t)) if r["summary"] == sys.argv[1]), None))' "$1"
+  else
+    ipc smoke layerItems vgs.notifications NotificationCard summary,showsSlot | py_reply 'import json,sys; print(next((v["showsSlot"] for s, r, v in json.load(sys.stdin) if v["summary"] == sys.argv[1]), None))' "$1"
+  fi
+}
 expect_poll "the card with a missing image draws no image" False shows_slot Unpictured
 expect_poll "the card with its image draws it" True shows_slot Pictured
 unpictured_key="$(key_of Unpictured)"
@@ -656,24 +716,23 @@ note_card_reading() { # LABEL SUMMARY
 # top=<px> height=<px> control=<px> centre=<px>`: the titles' inset and top
 # in the header, and the pill's inset from the right end and its centre.
 header_space() {
-  local headers texts pills
-  headers="$(ipc smoke layerItems vgs.notifications InboxHeader titleInset)" || return
-  texts="$(ipc smoke layerItems vgs.notifications QQuickText text,visible,objectName)" || return
-  pills="$(ipc smoke layerItems vgs.notifications PillButton text,visible)" || return
-  python3 -c 'import json,sys
-headers, texts, pills = json.loads(sys.argv[1]), json.loads(sys.argv[2]), json.loads(sys.argv[3])
-header = next(((s, r, v) for s, r, v in headers if r[3] > 0), None)
+  ipc smoke descendantGeometry panel vgs.notifications | py_reply 'import json,sys
+t = sys.stdin.read().strip()
+if not t.startswith("["):
+    print(t); sys.exit()
+rows = json.loads(t)
+header = next((r for r in rows if r["type"] == "InboxHeader" and r["box"][3] > 0), None)
 if header is None: print("absent"); sys.exit()
-screen, (x, y, w, h), values = header
-lines = [r for s, r, v in texts if s == screen and v["visible"] and v["objectName"] in ("notificationHeaderTitleText", "notificationHeaderSubtitleText") and x <= r[0] < x + w and y <= r[1] < y + h]
-buttons = [(r, v["text"]) for s, r, v in pills if s == screen and v["visible"] and v["text"] in ("Mark read", "History", "Clear history", "Unread") and x <= r[0] < x + w and y <= r[1] < y + h]
+x, y, w, h = header["box"]
+lines = [r["box"] for r in rows if r["type"] == "QQuickText" and r.get("text") in ("Notifications", "History") and x <= r["box"][0] < x + w and y <= r["box"][1] < y + h]
+buttons = [(r["box"], r.get("text")) for r in rows if r["type"] == "PillButton" and r.get("text") in ("Mark read", "History", "Clear history", "Unread") and x <= r["box"][0] < x + w and y <= r["box"][1] < y + h]
 if not lines or not buttons: print("incomplete"); sys.exit()
 left = min(r[0] for r in lines) - x
 top = min(r[1] for r in lines) - y
 right_button = max(buttons, key=lambda item: item[0][0] + item[0][2])[0]
 control = x + w - (right_button[0] + right_button[2])
 centre = control + right_button[3] / 2
-print("left=%d top=%d height=%d control=%d centre=%.1f" % (left, top, h, control, centre))' "$headers" "$texts" "$pills"
+print("left=%d top=%d height=%d control=%d centre=%.1f" % (left, top, h, control, centre))'
 }
 # The header's title starts where a card's text alone does, its corner
 # keeps the step inside the header's own rounded end, and its pills sit
@@ -696,7 +755,8 @@ print("ok" if not problems else "violation " + ",".join(problems))' "$1"
 }
 checked_header() { # CARD_SUMMARY
   local card t
-  card="$(text_space "$1")" || return
+  card="${header_card_reading:-}"
+  [[ -n $card ]] || card="$(text_space "$1")" || return
   t="$(header_space)" || return
   header_contract_value "$card" <<<"$t"
 }
@@ -798,24 +858,25 @@ for glass_card in "one-line:Even one" "two-line:Even two" "clamped:Even max"; do
   render expect "the ${glass_card%%:*} card's glass draws nothing outside its capsule" clear glass_clear "$glass_png" "${glass_card#*:}"
 done
 render expect "the glass predicate rejects glass drawn outside the capsule" violation glass_clear_shrunk "$sandbox/glass-clamped.png" "Even max"
+header_card_reading="$(text_space "Even two")" || header_card_reading=""
 expect "the inbox opens for header geometry" ok notes inbox
 expect_poll "the inbox header title starts on a card's text column and clears its rounded end" ok checked_header "Even two"
 # The Silence toggle takes a press over the pills' height, a strip above
 # and below its 20 px track: a click 2 px above the track turns Silence on,
 # and a click past the strip, 2 px above its top, changes nothing, so the
 # strip is the look's `toggle.hitHeight` and no taller.
-toggle_press() { # CHECKED DY: one click DY px above the shown toggle's top
+toggle_press() { # DY: one click DY px above the shown toggle's track top
   local rect x y
-  rect="$(control_box vgs:layer vgs.notifications Toggle checked "$1")" && [[ $rect == \[* ]] || return 1
-  read -r x y < <(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(int(r[0] + r[2] / 2), int(r[1]) - int(sys.argv[2]))' "$rect" "$2") || return 1
+  rect="$(ipc smoke itemGeometry panel vgs.notifications Toggle Silence)" && [[ $rect == \[* ]] || return 1
+  read -r x y < <(panel_point "$rect" - "$((toggle_strip - $1))") || return 1
   hover "$((x - 1))" "$y" && click "$x" "$y"
 }
 # (toggle.hitHeight 28 - toggle.height 20) / 2 in vgs.notifications/Appearance.js.
 toggle_strip=4
-toggle_press false 2 || fail "the click in the Silence toggle's strip failed"
+toggle_press 2 || fail "the click in the Silence toggle's strip failed"
 expect_poll "a click in the toggle's strip above its track turns Silence on" true read_notes silenced
 expect "Silence turns off before the strip's edge" off notes silence off
-toggle_press false "$((toggle_strip + 2))" || fail "the click past the Silence toggle's strip failed"
+toggle_press "$((toggle_strip + 2))" || fail "the click past the Silence toggle's strip failed"
 sleep 0.3
 expect "a click past the strip leaves Silence off" false read_notes silenced
 note_card_reading "one-line card geometry measured" "Even one"
@@ -1043,11 +1104,20 @@ expect "dismissing the emoji cards is allowed" ok notes dismiss-all
 expect_poll "no card is left before the emoji latencies" 0 note_status onScreen
 # The latencies with custom emoji, each read once: from the notify call to
 # the card's body naming its images on every screen, and from the history
-# call to forty such rows naming theirs. The probe counts matching visible
-# text items, one reading per IPC round trip. The budgets and their runs
-# are in scripts/qml-smoke.sh's header.
+# call to forty such panel rows being present. The toast probe counts
+# matching visible text items. The inbox probe reads the panel's rowCount,
+# so it does not move the forty row objects through IPC on each poll. The
+# budgets and their runs are in scripts/qml-smoke.sh's header.
 emoji_body="ada: :smoke-party: ship :smoke-party: it :smoke-party: now :smoke-party: team, and a tail long enough to run onto a second line :smoke-party: here"
-emoji_texts() { ipc smoke layerItemsWith vgs.notifications QQuickText text '<img src='; }
+emoji_texts() {
+  local panel_state
+  panel_state="$(ipc smoke readInstance panel vgs.notifications rows)" || panel_state=absent
+  if [[ $panel_state == \[* ]]; then
+    ipc smoke itemImageTextCount panel vgs.notifications Panel
+  else
+    ipc smoke layerItemsWith vgs.notifications QQuickText text '<img src='
+  fi
+}
 latency_bound_ms=5000
 # latency_since LABEL START WANT CMD...: sets latency_ms to the
 # milliseconds from START until CMD prints a count of WANT or more, or to
@@ -1180,22 +1250,16 @@ for i in $(seq 1 40); do notify_now "[acme] in inbox $i"; done
 expect_poll "the forty emoji notifications are in the history" 40 note_status history
 start="$(date +%s%3N)"
 notes history >/dev/null
-latency_since "the emoji inbox latency reader" "$start" "$((40 * monitors))" emoji_texts
+latency_since "the emoji inbox latency reader" "$start" 40 emoji_texts
 emoji_inbox_ms="$latency_ms"
 printf '        latency_emoji_inbox_ms=%s budget_ms=%s\n' "$emoji_inbox_ms" "$emoji_inbox_budget_ms"
-expect "an inbox of forty cards with custom emoji names their images within its budget" True within_budget "$emoji_inbox_ms" "$emoji_inbox_budget_ms"
-raw_emoji_layer_items() { "${shell_env[@]}" "$repo/bin/vgsh" ipc call smoke layerItems vgs.notifications QQuickText text,visible 2>>"$sandbox/ipc.log" | tail -n 1; }
-raw_paged() { local r; r="$(raw_emoji_layer_items)" || return; [[ $r =~ ^paged=[0-9]+$ ]] && echo paged || printf '%s\n' "$r"; }
-emoji_layer_images() { ipc smoke layerItems vgs.notifications QQuickText text,visible | py_reply 'import json,sys; print(sum(1 for s, r, v in json.load(sys.stdin) if v["visible"] and "<img src=" in v["text"]))'; }
-expect "the raw emoji inbox text reply is paged" paged raw_paged
-emoji_layer_images_hold_all() { [[ $(emoji_layer_images) -ge $((40 * monitors)) ]] && echo True || echo False; }
-expect "the paged emoji inbox text reply reassembles whole through ipc" True emoji_layer_images_hold_all
-expect "the probe counts exactly the forty visible emoji inbox texts" "$((40 * monitors))" emoji_texts
+expect "an inbox of forty cards appears within its budget" True within_budget "$emoji_inbox_ms" "$emoji_inbox_budget_ms"
+expect "the probe counts exactly the forty visible emoji inbox rows" 40 emoji_texts
 # The history's slim scroll bar shows while forty cards overflow the
 # screen and hides on a history that fits. The control for its rule is the
 # SlimScrollBar mutation "a slim bar shows on content that fits"
 # (tst_slimscrollbar.qml).
-note_scroll_bars() { ipc smoke layerItems vgs.notifications SlimScrollBar visible | py_reply 'import json,sys; print(json.dumps(sorted(set(v["visible"] for s, r, v in json.load(sys.stdin)))))'; }
+note_scroll_bars() { ipc smoke readDescendant panel vgs.notifications SlimScrollBar visible | py_reply 'import json,sys; t=sys.stdin.read().strip(); print(json.dumps([False if t == "absent" else json.loads(t)]))'; }
 expect_poll "the forty-card history shows its scroll bar" '[true]' note_scroll_bars
 expect "the emoji inbox closes" ok notes close
 expect_poll "the emoji inbox closed" '""' read_notes panelMode
@@ -1255,10 +1319,10 @@ kept="$(note_status history)"
 expect "the inbox opens over IPC" ok notes inbox
 expect_poll "the panel is the inbox" '"inbox"' read_notes panelMode
 expect_poll "the inbox lists the kept notifications, forty at most" "$(( kept < 40 ? kept : 40 ))" panel_count
-input_all() { ipc smoke layerItems vgs.notifications Stack inputAll | py_reply 'import json,sys; print(sorted(set(v["inputAll"] for s, r, v in json.load(sys.stdin))))'; }
-expect_poll "the stack takes the whole screen's presses while a panel is open" '[True]' input_all
+expect_poll "the inbox panel surface opens" 1 layer_count vgs:panel
 notify smoke-app 0 "While open" "" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
-expect_poll "a toast arriving with the panel open shows" True has_row live "While open"
+expect_poll "a toast arriving with the panel open is listed" True has_row live "While open"
+expect_poll "the toast layer stays hidden while the panel is open" 0 layer_count vgs:layer
 expect_poll "its clock does not run while the panel is open" paused clock_state "While open"
 click_pill "Mark read" || fail "the click on Mark read failed"
 expect_poll "Mark read closes the panel" '""' read_notes panelMode
@@ -1266,27 +1330,106 @@ read_before_set() { state_at readBefore | python3 -c 'import sys; print(float(sy
 expect_poll "Mark read persists its cutoff" True read_before_set
 expect_poll "the live toast stayed through the panel" True has_row live "While open"
 expect_poll "the panel's rows went with it" '[]' row_summaries panel
-expect_poll "the stack lets presses through again once the panel is closed" '[False]' input_all
 expect "dismissing the toast held through the panel is allowed" ok notes dismiss-all
 expect_poll "no toast is left before the inbox opens again" 0 on_screen
 all_rows() { ipc smoke modelRows vgs.notifications rows key | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
 expect_poll "every exit has played before the inbox opens again" 0 all_rows
 expect "the inbox opens again" ok notes inbox
-expect_poll "an inbox after Mark read is caught up" '"All caught up"' read_notes panelSubtitle
+expect_poll "an inbox after Mark read is caught up" '"All caught up"' panel_subtitle
 expect "the history panel opens" ok notes history
 kept="$(note_status history)"
 expect_poll "the history lists what is kept" "$(( kept < 40 ? kept : 40 ))" panel_count
 click_pill "Clear history" || fail "the click on Clear history failed"
 expect_poll "Clear history empties the stored history" 0 history_count
-expect_poll "its rows fade out" '[]' row_summaries panel
+expect_poll "its rows leave the panel" '[]' row_summaries panel
 expect "the panel stays open after Clear history" '"history"' read_notes panelMode
-click 5 "$((mon_h - 5))" || fail "the click outside the panel failed"
-expect_poll "a press outside the stack closes the panel" '""' read_notes panelMode
+type_keys -k Escape || fail "sending Escape to the notification panel failed"
+expect_poll "Escape closed the panel" '""' read_notes panelMode
 expect "the inbox shortcut toggles the panel" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
 expect_poll "the shortcut opened the inbox" '"inbox"' read_notes panelMode
 expect "the shortcut closes it again" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
 expect_poll "the shortcut closed the inbox" '""' read_notes panelMode
+notify smoke-app 0 "Focus loss closes" "" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
+expect_poll "the focus-loss toast is live" True has_row live "Focus loss closes"
+expect "the inbox opens for the focus-loss check" ok notes inbox
+expect_poll "the focus-loss inbox is open" '"inbox"' read_notes panelMode
+expect_poll "the focus-loss toast clock pauses while the panel has focus" paused clock_state "Focus loss closes"
+if open_other "$sandbox/toplevel-notifications-focus-loss.log"; then
+  other_window="$(other_address)"
+  focus_other
+  expect_poll "the panel closes when another window takes the keyboard" '""' read_notes panelMode
+  expect_poll "the focus-loss toast clock runs once the panel loses focus" running clock_state "Focus loss closes"
+  close_other "the focus-loss helper exits 0 on SIGTERM"
+else
+  fail "opening the focus-loss helper failed"
+fi
+expect "dismissing the focus-loss toast is allowed" ok notes dismiss-all
+expect_poll "the focus-loss toast is gone" 0 on_screen
 expect_poll "the screen is clear" 0 on_screen
+expect "Silence turns off before the Delete control" off notes silence off
+panel_qml="$repo/shell/plugins/vgs.notifications/Panel.qml"
+cp -- "$panel_qml" "$sandbox/Panel.qml.kept"
+python3 - "$panel_qml" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+needle = 'choose(row.key, "dismiss");\n        return true;'
+assert text.count(needle) == 1, "the dismiss handler body occurs once"
+open(path, "w").write(text.replace(needle, 'return false;'))
+PY
+expect "a rescan builds the no-delete panel copy" ok ipc shell rescanPlugins
+expect_poll "the no-delete panel copy is built" True record_exists vgs.notifications
+notify smoke-app 0 "Delete control" "" '[]' '{"urgency": <byte 1>}' 0 >/dev/null
+expect "the no-delete panel opens" ok notes inbox
+expect_poll "the no-delete panel selects its row" "Delete control" panel_selected_summary
+type_keys -k Delete || fail "sending Delete to the no-delete panel failed"
+expect "control: a Panel.qml copy without its dismiss handler leaves the row" True has_row panel "Delete control"
+expect "the no-delete panel closes" ok notes close
+expect "dismissing the Delete control notification is allowed" ok notes dismiss-all
+cp -- "$sandbox/Panel.qml.kept" "$panel_qml"
+expect "a rescan restores the real panel" ok ipc shell rescanPlugins
+expect_poll "the restored panel is built" True record_exists vgs.notifications
+expect "clearing history before the keyboard path is allowed" ok notes clear-history
+keyboard_first_id="$(sender_note "Keyboard first" 1)"
+keyboard_second_id="$(sender_note "Keyboard second" 1)"
+keyboard_third_id="$(sender_note "Keyboard third" 1)"
+keyboard_fourth_id="$(sender_note "Keyboard fourth" 1)"
+expect_poll "the keyboard path has four live rows" 4 note_status onScreen
+expect "the notifications shortcut opens the keyboard inbox" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
+expect_poll "the keyboard inbox is open" '"inbox"' read_notes panelMode
+expect_poll "the keyboard inbox opens on its list" True panel_focus_on_list
+expect_poll "the keyboard inbox selects the newest row" "Keyboard fourth" panel_selected_summary
+type_keys -k Down || fail "sending Down to the notification inbox failed"
+expect_poll "Down selects the next notification" "Keyboard third" panel_selected_summary
+type_keys -k Up || fail "sending Up to the notification inbox failed"
+expect_poll "Up selects the previous notification" "Keyboard fourth" panel_selected_summary
+type_keys -k End || fail "sending End to the notification inbox failed"
+expect_poll "End selects the oldest notification" "Keyboard first" panel_selected_summary
+type_keys -k Home || fail "sending Home to the notification inbox failed"
+expect_poll "Home selects the newest notification" "Keyboard fourth" panel_selected_summary
+type_keys -k Return || fail "sending Return to the selected notification failed"
+expect_poll "Return opens the selected notification's default action" 1 delivered "$keyboard_fourth_id" default
+expect_poll "Return removes the opened keyboard row" none key_of "Keyboard fourth"
+expect_poll "the inbox list has focus after Return removes a row" True panel_focus_on_list
+type_keys -k Delete || fail "sending Delete to the notification inbox failed"
+expect_poll "Delete dismisses the selected notification" none key_of "Keyboard third"
+expect_poll "Delete closes the selected notification on the server" 1 closed_on_server "$keyboard_third_id"
+expect_poll "the inbox list has focus after Delete removes a row" True panel_focus_on_list
+type_keys -k Right -k Return || fail "sending Right and Return to the inbox action pill failed"
+expect_poll "Return on a selected pill delivers its default action" 1 delivered "$keyboard_second_id" default
+expect_poll "Return on a selected pill removes its row" none key_of "Keyboard second"
+expect_poll "the inbox list has focus after Return removes an action row" True panel_focus_on_list
+type_keys -k Left -k Right -k Right -k Space || fail "sending Left, Right and Space to the inbox action pill failed"
+expect_poll "Space on a selected pill delivers its action" 1 delivered "$keyboard_first_id" reply
+expect_poll "Space on a selected pill removes its row" none key_of "Keyboard first"
+type_keys -k Tab || fail "sending Tab to the notification header failed"
+expect_poll "Tab reaches the Silence switch" Silence panel_focus_name
+type_keys -k Space || fail "sending Space to the Silence switch failed"
+expect_poll "Space toggles Silence from the keyboard" true state_at dnd
+expect "Silence turns off after the keyboard path" off notes silence off
+type_keys -k Escape || fail "sending Escape after the keyboard path failed"
+expect_poll "Escape closes the keyboard inbox" '""' read_notes panelMode
+expect_poll "the keyboard path leaves no live rows" 0 note_status onScreen
 
 # Silence: a notification goes into the history instead of the screen, bar
 # a critical one from the bare command line; one from the bare command line

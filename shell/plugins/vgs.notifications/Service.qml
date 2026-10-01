@@ -71,10 +71,11 @@ Item {
     // "", "inbox" or "history".
     property string panelMode: ""
     readonly property bool panelOpen: panelMode !== ""
-    readonly property bool panelClosing: panelCloseTimer.running
+    property bool panelFocused: false
     readonly property string panelSubtitle: Logic.panelSubtitle(panelMode, shownCount, store.status)
     property int shownCount: 0
     readonly property bool silenced: store.dnd
+    property int panelRevision: 0
 
     // The exit's and the entrance's whole length, from their animations in
     // CardSlot.qml.
@@ -83,7 +84,7 @@ Item {
     readonly property int enterTime: durations === null ? 0 : Math.max(durations.short3, durations.medium1) + durations.short2 + Math.max(durations.medium2, durations.medium4, 2 * durations.short4)
 
     // The layer exists while there is something to draw.
-    readonly property bool wanted: look !== null && (rowModel.count > 0 || panelOpen || panelClosing)
+    readonly property bool wanted: look !== null && rowModel.count > 0 && !panelOpen
     onWantedChanged: syncLayer()
 
     Store {
@@ -131,6 +132,14 @@ Item {
         if (!rows.ok || JSON.stringify(shell.status.values.slackTokens) === JSON.stringify(rows.items)) return;
         const reply = shell.status.set("slackTokens", rows.items);
         if (reply !== "ok") console.error("notifications: " + reply);
+    }
+
+    function bumpPanel() {
+        panelRevision += 1;
+        if (shell !== null) {
+            const reply = shell.status.set("panelRevision", panelRevision);
+            if (reply !== "ok") console.error("notifications: panelRevision " + reply);
+        }
     }
 
     // The workspace a card of `enrichment` belongs to, the one its summary
@@ -196,12 +205,20 @@ Item {
         }
         registered = true;
         restore();
+        shell.status.set("panelRevision", panelRevision);
         shell.shortcut.register("inbox", "Open or close the notification inbox", () => root.togglePanel());
         shell.ipc.handle("inbox", () => root.togglePanel());
-        shell.ipc.handle("history", () => { root.openPanel("history"); return "ok"; });
+        shell.ipc.handle("panel", () => root.showPanel("inbox"));
+        shell.ipc.handle("history", () => root.showPanel("history"));
         shell.ipc.handle("close", () => { root.closePanel(); return "ok"; });
         shell.ipc.handle("mark-read", () => { root.markRead(); return "ok"; });
         shell.ipc.handle("clear-history", () => { root.clearHistoryPanel(); return "ok"; });
+        shell.ipc.handle("panel-opened", mode => { root.panelOpened(mode); return "ok"; });
+        shell.ipc.handle("panel-closed", () => { root.panelClosed(); return "ok"; });
+        shell.ipc.handle("panel-focused", arg => { root.panelFocused = arg === "on"; root.settle(); return "ok"; });
+        shell.ipc.handle("panel-state", () => JSON.stringify(root.panelSnapshot()));
+        shell.ipc.handle("hover", arg => root.hoverFromPanel(arg));
+        shell.ipc.handle("choose", arg => root.chooseFromPanel(arg));
         shell.ipc.handle("silence", arg => {
             const judged = Logic.silenceArgument(arg, store.dnd);
             if (!judged.ok) return "refused: silence=" + JSON.stringify(arg) + " want=on|off|toggle";
@@ -209,7 +226,7 @@ Item {
             return store.dnd ? "on" : "off";
         });
         shell.ipc.handle("dismiss-all", () => {
-            const keys = root.rowKeys(r => r.origin !== "panel");
+            const keys = root.rowKeys(() => true);
             for (const key of keys) root.leave(key, "dismiss");
             return keys.length === 0 ? "none" : "ok";
         });
@@ -252,7 +269,7 @@ Item {
     }
 
     function onLatest(act) {
-        const keys = rowKeys(r => r.origin !== "panel");
+        const keys = rowKeys(() => true);
         if (keys.length === 0) return "none";
         act(keys[0]);
         return "ok";
@@ -320,8 +337,9 @@ Item {
         store.copy(stored.copies, null);
         store.putLive(stored.entry);
         rowModel.insert(0, rowOf(entry, "live"));
+        bumpPanel();
         startClock(entry.key, Logic.lifetimeFor(entry.urgency, entry.expireTimeout, root.normalLifetime));
-        const onScreen = rowKeys(r => r.origin !== "panel");
+        const onScreen = rowKeys(() => true);
         if (onScreen.length > Logic.LIVE_MAX) {
             const rowsOldestLast = onScreen.map(k => ({ key: k, urgency: rowModel.get(root.indexOf(k)).urgency }));
             leave(Logic.evictionKey(rowsOldestLast), "expire");
@@ -465,6 +483,7 @@ Item {
         if (!Logic.entryChanged(current, updated)) return;
         wantWorkspace(updated);
         for (const role of Logic.ENTRY_ROLES) rowModel.setProperty(at, role, updated[role]);
+        bumpPanel();
         const stored = Logic.persistable(updated, store.imagesDir);
         store.copy(stored.copies, null);
         store.putLive(stored.entry);
@@ -490,7 +509,7 @@ Item {
                 root.silence(n, updated);
                 return;
             }
-            root.syncPanel();
+            root.bumpPanel();
             root.holdSilenced(entry.key);
         });
     }
@@ -534,6 +553,7 @@ Item {
         for (const entry of plan.show) {
             store.putLive(entry);
             rowModel.append(rowOf(entry, "restored"));
+            bumpPanel();
             if (entry.deadline !== undefined) startClock(entry.key, entry.deadline - now);
         }
         countShown();
@@ -557,11 +577,11 @@ Item {
         settle();
     }
 
-    // Run the clocks of every toast nobody is looking at, while no panel is
-    // open, and wake for the first to run out.
+    // Run the clocks of every toast nobody is looking at, while the panel
+    // does not hold the keyboard, and wake for the first to run out.
     function settle() {
         const now = Date.now();
-        clocks = Logic.settleClocks(clocks, key => !root.panelOpen && !(root.hovers[key] > 0), now);
+        clocks = Logic.settleClocks(clocks, key => !(root.panelOpen && root.panelFocused) && !(root.hovers[key] > 0), now);
         // The store keeps each toast's clock, so a restart judges it as it
         // stood.
         for (const key of Object.keys(clocks)) store.setClock(key, Logic.clockFields(clocks[key]));
@@ -601,18 +621,14 @@ Item {
     // so a rebuild during the exit restores nothing it should not, and its
     // notification is held for the history or closed as
     // NotificationLogic.heldAfterLeave says; the row itself goes once its
-    // animation has played. `reason` is expire, dismiss, invoke or closed
-    // for a toast, invoke or dismiss for a panel row, or fade for a panel
-    // row, which goes with the panel's own timer.
+    // animation has played. `reason` is expire, dismiss, invoke or closed.
     function leave(key, reason) {
         const at = indexOf(key);
         if (at === -1 || rowModel.get(at).leaving !== "") return;
-        const origin = rowModel.get(at).origin;
         rowModel.setProperty(at, "leaving", reason);
         stopClock(key);
         countShown();
-        if (reason === "fade") return;
-        if (origin !== "panel") store.dropLive(key, false);
+        store.dropLive(key, false);
         if (Logic.hasOwn(held, key)) {
             const fields = fieldsOf(held[key].notification);
             const fate = fields === null ? "drop" : Logic.heldAfterLeave(reason, fields.transient);
@@ -637,10 +653,8 @@ Item {
             delete next[key];
             exits = next;
         }
-        const origin = rowModel.get(at).origin;
         rowModel.remove(at);
-        // A toast that left while a panel is open is in the history now.
-        if (origin !== "panel" && panelOpen) Qt.callLater(syncPanel);
+        bumpPanel();
         if (Logic.hasOwn(hovers, key)) {
             const next = Object.assign({}, hovers);
             delete next[key];
@@ -668,10 +682,18 @@ Item {
         }));
     }
 
-    function actionsFor(key) {
+    function entryFor(key) {
         const at = indexOf(key);
-        if (at === -1) return [];
-        return Logic.actionsFor(offered(key), Logic.senderWindows(windows(), rowModel.get(at)).length > 0);
+        if (at !== -1) return rowModel.get(at);
+        for (const entry of store.history)
+            if (entry.key === key) return entry;
+        return null;
+    }
+
+    function actionsFor(key) {
+        const entry = entryFor(key);
+        if (entry === null) return [];
+        return Logic.actionsFor(offered(key), Logic.senderWindows(windows(), entry).length > 0);
     }
 
     // A choice on a card, a toast's or an inbox row's: open, action:<id> or
@@ -686,14 +708,15 @@ Item {
     // it itself. Logs what the choice reached, with no content.
     function choose(key, choice) {
         const at = indexOf(key);
-        if (at === -1) return;
-        const route = Logic.clickRoute(choice, rowModel.get(at));
+        const entry = at === -1 ? entryFor(key) : rowModel.get(at);
+        if (entry === null) return false;
+        const route = Logic.clickRoute(choice, entry);
         if (route === "open") {
-            const reply = shell.tui.run("open", [rowModel.get(at).hintOpen]);
+            const reply = shell.tui.run("open", [entry.hintOpen]);
             const outcome = Logic.openOutcome(reply);
             if (outcome.leave) {
-                leave(key, "invoke");
-                return;
+                leaveChosen(key, "invoke");
+                return true;
             }
             console.warn("notifications: open " + reply);
             try {
@@ -701,20 +724,20 @@ Item {
             } catch (e) {
                 console.error("notifications: open notice " + e.message);
             }
-            return;
+            return false;
         }
         if (route === "dismiss") {
-            leave(key, "dismiss");
-            return;
+            leaveChosen(key, "dismiss");
+            return true;
         }
         const plan = Logic.choicePlan(choice, offered(key).map(a => a.identifier));
         if (plan === null) {
             console.error("notifications: refused: choice=" + choice + " want=open|action:<id>|dismiss");
-            return;
+            return false;
         }
         // Read before the delivery, after which the server may close the
         // notification and the toast start to leave.
-        const senders = plan.raise ? Logic.senderWindows(windows(), rowModel.get(at)) : [];
+        const senders = plan.raise ? Logic.senderWindows(windows(), entry) : [];
         let delivered = false;
         if (plan.deliver !== "") {
             try {
@@ -730,95 +753,64 @@ Item {
             if (reply !== "ok") console.warn("notifications: reveal " + reply);
         }
         if (plan.raise) console.info("notifications: chose delivered=" + (delivered ? plan.deliver : "none") + " windows=" + senders.length);
-        leave(key, plan.leave);
+        leaveChosen(key, plan.leave);
+        return true;
+    }
+
+    function leaveChosen(key, reason) {
+        const at = indexOf(key);
+        if (at !== -1) {
+            leave(key, reason);
+            return;
+        }
+        if (reason === "dismiss") {
+            store.dropHistory(key);
+            if (Logic.hasOwn(held, key)) unlink(key, "dismiss");
+            bumpPanel();
+        }
     }
 
     // ------------------------------------------------------------ panel
 
     function togglePanel() {
-        if (panelOpen) closePanel();
-        else openPanel("inbox");
-        return "ok";
+        if (panelOpen) return closePanel();
+        return showPanel("inbox");
     }
 
-    function openPanel(mode) {
-        // Reopened while closing: the faded rows go now, not as blanks.
-        if (panelCloseTimer.running) {
-            panelCloseTimer.stop();
-            removePanelRows();
-        }
-        panelMode = mode;
-        removePanelRows();
-        syncPanel();
+    function showPanel(mode) {
+        const payload = JSON.stringify({ mode: mode === "history" ? "history" : "inbox" });
+        const reply = shell.surfaces.summon("panel", payload);
+        if (reply !== "ok") console.warn("notifications: panel " + reply);
+        return reply;
     }
 
-    // Keep an open panel's rows the history's: a notification that enters
-    // the history while it is open, silenced or off the screen, joins it in
-    // its place, a row whose stored entry changed draws the change, and a row
-    // past the panel's limit goes. A key the model holds as a toast, one
-    // still leaving among them, is not added twice; the toast joins once its
-    // exit has played.
-    function syncPanel() {
-        if (!panelOpen) return;
-        const present = {};
-        for (let i = 0; i < rowModel.count; i++) present[rowModel.get(i).key] = rowModel.get(i).origin;
-        const wanted = Logic.panelRows(store.history, panelMode, store.readBefore);
-        const keep = {};
-        for (const entry of wanted) keep[entry.key] = true;
-        for (const key of rowKeys(r => r.origin === "panel" && !keep[r.key])) removeRow(key);
-        for (const entry of wanted) {
-            if (present[entry.key] === "panel") {
-                const at = indexOf(entry.key);
-                for (const role of Logic.ENTRY_ROLES)
-                    if (rowModel.get(at)[role] !== entry[role]) rowModel.setProperty(at, role, entry[role]);
-                continue;
-            }
-            if (present[entry.key] !== undefined) continue;
-            let at = rowModel.count;
-            for (let i = 0; i < rowModel.count; i++) {
-                const row = rowModel.get(i);
-                if (row.origin === "panel" && row.timestamp < entry.timestamp) { at = i; break; }
-            }
-            rowModel.insert(at, rowOf(entry, "panel"));
-        }
-        countShown();
+    function panelOpened(mode) {
+        const next = mode === "history" ? "history" : "inbox";
+        if (panelMode === next) return;
+        panelMode = next;
+        settle();
+        bumpPanel();
     }
 
     function closePanel() {
-        if (!panelOpen) return;
+        const reply = shell.surfaces.hide("panel");
+        if (reply !== "ok") console.warn("notifications: panel " + reply);
+        return reply;
+    }
+
+    function panelClosed() {
+        if (panelMode === "") return;
         panelMode = "";
-        fadePanelRows();
-    }
-
-    function fadePanelRows() {
-        for (const key of rowKeys(r => r.origin === "panel")) leave(key, "fade");
-        panelCloseTimer.restart();
-    }
-
-    // Panel rows fade in place and then all go in one step, so the stack is
-    // laid out once instead of shifting as each row leaves; a row that
-    // joined an open panel meanwhile stays.
-    Timer {
-        id: panelCloseTimer
-        interval: root.look === null ? 1 : root.look.motion.staggerRows * root.look.motion.duration.stagger + root.look.motion.duration.short4 + root.look.motion.settle
-        onTriggered: {
-            root.removePanelRows(true);
-            root.syncPanel();
-        }
-    }
-
-    // Every panel row, or with `fadedOnly` those that faded out.
-    function removePanelRows(fadedOnly) {
-        for (let i = rowModel.count - 1; i >= 0; i--) {
-            const row = rowModel.get(i);
-            if (row.origin === "panel" && (!fadedOnly || row.leaving === "fade")) removeRow(row.key);
-        }
+        panelFocused = false;
+        settle();
+        bumpPanel();
     }
 
     // Mark read: everything so far is read, and the panel closes.
     function markRead() {
         store.setReadBefore(Date.now());
         closePanel();
+        bumpPanel();
     }
 
     // Clear history: the kept notifications go; the panel stays open and its
@@ -826,7 +818,76 @@ Item {
     function clearHistoryPanel() {
         store.clearHistory();
         releaseUnstored("dismiss");
-        if (panelOpen) fadePanelRows();
+        bumpPanel();
+    }
+
+    function panelEntries() {
+        const entries = [];
+        const present = {};
+        for (let i = 0; i < rowModel.count; i++) {
+            const row = rowModel.get(i);
+            if (row.leaving !== "") continue;
+            if (panelMode === "history" || row.timestamp > store.readBefore) {
+                entries.push(row);
+                present[row.key] = true;
+            }
+        }
+        const stored = Logic.panelRows(store.history, panelMode, store.readBefore);
+        for (const entry of stored) {
+            if (present[entry.key]) continue;
+            entries.push(rowOf(entry, "panel"));
+            present[entry.key] = true;
+        }
+        entries.sort((a, b) => b.timestamp - a.timestamp);
+        return entries.slice(0, Logic.PANEL_ROWS_MAX);
+    }
+
+    function panelRow(entry) {
+        const enrichment = Logic.enrich(entry.app, entry.desktopEntry, entry.appIcon, entry.summary, entry.body);
+        const workspace = workspaceOf(enrichment);
+        const out = {};
+        for (const role of Logic.ENTRY_ROLES) out[role] = entry[role];
+        out.origin = entry.origin || "panel";
+        out.workspace = workspace;
+        out.workspaceIcon = enrichment !== null ? workspaceIcon(enrichment.rule, workspace) : "";
+        out.faceImages = enrichment !== null ? faceImages(enrichment, entry.image, workspace) : [];
+        out.emoji = emojiFor(enrichment, workspace);
+        out.actions = actionsFor(entry.key);
+        return out;
+    }
+
+    function panelSnapshot() {
+        const entries = panelEntries();
+        return {
+            mode: panelMode === "history" ? "history" : "inbox",
+            subtitle: Logic.panelSubtitle(panelMode === "" ? "inbox" : panelMode, entries.length, store.status),
+            silenced: store.dnd,
+            rows: entries.map(panelRow)
+        };
+    }
+
+    function hoverFromPanel(arg) {
+        try {
+            const request = JSON.parse(String(arg || "{}"));
+            if (typeof request.key !== "string") return "refused: hover=key";
+            hover(request.key, request.on === true);
+            return "ok";
+        } catch (e) {
+            return "refused: hover=json";
+        }
+    }
+
+    function chooseFromPanel(arg) {
+        try {
+            const request = JSON.parse(String(arg || "{}"));
+            if (typeof request.key !== "string" || typeof request.choice !== "string") return "refused: choose=shape";
+            const mode = panelMode === "history" ? "history" : "inbox";
+            const left = choose(request.key, request.choice);
+            if (panelOpen) showPanel(mode);
+            return left ? "left" : "held";
+        } catch (e) {
+            return "refused: choose=json";
+        }
     }
 
     // Close, as `how` says, every held notification whose entry the store
@@ -843,8 +904,16 @@ Item {
     // into the history, so the held set is judged at the end of the turn.
     Connections {
         target: store
-        function onLiveChanged() { Qt.callLater(root.releaseTrimmed); }
-        function onHistoryChanged() { Qt.callLater(root.releaseTrimmed); }
+        function onLiveChanged() {
+            Qt.callLater(root.releaseTrimmed);
+            root.bumpPanel();
+        }
+        function onHistoryChanged() {
+            Qt.callLater(root.releaseTrimmed);
+            root.bumpPanel();
+        }
+        function onReadBeforeChanged() { root.bumpPanel(); }
+        function onDndChanged() { root.bumpPanel(); }
     }
 
     function setSilence(on) {
@@ -859,7 +928,7 @@ Item {
             silence: store.dnd,
             panel: panelMode,
             store: { state: store.status, problem: store.problem },
-            onScreen: rowKeys(r => r.origin !== "panel").length,
+            onScreen: rowKeys(() => true).length,
             history: store.history.length,
             held: Object.keys(held).length,
             readBefore: store.readBefore,

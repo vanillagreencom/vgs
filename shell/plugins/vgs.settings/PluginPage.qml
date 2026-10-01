@@ -39,6 +39,7 @@ FocusScope {
     readonly property alias scrollArea: layout.scrollArea
     readonly property alias titleMenu: menu
     readonly property alias title: titleHeader.titleButton
+    readonly property alias initialFocus: back
 
     // The schema's keys by section: [{ group, keys }], entries without a
     // group first under "", then each group in the order its first entry
@@ -80,7 +81,7 @@ FocusScope {
         return row === null ? null : row.status.find(entry => entry.key === key) || null;
     }
 
-    function focusBack() { back.forceActiveFocus(); }
+    function focusBack(reason) { back.forceActiveFocus(reason === undefined ? Qt.TabFocusReason : reason); }
 
     Pane {
         id: layout
@@ -117,7 +118,7 @@ FocusScope {
                             text: modelData.name
                             iconName: modelData.icon
                             checked: page.row !== null && modelData.id === page.row.id
-                            onTriggered: page.panel.openPlugin(modelData.id)
+                            onTriggered: page.panel.openPlugin(modelData.id, Qt.TabFocusReason)
                         }
                     }
                 }

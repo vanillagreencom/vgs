@@ -305,6 +305,7 @@ print(json.dumps([json.loads(icon), names[0] if len(names) == 1 else "colour=" +
 PY
 }
 warden_panel_shown() { [[ $(ipc smoke readInstance panel vgs.agent-warden detail) != absent ]] && echo shown || echo hidden; }
+warden_focused() { ipc smoke focused panel vgs.agent-warden | py_reply 'import json,sys; t=sys.stdin.read().strip(); print(t if not t.startswith("[") else json.dumps([json.loads(t)[1], json.loads(t)[2], json.loads(t)[3], json.loads(t)[4]]))'; }
 # Every text the panel draws, or `absent`.
 warden_panel() { ipc smoke itemTexts panel vgs.agent-warden Panel | py_reply '
 import json, re, sys
@@ -375,6 +376,21 @@ expect "a rescan after the stand-in vsys arrives starts" ok ipc shell rescanPlug
 expect_poll "the stand-in vsys reads as present" '"present"' warden_value vsys
 
 expect_poll "the shield reads not set up" '["shield-question-mark", "neutral", "", "Agent Warden isn'"'"'t set up"]' warden_shield
+# Keyboard-only path.
+expect "the Agent Warden panel is closed before the keyboard path" ok ipc shell hide panel vgs.agent-warden
+expect "the Agent Warden shortcut opens the panel" ok hypr dispatch 'hl.dsp.global("vgs.agent-warden:toggle")'
+expect_poll "the shortcut opens on the primary button with a visible focus ring" '["Set up", true, true, true]' warden_focused
+forget_record
+type_keys -k Down || fail "sending Down to the Agent Warden control failed"
+expect "control: Down on the primary button runs no TUI" absent recorded_tail
+type_keys -k Return || fail "sending Return to the focused Set up button failed"
+expect_poll "Return on Set up hands the terminal the setup TUI" "$(words vgs.agent-warden/setup tui/setup.sh)" recorded_tail
+expect_poll "the keyboard Set up hand-off closes the panel" hidden warden_panel_shown
+expect_run_end "the keyboard setup run ends" vgs.agent-warden/setup
+expect "the Agent Warden shortcut opens the panel for Escape" ok hypr dispatch 'hl.dsp.global("vgs.agent-warden:toggle")'
+expect_poll "the Agent Warden panel is open before Escape" shown warden_panel_shown
+type_keys -k Escape || fail "sending Escape to the Agent Warden panel failed"
+expect_poll "Escape closes the Agent Warden panel" hidden warden_panel_shown
 warden_open "not set up"
 expect_poll "the not-set-up panel offers Set up and the link" "$(words Agents "Agent Warden isn't set up." "$warden_line" "Set up" "Open vsys")" warden_panel
 click_item panel vgs.agent-warden Button "Set up" || fail "the click on Set up failed"

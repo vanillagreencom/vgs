@@ -48,11 +48,18 @@ Item {
     function start() {
         if (shell === null || registered) return;
         registered = true;
+        shell.shortcut.register("toggle", "Open or close Updates", () => root.togglePanel());
         shell.ipc.handle("check", () => root.requestCheck("ipc"));
         shell.ipc.handle("status", () => JSON.stringify(shell.status.values));
         cacheReader.path = statusPath;
         if (lastTuiState === null) lastTuiState = shell.tui.state;
         publishNow();
+    }
+
+    function togglePanel() {
+        const reply = shell.surfaces.toggle("panel", "{}");
+        if (reply !== "ok") console.warn("updates: panel " + reply);
+        return reply;
     }
 
     function requestCheck(reason) {

@@ -32,6 +32,9 @@ Field {
         text: root.shown
         placeholderText: "Unbound"
         readOnly: !root.editable
+        focusPolicy: root.editable ? Qt.StrongFocus : Qt.NoFocus
+        escapeReverts: true
+        committedText: root.shown
         onEditingFinished: {
             const typed = text.trim();
             text = Qt.binding(() => root.shown);

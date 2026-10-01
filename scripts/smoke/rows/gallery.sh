@@ -13,14 +13,109 @@ expect "the gallery maps no layer surface" 0 layer_count vgs:panel
 # Every component the module's qmldir lists is drawn, read back by type
 # name; the headings have a size, so they show.
 expect_poll "the gallery draws every component of the module" '[]' ipc smoke galleryMissing window vgs.gallery
-render expect_poll "the gallery's headings are drawn with a size" 14 ipc smoke galleryHeadings window vgs.gallery
+
+
+expect_poll "the gallery draws every focus example" '[]' ipc smoke galleryFocusMissing window vgs.gallery
+gallery_tab_tour() {
+  local required focus label seen_json
+  required='["Button primary","Button secondary","Button tertiary","Button ghost","Button danger","ToggleButton","IconButton","BarItem","Switch","Checkbox","SegmentedControl","Select","TextField","Slider","TitleButton","Tabs","Disclosure","CardCarousel","KeyNav list","Dialog accept action"]'
+  seen_json='[]'
+  [[ $(ipc smoke focusExample window vgs.gallery "Button primary") == focused ]] || { echo "focus-start-failed"; return 1; }
+  for _ in $(seq 1 220); do
+    focus="$(ipc smoke focused window vgs.gallery)" || return 1
+    if [[ $focus != \[* ]]; then printf 'focus=%s\n' "$focus"; return; fi
+    if ! python3 - "$focus" <<'PY'
+import json, sys
+row = json.loads(sys.argv[1])
+composite = len(row) == 5 and row[1] in ("CardCarousel", "KeyNav list")
+if len(row) != 5 or not ((row[2] and row[3] and row[4]) or (composite and row[4])):
+    print("bad-focus=" + json.dumps(row))
+    sys.exit(1)
+PY
+    then return 1; fi
+    label="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])[1])' "$focus")" || return 1
+    seen_json="$(python3 - "$seen_json" "$label" <<'PY'
+import json, sys
+seen = json.loads(sys.argv[1])
+label = sys.argv[2]
+if label and label not in seen:
+    seen.append(label)
+print(json.dumps(seen))
+PY
+)" || return 1
+    if python3 - "$required" "$seen_json" <<'PY'
+import json, sys
+required, seen = map(json.loads, sys.argv[1:])
+sys.exit(0 if all(label in seen for label in required) else 1)
+PY
+    then printf 'ok\n'; return 0; fi
+    type_keys -k Tab || return 1
+  done
+  python3 - "$required" "$seen_json" <<'PY'
+import json, sys
+required, seen = map(json.loads, sys.argv[1:])
+print("missing=" + json.dumps([label for label in required if label not in seen]) + " seen=" + json.dumps(seen))
+PY
+}
+expect "the Gallery Tab tour reaches every Focus control with its ring in view" ok gallery_tab_tour
+expect "the Gallery Radio focus example takes focus" focused ipc smoke focusExample window vgs.gallery Radio
+mkdir -p "$repo/shell/Core/DialogModalControl"
+cat >"$repo/shell/Core/DialogModalControl/Item.qml" <<'QML'
+import QtQuick
+import qs.Ui
+
+Item {
+    id: root
+    property Item examples: root
+    width: 480
+    height: 220
+    Dialog {
+        property string focusExample: "Dialog accept action"
+        width: parent.width
+        modal: true
+        title: "Modal control"
+        message: "Escape stays in this control."
+        actions: [{ label: "Cancel", role: "cancel" }, { label: "Save", role: "accept" }]
+    }
+}
+QML
+expect "the modal dialog control builds" ok ipc smoke popupLoad gallery-modal-control "$repo/shell/Core/DialogModalControl/Item.qml" window vgs.gallery '{}'
+expect "the modal dialog control takes focus" focused ipc smoke popupFocusExample gallery-modal-control "Dialog accept action"
+type_keys -k Escape || fail "Escape in the modal Gallery control failed"
+expect "control: a modal Dialog keeps Escape from closing the Gallery window" 1 window_count Gallery
+expect "the modal dialog control is released" ok ipc smoke popupDrop gallery-modal-control
+rm -r -- "${repo:?}/shell/Core/DialogModalControl" || fail "removing the modal Dialog control failed"
+ipc smoke scrollTo window vgs.gallery 0 >/dev/null || fail "the gallery did not return to the top after the Tab tour"
+render expect_poll "the gallery's headings are drawn with a size" 15 ipc smoke galleryHeadings window vgs.gallery
 geometry expect "every example stays inside the gallery" '[]' ipc smoke galleryOverflow window vgs.gallery
+mkdir -p "$repo/shell/Core/GalleryFocusControl"
+cat >"$repo/shell/Core/GalleryFocusControl/Item.qml" <<'QML'
+import QtQuick
+import qs.Ui
+
+Item {
+    id: root
+    property Item examples: root
+    width: 240
+    height: 80
+    Switch {
+        property string focusExample: "Switch"
+        focusPreview: false
+        text: "Switch"
+    }
+}
+QML
+focus_control_names_switch() { ipc smoke galleryFocusMissingCopy gallery-focus-control | py_reply 'import json,sys; print("Switch:focusPreview" in json.load(sys.stdin))'; }
+expect "the focus example control builds" ok ipc smoke popupLoad gallery-focus-control "$repo/shell/Core/GalleryFocusControl/Item.qml" window vgs.gallery '{}'
+expect "control: a missing focusPreview is named" True focus_control_names_switch
+expect "the focus example control is released" ok ipc smoke popupDrop gallery-focus-control
+rm -r -- "${repo:?}/shell/Core/GalleryFocusControl" || fail "removing the Gallery focus control failed"
 # No block of the gallery draws over another: the title and each section's
 # heading, in the order the body lays them out, each start at or below the
 # end of the one before, within one pixel. The control moves the third
 # heading onto the second in a copy of the same reading, which the check
 # refuses. `[]` is the pass.
-gallery_sections=(Surfaces Typography Buttons Choices Inputs Feedback "Voice levels" Dialogs Cards Carousel "Titles and scrolling" Lists "List motion")
+gallery_sections=(Surfaces Typography Buttons Choices Inputs Groups Feedback "Voice levels" Dialogs Cards Carousel Focus "Titles and scrolling" Lists "List motion")
 gallery_stack() {
   local boxes=() title name
   title="$(ipc smoke shownWindowGeometry window vgs.gallery Label Gallery)" || return
@@ -187,15 +282,34 @@ expect_poll "the gallery builds the VoiceOrb tones and level states" True orb_ex
 gallery_draw_orbs "the Gallery VoiceOrb shader"
 # The same control must draw before its shader is hidden. Its blue tone
 # occupies a blank fourth slot beside the final three accent examples.
+
+
+mkdir -p "$repo/shell/Core/VoiceOrbControl"
+python3 - "$repo/shell/Ui/feedback/VoiceOrb.qml" "$repo/shell/Core/VoiceOrbControl/VoiceOrb.qml" "$repo/shell/Ui/feedback/shaders/voiceorb.frag.qsb" <<'PY'
+from pathlib import Path
+import json, sys
+source, destination, pack = map(Path, sys.argv[1:])
+text = source.read_text()
+for needle, replacement in [
+    ("    Accessible.ignored: true\n", "    Accessible.ignored: true\n    function hideShader() { shader.visible = false; }\n"),
+    ('Qt.resolvedUrl("shaders/voiceorb.frag.qsb")', 'Qt.resolvedUrl(' + json.dumps(str(pack)) + ')'),
+]:
+    assert text.count(needle) == 1, needle
+    changed = text.replace(needle, replacement)
+    assert changed != text
+    text = changed
+destination.write_text(text)
+PY
 control_gap="$(ipc smoke themeValue space.sm)" || exit 1
 control_position="$(ipc smoke galleryOrbs window vgs.gallery '' | py_reply 'import json,sys
 orb=json.load(sys.stdin)[-1]; x,y,w,h=orb["box"]
 print(json.dumps({"x":x+w+json.loads(sys.argv[1]),"y":y,"tone":"info"}))' "$control_gap")" || exit 1
-expect "the orb drawing control builds" ok ipc smoke popupLoad orb-control "$repo/shell/plugins/vgs.gallery/VoiceOrbControl.qml" window vgs.gallery "$control_position"
+expect "the orb drawing control builds" ok ipc smoke popupLoad orb-control "$repo/shell/Core/VoiceOrbControl/VoiceOrb.qml" window vgs.gallery "$control_position"
 render expect_poll "the normal orb control draws before the defect" True orb_drawn orb-control 0
 expect "the control hides only its shader" ok ipc smoke popupCall orb-control hideShader
 render expect_poll "the pixel reader rejects the hidden shader control" False orb_drawn orb-control 0
 expect "the orb control is released" ok ipc smoke popupDrop orb-control
+rm -r -- "${repo:?}/shell/Core/VoiceOrbControl" || fail "removing the orb control failed"
 if [[ $(ipc smoke scrollTo window vgs.gallery 0) == \[* ]] && offset="$(gallery_offset Buttons)" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
   expect_cursor "an enabled button shows the hand" pointer window:Gallery "$(gallery_box Button Small)"
   expect_cursor "a disabled button shows the arrow" default window:Gallery "$(gallery_box Button Disabled)"
@@ -217,4 +331,8 @@ expect "hiding the gallery is allowed" ok ipc shell hide window vgs.gallery
 expect_poll "the gallery's window is gone" 0 window_count Gallery
 expect_poll "hiding the gallery released its toast" '[]' toast_titles visible
 expect "the gallery summons again for the window rows" ok ipc shell summon window vgs.gallery '{}'
+expect "the non-modal Gallery dialog example takes focus" focused ipc smoke focusExample window vgs.gallery "Dialog accept action"
+type_keys -k Escape || fail "Escape in the Gallery's non-modal Dialog failed"
+expect_poll "Escape from a Gallery Dialog example closes the window" 0 window_count Gallery
+expect "the gallery summons again for the app-window rows" ok ipc shell summon window vgs.gallery '{}'
 app_window_rows Gallery vgs.gallery

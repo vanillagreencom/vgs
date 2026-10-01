@@ -309,8 +309,7 @@ FocusScope {
         onTriggered: root.startPreview()
     }
 
-    // Keys the carousel passes on.
-    Keys.onPressed: event => {
+    function handleKey(event) {
         // The Dialog holds the keys while it shows; what it passes on edits
         // nothing under it.
         if (offer !== null) {
@@ -355,6 +354,9 @@ FocusScope {
         }
         event.accepted = true;
     }
+
+    // Keys the carousel passes on.
+    Keys.onPressed: event => root.handleKey(event)
 
     // One inset box centred on the output, as Omarchy centres its picker:
     // the tabs and the scope in the header, the rail in the body, and the
@@ -416,6 +418,8 @@ FocusScope {
                 focus: true
                 devicePixelRatio: root.shell === null || root.shell.screens.current === null ? Screen.devicePixelRatio : root.shell.screens.current.devicePixelRatio
                 tabSteps: false
+                spaceActivates: false
+                onTabStepped: delta => root.switchRequested(delta)
                 Keys.onTabPressed: event => { root.switchRequested(1); event.accepted = true; }
                 Keys.onBacktabPressed: event => { root.switchRequested(-1); event.accepted = true; }
                 model: ScriptModel {
@@ -545,6 +549,7 @@ FocusScope {
                     ]
                 }
             }
+
         ]
     }
 

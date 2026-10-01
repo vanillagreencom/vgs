@@ -23,6 +23,7 @@ BarWidget {
         anchors.centerIn: parent
         iconName: "settings"
         label: "Settings"
+        shortcut: root.shell === null || root.shell.shortcut === undefined ? "" : (root.shell.shortcut.keys.toggle || "")
         onClicked: root.toggle()
     }
 }

@@ -27,6 +27,7 @@ BarWidget {
         onClicked: root.open(Qt.LeftButton)
 
         // pointer-cursor-exempt: it adds the right click to the BarItem it sits in, whose own PointerCursor shows the hand
+        // keyboard-path: the Terminal row in the launcher opens the same terminal action
         TapHandler {
             acceptedButtons: Qt.RightButton
             onTapped: root.open(Qt.RightButton)

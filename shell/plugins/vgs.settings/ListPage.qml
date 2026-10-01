@@ -27,6 +27,9 @@ FocusScope {
         return panel.plugins.filter(p => wanted === "" || [p.name, p.id, p.description].some(t => String(t).toLowerCase().indexOf(wanted) !== -1));
     }
     readonly property alias scrollArea: layout.scrollArea
+    readonly property alias initialFocus: search
+
+    Keys.onPressed: event => { event.accepted = handleKey(event); }
 
     // The rows change under a resting pointer: it takes no row until it
     // moves, and the cursor lands on the row the keyboard keeps.
@@ -36,27 +39,40 @@ FocusScope {
         current = Math.max(0, Math.min(current, shown.length - 1));
     }
 
-    function focusSearch() { search.forceActiveFocus(); }
+    function focusSearch(reason) { search.forceActiveFocus(reason === undefined ? Qt.TabFocusReason : reason); }
 
-    function move(step) {
-        if (shown.length === 0) return;
-        plate.disarm();
-        current = Math.max(0, Math.min(shown.length - 1, current + step));
-        const item = rows.itemAt(current);
-        if (item === null) return;
-        const top = item.mapToItem(layout.scrollArea.contentItem, 0, 0).y;
-        if (top < layout.scrollArea.contentY) layout.scrollArea.contentY = top;
-        else if (top + item.height > layout.scrollArea.contentY + layout.scrollArea.height) layout.scrollArea.contentY = top + item.height - layout.scrollArea.height;
+    function handleKey(event) {
+        const accepted = nav.handle(event);
+        if (accepted) return true;
+        const typed = KeyNavLogic.printable(event.text, event.modifiers);
+        if (typed === "" || search.activeFocus) return false;
+        focusSearch(Qt.ShortcutFocusReason);
+        search.insert(search.cursorPosition, typed);
+        return true;
     }
 
-    function openCurrent() {
-        if (current >= 0 && current < shown.length) panel.openPlugin(shown[current].id);
+    function openCurrent(reason) {
+        if (current >= 0 && current < shown.length) panel.openPlugin(shown[current].id, reason);
     }
 
     // The rows' cursor, in the body's scrolling content with the rows.
     ListCursor {
         id: plate
         parent: layout.scrollArea.contentItem
+    }
+
+    KeyNav {
+        id: nav
+        count: page.shown.length
+        currentIndex: page.current
+        textEntry: true
+        viewHeight: layout.scrollArea.height
+        rowHeight: Theme.listItem.twoLineHeight
+        cursor: plate
+        flickable: layout.scrollArea
+        itemAt: index => rows.itemAt(index)
+        onMoved: index => page.current = index
+        onActivated: index => page.openCurrent(Qt.TabFocusReason)
     }
 
     Pane {
@@ -100,10 +116,7 @@ FocusScope {
                     leadingIcon: "search"
                     focus: true
                     onTextChanged: page.query = text
-                    Keys.onUpPressed: page.move(-1)
-                    Keys.onDownPressed: page.move(1)
-                    Keys.onReturnPressed: page.openCurrent()
-                    Keys.onEnterPressed: page.openCurrent()
+                    Keys.onPressed: event => { event.accepted = nav.handle(event); }
                 }
             }
         ]
@@ -140,7 +153,7 @@ FocusScope {
                 highlighted: index === page.current
                 cursor: plate
                 onPointed: page.current = index
-                onClicked: page.panel.openPlugin(modelData.id)
+                onClicked: page.panel.openPlugin(modelData.id, Qt.MouseFocusReason)
                 trailing: [
                     Badge {
                         tone: "danger"
@@ -149,9 +162,11 @@ FocusScope {
                         visible: entry.modelData.errors.length > 0
                         anchors.verticalCenter: parent.verticalCenter
                     },
+                    // keyboard-path: open the row and use the plugin page's Enabled switch
                     Switch {
                         size: "sm"
                         checked: entry.modelData.enabled
+                        focusPolicy: Qt.NoFocus
                         anchors.verticalCenter: parent.verticalCenter
                         onToggled: {
                             checked = Qt.binding(() => entry.modelData.enabled);

@@ -43,6 +43,7 @@ Item {
     readonly property string fallbackGlyph: kind === "folder" ? "folder" : kind === "file" ? "file" : "app-window"
     readonly property bool isMenu: kind === "menu" || kind === "link"
     readonly property bool showsDetail: live && (launcher.filterText.length > 0 || kind === "option" || kind === "notice" || kind === "unavailable") && detail.length > 0
+    readonly property bool openWithHintShown: live && hasCursor && (kind === "file" || kind === "folder")
 
     height: live ? launcher.rowHeightFor(detail) : 0
 
@@ -121,16 +122,39 @@ Item {
             elide: Text.ElideRight
         }
 
-        Text {
-            textFormat: Text.PlainText
+        Row {
             width: parent.width
-            text: row.detail
             visible: row.showsDetail
-            color: row.look.text.foreground
-            opacity: row.look.text.detail.opacity
-            font.family: row.look.font.family
-            font.pixelSize: row.look.text.detail.size
-            elide: Text.ElideRight
+            spacing: row.look.row.lineGap
+
+            Text {
+                textFormat: Text.PlainText
+                width: row.openWithHintShown ? Math.max(0, parent.width - hint.implicitWidth - parent.spacing) : parent.width
+                text: row.detail
+                color: row.look.text.foreground
+                opacity: row.look.text.detail.opacity
+                font.family: row.look.font.family
+                font.pixelSize: row.look.text.detail.size
+                elide: Text.ElideRight
+            }
+            Row {
+                id: hint
+                visible: row.openWithHintShown
+                spacing: row.look.row.lineGap
+                KeyCaps {
+                    anchors.verticalCenter: parent.verticalCenter
+                    shortcut: "Shift+Enter"
+                }
+                Text {
+                    textFormat: Text.PlainText
+                    text: "open with"
+                    color: row.look.text.foreground
+                    opacity: row.look.text.detail.opacity
+                    font.family: row.look.font.family
+                    font.pixelSize: row.look.text.detail.size
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
         }
     }
 
@@ -146,6 +170,7 @@ Item {
         }
     }
 
+    // keyboard-path: the launcher's KeyNav moves the cursor here, Enter activates it, and Shift+F10/Menu opens the file flyout
     MouseArea {
         id: mouseArea
         anchors.fill: parent

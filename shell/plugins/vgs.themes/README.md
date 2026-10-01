@@ -34,10 +34,19 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 - `SUPER+T`: open or close the full-screen theme browser. In the wallpaper browser, open the theme browser.
 - `SUPER+W`: open or close the full-screen wallpaper browser. In the theme browser, open the wallpaper browser.
+- `SUPER+CTRL+J`: open or close the Themes panel. VGS does not use `SUPER+CTRL+T` because Omarchy binds it to Activity.
+
+In the Themes panel:
+
+- `Up`, `Down`, `Home`, `End`, `PageUp` and `PageDown`: move the theme selection.
+- Typing: jump to a theme by name.
+- `Enter` or Space: apply an installed row, or install a catalog row.
+- `Alt+D`: run the selected installed catalog row's Download wallpapers action when it is shown.
+- `Esc`: close the panel.
 
 In both full-screen browsers:
 
-- `Tab` and `Shift+Tab`: switch between Themes and Wallpapers.
+- `Tab`, `Shift+Tab`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+PageDown` and `Ctrl+PageUp`: switch between Themes and Wallpapers.
 - `Left`, `Right`, `Up`, `Down`, `Home`, `End` and the wheel: move through cards.
 - The user's Hyprland directional focus keys also move through cards while the browser is open.
 - `Enter`: apply the selected theme, set the selected wallpaper, or run the Download or Update card.
@@ -53,14 +62,15 @@ In the wallpaper browser:
 
 - `Alt+S`: switch between Theme and All.
 - `Alt+M`: switch between All monitors and This monitor when that control is shown.
+- Space: set the selected wallpaper or run the Download or Update card.
 
-The plugin declares both shortcuts in its manifest. The generated Hyprland layer captures the keyboard while the browser is open, so matching user window binds do not reach windows behind it.
+The plugin declares the browser and panel shortcuts in its manifest. The generated Hyprland layer captures the keyboard while the browser is open, so matching user window binds do not reach windows behind it.
 
 ## Capabilities
 
 - `theme`: list packages, read the catalog, install a catalog package, apply a package, list and set images, download or update wallpapers, and fetch a selected catalog preview.
 - `surfaces`: open the panel and the full-screen browser, and close them from their own controls.
-- `shortcut`: register `vgs.themes:themes` and `vgs.themes:wallpapers`, which the manifest binds to `SUPER+T` and `SUPER+W`.
+- `shortcut`: register `vgs.themes:themes`, `vgs.themes:wallpapers` and `vgs.themes:panel`, which the manifest binds to `SUPER+T`, `SUPER+W` and `SUPER+CTRL+J`.
 - `screens`: count the monitors for the wallpaper browser's monitor choice, and name the monitor it shows on.
 
 ## Settings

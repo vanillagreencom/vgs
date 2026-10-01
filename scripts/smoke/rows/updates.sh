@@ -265,6 +265,7 @@ widget_visible() { ipc smoke readInstance "$widget_key" vgs.updates visible; }
 widget_tip() { ipc smoke readInstance "$widget_key" vgs.updates tooltip | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin).split("\n")[:-1]))'; }
 widget_tip_line() { widget_tip | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)[int(sys.argv[1])]))' "$1"; }
 widget_tip_last() { ipc smoke readInstance "$widget_key" vgs.updates tooltip | py_reply 'import json,re,sys; print(bool(re.fullmatch(r"Checked \S.*", json.load(sys.stdin).split("\n")[-1])))'; }
+updates_focused() { ipc smoke focused panel vgs.updates | py_reply 'import json,sys; t=sys.stdin.read().strip(); print(t if not t.startswith("[") else json.dumps([json.loads(t)[1], json.loads(t)[2], json.loads(t)[3], json.loads(t)[4]]))'; }
 # hideWhenCurrent in the widget's layout entry of the user file, written
 # whole and moved into place.
 widget_hide_when_current() { # true|false
@@ -368,6 +369,31 @@ expect "the tooltip ends with the check's time" True widget_tip_last
 
 # The flyout: one row per source with its count and its own Update when it
 # has updates; a click on a row lists its packages.
+# Keyboard-only path.
+expect "the updates panel is closed before the keyboard path" ok ipc shell hide panel vgs.updates
+expect "the updates shortcut opens the flyout" ok hypr dispatch 'hl.dsp.global("vgs.updates:toggle")'
+expect_poll "the shortcut opens on the first source row with a visible focus ring" '["System", true, true, true]' updates_focused
+forget_record
+type_keys -k Left || fail "sending Left to the updates row control failed"
+type_keys -k Space || fail "sending Space to expand the first updates row failed"
+expect_poll "Space expands the first updates row" '["System", "2 updates", "2", "Update", "coreutils 9.11-2 → 9.12-1", "linux 6.1 → 6.2"]' flyout_row 0
+expect "control: Left on the source row runs no TUI" absent launched
+forget_record
+type_keys -k Tab -k Return || fail "sending Tab and Return to the source Update button failed"
+expect_poll "Return on the source Update button opens the source update TUI" '["update-source.sh", "pacman"]' launched
+expect_run_end "the keyboard source Update run ends" vgs.updates/update-source
+expect_poll "the service is idle after the keyboard source update run" idle updates_idle
+expect "the updates panel reopens for the Update everything keyboard path" ok ipc shell summon panel vgs.updates '{}'
+expect_poll "the reopened updates panel starts on the first row" '["System", true, true, true]' updates_focused
+forget_record
+type_keys -k Tab -k Tab -k Tab -k Tab -k Tab -k Tab -k Tab -k Tab -k Tab -k Tab -k Tab -k Tab -k Tab -k Return || fail "sending Tab and Return to Update everything failed"
+expect_poll "Return on Update everything opens the update TUI with no argument" '["update.sh"]' launched
+expect_run_end "the keyboard Update everything run ends" vgs.updates/update
+expect_poll "the service is idle after the keyboard update run" idle updates_idle
+expect "the updates panel opens for Escape" ok ipc shell summon panel vgs.updates '{}'
+expect_poll "the updates panel is open before Escape" open flyout_open
+type_keys -k Escape || fail "sending Escape to the updates panel failed"
+expect_poll "Escape closes the updates panel" closed flyout_open
 open_flyout
 expect_poll "the flyout draws one row per source" \
   '[["System", "2 updates", "2", "Update"], ["AUR", "1 update", "1", "Update"], ["Flatpak", "1 update", "1", "Update"], ["mise", "1 update", "1", "Update"], ["VGS", "1 update", "1", "Update"], ["Plugins", "1 update", "1", "Update"], ["Themes", "Up to date", "0"]]' flyout_rows

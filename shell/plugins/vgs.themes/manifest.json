@@ -86,7 +86,8 @@
     },
     "binds": [
       { "shortcut": "themes", "key": "SUPER+T" },
-      { "shortcut": "wallpapers", "key": "SUPER+W" }
+      { "shortcut": "wallpapers", "key": "SUPER+W" },
+      { "shortcut": "panel", "key": "SUPER+CTRL+J" }
     ]
   }
 }

@@ -31,6 +31,7 @@ Item {
     property var summary: null
     // Why the last press did not hand off, "" when it did or before one.
     property string problem: ""
+    property Item initialFocus: primaryButton.visible ? primaryButton : linkButton
 
     function open(payloadJson) {
         problem = "";
@@ -173,6 +174,7 @@ Item {
         }
 
         Button {
+            id: primaryButton
             visible: root.setupButton !== null
             variant: "primary"
             text: root.setupButton === null ? "" : root.setupButton.label

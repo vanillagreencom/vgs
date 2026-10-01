@@ -61,6 +61,20 @@ Install opens `core/pkg-install` and Remove `core/pkg-remove`, the core's packag
 
 `f:` and `F:` run `file-search.sh` from the plugin's published revision; its header states its protocol and every refusal. The index lives in `$XDG_CACHE_HOME/vgs/launcher/`, holds at most 200000 entries, and refreshes each time the launcher enters `f:` or `F:`. A query shows at most 40 results; hits with one name sit together, newest first. Enter opens the pick with its default application; Shift+Enter or a right click lists the applications that open it, with Show in folder and Copy path. A helper that fails shows its keyed line as a notice row. It needs `fd`, `fzf`, `file`, `flock`, `gio`, `xdg-mime` and `wl-copy`.
 
+## Keys
+
+- `Up`, `Down`, `Home`, `End`, `PageUp` and `PageDown`: move the list selection. With search text, `Ctrl+Home` and `Ctrl+End` move to the first and last result.
+- `Enter`: run the selected row.
+- `Right`: open only a menu, link or open-with row. It does not run action rows.
+- `Left` or Backspace on an empty search: go back one menu.
+- `Esc`: clear the search, then leave a menu the user opened, then close the launcher. A menu opened directly by a payload closes on the first `Esc`.
+- `Ctrl+B`: show or hide Categories.
+- `Shift+Enter`: open the selected file's open-with list.
+- `Shift+F10` or Menu: open the selected file's flyout. The flyout owns the keys while open. `Up`, `Down`, `Home`, `End` and typed letters move inside it. `Enter` picks the highlighted entry. `Esc` closes it.
+- The user's Hyprland directional focus keys call `navigate(direction)`: Up and Down move the selection, Left goes back and Right opens menus only.
+
+The launcher does not bind `SUPER+W`, `SUPER+A`, `SUPER+S` or `SUPER+D` inside QML. The Hyprland capture submap from D067 sends the user's focus binds to `navigate(direction)`, and `vgs.themes` keeps `SUPER+W` for the wallpaper browser.
+
 ## Look
 
 `Appearance.js` holds every value the launcher draws with, as the `appearance` table [docs/decisions/D023](../../../docs/decisions/D023-plugin-owned-appearance.md) sets out. The theme reaches it through `scheme.mode`, `palette.accent` and `motion.scale` alone, so a theme's palette, fonts and metrics leave the glass as it is; the accent lights the orbiting edge reflection and the caret while a search runs. The result list and the file flyout move their highlight through the list motion of `qs.Ui`, `ListCursor` and `ListEntrance`, at the launcher's own timings and curves and with its own glass plate ([motion.md](../../../docs/architecture/motion.md)). With the motion scale at 0 nothing animates, the caret stays on and the edge lights stand still.

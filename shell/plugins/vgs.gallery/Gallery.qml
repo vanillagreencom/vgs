@@ -18,6 +18,9 @@ Item {
     // The root of every example, for the row that checks each component of
     // the module is drawn here.
     readonly property Item examples: root
+    property Item initialFocus: layout.scrollArea.focusProxy
+
+    KeyNav {}
 
     function open(payloadJson) { payload = payloadJson ? JSON.parse(payloadJson) : {}; }
     function close() {}
@@ -34,6 +37,7 @@ Item {
         id: layout
         anchors.fill: parent
         container: "window"
+        Component.onCompleted: scrollArea.keyboardScroll = true
 
         header: [
             Column {
@@ -296,6 +300,7 @@ Item {
                                 Kbd { text: "Ctrl" }
                                 Kbd { text: "K" }
                             }
+                            KeyCaps { shortcut: "SUPER+SHIFT+T" }
                         }
                     }
                 }
@@ -378,22 +383,26 @@ Item {
                     rowSpacing: Theme.stack.group
                     description: "Waiting, destructive, busy, and with content and a disabled action"
                 Dialog {
+                    modal: false
                     title: "Download wallpapers for Nord?"
                     message: "12 wallpapers, 42 MB, from vanillagreencom/vgs-themes."
                     actions: [{ label: "Not now", role: "cancel" }, { label: "Download", role: "accept" }]
                 }
                 Dialog {
+                    modal: false
                     title: "Remove acme.weather?"
                     message: "Its settings stay in shell.json."
                     actions: [{ label: "Cancel", role: "cancel" }, { label: "Remove", role: "accept", variant: "danger" }]
                 }
                 Dialog {
+                    modal: false
                     title: "Downloading wallpapers for Nord"
                     message: "The theme applies again when the download ends."
                     busy: true
                     actions: [{ label: "Not now", role: "cancel" }, { label: "Download", role: "accept" }]
                 }
                 Dialog {
+                    modal: false
                     title: "Install what acme.weather needs?"
                     message: "No known package manager was found; install these by hand."
                     actions: [{ label: "Not now", role: "cancel" }, { label: "Install", role: "accept", enabled: false }]
@@ -439,11 +448,251 @@ Item {
                     height: Theme.carousel.expandedHeight * Theme.carousel.minScale
                     model: ["info", "success", "warning", "danger", "info", "success", "warning", "danger", "info"]
                     currentIndex: 4
+                    tabSteps: false
                     delegate: Rectangle {
                         required property var modelData
                         required property size decodeSize
                         anchors.fill: parent
                         color: Theme.color[modelData]
+                    }
+                }
+
+                }
+                Section {
+                    title: "Focus"
+                    rowSpacing: Theme.stack.group
+                    description: "Focusable controls drawn with their keyboard focus state"
+                Column {
+                    width: parent.width
+                    spacing: Theme.stack.row
+                    Field {
+                        label: "Buttons"
+                        inline: true
+                        width: parent.width
+                        Flow {
+                            width: parent.width
+                            spacing: Theme.stack.inline
+                            Repeater {
+                                model: ["primary", "secondary", "tertiary", "ghost", "danger"]
+                                Button {
+                                    required property string modelData
+                                    property string focusExample: "Button " + modelData
+                                    focusPreview: true
+                                    variant: modelData
+                                    text: modelData
+                                }
+                            }
+                            ToggleButton {
+                                property string focusExample: "ToggleButton"
+                                focusPreview: true
+                                text: "Pinned"
+                                checked: true
+                            }
+                            IconButton {
+                                property string focusExample: "IconButton"
+                                focusPreview: true
+                                iconName: "settings"
+                                label: "Settings"
+                            }
+                        }
+                    }
+                    Field {
+                        label: "Bar item"
+                        inline: true
+                        width: parent.width
+                        Rectangle {
+                            width: Math.min(parent.width, Theme.size.panel.sm)
+                            height: Theme.bar.height
+                            color: Theme.bar.background
+                            BarItem {
+                                property string focusExample: "BarItem"
+                                focusPreview: true
+                                anchors.verticalCenter: parent.verticalCenter
+                                iconName: "settings"
+                                label: "Settings"
+                                shortcut: "SUPER+M"
+                            }
+                        }
+                    }
+                    Field {
+                        label: "Choices"
+                        inline: true
+                        width: parent.width
+                        Flow {
+                            width: parent.width
+                            spacing: Theme.stack.inline
+                            Switch {
+                                property string focusExample: "Switch"
+                                focusPreview: true
+                                text: "Switch"
+                                checked: true
+                            }
+                            Checkbox {
+                                property string focusExample: "Checkbox"
+                                focusPreview: true
+                                text: "Checkbox"
+                                checked: true
+                            }
+                            Radio {
+                                property string focusExample: "Radio"
+                                focusPreview: true
+                                text: "Radio"
+                                checked: true
+                            }
+                            SegmentedControl {
+                                property string focusExample: "SegmentedControl"
+                                focusPreview: true
+                                model: ["One", "Two", "Three"]
+                                currentIndex: 1
+                            }
+                        }
+                    }
+                    Field {
+                        label: "Inputs"
+                        inline: true
+                        width: parent.width
+                        Flow {
+                            width: parent.width
+                            spacing: Theme.stack.inline
+                            Select {
+                                property string focusExample: "Select"
+                                property bool focusPreview: true
+                                model: ["Default", "Ocean", "Forest"]
+                            }
+                            TextField {
+                                property string focusExample: "TextField"
+                                property bool focusPreview: true
+                                text: "Focused text"
+                            }
+                            Slider {
+                                property string focusExample: "Slider"
+                                focusPreview: true
+                                from: 0
+                                to: 100
+                                value: 55
+                                width: Theme.size.panel.sm / 2
+                            }
+                            TitleButton {
+                                property string focusExample: "TitleButton"
+                                property bool focusPreview: true
+                                text: "Focused title"
+                                menu: Menu { MenuItem { text: "Focused title" } }
+                            }
+                        }
+                    }
+                    Field {
+                        label: "Tabs and disclosure"
+                        inline: true
+                        width: parent.width
+                        Column {
+                            width: parent.width
+                            spacing: Theme.stack.row
+                            Tabs {
+                                property string focusExample: "Tabs"
+                                property bool focusPreview: true
+                                width: parent.width
+                                model: ["Installed", "Available", "Updates"]
+                                currentIndex: 1
+                            }
+                            Disclosure {
+                                property string focusExample: "Disclosure"
+                                width: parent.width
+                                text: "Focused disclosure"
+                                secondary: "Expanded"
+                                iconName: "package"
+                                expanded: true
+                                Label { role: "hint"; text: "The disclosure row is the focusable control." }
+                            }
+                        }
+                    }
+                    Field {
+                        label: "Carousel"
+                        inline: true
+                        width: parent.width
+                        CardCarousel {
+                            property string focusExample: "CardCarousel"
+                            width: parent.width
+                            height: Theme.carousel.expandedHeight * Theme.carousel.minScale
+                            model: ["accent", "info", "success", "warning", "danger"]
+                            currentIndex: 2
+                            tabSteps: false
+                            delegate: Rectangle {
+                                required property var modelData
+                                required property size decodeSize
+                                anchors.fill: parent
+                                color: Theme.color[modelData]
+                            }
+                        }
+                    }
+                    Field {
+                        label: "Key navigation"
+                        inline: true
+                        width: parent.width
+                        Column {
+                            width: parent.width
+                            spacing: Theme.stack.row
+                            KeyCaps {
+                                property string focusExample: "KeyCaps"
+                                shortcut: "SUPER+SHIFT+T"
+                            }
+                            KeyHints {
+                                hints: [
+                                    { key: "Left/Right", text: "Move" },
+                                    { key: "Enter", text: "Open" }
+                                ]
+                            }
+                            // focus-indicator: ListCursor shows the current row
+                            Item {
+                                id: focusList
+                                property string focusExample: "KeyNav list"
+                                property int current: 0
+                                width: parent.width
+                                height: focusListColumn.height
+                                activeFocusOnTab: true
+                                Keys.onPressed: event => { event.accepted = focusListNav.handle(event); }
+
+                                ListCursor { id: focusListCursor }
+                                KeyNav {
+                                    id: focusListNav
+                                    count: focusListRows.count
+                                    currentIndex: focusList.current
+                                    cursor: focusListCursor
+                                    itemAt: index => focusListRows.itemAt(index)
+                                    onMoved: index => focusList.current = index
+                                }
+                                Column {
+                                    id: focusListColumn
+                                    width: parent.width
+                                    Repeater {
+                                        id: focusListRows
+                                        model: ["First", "Second", "Third"]
+                                        ListItem {
+                                            required property string modelData
+                                            required property int index
+                                            width: focusListColumn.width
+                                            text: modelData
+                                            iconName: "list"
+                                            cursor: focusListCursor
+                                            highlighted: index === focusList.current
+                                            onPointed: focusList.current = index
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Field {
+                        label: "Dialog"
+                        inline: false
+                        width: parent.width
+                        Dialog {
+                            property string focusExample: "Dialog accept action"
+                            width: parent.width
+                            modal: false
+                            title: "Save this theme?"
+                            message: "The accept action is the focused action."
+                            actions: [{ label: "Cancel", role: "cancel" }, { label: "Save", role: "accept" }]
+                        }
                     }
                 }
 
@@ -567,6 +816,7 @@ Item {
                         motionRows.model = 5;
                     }
                 }
+                // focus-indicator: ListCursor shows the current row
                 Item {
                     id: motionList
                     property int current: 0
