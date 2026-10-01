@@ -461,7 +461,7 @@ gallery_error_focus() { # MODE
 
 # The gallery's menu opened from its button, the pointer on its first
 # entry, 20 px under the button, which highlights it.
-gallery_menu_current() { ipc smoke menus "$gallery_kind" vgs.gallery | py_reply 'import json,sys; m=[x for x in json.load(sys.stdin) if x["opened"]]; print(m[0]["current"] if len(m) == 1 else "open=%d" % len(m))'; }
+gallery_menu_current() { ipc smoke menus "$gallery_kind" vgs.gallery | py_reply 'import json,sys; m=[x for x in json.load(sys.stdin) if x["opened"]]; print(json.dumps(m[0]["current"]) if len(m) == 1 else "open=%d" % len(m))'; }
 gallery_menu_first() { # MODE
   local box y x
   ipc smoke scrollTo "$gallery_kind" vgs.gallery 0 >/dev/null || { fail "the gallery did not scroll to its top"; return; }
@@ -511,7 +511,9 @@ scene_gallery() { # MODE
 settings_page() { ipc smoke readInstance "$settings_kind" vgs.settings page; }
 settings_menu_hovered() { ipc smoke menus "$settings_kind" vgs.settings | py_reply 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0].get("barHovered") is True)'; }
 settings_menu_open() { ipc smoke menus "$settings_kind" vgs.settings | python3 -c 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0]["opened"])'; }
-settings_menu_first() { ipc smoke menus "$settings_kind" vgs.settings | py_reply 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and len(m[0]["entries"]) > 0 and m[0]["current"] == m[0]["entries"][0])'; }
+# Whether the pointer took the title's menu's highlight from the checked
+# entry, which opening highlights.
+settings_menu_pointed() { ipc smoke menus "$settings_kind" vgs.settings | py_reply 'import json,sys; m=json.load(sys.stdin); print(len(m) == 1 and m[0]["current"] is not None and m[0]["current"] not in m[0]["checked"])'; }
 # The page's one scroll area as the probe reads it.
 settings_scroll() { ipc smoke scrollAreas "$settings_kind" vgs.settings | python3 -c 'import json,sys; a=json.load(sys.stdin); print(json.dumps(a[0]) if len(a) == 1 else "areas=%d" % len(a))'; }
 settings_drag_page_down() { # LABEL
@@ -810,7 +812,7 @@ scene_settings() { # MODE
     read -r x y < <(at_centre "$settings_surface" "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(json.dumps([r[0], r[1] + r[3], 80, 40]))' "$title")")
     hover "$((x - 6))" "$y" && hover "$x" "$y" || fail "the hover inside the title's menu failed"
     expect_poll "the title's menu reports the pointer inside it" True settings_menu_hovered
-    expect_poll "the pointer highlights the menu's first entry" True settings_menu_first
+    expect_poll "the pointer takes the menu's highlight" True settings_menu_pointed
   fi
   take "settings-$1-menu"
   type_keys -k Escape || fail "sending Escape to the title's menu failed"
