@@ -212,6 +212,11 @@ Item {
         if (errorTail !== "") cause = errorTail;
         if (cause === "") cause = "jarvis: daemon=ended";
         const permanent = completion !== null && completion.status === 0 && completion.code === 78;
+        // The ended child's Session state is no longer current: neither the
+        // retry wait nor a problem may show or act on it.
+        sessionState = null;
+        const stale = shell.status.set("detail", null);
+        if (stale !== "ok") throw new Error("jarvis: " + stale);
         if (permanent || retries === 5) {
             if (lifetime.pendingMute !== "none") refuseMute(cause);
             lifetime = { kind: "problem", pendingMute: "none" };

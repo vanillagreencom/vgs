@@ -23,7 +23,7 @@ The manifest declares kind `bar-widget` with `defaultSection` `right`. Enabling 
 | ready | the phase is `idle` | `mic` | the bar's foreground |
 
 - Live comes first: an opening, open or closing microphone always shows. A mute that waits for capture to close therefore reads live until the close completes.
-- The tooltip's first line names the state. A problem names its cause text. Off before the first state shows the daemon's own text, such as Starting or Restarting. Off with the gate down names its reason. The second line is "Click to unmute" while muted, otherwise "Click to mute".
+- The tooltip's first line names the state. A problem names its cause text. Off before the first state shows the daemon's own text, such as Starting or Restarting. The service clears `detail` when the child ends, so the retry wait and a problem never show the ended child's state. Off with the gate down names its reason. The second line follows the mute region a click toggles, whatever state the icon shows: "Click to unmute" while a Session state has mute `on` or `muting`, otherwise "Click to mute".
 - The shell has no coding-task status yet. Working therefore means a Session phase in which Jarvis is busy with its microphone closed.
 - A tone, region kind, gate reason or phase outside the shapes that `Service.qml` and `Session.js` produce throws a keyed `jarvis widget:` error. Listening and armed with capture closed are such shapes. No value falls back to a default.
 
@@ -35,13 +35,13 @@ The widget calls `shell.ipc.call("mute", "")` and logs any reply other than `ok`
 
 ## Keyboard
 
-`BarItem` is a button that takes Tab focus. Space activates it as a click. No `qs.Ui` button handles Return or keypad Enter, so the widget adds `Keys.onReturnPressed` and `Keys.onEnterPressed`. The bar layer takes no keyboard focus in the live shell, so the Mute shortcut is the keyboard path there. The QML unit test proves Space, Return and Enter on a focused widget.
+`BarItem` is a button that takes Tab focus. Space activates it as a click. `BarItem` handles neither Return nor keypad Enter, so the widget adds `Keys.onReturnPressed` and `Keys.onEnterPressed`. The bar layer takes no keyboard focus in the live shell, so the Mute shortcut is the keyboard path there. The QML unit test proves Space, Return and Enter on a focused widget.
 
 ## Evidence
 
 - `scripts/test-jarvis-widget.js` runs the judge under node. Its Session records come from `Session.initial`, pass `Session.validate` and take their phase from `Session.phaseOf`. It covers every state, each precedence edge, every gate reason and working phase, and each refusal. Each control removes one rule from a copy of the view and must fail an assertion.
 - `scripts/qml-tests/tst_jarvis_widget.qml` builds `Widget.qml` with a stand-in `shell`. It reads the drawn icon, colour and tooltip per state. A click, Space, Return and Enter each make exactly one `mute` call. Mutation rows in `scripts/test-qml-unit.sh` drop the click call and each key handler, change the handler name, fix the icon, swap one tone and accept an unknown tone.
-- `scripts/smoke/rows/jarvis-widget.sh` runs the real service with the scripted daemon fixture. It reads the right section, then the drawn widget for off before the first state, ready, live, thinking, speaking, muted by a click, unmuted and muted again by the physical Mute key, unmuted by a click, live while mute waits for capture to close, a permanent problem with its refusal toast, and off for the unconfigured stock daemon. Three controls each plant one defect in a copy of a plugin file. A click that calls nothing and a handler that sends no intent each fail the click assertion once. A view that reads the microphone from the phase fails the closing assertion once. No latency budget is claimed.
+- `scripts/smoke/rows/jarvis-widget.sh` runs the real service with the scripted daemon fixture. It reads the right section, then the drawn widget for off before the first state, ready, live, thinking, speaking, muted by a click, unmuted and muted again by the physical Mute key, unmuted by a click, live while mute waits for capture to close, off with the Restarting text after the daemon is killed, a permanent problem with its refusal toast, and off for the unconfigured stock daemon. The retry case plants a 3 s retry delay in a copy of `Service.qml`, so the row reads the widget before the next start. Four controls each plant one defect in a copy of a plugin file. A click that calls nothing and a handler that sends no intent each fail the click assertion once. A view that reads the microphone from the phase fails the closing assertion once. A service that keeps the ended state fails the Restarting assertion once. No latency budget is claimed.
 
 ## Omarchy comparison
 

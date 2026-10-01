@@ -58,7 +58,7 @@ jarvis_widget_click_control() { # LABEL
    jarvis_widget_click_mutes >"$sandbox/jarvis-widget-click-$1-control.log"
    echo "$failures")
 }
-jarvis_widget_closing() { expect_poll "the widget reads live while muting closes capture" "$jarvis_widget_live" jarvis_widget; }
+jarvis_widget_closing() { expect_poll "the widget reads live while muting closes capture" '["audio-lines", "accent", "Jarvis is using the microphone\nClick to unmute"]' jarvis_widget; }
 jarvis_widget_closing_control() {
   (failures=0 behaviour_failures=0
    jarvis_widget_closing >"$sandbox/jarvis-widget-closing-control.log"
@@ -83,22 +83,52 @@ jarvis_widget_mute_while_listening() { # ASSERTION
   expect_poll "a click unmutes after the conversation" off jarvis_key_state mute
   jarvis_key_mode hold
 }
-# With Jarvis disabled, put FILE's copy from before the row back with
-# NEEDLE replaced by REPLACEMENT once, and rescan.
-jarvis_widget_plant() { # FILE NEEDLE REPLACEMENT
-  python3 - "$sandbox/jarvis-widget-before-$1" "$jarvis_widget_dir/$1" "$2" "$3" <<'PY'
+# With Jarvis disabled, put FILE's copy from before the row back with each
+# NEEDLE replaced by its REPLACEMENT once, and rescan.
+jarvis_widget_plant() { # FILE NEEDLE REPLACEMENT [NEEDLE REPLACEMENT]...
+  python3 - "$sandbox/jarvis-widget-before-$1" "$jarvis_widget_dir/$1" "${@:2}" <<'PY'
 from pathlib import Path
 import sys
-source, target, needle, replacement = sys.argv[1:]
+source, target, *pairs = sys.argv[1:]
+assert pairs and len(pairs) % 2 == 0, pairs
 p = Path(target); assert not p.is_symlink()
 s = Path(source).read_text()
-assert s.count(needle) == 1, needle
-changed = s.replace(needle, replacement)
-assert changed != s
-p.write_text(changed)
+for needle, replacement in zip(pairs[::2], pairs[1::2]):
+    assert s.count(needle) == 1, needle
+    changed = s.replace(needle, replacement)
+    assert changed != s
+    s = changed
+p.write_text(s)
 PY
   jarvis_rescan
 }
+# The widget during the retry wait: `restarting` for the off look with the
+# daemon's Restarting text, otherwise the reading itself.
+jarvis_widget_restarting() {
+  jarvis_widget | py_reply '
+import json, sys
+t = sys.stdin.read().strip()
+r = None if t == "absent" else json.loads(t)
+ok = r is not None and r[:2] == ["power-off", "neutral"] and r[2].startswith("Jarvis: Restarting: ") and r[2].endswith("\nClick to mute")
+print("restarting" if ok else t)
+'
+}
+jarvis_widget_restart_assertion() { expect_poll "the widget reads off with the Restarting text after the daemon ends" restarting jarvis_widget_restarting; }
+jarvis_widget_restart_control() {
+  (failures=0 behaviour_failures=0
+   jarvis_widget_restart_assertion >"$sandbox/jarvis-widget-restart-control.log"
+   echo "$failures")
+}
+# Kill the running daemon by the PID below its Process-owned launcher.
+jarvis_widget_kill() {
+  local launcher
+  launcher="$(ipc smoke jarvisProcess | jarvis_launcher_pid)" || return
+  kill -KILL "$(jarvis_descendants "$launcher")"
+}
+# Keep the real retry timer, with a fixture delay long enough to read the
+# widget before the next start.
+jarvis_widget_retry_needle='retry.interval = 250 * Math.pow(2, retries);'
+jarvis_widget_retry_delay='retry.interval = 3000;'
 jarvis_widget_restore() { # FILE
   jarvis_disable
   cp -- "$sandbox/jarvis-widget-before-$1" "$jarvis_widget_dir/$1"
@@ -145,8 +175,27 @@ expect "unmute alone keeps capture closed" closed jarvis_key_state capture
 jarvis_widget_mute_while_listening jarvis_widget_closing
 expect_poll "the widget reads ready after the toggle case" "$jarvis_widget_ready" jarvis_widget
 
-# Keep the widget's button and its handler. Drop only the click's call.
 jarvis_disable
+jarvis_widget_plant Service.qml "$jarvis_widget_retry_needle" "$jarvis_widget_retry_delay"
+jarvis_enable
+expect_poll "the retry case draws the ready widget" "$jarvis_widget_ready" jarvis_widget
+jarvis_widget_kill
+jarvis_widget_restart_assertion
+expect_poll "the restarted daemon answers after one retry" ready jarvis_ready 1
+expect_poll "the widget reads ready after the restart" "$jarvis_widget_ready" jarvis_widget
+jarvis_widget_restore Service.qml
+
+# Keep the retry and its report. Drop only the clear of the ended state.
+jarvis_widget_plant Service.qml "$jarvis_widget_retry_needle" "$jarvis_widget_retry_delay" \
+  'const stale = shell.status.set("detail", null);' 'const stale = "ok";'
+jarvis_enable
+expect_poll "the clear control draws the ready widget" "$jarvis_widget_ready" jarvis_widget
+jarvis_widget_kill
+expect "a service that keeps the ended state fails the restarting assertion" 1 jarvis_widget_restart_control
+expect_poll "the clear control's daemon answers after one retry" ready jarvis_ready 1
+jarvis_widget_restore Service.qml
+
+# Keep the widget's button and its handler. Drop only the click's call.
 jarvis_widget_plant Widget.qml 'onClicked: root.toggleMute()' 'onClicked: {}'
 jarvis_enable
 expect_poll "the click control draws the ready widget" "$jarvis_widget_ready" jarvis_widget

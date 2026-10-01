@@ -86,10 +86,12 @@ function gateDown(gate) {
     }
 }
 
-function look(state, line) {
+// The second tooltip line names what a click does to MUTEON, the mute
+// region the click toggles, whatever state the icon shows.
+function look(state, line, muteOn) {
     var out = LOOKS[state];
     return { state: state, icon: out.icon, tone: out.tone,
-        tooltip: line + "\n" + (state === "muted" ? "Click to unmute" : "Click to mute") };
+        tooltip: line + "\n" + (muteOn ? "Click to unmute" : "Click to mute") };
 }
 
 // The widget's { state, icon, tone, tooltip } for VALUES, the plugin's
@@ -102,22 +104,23 @@ function view(values) {
             || detail.state === null || typeof detail.state !== "object"))
         refuse("detail", detail);
     var state = detail === null ? null : detail.state;
-    if (state !== null && microphoneOpen(state.capture)) return look("live", "Jarvis is using the microphone");
-    if (daemon !== null && daemon.tone === "danger") return look("problem", daemon.text);
+    var muteOn = state !== null && muted(state.mute);
+    if (state !== null && microphoneOpen(state.capture)) return look("live", "Jarvis is using the microphone", muteOn);
+    if (daemon !== null && daemon.tone === "danger") return look("problem", daemon.text, muteOn);
     if (detail !== null && detail.phase === "error") {
         if (state.fault === null || typeof state.fault !== "object" || typeof state.fault.reason !== "string")
             refuse("fault", state.fault);
-        return look("problem", "Problem: " + state.fault.reason);
+        return look("problem", "Problem: " + state.fault.reason, muteOn);
     }
-    if (audio !== null && audio.tone === "danger") return look("problem", "Audio problem: " + audio.text);
-    if (state === null) return look("off", daemon === null ? GATE_TEXT.starting : "Jarvis: " + daemon.text);
-    if (muted(state.mute)) return look("muted", "Jarvis is muted");
-    if (gateDown(state.gate)) return look("off", GATE_TEXT[state.gate.reason]);
+    if (audio !== null && audio.tone === "danger") return look("problem", "Audio problem: " + audio.text, muteOn);
+    if (state === null) return look("off", daemon === null ? GATE_TEXT.starting : "Jarvis: " + daemon.text, muteOn);
+    if (muteOn) return look("muted", "Jarvis is muted", muteOn);
+    if (gateDown(state.gate)) return look("off", GATE_TEXT[state.gate.reason], muteOn);
     switch (detail.phase) {
     case "thinking": case "speaking": case "confirming": case "acting":
-        return look("working", WORK_TEXT[detail.phase]);
+        return look("working", WORK_TEXT[detail.phase], muteOn);
     case "idle":
-        return look("ready", "Jarvis is ready");
+        return look("ready", "Jarvis is ready", muteOn);
     default:
         // Listening and armed hold capture open, which reads live above;
         // down holds the gate down.

@@ -56,16 +56,12 @@ const CASES = [
     ["armed", up({ capture: { kind: "open", gen: 1, op: 2, mode: "armed" } }),
         ["live", "audio-lines", "accent", "Jarvis is using the microphone" + MUTE]],
     ["muting while capture closes", up({ mute: { kind: "muting" }, ...CLOSING }),
-        ["live", "audio-lines", "accent", "Jarvis is using the microphone" + MUTE]],
+        ["live", "audio-lines", "accent", "Jarvis is using the microphone" + UNMUTE]],
     ["capture closing after a lock", up({ ...down("locked"), ...CLOSING }),
-        ["live", "audio-lines", "accent", "Jarvis is using the microphone" + MUTE]],
-    ["live over a daemon problem", up(OPEN, { daemon: FLOOR }),
         ["live", "audio-lines", "accent", "Jarvis is using the microphone" + MUTE]],
     ["live over an audio problem", up(OPEN, { audio: OVERFLOW }),
         ["live", "audio-lines", "accent", "Jarvis is using the microphone" + MUTE]],
     ["permanent daemon problem", { daemon: FLOOR, detail: null, audio: DEVICES },
-        ["problem", "circle-alert", "danger", "Problem: jarvis: node=21.0.0 need=22" + MUTE]],
-    ["daemon problem over a ready state", up({}, { daemon: FLOOR }),
         ["problem", "circle-alert", "danger", "Problem: jarvis: node=21.0.0 need=22" + MUTE]],
     ["Session error", up({ fault: { kind: "error", reason: "thinking-timeout", retry: 0 } }),
         ["problem", "circle-alert", "danger", "Problem: thinking-timeout" + MUTE]],
@@ -76,7 +72,9 @@ const CASES = [
     ["audio fault before the first state", { daemon: { tone: "info", text: "Starting" }, detail: null, audio: OVERFLOW },
         ["problem", "circle-alert", "danger", "Audio problem: capture-overflow" + MUTE]],
     ["problem over mute", up(MUTED, { audio: OVERFLOW }),
-        ["problem", "circle-alert", "danger", "Audio problem: capture-overflow" + MUTE]],
+        ["problem", "circle-alert", "danger", "Audio problem: capture-overflow" + UNMUTE]],
+    ["Session error while muted", up({ ...MUTED, fault: { kind: "error", reason: "thinking-timeout", retry: 0 } }),
+        ["problem", "circle-alert", "danger", "Problem: thinking-timeout" + UNMUTE]],
     ["muted", up(MUTED), ["muted", "mic-off", "neutral", "Jarvis is muted" + UNMUTE]],
     ["muted while locked", up({ ...MUTED, ...down("locked") }), ["muted", "mic-off", "neutral", "Jarvis is muted" + UNMUTE]],
     ["muted over a cancelling turn", up({ ...MUTED, turn: { kind: "cancelling", gen: 1, op: 4, deadline: 70 } }),
@@ -144,25 +142,23 @@ verify(load(path.join(dir, "WidgetView.js")));
 
 // Each control removes one rule from a copy of the view and keeps the text
 // around it: [label, needle, replacement].
-const LIVE = 'if (state !== null && microphoneOpen(state.capture)) return look("live", "Jarvis is using the microphone");';
-const DAEMON = 'if (daemon !== null && daemon.tone === "danger") return look("problem", daemon.text);';
 const CONTROLS = [
     ["an open microphone is not live", "microphoneOpen(state.capture)) return", "false) return"],
-    ["a daemon problem hides an open microphone", LIVE + "\n    " + DAEMON, DAEMON + "\n    " + LIVE],
     ["a daemon problem is not a problem", 'daemon.tone === "danger") return', 'false) return'],
     ["a Session error is not a problem", 'detail.phase === "error") {', 'false) {'],
     ["an audio problem is not a problem", 'audio.tone === "danger") return', 'false) return'],
     ["no state yet is not off", "if (state === null) return look(\"off\"", "if (false) return look(\"off\""],
     ["the daemon text is not shown before a state", '"Jarvis: " + daemon.text', 'GATE_TEXT.starting'],
-    ["mute is not shown", "if (muted(state.mute)) return", "if (false) return"],
+    ["mute is not shown", "if (muteOn) return look(\"muted\"", "if (false) return look(\"muted\""],
     ["muting is not muted", 'case "muting": case "on": return true;', 'case "on": return true;'],
     ["a lowered gate is not off", "if (gateDown(state.gate)) return", "if (false) return"],
-    ["working phases read ready", 'return look("working", WORK_TEXT[detail.phase]);', 'return look("ready", "Jarvis is ready");'],
-    ["the click line never offers unmute", 'state === "muted" ? "Click to unmute" : "Click to mute"', '"Click to mute"'],
+    ["working phases read ready", 'return look("working", WORK_TEXT[detail.phase], muteOn);', 'return look("ready", "Jarvis is ready", muteOn);'],
+    ["the click line follows the icon, not the mute region", 'muteOn ? "Click to unmute" : "Click to mute"', 'state === "muted" ? "Click to unmute" : "Click to mute"'],
+    ["the click line never offers unmute", 'muteOn ? "Click to unmute" : "Click to mute"', '"Click to mute"'],
     ["any report tone is accepted", "tones.indexOf(value.tone) === -1", "false"],
     ["an unknown capture is closed", 'default: refuse("capture", capture);', "default: return false;"],
     ["an unknown gate reason is off", 'if (!Object.prototype.hasOwnProperty.call(GATE_TEXT, gate.reason)) refuse("gate", gate);', ""],
-    ["an unexpected phase reads ready", 'refuse("phase", detail.phase);', 'return look("ready", "Jarvis is ready");']
+    ["an unexpected phase reads ready", 'refuse("phase", detail.phase);', 'return look("ready", "Jarvis is ready", muteOn);']
 ];
 
 const source = fs.readFileSync(path.join(dir, "WidgetView.js"), "utf8");
