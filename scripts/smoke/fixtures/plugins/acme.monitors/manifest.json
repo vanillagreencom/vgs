@@ -7,5 +7,6 @@
     "description": "Writes monitor rules through the monitors capability and reads them back",
     "kinds": ["service"],
     "entryPoints": { "service": "Service.qml" },
-    "capabilities": ["monitors", "ipc"]
+    "capabilities": ["monitors", "shortcut", "ipc"],
+    "hyprland": { "binds": [{ "shortcut": "ping", "key": "SUPER+F10" }] }
 }

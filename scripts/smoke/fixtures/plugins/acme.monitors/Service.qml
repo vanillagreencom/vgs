@@ -3,7 +3,9 @@ import QtQuick
 // Reads the `monitors` capability back for rows/monitor-rules.sh: its
 // member names, the outputs, the saved rules, the identifiers overridden
 // and a write's progress; `write` hands the capability the `rules` of a
-// JSON object and answers its reply. The rules ride in an object because
+// JSON object and answers its reply. Its one bind gives the layer a plugin
+// section, so the row reads the Monitors section's place whatever the
+// rows before it left enabled. The rules ride in an object because
 // `qs ipc call` strips the brackets of an argument that starts with `[`.
 Item {
     id: root
@@ -18,6 +20,7 @@ Item {
     onShellChanged: {
         if (shell === null || registered) return;
         registered = true;
+        shell.shortcut.register("ping", "Ping", () => {});
         shell.ipc.handle("write", text => {
             let request;
             try {
