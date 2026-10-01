@@ -5,10 +5,10 @@
 # CTRL+ALT+T and F5, each held by a harness user bind that touches a
 # marker, reach the field instead of the bind. Each capture stores the
 # string the field's text entry stores when the same keys are typed into
-# it, the submap is left once it commits, and the field names the user
-# bind holding SUPER+SPACE. A captured SUPER+T names the Themes plugin,
-# whose shortcut asks for the same key, and the field's Unbind button,
-# clicked, stores null. The control starts a tree whose key capture owner
+# it, the submap is left once it commits, and the field names the
+# Launcher shortcut and the user bind holding SUPER+SPACE. A captured
+# SUPER+T names the Themes plugin, whose shortcut asks for the same key,
+# and the field's Unbind button, clicked, stores null. The control starts a tree whose key capture owner
 # sends no enter: Hyprland stays in its default map, the user bind takes
 # SUPER+SPACE, its marker appears and the stored key stays. Every key goes
 # to the nested instance alone, through wtype on its seat, and the row
@@ -64,6 +64,7 @@ expect "the nested instance reloads with the key capture harness binds" ok hypr 
 kc_config_errors() { hypr -j configerrors | py_reply 'import json,sys; print(json.dumps([e for e in json.load(sys.stdin) if e]))'; }
 expect_poll "the nested instance holds no configuration error" '[]' kc_config_errors
 
+expect "enabling Launcher, whose shortcut asks for SUPER+SPACE, is allowed" ok ipc shell setPluginEnabled vgs.launcher true
 kc_open "key capture"
 key_reset "key capture start"
 for _ in $(seq 1 60); do
@@ -74,7 +75,7 @@ expect "Tab presses reach the Keys row's field" true key_field focus
 expect "the field shows its focus ring for the Tab focus" true key_field visualFocus
 
 kc_capture "SUPER+SPACE" SUPER+SPACE "$sandbox/key-capture-space" -M logo -k space -m logo
-expect_poll "the field names the user bind holding SUPER+SPACE" '"Also bound to your Hyprland config."' key_field conflict
+expect_poll "the field names the Launcher shortcut and the user bind holding SUPER+SPACE" '"Also bound to Launcher (toggle), your Hyprland config."' key_field conflict
 kc_typed "SUPER+SPACE typed" "super+space" SUPER+SPACE
 kc_capture "CTRL+ALT+T" CTRL+ALT+T "$sandbox/key-capture-t" -M ctrl -M alt -k t -m alt -m ctrl
 kc_typed "CTRL+ALT+T typed" "ctrl+alt+t" CTRL+ALT+T

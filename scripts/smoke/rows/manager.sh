@@ -380,7 +380,7 @@ for n, i in enumerate(fields):
     # A value drawn with leading below its glyphs is centred as a box and
     # not as text.
     for j, r in enumerate(rows):
-        if r["type"] in ("TextField", "Select") and inside(j, i): check(name + "." + r["type"] + ".right", right(r), column_right)
+        if r["type"] in ("TextField", "Select") and inside(j, i) and visible(j): check(name + "." + r["type"] + ".right", right(r), column_right)
         if r["type"] == "Slider" and inside(j, i):
             labels_after = [q for q, row in enumerate(rows) if row["type"] == "Label" and row.get("role") == "label" and row["box"][0] > right(r) and inside(q, i)]
             if labels_after: check(name + ".slider.gap", rows[labels_after[0]]["box"][0] - right(r), label_gap)
