@@ -1,6 +1,6 @@
 # Monitor rules and the monitors capability
 
-Covers: shell/Core/MonitorLogic.js, shell/Core/MonitorState.qml, scripts/test-monitor-logic.js, scripts/smoke/rows/monitor-rules.sh, scripts/smoke/fixtures/plugins/acme.monitors
+Covers: shell/Core/MonitorLogic.js, shell/Core/MonitorState.qml, bin/vgsh-monitor-guard, bin/lib/monitor-preview.js, scripts/test-monitor-logic.js, scripts/smoke/rows/monitor-rules.sh, scripts/smoke/fixtures/plugins/acme.monitors
 
 How the user's monitor rules reach Hyprland through the Hyprland layer, and what the `monitors` capability reads back and writes. The layer itself is [hyprland.md](hyprland.md); the Hyprland facts these rest on are [runtime-hyprland-monitors.md](runtime-hyprland-monitors.md). [D080](../decisions/D080-hyprland-options-rendered-from-data.md) records the choice.
 
