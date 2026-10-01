@@ -465,13 +465,11 @@ gallery_menu_current() { ipc smoke menus "$gallery_kind" vgs.gallery | py_reply 
 gallery_menu_first() { # MODE
   local box y x
   ipc smoke scrollTo "$gallery_kind" vgs.gallery 0 >/dev/null || { fail "the gallery did not scroll to its top"; return; }
-  box="$(ipc smoke windowGeometry "$gallery_kind" vgs.gallery Button "Open a menu")"
-  [[ $box == \[* ]] || { fail "the gallery's menu button has no box: $box"; return; }
+  if ! box="$(ipc smoke windowGeometry "$gallery_kind" vgs.gallery Button "Open a menu")" || [[ $box != \[* ]]; then fail "the gallery's menu button has no box: ${box:-}"; return; fi
   y="$(python3 -c 'import json,sys; print(max(0, int(json.loads(sys.argv[1])[1]) - 200))' "$box")"
   ipc smoke scrollTo "$gallery_kind" vgs.gallery "$y" >/dev/null || { fail "the gallery did not scroll to its menu button"; return; }
   read -r x y < <(window_point "$gallery_surface" "$gallery_kind" vgs.gallery Button "Open a menu") || { fail "the gallery's menu button has no box on the output"; return; }
-  if hover "$((x - 1))" "$y" && click "$x" "$y"; then
-    box="$(ipc smoke windowGeometry "$gallery_kind" vgs.gallery Button "Open a menu")"
+  if hover "$((x - 1))" "$y" && click "$x" "$y" && box="$(ipc smoke windowGeometry "$gallery_kind" vgs.gallery Button "Open a menu")"; then
     read -r x y < <(at_centre "$gallery_surface" "$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(json.dumps([r[0], r[1] + r[3], 80, 40]))' "$box")")
     # Opening disarms the pointer, which takes the highlight once it moves
     # over the menu: two motions onto the entry.
