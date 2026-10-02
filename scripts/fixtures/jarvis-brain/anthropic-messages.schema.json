@@ -13,7 +13,7 @@
     "The official vendor wire interfaces are transcribed to JSON Schema for the existing excerpt checker. No SDK runs.",
     "String literals become enums; interface members retain their required or optional status, except the omitted fields named below. Number indices and token counts become integers.",
     "MessageCreateParamsBase keeps model as its string branch, messages, system as its string branch, max_tokens, stream and tools as Tool[].",
-    "MessageParam content keeps text, base64 image, tool_use and tool_result with string content only.",
+    "MessageParam content keeps text, base64 image, tool_use and tool_result with string content or an array of text and base64 image blocks.",
     "Message and stream blocks keep consumed fields and usage token counts. Raw events keep text_delta and input_json_delta only.",
     "Ping and ErrorResponse follow the documented SSE examples. ErrorResponse permits request_id. The checker closes every object."
   ],
@@ -26,7 +26,7 @@
     "Text": {"type":"object","required":["type","text"],"properties":{"type":{"enum":["text"]},"text":{"type":"string"}}},
     "Image": {"type":"object","required":["type","source"],"properties":{"type":{"enum":["image"]},"source":{"type":"object","required":["type","media_type","data"],"properties":{"type":{"enum":["base64"]},"media_type":{"enum":["image/png","image/jpeg","image/gif","image/webp"]},"data":{"type":"string"}}}}},
     "ToolUse": {"type":"object","required":["type","id","name","input"],"properties":{"type":{"enum":["tool_use"]},"id":{"type":"string"},"name":{"type":"string"},"input":{"type":"object","additionalProperties":true}}},
-    "ToolResult": {"type":"object","required":["type","tool_use_id"],"properties":{"type":{"enum":["tool_result"]},"tool_use_id":{"type":"string"},"content":{"type":"string"},"is_error":{"type":"boolean"}}},
+    "ToolResult": {"type":"object","required":["type","tool_use_id"],"properties":{"type":{"enum":["tool_result"]},"tool_use_id":{"type":"string"},"content":{"anyOf":[{"type":"string"},{"type":"array","items":{"oneOf":[{"$ref":"#/schemas/Text"},{"$ref":"#/schemas/Image"}]}}]},"is_error":{"type":"boolean"}}},
     "MessageParam": {"type":"object","required":["role","content"],"properties":{"role":{"enum":["user","assistant"]},"content":{"anyOf":[{"type":"string"},{"type":"array","items":{"oneOf":[{"$ref":"#/schemas/Text"},{"$ref":"#/schemas/Image"},{"$ref":"#/schemas/ToolUse"},{"$ref":"#/schemas/ToolResult"}]}}]}}},
     "Tool": {"type":"object","required":["name","input_schema"],"properties":{"name":{"type":"string"},"description":{"type":"string"},"input_schema":{"type":"object","additionalProperties":true}}},
     "Request": {"type":"object","required":["model","messages","max_tokens"],"properties":{"model":{"type":"string"},"system":{"type":"string"},"messages":{"type":"array","items":{"$ref":"#/schemas/MessageParam"}},"stream":{"type":"boolean"},"max_tokens":{"type":"integer"},"tools":{"type":"array","items":{"$ref":"#/schemas/Tool"}}}},

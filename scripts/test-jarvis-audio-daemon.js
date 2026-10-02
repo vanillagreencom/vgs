@@ -74,7 +74,7 @@ async function run(file, trigger) {
     child.stdin.on("error", e => { if (e.code !== "EPIPE") throw e; });
     const half = trigger.startsWith("speaking-");
     const hello = locked => JSON.stringify({ v: 1, type: "hello", gen: 0,
-        settings: { mode: half ? "toggle" : "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" },
+        settings: { mode: half ? "toggle" : "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto", cloudVision: "ask", privateWindows: "bitwarden" },
         keys: { talk: null, mute: null, stop: null }, locked,
         directories: { state: process.env.HOME, data: process.env.HOME, runtime: process.env.XDG_RUNTIME_DIR },
         revision: "a".repeat(64) }) + "\n";

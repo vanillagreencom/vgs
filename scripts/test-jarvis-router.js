@@ -46,9 +46,9 @@ world(() => {
                 profile: options.profile ?? "standard", locked, get denied() { return denied(); } }),
             audit, result: value => results.push(value) });
         Object.assign(ports, router.ports);
-        for (const executor of ["windows", "compositor", "files", "input", "sandbox", "browser", "harness"]) {
+        for (const executor of ["windows", "compositor", "files", "input", "sandbox", "browser", "harness", "vision"]) {
             if (executor === "browser" && options.browser) continue;
-            router.register(executor, { commands: ["hyprctl", "wtype", "wlrctl", "bwrap", "agent-browser"],
+            router.register(executor, { commands: ["hyprctl", "wtype", "wlrctl", "bwrap", "agent-browser", "grim"],
                 timeoutMs: 1000, cancellable: true,
                 observe: () => ({ target, text: { effective: [] } }),
                 start: (call, done) => {
@@ -510,6 +510,37 @@ world(() => {
             assert.equal(w.results.length, before);
             assert.deepEqual(w.router.offer(), []);
         }],
+        // An image rides beside its text with the text's labels. A capture's
+        // facts enter the audit; its bytes never do, and a refused record
+        // holds the image back.
+        ["image", implementation => {
+            const png = Buffer.from("89504e470d0a1a0aPRIVATEPIXELS");
+            const image = { type: "image/png", bytes: png };
+            const capture = { box: [0, 0, 320, 200], scale: 1, width: 320, height: 200, bytes: png.length, sha256: "a".repeat(64), masks: 1 };
+            const w = make(implementation);
+            assert.equal(w.call("vision.screen").kind, "proposed");
+            w.answers[0]({ outcome: "completed", content: "Screen", image, capture });
+            const [result] = w.results.at(-1).results;
+            assert.deepEqual(result.item, { content: "Screen", labels: ["screen"] });
+            assert.deepEqual([result.image.type, result.image.item.labels, Buffer.from(result.image.item.content).equals(png)],
+                ["image/png", ["screen"], true]);
+            assert.deepEqual([w.rows().at(-1).outcome, w.rows().at(-1).capture], ["completed", capture]);
+            assert.equal(JSON.stringify(w.rows()).includes("PRIVATEPIXELS"), false);
+            assert.equal(w.call("windows.list").kind, "proposed");
+            w.answers[1]({ outcome: "completed", content: "fixture windows" });
+            assert.equal(Object.hasOwn(w.results.at(-1).results[0], "image"), false, "a text answer has no image");
+            const refused = make(implementation);
+            refused.call("vision.screen");
+            refused.answers[0]({ outcome: "completed", content: "Screen", image, capture: { ...capture, image: "PRIVATEPIXELS" } });
+            assert.equal(Object.hasOwn(refused.results.at(-1).results[0], "image"), false, "an unaudited capture is not delivered");
+            assert.equal(JSON.parse(refused.results.at(-1).results[0].item.content).reason, "audit-write");
+            for (const bad of [{ outcome: "failed", content: "x", image }, { outcome: "completed", content: "x", image: { ...image, type: "image/gif" } },
+                { outcome: "completed", content: "x", image: { ...image, bytes: "PRIVATEPIXELS" } }, { outcome: "completed", content: "x", image: null }]) {
+                const v = make(implementation);
+                v.call("vision.screen");
+                assert.throws(() => v.answers[0](bad), { message: "jarvis: router=outcome" }, JSON.stringify(bad));
+            }
+        }],
         ["offer", implementation => {
             const w = make(implementation);
             assert.equal(w.router.offer().some(row => row.id === "windows.list"), true);
@@ -598,7 +629,11 @@ world(() => {
             ["harness-offer", "row.proposer === undefined && available(row) !== null", "available(row) !== null", "harness-offer"],
             ["harness-kind", '(request.kind === "approval") !== (row !== null && row.proposer === "harness")', "false", "harness-kind"],
             ["approval-proposer", 'row !== null && row.proposer === "harness"', "row !== null", "harness-kind"],
-            ["request-kind", 'throw new Error("jarvis: router=request-kind");', "void request;", "harness-kind"]
+            ["request-kind", 'throw new Error("jarvis: router=request-kind");', "void request;", "harness-kind"],
+            ["image-labels", "Policy.item(image.bytes, item.labels)", "Policy.item(image.bytes, [\"desktop\"])", "image"],
+            ["image-on-refusal", "written.kind === \"refuse\" ? undefined : value.answer?.image", "value.answer?.image", "image"],
+            ["capture-audited", "...(capture === undefined ? {} : { capture }) });", "});", "image"],
+            ["image-contract", "(answer.image !== undefined && (answer.outcome !== \"completed\"", "(false && (answer.outcome !== \"completed\"", "image"]
         ];
         for (const [name, needle, replacement, row] of controlsTable) {
             mutant(routerFile, name, needle, replacement, byName(row));

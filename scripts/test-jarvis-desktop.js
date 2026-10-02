@@ -274,7 +274,8 @@ world(async () => {
         "for (const id of [\"wire\", \"windows\", \"compositor\", \"apps\"]) router.register(id, desktop.records[id]);", registration);
     await control("close-reads", "if (closed) { reject(new Error(\"closed\")); return; }", "", closing);
     for (const [name, needle, replacement] of [
-        ["seam-install", "lifetimes.push(owner.install({ router, ...desktop }));", "void owner;"],
+        ["seam-install", "const session = DesktopSession.install({ router, ...desktop });",
+            "const session = { ready: Promise.resolve(false), read: null, readMs: 0, close() {} };"],
         ["seam-close", "for (const lifetime of lifetimes) lifetime.close();", "void lifetimes;"]
     ]) {
         await mutant(executorsFile, name, needle, replacement, integrated, "Executors.js");

@@ -15,7 +15,8 @@ const { instrument: instrumentDesktop } = require("./fixtures/jarvis/desktop-dri
 const tree = path.resolve(__dirname, "..");
 const daemon = path.join(tree, "shell/plugins/vgs.jarvis/backend/jarvisd.js");
 const source = fs.readFileSync(daemon, "utf8");
-const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" }, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto",
+    cloudVision: "ask", privateWindows: "bitwarden" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
@@ -900,7 +901,11 @@ exit "$failures"
     await routed(desktopDaemon("desktop"));
     const register = "executors = Executors.register(router, { find: commandFile, environment: process.env,\n"
         + "                        desktop: { Dispatch, Launch, request: requests.send, clock,\n"
-        + '                            environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) } });';
+        + '                            environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) },\n'
+        + "                        // The engine exists before the first turn that could route a capture.\n"
+        + '                        vision: { directory: path.join(context.directories.runtime, "vision"), state: () => runner.state,\n'
+        + '                            route: () => engine.images() ? "image" : "text",\n'
+        + "                            privateWindows: () => context.settings.privateWindows } });";
     await assert.rejects(() => routed(desktopDaemon("desktop-unregistered", [[register, "void Executors;"]])),
         assert.AssertionError, "a daemon that registers no executor must fail the routed call");
     controls++;

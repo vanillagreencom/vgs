@@ -251,6 +251,29 @@ world(() => {
             assert.equal(records(root)[0].tool, "unknown");
         });
     }
+    // A vision capture's facts: numbers and a digest, never image bytes.
+    const capture = { box: [0, 0, 320, 200], scale: 1.25, width: 400, height: 250, bytes: 1024, sha256: "0a".repeat(32), masks: 2 };
+    const vision = { ...event, tool: "vision.screen", args: {}, effect: "read", outcome: "completed", capture };
+    function checkCapture(logic) {
+        const root = state();
+        withWriter(logic, { state: root }, writer => {
+            assert.deepEqual(writer.record(vision), { kind: "recorded" });
+            assert.deepEqual(records(root)[0].capture, capture);
+            for (const [name, value] of [
+                ["extra key", { ...vision, capture: { ...capture, image: "iVBORw0KGgo" } }],
+                ["other tool", { ...vision, tool: "files.read" }],
+                ["release", { ...vision, kind: "release", decision: "send" }],
+                ["digest", { ...vision, capture: { ...capture, sha256: "0A".repeat(32) } }],
+                ["box length", { ...vision, capture: { ...capture, box: [0, 0, 320] } }],
+                ["box value", { ...vision, capture: { ...capture, box: ["0", 0, 320, 200] } }],
+                ["box size", { ...vision, capture: { ...capture, box: [0, 0, 0, 200] } }],
+                ["scale", { ...vision, capture: { ...capture, scale: 0 } }],
+                ["image size", { ...vision, capture: { ...capture, width: 0 } }],
+                ["counts", { ...vision, capture: { ...capture, masks: -1 } }]
+            ]) assert.deepEqual(writer.record(value), { kind: "refuse", reason: "audit-write", cause: "capture" }, name);
+            assert.equal(records(root).length, 1, "a refused capture writes nothing");
+        });
+    }
     function checkUnlinkFailure(logic) {
         const root = state();
         old(root, "2026-08-31");
@@ -262,7 +285,7 @@ world(() => {
             });
         });
     }
-    checkUnlinkFailure(Audit); checkClock(Audit); checkUnknownTool(Audit);
+    checkUnlinkFailure(Audit); checkClock(Audit); checkUnknownTool(Audit); checkCapture(Audit);
     for (const invalid of ["relative", "/", base + "/x/../y", null])
         assert.throws(() => Audit.create({ state: invalid }), { code: "state-path" });
     withWriter(Audit, { now: () => NaN }, writer => assert.equal(writer.record(event).kind, "refuse"));
@@ -326,6 +349,14 @@ world(() => {
         ["outcome enum", 'if (!["pending", "completed", "failed", "unknown", "cancelled"].includes(outcome))', 'if (false && !["pending", "completed", "failed", "unknown", "cancelled"].includes(outcome))',
             logic => checkField(logic, "outcome", "planted-key", "outcome")],
         ["tool identity", 'Object.hasOwn(Tools.TABLE, tool) ? tool : "unknown"', 'tool', checkUnknownTool],
+        ["capture keys", 'Object.keys(capture).sort().join(",") !== "box,bytes,height,masks,scale,sha256,width"', "false", checkCapture],
+        ["capture scope", 'if (kind !== "action" || !Object.hasOwn(Tools.TABLE, tool) || Tools.TABLE[tool].executor !== "vision"', "if (false", checkCapture],
+        ["capture digest", "!/^[0-9a-f]{64}$/.test(capture.sha256)", "false", checkCapture],
+        ["capture box", "!capture.box.every(whole)", "false", checkCapture],
+        ["capture box size", "capture.box[2] < 1 || capture.box[3] < 1", "false", checkCapture],
+        ["capture scale", "capture.scale <= 0", "false", checkCapture],
+        ["capture size", "![capture.width, capture.height].every(value => whole(value) && value > 0)", "false", checkCapture],
+        ["capture counts", "![capture.bytes, capture.masks].every(value => whole(value) && value >= 0)", "false", checkCapture],
         ["invalid stored date", 'new Date(time).toISOString().slice(0, 10) !== date', 'false && new Date(time).toISOString().slice(0, 10) !== date',
             logic => checkUnsafe(logic, invalidDate, "entry-date")]
     ];

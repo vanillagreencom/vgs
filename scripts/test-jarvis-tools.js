@@ -47,6 +47,7 @@ world(() => {
         ["vision.screen", {}, "read", "screen"], ["vision.monitor", { monitor: "DP-1" }, "read", "screen"],
         ["vision.window", { window }, "read", "screen"],
         ["vision.region", { x: 0, y: 0, width: 1, height: 1 }, "read", "screen"],
+        ["vision.area", {}, "read", "screen"],
         ["task.start", { goal: "synthetic task", cwd: project }, "exec", "agent"],
         ["browser", { command: "open", args: { url: "https://example.test/" } }, "read", "web"],
         ["browser", { command: "read", args: {} }, "read", "web"],

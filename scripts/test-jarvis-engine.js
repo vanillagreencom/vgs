@@ -15,6 +15,8 @@ const PORT = 11434;
 const OBSERVE_MS = 15000;
 const until = (check, message) => wait(check, message, OBSERVE_MS);
 const INTERRUPTED = "[interrupted] The user heard none of your last reply.";
+// A synthetic screen image the vision stand-in answers with.
+const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
 const heardOnly = prefix => "[interrupted] The user heard only this part of your last reply: \"" + prefix + "\"";
 // A reply that opens its stream, then waits for the case's gate.
 const pause = held => [{ delta: { role: "assistant", content: "" }, finish_reason: null }, { wait: held.wait }];
@@ -73,7 +75,7 @@ function rig(kit, server, options = {}) {
     } });
     router.register("vision", { commands: ["grim"], timeoutMs: 30000, cancellable: false, start(call, done) {
         executions.push(call);
-        done({ outcome: "completed", content: "screen text" });
+        done({ outcome: "completed", content: "screen text", image: { type: "image/png", bytes: PNG } });
     } });
     // Accounts.resolve has its own suite; this stand-in names a loopback row.
     const accounts = () => ({ secrets: null, resolve: id => ({ id, provider: "ollama", label: "local",
@@ -308,6 +310,23 @@ async function cases(kit, server, only = null) {
         server.replies.push(text(""));
         assert.equal(user(await requested(w, fourth + 1, "the fourth request")).at(-1), "Bye.");
     }, { holdTools: true });
+
+    // A tool result's image reaches the brain beside its text, for a brain
+    // whose row takes images; an engine with no ready brain takes none.
+    await run("screen-image", async w => {
+        assert.equal(w.engine.images(), true, "the ollama row takes images");
+        const first = await say(w, utterance("What is on screen?"));
+        server.replies.push(calls({ id: "call_1", name: "vision_screen", arguments: {} }), text("A terminal."));
+        const body = await requested(w, first + 2, "the tool-results request");
+        assert.deepEqual(body.messages.slice(-3, -1), [{ role: "tool", tool_call_id: "call_1", content: "screen text" },
+            { role: "user", content: [{ type: "text", text: "Image from tool call call_1:" },
+                { type: "image_url", image_url: { url: "data:image/png;base64," + PNG.toString("base64") } }] }]);
+        await until(() => w.s().playback.kind === "playing", "the final reply speaks");
+        await playOut(w);
+        const idle = kit.Engine.create({ session: load(path.join(kit.folder, "Session.js")), state: () => w.s(), audit: null,
+            router: null, accounts: () => null, policy: () => null, fault: () => {} });
+        assert.equal(idle.images(), false, "no ready brain takes no image");
+    });
 
     // History taints later turns: a screen read in one turn makes the next
     // turn's persistent call ask for approval.
@@ -605,6 +624,8 @@ world(async () => {
             ["audit-skipped", '"pending"), start);\n        if (result.kind !== "started") fail("audit-write");\n        return result.value;',
                 '"pending"), () => {});\n        void result;\n        return start();', "audit-refusal"],
             ["after-tool-rule", "...(after === null ? {} : { instructions: after }),", "", "tool-round"],
+            ["image-answer", "turn.answers.set(id, image === undefined ? { item } : { item, image });", "turn.answers.set(id, { item });", "screen-image"],
+            ["images-ready", 'return current.kind === "ready" && current.brain.provider.images;', "return true;", "screen-image"],
             ["context-clean-end", 'turn.done(reason === "brain=context-limit" ? "brain-ended" : "brain-failed", { reason });',
                 'turn.done("brain-failed", { reason });', "context-bound"],
             ["readable-backpressure", "if (!readable.push(step.value)) await wanted.wait();", "readable.push(step.value);", "backpressure"],

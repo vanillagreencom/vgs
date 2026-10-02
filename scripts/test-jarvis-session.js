@@ -639,7 +639,7 @@ const table = [
         assert.equal(logic.phaseOf(s), "down");
     }]
 ];
-for (const key of ["voiceProvider", "voice", "language", "brain", "model", "customBaseUrl", "policy", "account"])
+for (const key of ["voiceProvider", "voice", "language", "brain", "model", "customBaseUrl", "policy", "cloudVision", "account"])
     table.push(["settings-" + key, logic => {
         const s = held(logic);
         const r = step(logic, s, snapshot({ at: 50, settings: { [key]: "changed" } }));
@@ -1074,6 +1074,7 @@ try {
         ["start-gen", 's.gen++;\n        s.conversation = { kind: "active" };', 's.gen += 0;\n        s.conversation = { kind: "active" };', "start-generation"],
         ["end-gen", 's.gen++;\n        s.conversation = { kind: "ended" };', 's.gen += 0;\n        s.conversation = { kind: "ended" };', "end-generation"],
         ["settings", 'a[key] !== b[key]', '(false && a[key] !== b[key])', "settings-model"],
+        ["settings-cloud-vision", '"policy", "cloudVision", "account"]', '"policy", "account"]', "settings-cloudVision"],
         ["mute-ack", 's.mute.kind === "muting" && s.capture.kind === "closed"', 's.mute.kind === "muting"', "mute-ack"],
         ["cancel-ack", 'live(s, e, "turn", ["cancelling"])', 'live(s, e, "turn", ["none"])', "cancel-ack"],
         ["cancel-ack-retains", 'if (s.conversation.kind === "ended") closeBrain(s, effects);\n        s.turn',

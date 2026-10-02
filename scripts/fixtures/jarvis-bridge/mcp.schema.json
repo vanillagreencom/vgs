@@ -12,15 +12,14 @@
   "Schemas are copied from $defs with $ref rewritten from #/$defs/ to #/schemas/.",
   "Annotation keywords are removed: description, title and format. A property named title stays.",
   "const is rewritten as a one-member enum, which the checker implements.",
-  "ContentBlock keeps its TextContent branch only; the bridge writes text content alone.",
-  "TextContent loses its optional annotations property, whose Annotations schema uses minimum and maximum.",
+  "ContentBlock keeps its TextContent and ImageContent branches; the bridge writes text and image content alone.",
+  "TextContent and ImageContent lose their optional annotations property, whose Annotations schema uses minimum and maximum.",
   "Tool.inputSchema gains additionalProperties: true. It is a JSON Schema object, which carries keywords the published schema does not name."
  ],
  "omitted": [
   "Annotations",
   "AudioContent",
   "EmbeddedResource",
-  "ImageContent",
   "ResourceLink"
  ],
  "schemas": {
@@ -783,6 +782,9 @@
    "anyOf": [
     {
      "$ref": "#/schemas/TextContent"
+    },
+    {
+     "$ref": "#/schemas/ImageContent"
     }
    ]
   },
@@ -804,6 +806,32 @@
    },
    "required": [
     "text",
+    "type"
+   ],
+   "type": "object"
+  },
+  "ImageContent": {
+   "properties": {
+    "_meta": {
+     "additionalProperties": {},
+     "type": "object"
+    },
+    "data": {
+     "type": "string"
+    },
+    "mimeType": {
+     "type": "string"
+    },
+    "type": {
+     "enum": [
+      "image"
+     ],
+     "type": "string"
+    }
+   },
+   "required": [
+    "data",
+    "mimeType",
     "type"
    ],
    "type": "object"

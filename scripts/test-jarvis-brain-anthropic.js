@@ -172,6 +172,23 @@ world(async () => {
         assert.throws(() => brain.send(user(kit)), { message: "jarvis: brain=history-release" });
     }
     const PNG = Buffer.from("89504e470d0a1a0a", "hex");
+    // A result's image is a block of its own tool_result, released as its text is.
+    async function toolImages(kit) {
+        for (const [cloudVision, shown, block] of [
+            ["allow", "Screen of monitor DP-1", { type: "image", source: { type: "base64", media_type: "image/png", data: PNG.toString("base64") } }],
+            ["never", "[withheld: screen content]", { type: "text", text: "[withheld: screen content]" }]]) {
+            const { brain } = open(kit, [{ events: tools() }, { events: text() }], { remoteVoice: true, cloudVision });
+            await drain(brain.send(user(kit)));
+            const turn = brain.send({ kind: "tool-results", results: [
+                { id: "toolu_read", item: kit.Policy.item("Screen of monitor DP-1", ["screen"]),
+                    image: { type: "image/png", item: kit.Policy.item(PNG, ["screen"]) } },
+                { id: "toolu_focus", item: kit.Policy.item("focused", ["desktop"]) }] });
+            assert.equal((await drain(turn)).error, null, cloudVision);
+            assert.deepEqual(last().body.messages.at(-1), { role: "user", content: [
+                { type: "tool_result", tool_use_id: "toolu_focus", content: "focused" },
+                { type: "tool_result", tool_use_id: "toolu_read", content: [{ type: "text", text: shown }, block] }] }, cloudVision);
+        }
+    }
     async function images(kit) {
         const seen = [];
         const wrap = door => ({ request(item, options, grants) { seen.push(item.labels); return door.request(item, options, grants); } });
@@ -405,7 +422,7 @@ world(async () => {
     }
     try {
         const kit = kitFrom(backend);
-        for (const check of [textTurns, toolTurns, images, bounds, endings, cancellation, races, drivers]) await check(kit);
+        for (const check of [textTurns, toolTurns, toolImages, images, bounds, endings, cancellation, races, drivers]) await check(kit);
         for (const [name] of refusals) await refusal(name)(kit);
         const statuses = [[400, "request-rejected"], [401, "unauthorized"], [402, "billing"], [403, "forbidden"],
             [404, "not-found"], [409, "conflict"], [413, "request-too-large"], [429, "rate-limited"],
@@ -431,6 +448,7 @@ world(async () => {
             ["image-media", "media_type: image.type", 'media_type: "image/png"', images],
             ["image-base64", 'image.decision.content.toString("base64")', 'image.decision.content.toString("hex")', images],
             ["image-marker", 'image.decision.kind === "send"', "true", images],
+            ["tool-result-image", "content: result.image === null ? result.content :", "content: true ? result.content :", toolImages],
             ["terminal-required", "            block = null;\n            break;",
                 '            block = null;\n            return { kind: "complete", text, calls, content, reason: "stop" };', refusal("lost-terminal")],
             ["json", 'try { parsed = JSON.parse(block.fragments); } catch { fail("tool-call-arguments"); }',

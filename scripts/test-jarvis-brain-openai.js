@@ -82,6 +82,8 @@ world(async () => {
     const faults = [];
     const counters = new Map();
     let conversations = 0;
+    // The scripts the local rows' fixed /v1 base replays, in order.
+    let local = ["text"];
     // One close observation per connection; keep-alive serves several requests.
     const closes = new WeakMap();
     function closing(socket) {
@@ -102,7 +104,7 @@ world(async () => {
                 const route = request.url.slice(0, -suffix.length);
                 // A custom base is /<scripts>/<conversation>: each conversation
                 // replays its own comma-separated sequence from the start.
-                const sequence = route === "/v1" ? ["text"] : route.split("/")[1].split(",");
+                const sequence = route === "/v1" ? local : route.split("/")[1].split(",");
                 const count = counters.get(route) ?? 0;
                 counters.set(route, count + 1);
                 const name = sequence[Math.min(count, sequence.length - 1)];
@@ -253,6 +255,37 @@ world(async () => {
                 { id: "call_read", type: "function", function: { name: "files_read", arguments: "{\"path\":\"/home/user/notes\"}" } }] },
             { role: "tool", tool_call_id: "call_focus", content: "focused" },
             { role: "tool", tool_call_id: "call_read", content: "notes text" }]);
+    }
+
+    // A result's image follows the tool messages in one user message: the
+    // pinned excerpt's tool message carries text parts only.
+    async function toolImages(kit) {
+        local = ["tool-calls", "after-tools"];
+        counters.delete("/v1");
+        try {
+            const { brain } = open(kit, { id: "ollama" });
+            await drain(brain.send(user(kit)));
+            const done = await drain(brain.send({ kind: "tool-results", results: [
+                { id: "call_read", item: kit.Policy.item("Screen of monitor DP-1", ["screen"]),
+                    image: { type: "image/png", item: kit.Policy.item(PNG, ["screen"]) } },
+                { id: "call_focus", item: kit.Policy.item("focused", ["desktop"]) }] }));
+            assert.equal(done.error, null);
+            assert.deepEqual(last().body.messages.slice(3), [
+                { role: "tool", tool_call_id: "call_focus", content: "focused" },
+                { role: "tool", tool_call_id: "call_read", content: "Screen of monitor DP-1" },
+                { role: "user", content: [{ type: "text", text: "Image from tool call call_read:" },
+                    { type: "image_url", image_url: { url: "data:image/png;base64," + PNG.toString("base64") } }] }]);
+        } finally {
+            local = ["text"];
+            counters.delete("/v1");
+        }
+        const custom = open(kit, { base: first + "/tool-calls" });
+        await drain(custom.brain.send(user(kit)));
+        const count = records.length;
+        assert.throws(() => custom.brain.send({ kind: "tool-results", results: [
+            { id: "call_read", item: speech(kit), image: { type: "image/png", item: kit.Policy.item(PNG, ["screen"]) } },
+            { id: "call_focus", item: speech(kit) }] }), { message: "jarvis: brain=images-unsupported" });
+        assert.equal(records.length, count, "a refused result image sends nothing");
     }
 
     // record() appends answers without a request; the next send renders them.
@@ -640,7 +673,7 @@ world(async () => {
 
     try {
         const kit = kitFrom(backend);
-        for (const scenario of [textTurns, toolTurns, toolCallsStop, bounds, failedTurnKeepsHistory, keys, release, images, localRows, cloudRows,
+        for (const scenario of [textTurns, toolTurns, toolImages, toolCallsStop, bounds, failedTurnKeepsHistory, keys, release, images, localRows, cloudRows,
             cancelHeld, cancelBeforeHeaders, cancelRace, cancelOrder, cancelBuffered, breakLoop, cancelUnstarted, closeHeld, starts, noTools,
             unanswered, instructions, contextBound]) await scenario(kit);
         for (const [script] of refusals) await refusal(script)(kit);
@@ -724,11 +757,13 @@ world(async () => {
             ["release-labels", "sent.flatMap(item => item.labels)", "entries.flatMap(entry => (entry.items ?? []).flatMap(item => item.labels))", release],
             ["history-release", 'if (released(entry.item).kind !== "send") fail("history-release");', "released(entry.item);", release],
             ["release-empty", 'if (request.item === null) fail("release-empty");', "", release],
-            ["images-unsupported", 'if (images.length !== 0 && !provider.images) fail("images-unsupported");', "", images],
+            ["images-unsupported", 'if (!provider.images) fail("images-unsupported");', "", images],
             ["image-type", '!IMAGE_TYPES.includes(image.type)', "false", images],
             ["image-bytes", '!(image.item.content instanceof Uint8Array)', "false", images],
             ["request-limit", 'if (Buffer.byteLength(body) > REQUEST_BYTES) fail("request-limit");', "", images],
             ["image-part", '"data:" + image.type + ";base64,"', '"data:image/png,"', images],
+            ["tool-result-image", "...(pictured.length === 0 ? [] : [", "...(true ? [] : [", toolImages],
+            ["tool-result-image-kept", "image: result.image === undefined ? null : imageOf(result.image) };", "image: null };", toolImages],
             ["tool-results", "!calls.every(call => byId.has(call.id))", "false", toolTurns],
             ["tool-results-pending", 'if (pending().length !== 0) fail("tool-results-pending");', "", toolTurns],
             ["item-text", 'if (!item || typeof item.content !== "string") fail("item-text");', "", toolTurns],

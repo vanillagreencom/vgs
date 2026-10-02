@@ -94,15 +94,15 @@ world(async () => {
             context: () => ({ profile: "standard", locked, denied: Denied.create(fixtures.roots) }),
             audit, result: value => bridge.deliver(value) || brain.push(value) });
         Object.assign(ports, router.ports);
-        for (const executor of ["windows", "files", "sandbox"])
-            router.register(executor, { commands: ["hyprctl", "bwrap"], timeoutMs: 1000, cancellable: true,
+        for (const executor of ["windows", "files", "sandbox", ...(options.vision ? ["vision"] : [])])
+            router.register(executor, { commands: ["hyprctl", "bwrap", ...(options.vision ? ["grim"] : [])], timeoutMs: 1000, cancellable: true,
                 start: (call, done) => { starts.push({ call, audit: rows().at(-1) }); answers.push(done); },
                 cancel: () => {} });
         runner.dispatch({ type: "snapshot", locked: false, engine: "chained", configured: true, settings: {} });
         runner.dispatch({ type: "indicator", shown: true });
         const newTurn = () => { runner.dispatch({ type: "talk-down" }); transcript("final", "fixture user"); };
         newTurn();
-        const recipients = Policy.recipients({ conversation: "fixture-" + serial, profile: "standard", cloudVision: "ask",
+        const recipients = Policy.recipients({ conversation: "fixture-" + serial, profile: "standard", cloudVision: options.cloudVision ?? "ask",
             brain: options.network ? { kind: "network", provider: "fixture-cloud", account: "a", origin: "https://brain.example.test" }
                 : { kind: "local", provider: "fixture-local", account: "" },
             speech: [{ kind: "local", provider: "fixture-speech", account: "" }] });
@@ -328,6 +328,27 @@ world(async () => {
                     ["release", decision, { labels: "[redacted]", recipients: "[redacted]" }]);
             }
         }],
+        // A released image is an MCP image block; a withheld one, its marker.
+        ["image", async folder => {
+            const png = Buffer.from("89504e470d0a1a0a", "hex");
+            const marker = { type: "text", text: "[withheld: screen content]" };
+            const block = { type: "image", data: png.toString("base64"), mimeType: "image/png" };
+            for (const [network, cloudVision, text, second, decision] of [[false, "ask", "Screen text", block, "send"],
+                [true, "allow", "Screen text", block, "send"], [true, "ask", marker.text, marker, "ask"],
+                [true, "never", marker.text, marker, "withhold"]]) {
+                const w = await make(folder, { network, cloudVision, vision: true });
+                const c = await w.ready();
+                c.send(call(70, "vision_screen", {}));
+                c.send(ping(71));
+                await c.next();
+                w.answers[0]({ outcome: "completed", content: "Screen text", image: { type: "image/png", bytes: png } });
+                const answer = await c.next();
+                assert.equal(answer.id, 70);
+                assert.deepEqual(result(answer, "CallToolResult"), { content: [{ type: "text", text }, second], isError: false },
+                    network + " " + cloudVision);
+                assert.deepEqual([w.rows().at(-1).kind, w.rows().at(-1).decision], ["release", decision], cloudVision);
+            }
+        }],
         ["protocol", async folder => {
             const w = await make(folder);
             const c = await w.ready();
@@ -525,6 +546,9 @@ world(async () => {
             ["brain-results", "if (entry === undefined) return false;", "if (entry === undefined) return true;", "allow"],
             ["gen-binding", "s.gen !== current.gen || ", "", "stale"],
             ["release", "Policy.release(answer.item, entry.recipients)", "({ kind: \"send\", ...answer.item })", "release"],
+            ["image-release", "Policy.release(answer.image.item, entry.recipients)", "({ kind: released.kind, content: answer.image.item.content })", "image"],
+            ["image-delivered", "Mcp.content(entry.request, released.content.toString(), value.outcome !== \"completed\", image)",
+                "Mcp.content(entry.request, released.content.toString(), value.outcome !== \"completed\")", "image"],
             ["release-audit", "const admitted = audit.before(",
                 "const admitted = ({ before: (event, start) => ({ kind: \"started\", value: start() }) }).before(", "release"],
             ["is-error", 'value.outcome !== "completed"', "false", "refuse"],

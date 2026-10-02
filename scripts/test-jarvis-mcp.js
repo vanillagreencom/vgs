@@ -65,11 +65,23 @@ world(() => {
         }
     }
     table(Mcp);
-    for (const [name, isError] of [["completed", false], ["refused", true]]) {
-        const message = Mcp.content(9, "text", isError);
-        assert.deepEqual(message, { jsonrpc: "2.0", id: 9, result: { content: [{ type: "text", text: "text" }], isError } }, name);
-        assert.deepEqual(Check.errors(excerpt, "CallToolResult", message.result), [], name + " tool result");
-    }
+    // [name, isError, image argument, content blocks]: a released image is an
+    // image block, a withheld one its marker as a second text block.
+    const results = logic => {
+        for (const [name, isError, image, blocks] of [
+            ["completed", false, undefined, [{ type: "text", text: "text" }]],
+            ["refused", true, undefined, [{ type: "text", text: "text" }]],
+            ["image", false, { kind: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+                [{ type: "text", text: "text" }, { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]],
+            ["marker", false, { kind: "marker", text: "[withheld: screen content]" },
+                [{ type: "text", text: "text" }, { type: "text", text: "[withheld: screen content]" }]]
+        ]) {
+            const message = logic.content(9, "text", isError, image);
+            assert.deepEqual(message, { jsonrpc: "2.0", id: 9, result: { content: blocks, isError } }, name);
+            assert.deepEqual(Check.errors(excerpt, "CallToolResult", message.result), [], name + " tool result");
+        }
+    };
+    results(Mcp);
 
     let controls = 0;
     for (const [name, needle, replacement] of [
@@ -91,6 +103,14 @@ world(() => {
         ["integer-id", "Number.isSafeInteger(id)", 'typeof id === "number"']
     ]) {
         mutant(file, name, needle, replacement, table);
+        controls++;
+    }
+    for (const [name, needle, replacement] of [
+        ["image-block", '{ type: "image", data: image.data, mimeType: image.mimeType }', '{ type: "text", text: image.data }'],
+        ["marker-block", ': { type: "text", text: image.text });', ": { type: \"image\", data: \"\", mimeType: \"image/png\" });"],
+        ["image-kept", "if (image !== null) blocks.push(", "if (false) blocks.push("]
+    ]) {
+        mutant(file, name, needle, replacement, results);
         controls++;
     }
     console.log("test-jarvis-mcp: ok rows=" + rows.length + " controls=" + controls);

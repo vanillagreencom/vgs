@@ -8,7 +8,8 @@ const { load } = require("../bin/lib/qml-library.js");
 const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const file = path.join(__dirname, "../shell/plugins/vgs.jarvis/JarvisProtocol.js");
 const Protocol = load(file);
-const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" }, directories: {
+const hello = { v: 1, type: "hello", gen: 0, settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto",
+    cloudVision: "ask", privateWindows: "bitwarden, incognito" }, directories: {
     state: "/private/state", data: "/private/data", runtime: "/private/runtime"
 }, revision: "a".repeat(64), locked: false,
 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } };
@@ -22,7 +23,9 @@ const status = { v: 1, type: "status", gen: 0, revision: hello.revision, daemon:
 const state = { v: 1, type: "state", gen: 0, revision: hello.revision, seq: 1,
     state: JSON.parse(JSON.stringify(Protocol.Session.initial())), phase: "down" };
 const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(file), "manifest.json"), "utf8"));
-assert.deepEqual(manifest.settings, { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" });
+assert.deepEqual(Object.keys(manifest.settings), ["mode", "microphone", "speaker", "brain", "taskTerminal", "cloudVision", "privateWindows"]);
+assert.deepEqual([manifest.settings.cloudVision, manifest.schema.cloudVision.options], ["ask", ["ask", "allow", "never"]]);
+assert.equal(typeof manifest.settings.privateWindows, "string");
 assert.deepEqual(manifest.schema.mode.options, ["hold", "toggle"]);
 assert.deepEqual(manifest.schema.taskTerminal.options, ["auto", "tmux", "floating"]);
 assert.deepEqual(manifest.tui.task, { script: "tui/task.sh", title: "Jarvis coding task", presentation: "plain" });
@@ -170,6 +173,11 @@ const cases = [
     ["reply-entry-duplicate", changed(listReply, { data: { entries: [entry, entry], complete: true } }), "shell", "entry-duplicate"],
     ["reply-entry-terminal", changed(entryReply, { data: { ...entryReply.data, terminal: "no" } }), "shell", "entry"],
     ["task-terminal", changed(hello, { settings: { ...hello.settings, taskTerminal: "kitty" } }), "shell", "task-terminal"],
+    ["cloud-vision", changed(hello, { settings: { ...hello.settings, cloudVision: "sometimes" } }), "shell", "cloud-vision"],
+    ["missing-cloud-vision", changed(hello, { settings: { ...hello.settings, cloudVision: undefined } }), "shell", "shape-settings"],
+    ["private-windows-type", changed(hello, { settings: { ...hello.settings, privateWindows: ["bitwarden"] } }), "shell", "private-windows"],
+    ["private-windows-control", changed(hello, { settings: { ...hello.settings, privateWindows: "bitwarden\nvault" } }), "shell", "private-windows"],
+    ["private-windows-size", changed(hello, { settings: { ...hello.settings, privateWindows: "a".repeat(1025) } }), "shell", "private-windows"],
     ["missing-task-terminal", changed(hello, { settings: { mode: "hold", microphone: "", speaker: "", brain: "" } }), "shell", "shape-settings"],
     ["task-stop-shape", changed(taskStop, { task: undefined }), "shell", "shape-task-stop"],
     ["task-stop-id", changed(taskStop, { task: "../home" }), "shell", "task-id"],
@@ -217,6 +225,10 @@ for (const message of [devices, level, audioFault, taskRequest, tasks, taskAnswe
 for (const message of [taskStop, tuiState, { ...tuiState, running: false }, taskReply, { ...taskReply, answer: "ok" },
     { ...taskReply, answer: "x".repeat(300) }])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
+for (const cloudVision of ["ask", "allow", "never"])
+    assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, cloudVision } }), "shell").settings.cloudVision, cloudVision);
+for (const privateWindows of ["", "a".repeat(1024), manifest.settings.privateWindows])
+    assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, privateWindows } }), "shell").settings.privateWindows, privateWindows);
 for (const taskTerminal of ["auto", "tmux", "floating"])
     assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, taskTerminal } }), "shell").settings.taskTerminal, taskTerminal);
 assert.equal(Protocol.MAX_PENDING_REQUESTS, 16);
@@ -353,8 +365,8 @@ try {
         ["hello-direction", 'if (direction !== "shell") fail("direction-hello");', 'if (false) fail("direction-hello");', "hello-direction"],
         ["status-direction", 'if (direction !== "daemon") fail("direction-status");', 'if (false) fail("direction-status");', "status-direction"],
         ["shape", 'fail("shape-" + name);', ';', "hello-shape"],
-        ["settings-name", 'keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");',
-            'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");', "extra-setting"],
+        ["settings-name", 'keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal", "cloudVision", "privateWindows"], "settings");',
+            'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal", "cloudVision", "privateWindows"], "settings");', "extra-setting"],
         ["brain-type", 'typeof message.settings.brain !== "string"', 'false', "brain-setting"],
         ["directory", 'if (!directory(message.directories[name])) fail("directory-" + name);', 'if (false) fail("directory-" + name);', "directory"],
         ["lock", 'if (typeof message.locked !== "boolean") fail("lock");', 'if (false) fail("lock");', "lock"],
@@ -384,6 +396,11 @@ try {
         ["entry-duplicate", 'if (Object.prototype.hasOwnProperty.call(seen, entry.id)) fail("entry-duplicate");', ';', "reply-entry-duplicate"],
         ["task-terminal", 'if (TASK_TERMINALS.indexOf(message.settings.taskTerminal) === -1) fail("task-terminal");',
             'if (false) fail("task-terminal");', "task-terminal"],
+        ["cloud-vision", 'if (CLOUD_VISION.indexOf(message.settings.cloudVision) === -1) fail("cloud-vision");',
+            'if (false) fail("cloud-vision");', "cloud-vision"],
+        ["private-windows-type", 'if (typeof message.settings.privateWindows !== "string"\n                || ', 'if (', "private-windows-type"],
+        ["private-windows-control", "/^[^\\x00-\\x1f\\x7f]{0,1024}$/", "/^[^]{0,1024}$/", "private-windows-control"],
+        ["private-windows-size", "/^[^\\x00-\\x1f\\x7f]{0,1024}$/", "/^[^\\x00-\\x1f\\x7f]*$/", "private-windows-size"],
         ["task-stop-id", 'if (!taskId(message.task)) fail("task-id");', 'if (false) fail("task-id");', "task-stop-id"],
         ["task-id-rule", "/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(value)", "true", "task-stop-id"],
         ["tui-state-direction", 'if (direction !== "shell") fail("direction-tui-state");', 'if (false) fail("direction-tui-state");', "tui-state-direction"],
@@ -399,8 +416,8 @@ try {
     ];
     for (const [name, needle, replacement, example, matches] of guards)
         control(name, needle, replacement, logic => rejected(logic, cases.find(row => row[0] === example)), matches);
-    control("unsupported-echo", 'keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");',
-        'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");',
+    control("unsupported-echo", 'keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal", "cloudVision", "privateWindows"], "settings");',
+        'if (false) keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal", "cloudVision", "privateWindows"], "settings");',
         logic => {
             for (const row of cases.filter(row => row[0].startsWith("echo-setting-"))) rejected(logic, row);
         });
