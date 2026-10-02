@@ -7,8 +7,8 @@ const Tools = require("./Tools.js");
 /** create({request,environment,commands}) owns command children and observations.
  * wtype's single-key map emits raw XKB code 9 (atx/wtype main.c upload_keymap).
  * Core also resolves that code in the global translation map: Hyprland resolves symbols against its
- * native map when resolve_binds_by_sym is false. Text has zero modifiers;
- * any unmodified own bind makes text unavailable rather than guessing its map.
+ * native map when resolve_binds_by_sym is false. Policy judges text's generated
+ * codes and symbols, including possible held physical modifiers.
  * ydotool debug connects its existing daemon socket and emits no input event
  * (ReimuNotMoe/ydotool Client/ydotool.c). It never starts a daemon.
  */
@@ -31,9 +31,10 @@ function create({ request, environment, commands, timeoutMs = 2000 }) {
             children.add(child);
         });
     }
-    function ask(kind, args) {
+    function ask(kind, args, checkpoint) {
         return new Promise(resolve => request(kind, args, timeoutMs, resolve)).then(reply => {
             if (closed) throw new Error("input-closed");
+            if (checkpoint !== undefined) checkpoint();
             if (reply.kind !== "answer" || reply.answer !== "ok")
                 throw new Error(reply.kind === "answer" ? reply.answer : "input-request:" + reply.kind);
             return reply.data;
@@ -56,21 +57,22 @@ function create({ request, environment, commands, timeoutMs = 2000 }) {
         }
         return offered.concat(pointer === null ? [] : [pointer]);
     }
-    async function observe(call) {
+    async function observe(call, checkpoint) {
         const a = call.args;
         if (call.id === "input.text" && Buffer.byteLength(a.text) > 4096) return { refusal: "input-size" };
         const isPointer = call.id === "input.click" || call.id === "input.scroll";
         if (isPointer && pointer === "ydotool") {
             try { await command("ydotool", ["debug"]); }
             catch { return { refusal: "input-daemon-unavailable" }; }
+            if (checkpoint !== undefined) checkpoint();
         }
         try {
             const input = {};
             if (!isPointer) {
-                const resolved = await ask("input.keys", call.id === "input.key" ? [a.chord, "code:9"] : ["code:9"]);
+                const resolved = await ask("input.keys", call.id === "input.key" ? [a.chord, "code:9"] : ["code:9"], checkpoint);
                 const offset = call.id === "input.key" ? 2 : 1;
                 const effective = resolved.keys.slice(offset);
-                if (call.id === "input.text") input.text = { effective };
+                if (call.id === "input.text") input.text = { effective: effective.concat(resolved.translation.slice(offset)) };
                 else {
                     const chord = resolved.keys[0], raw = resolved.translation[1];
                     input.key = { request: a.chord, chord, effective,
@@ -81,7 +83,7 @@ function create({ request, environment, commands, timeoutMs = 2000 }) {
             }
             // Read the target last, after XKB resolution. A slow keymap read
             // must not retain the earlier window or keyboard focus.
-            const fact = await ask("input.observe", isPointer ? [a.x, a.y] : []);
+            const fact = await ask("input.observe", isPointer ? [a.x, a.y] : [], checkpoint);
             input.target = fact.target; input.cursor = fact.cursor;
             observations.set(call, input);
             return input;
@@ -104,18 +106,24 @@ function create({ request, environment, commands, timeoutMs = 2000 }) {
                 "-y", String(a.direction === "up" ? a.steps : a.direction === "down" ? -a.steps : 0)]];
         throw new Error("input-pointer-unavailable");
     }
-    async function send(call) {
+    async function send(call, authorize) {
         let input = observations.get(call);
         if (input === undefined || input.refusal !== undefined) throw new Error("input-unobserved");
+        if (typeof authorize !== "function") throw new Error("input-authority");
+        const checkpoint = () => {
+            const answer = authorize(input);
+            if (answer.kind !== "allow") throw new Error(answer.reason);
+        };
         if (Tools.refine(call).input === "pointer") {
-            await ask("compositor.moveCursor", [call.args.x, call.args.y]);
+            await ask("compositor.moveCursor", [call.args.x, call.args.y], checkpoint);
             const prior = input;
-            input = await observe(call);
+            input = await observe(call, checkpoint);
             if (input.refusal !== undefined) throw new Error(input.refusal);
             if (JSON.stringify(input.target) !== JSON.stringify(prior.target)) throw new Error("input-target-changed");
             if (input.cursor.x !== call.args.x || input.cursor.y !== call.args.y) throw new Error("input-cursor-unverified");
         }
         const [name, args] = argv(call, input);
+        checkpoint();
         try { await command(name, args); }
         catch (error) {
             if (!error.deliveryPossible) throw error;
@@ -131,7 +139,7 @@ function create({ request, environment, commands, timeoutMs = 2000 }) {
         return { outcome: "unknown", content: "Input was sent. The application effect is not observable. " + detail };
     }
     const record = { commands: [], timeoutMs: 20000, cancellable: false, observe,
-        start(call, done) { send(call).then(done, error => done({ outcome: "failed", content: error.message })); } };
+        start(call, done, authorize) { send(call, authorize).then(done, error => done({ outcome: "failed", content: error.message })); } };
     return { record, ready: async () => { record.commands = await ready(); return record; },
         close() { closed = true; for (const child of children) child.kill("SIGKILL"); } };
 }

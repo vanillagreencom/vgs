@@ -121,7 +121,18 @@ function chord(value) {
 
 function sameChord(left, right) {
     return left.keycode === right.keycode
-        && left.modifiers.slice().sort().join(",") === right.modifiers.slice().sort().join(",");
+        // Hyprland ORs modifiers from physical and virtual keyboards. The
+        // public read-only interfaces expose no held physical mask.
+        && left.modifiers.every(mod => right.modifiers.includes(mod));
+}
+
+function textChord(bound, symbols) {
+    // wtype assigns raw XKB codes from 9 in distinct-character order. Its
+    // symbol map remaps newline to Return, tab to Tab and escape to Escape.
+    return bound.modifiers.length === 0
+        || bound.keycode >= 9 && bound.keycode < 9 + symbols.length
+        || bound.codepoint !== 0 && symbols.some(symbol =>
+            symbol.toLowerCase() === String.fromCodePoint(bound.codepoint).toLowerCase());
 }
 
 /**
@@ -130,8 +141,8 @@ function sameChord(left, right) {
  * context: {profile, locked, taint, denied, input?, grants?}. Missing or
  * unknown lock refuses. denied is Denied.create's current snapshot.
  * J47/J51 supply input {target:{kind,id,password?}, key?} at send time.
- * For a key, key is {request, chord, effective}, where chord and effective
- * are layout-resolved {modifiers, keycode} records. J47 uses the core key
+ * For a key, key is {request, chord, effective, emitted, emittedEffective}.
+ * Each identity is a layout-resolved {modifiers, keycode} record. J47 uses the core key
  * judge, then resolves symbols against the live keymap. A literal comparison
  * cannot distinguish keycode/symbol aliases. A missing resolution refuses.
  * grants are J19-owned application/site ids for this conversation only.
@@ -192,11 +203,15 @@ function decide(call, context) {
             effect = "destructive";
         }
         if (refined.input === "text") {
-            if (!input.text || !Array.isArray(input.text.effective) || !input.text.effective.every(chord))
+            if (!input.text || !Array.isArray(input.text.effective) || !input.text.effective.every(bound => chord(bound)
+                    && Number.isSafeInteger(bound.codepoint) && bound.codepoint >= 0 && bound.codepoint <= 0x10ffff
+                    && !(bound.codepoint >= 0xd800 && bound.codepoint <= 0xdfff)))
                 return { kind: "refuse", reason: "text-context" };
-            // wtype text has no modifiers. Any unmodified own bind could
-            // match one of its dynamically assigned codes in either mode.
-            if (input.text.effective.some(bound => bound.modifiers.length === 0))
+            // Model text travels through Node's UTF-8 encoder; an unpaired
+            // surrogate becomes U+FFFD before wtype reads it.
+            const symbols = [...new Set(Buffer.from(call.args.text).toString("utf8"))]
+                .map(symbol => symbol === "\n" ? "\r" : symbol);
+            if (input.text.effective.some(bound => textChord(bound, symbols)))
                 return { kind: "refuse", reason: "own-shortcut" };
         }
         if (input.target.kind !== "terminal") scope = input.target.kind + ":" + input.target.id;

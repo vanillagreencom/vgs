@@ -81,7 +81,9 @@ function resolvedKeys(text, count, requireTranslation) {
     for (var list of lists) {
         for (var key of list) {
             if (!key || !Array.isArray(key.modifiers) || !key.modifiers.every(function (m) { return Logic.HYPRLAND_MODIFIERS.indexOf(m) !== -1; })
-                    || !Number.isInteger(key.keycode) || key.keycode < 8 || typeof key.keysym !== "string" || key.keysym.length === 0)
+                    || !Number.isInteger(key.keycode) || key.keycode < 8 || typeof key.keysym !== "string" || key.keysym.length === 0
+                    || !Number.isInteger(key.codepoint) || key.codepoint < 0 || key.codepoint > 0x10ffff
+                    || key.codepoint >= 0xd800 && key.codepoint <= 0xdfff)
                 return { ok: false, error: "refused: keymap=reply" };
         }
     }

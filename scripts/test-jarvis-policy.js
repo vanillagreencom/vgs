@@ -275,7 +275,7 @@ world(() => {
     control("own-chord", 'if (key.effective.some(bound => sameChord(key.chord, bound)))',
         'if (false && key.effective.some(bound => sameChord(key.chord, bound)))',
         logic => refuse(logic, pressed, keyContext, "jarvis-chord"));
-    control("chord-modifiers", 'left.modifiers.slice().sort().join(",") === right.modifiers.slice().sort().join(",")',
+    control("chord-modifiers", 'left.modifiers.every(mod => right.modifiers.includes(mod))',
         'true', logic => assert.deepEqual(logic.decide(pressed, allowedKey), expected("input", "allow")));
     control("chord-keycode", 'left.keycode === right.keycode', 'true',
         logic => assert.deepEqual(logic.decide(pressed, { ...keyContext, profile: "trusted", input: { ...keyContext.input,

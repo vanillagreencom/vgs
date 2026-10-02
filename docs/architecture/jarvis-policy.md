@@ -37,15 +37,15 @@ The exact read-only argv table belongs to `Tools.js`. Extra options, an absolute
 | `taint` | Router's value keyed to Session's turn: `{ kind: "clean" }` or `{ kind: "tainted" }`. Missing or invalid taint refuses. |
 | `denied` | Current `Denied.create` result. Every path-bearing call requires it. |
 | `input.target` | J47 or J51's send-time observation: `{ kind, id, password? }`. Kinds are application, terminal, site, VGS, lock and polkit. The code uses lower-case ids for these kinds. Unknown targets or empty identities refuse. |
-| `input.key` | J47's `{ request, chord, effective, emitted, emittedEffective }`. `request` must equal the call's chord. Native identities use the active device map. Emitted code and effective bind identities use the independent global group-zero translation map. Each is `{ modifiers, keycode }`; Policy alone matches and refuses own chords. |
-| `input.text` | J47's `{ effective }`. Every effective chord must resolve. Any chord with no modifiers refuses text, because wtype assigns its own raw codes. |
+| `input.key` | J47's `{ request, chord, effective, emitted, emittedEffective }`. `request` must equal the call's chord. Native identities use the active device map. Emitted code and effective bind identities use the independent global group-zero translation map. Each is `{ modifiers, keycode }`; Policy alone matches and refuses own chords. Unknown physical modifiers can add to the requested mask, so a possible matching superset also refuses. |
+| `input.text` | J47's `{ effective }` joins native and global identities. Each includes `{ modifiers, keycode, codepoint }`. Policy matches wtype's generated raw codes and Unicode characters against possible held-modifier combinations. Any chord with no modifiers also refuses text. |
 | `grants` | J19's conversation-local list of application or site scope ids. It is required when the standard input rule needs a grant. A missing list refuses. |
 
 The model produces only the call. It cannot supply this context. Key parsing remains with the core key judge. J47 must then resolve both keysyms and keycodes to the same physical identity. An unresolved key or effective binding refuses. Jarvis declares [Talk, Mute and Stop](jarvis-controls.md) through the existing core shortcut capability. The policy adds no key parser or input executor; J47 owns them.
 
 A grant scope is `application:<id>` or `site:<id>`. Standard input without a matching grant returns that scope for J19's user prompt. Another application or site does not inherit it. Cautious input confirms each call. Tainted input requires confirmation even with a grant. A terminal has no grant scope.
 
-VGS, lock and polkit targets refuse in every profile before the profile table applies. Browser input also requires a known non-password target. A key equal to any effective Jarvis chord refuses, independent of modifier order or key spelling.
+VGS, lock and polkit targets refuse in every profile before the profile table applies. Browser input also requires a known non-password target. A key that can equal an effective Jarvis chord refuses, independent of modifier order or key spelling. A physical modifier already held can complete that chord. Text uses the distinct Unicode characters in the actual UTF-8 transport, including newline's Return mapping. It refuses any generated raw code or character that can activate an own bind.
 
 Terminal keys, clicks and scrolling refuse as `terminal-input` in every profile, including with taint or a supplied grant. They can enter or paste a command without showing its text. Terminal text refuses in cautious and standard. Trusted terminal text becomes a physical, destructive hold. J19 must show the exact typed text. Taint cannot turn that hold into voice approval.
 

@@ -188,9 +188,11 @@ function replyData(message) {
                     || !Array.isArray(message.data.effective) || !Array.isArray(message.data.translation)
                     || message.data.translation.length !== message.data.keys.length) fail("input-reply");
             for (var key of message.data.keys.concat(message.data.translation)) {
-                keys(key, ["modifiers", "keycode", "keysym"], "resolved-key");
+                keys(key, ["modifiers", "keycode", "keysym", "codepoint"], "resolved-key");
                 if (!Array.isArray(key.modifiers) || !key.modifiers.every(text) || !Number.isSafeInteger(key.keycode)
-                        || key.keycode < 8 || !text(key.keysym)) fail("input-reply");
+                        || key.keycode < 8 || !text(key.keysym) || !Number.isSafeInteger(key.codepoint)
+                        || key.codepoint < 0 || key.codepoint > 0x10ffff
+                        || key.codepoint >= 0xd800 && key.codepoint <= 0xdfff) fail("input-reply");
             }
             if (!message.data.effective.every(text)) fail("input-reply");
         }

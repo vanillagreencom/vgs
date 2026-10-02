@@ -100,21 +100,24 @@ function create({ session, state, dispatch, context, audit, result }) {
         return refusal;
     }
 
+    function decide(value, input) {
+        const facts = context();
+        return Policy.decide(value.call, { profile: facts.profile, locked: facts.locked,
+            denied: facts.denied, taint, grants: [...grants], input });
+    }
+
     function judge(value) {
-        const decide = input => {
-            const facts = context();
-            return Policy.decide(value.call, { profile: facts.profile, locked: facts.locked,
-                denied: facts.denied, taint, grants: [...grants], input });
-        };
         const input = value.executor.observe === undefined ? undefined : value.executor.observe(value.call);
-        return input instanceof Promise ? input.then(decide, () => ({ kind: "refuse", reason: "input-observation" })) : decide(input);
+        return input instanceof Promise ? input.then(facts => decide(value, facts), () => ({ kind: "refuse", reason: "input-observation" })) : decide(value, input);
     }
 
     /**
      * Executor owners register once after confinement and command probes pass.
-     * commands lists commands actually present. start(call, done) receives a
+     * commands lists commands actually present. start(call, done, authorize) receives a
      * frozen {id,args}; done is {outcome:"completed"|"failed"|"unknown",content}.
      * Input executors supply observe(call) for fresh trusted target/key facts.
+     * They call synchronous authorize(input) after preparation replies and
+     * immediately before delivery. Other executors need no preparation callback.
      */
     function register(id, executor) {
         if (closed || registry.has(id) || !Object.values(Tools.TABLE).some(row => row.executor === id)
@@ -223,22 +226,28 @@ function create({ session, state, dispatch, context, audit, result }) {
         startJudged(e, done, value, fresh);
     }
 
-    function startJudged(e, done, value, fresh) {
+    function authorize(value, e, fresh) {
         dispatch({ type: "deadline", gen: e.gen, op: e.op });
         const freshState = state();
-        if (freshState.gen !== value.turn.gen || freshState.gate.kind !== "up"
+        if (closed || pending !== value || freshState.gen !== value.turn.gen || freshState.gate.kind !== "up"
                 || freshState.action.kind !== "running" || freshState.action.gen !== e.gen || freshState.action.op !== e.op
-                || freshState.action.limit.kind !== "pending") { done("failed"); return; }
+                || freshState.action.limit.kind !== "pending") return { kind: "refuse", reason: "stale-action" };
         const prior = value.decision;
         const accepted = e.confirmed !== undefined;
         const authorized = fresh.kind === "allow" && fresh.effect === prior.effect
             || accepted && fresh.kind === "confirm" && fresh.effect === prior.effect
                 && fresh.physical === prior.physical && fresh.scope === prior.scope;
         if (!authorized) {
-            value.refusal = fresh.kind === "refuse" ? fresh.reason : "policy-changed";
-            done("failed");
-            return;
+            return { kind: "refuse", reason: fresh.kind === "refuse" ? fresh.reason : "policy-changed" };
         }
+        return { kind: "allow" };
+    }
+
+    function startJudged(e, done, value, fresh) {
+        const authority = authorize(value, e, fresh);
+        if (authority.kind === "refuse") { value.refusal = authority.reason; done("failed"); return; }
+        const prior = value.decision;
+        const accepted = e.confirmed !== undefined;
         value.confirmed = !accepted ? "none" : e.confirmed === "voice" ? "voice" : "physical";
         value.action = { gen: e.gen, op: e.op };
         const admitted = audit.before({ kind: "action", gen: value.turn.gen, op: value.turn.op,
@@ -252,6 +261,10 @@ function create({ session, state, dispatch, context, audit, result }) {
                         throw new Error("jarvis: router=outcome");
                     value.answer = answer;
                     done(answer.outcome);
+                }, input => {
+                    const answer = authorize(value, e, decide(value, input));
+                    if (answer.kind === "refuse") value.refusal = answer.reason;
+                    return answer;
                 });
             } catch (error) {
                 value.answer = { outcome: "failed", content: "executor-failed" };

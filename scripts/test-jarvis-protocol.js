@@ -54,7 +54,7 @@ const taskAnswer = { v: 1, type: "task-answer", gen: 0, revision: hello.revision
 const transcript = { v: 1, type: "transcript", gen: 0, revision: hello.revision, role: "user", text: " the time?", stage: "partial", rev: 1 };
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const inputReply = { ...reply, kind: "input.observe", data: { ok: true, target: { kind: "application", id: "fixture", window: "0xa1" }, cursor: { x: 1, y: 2 } } };
-const keysReply = { ...reply, kind: "input.keys", data: { ok: true, keys: [{ modifiers: ["SUPER"], keycode: 38, keysym: "a" }], translation: [{ modifiers: ["SUPER"], keycode: 38, keysym: "a" }], effective: [] } };
+const keysReply = { ...reply, kind: "input.keys", data: { ok: true, keys: [{ modifiers: ["SUPER"], keycode: 38, keysym: "a", codepoint: 97 }], translation: [{ modifiers: ["SUPER"], keycode: 38, keysym: "a", codepoint: 97 }], effective: [] } };
 const inputReady = { ...status, type: "input-ready", commands: ["wtype", "wlrctl"] };
 delete inputReady.daemon;
 const cases = [
@@ -71,7 +71,10 @@ const cases = [
     ["indicator-shown", changed(indicator, { shown: 1 }), "shell", "indicator"],
     ["input-point", changed(request, { kind: "input.observe", args: [1] }), "daemon", "request-args"],
     ["input-target", changed(inputReply, { data: { ...inputReply.data, target: { kind: "unknown", id: "fixture" } } }), "shell", "input-reply"],
-    ["input-key", changed(keysReply, { data: { ...keysReply.data, keys: [{ modifiers: ["SUPER"], keycode: 0, keysym: "a" }] } }), "shell", "input-reply"],
+    ["input-key", changed(keysReply, { data: { ...keysReply.data, keys: [{ modifiers: ["SUPER"], keycode: 0, keysym: "a", codepoint: 97 }] } }), "shell", "input-reply"],
+    ...[null, -1, 0.5, 0x110000, 0xd800, 0xdfff].map(codepoint =>
+        ["input-codepoint-" + codepoint, changed(keysReply, { data: { ...keysReply.data,
+            keys: [{ ...keysReply.data.keys[0], codepoint }] } }), "shell", "input-reply"]),
     ["input-ready-direction", JSON.stringify(inputReady), "shell", "direction-input-ready"],
     ["input-ready-command", changed(inputReady, { commands: ["sudo"] }), "daemon", "input-commands"],
     ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
@@ -298,6 +301,10 @@ try {
         controls++;
     }
     const guards = [
+        ["input-symbol-type", '!Number.isSafeInteger(key.codepoint)', 'false', "input-codepoint-0.5"],
+        ["input-symbol-floor", ' || key.codepoint < 0', '', "input-codepoint--1"],
+        ["input-symbol-ceiling", ' || key.codepoint > 0x10ffff', '', "input-codepoint-1114112"],
+        ["input-symbol-scalar", ' || key.codepoint >= 0xd800 && key.codepoint <= 0xdfff', '', "input-codepoint-55296"],
         ["approval-id", 'if (!approvalId(message.id)) fail("approval-id");',
             'if (false) fail("approval-id");', "confirm-id", 3],
         ["approval-digest", 'if (typeof message.digest !== "string" || !/^[0-9a-f]{64}$/.test(message.digest)) fail("approval-digest");',

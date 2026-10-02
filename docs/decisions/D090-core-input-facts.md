@@ -9,7 +9,7 @@
 
 **Context**: Synthetic input must not activate the assistant's controls or deliver input to a protected surface. Effective key strings do not resolve physical key aliases. An active application can remain listed while a shell layer owns the keyboard.
 
-**Decision**: Existing Hyprland device and compositor owners provide fresh key and target observations. The core key judge normalizes strings. A read-only system XKB helper resolves both the active device layout and Hyprland's global group-zero bind translation map. Core hosts register raw Qt window activation with the compositor owner. The router reserves its serial slot while observations await their reply. Protected rectangles include pass-through gaps.
+**Decision**: Existing Hyprland device and compositor owners provide fresh key and target observations. The core key judge normalizes strings. A read-only system XKB helper resolves both the active device layout and Hyprland's global group-zero bind translation map. Core hosts register raw Qt window activation with the compositor owner. The router reserves its serial slot while observations await their reply. Protected rectangles include pass-through gaps and use their monitor's logical origin. Input returns to the router's authority check after preparation awaits and before delivery. Policy refuses possible own-bind combinations when held physical modifiers cannot be observed.
 
 **Rationale**:
 - A plugin-owned key or target reader would duplicate the core's device and surface facts.

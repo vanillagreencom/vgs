@@ -20,7 +20,7 @@ const answer = (call, name) => {
 const keyboard = extra => Object.assign({ name: "wl_keyboard", layout: "us,de", variant: ",", options: "caps:escape",
     activeLayoutIndex: 1, activeKeymap: "German", main: true }, extra);
 const devices = keyboards => ({ mice: [], keyboards });
-const key = extra => Object.assign({ modifiers: ["SUPER"], keycode: 29, keysym: "z" }, extra);
+const key = extra => Object.assign({ modifiers: ["SUPER"], keycode: 29, keysym: "z", codepoint: 122 }, extra);
 
 function stateChecks(state) {
     const request = state.keyRequest(devices([keyboard({ main: false, layout: "fr" }), keyboard()]), ["shift+super+y", "CTRL+code:36"]);
@@ -58,6 +58,8 @@ function stateChecks(state) {
         ["evdev code instead of XKB", JSON.stringify({ ok: true, keys: [key({ keycode: 7 })] }), 1, "refused: keymap=reply"],
         ["missing symbol", JSON.stringify({ ok: true, keys: [key({ keysym: "" })] }), 1, "refused: keymap=reply"],
         ["non-string symbol", JSON.stringify({ ok: true, keys: [key({ keysym: 1 })] }), 1, "refused: keymap=reply"],
+        ...[undefined, null, -1, 0.5, 0x110000, 0xd800, 0xdfff].map(codepoint =>
+            ["invalid symbol character " + codepoint, JSON.stringify({ ok: true, keys: [key({ codepoint })] }), 1, "refused: keymap=reply"]),
         ["translation is not a list", JSON.stringify({ ok: true, keys: [key()], translation: null }), 1, "refused: keymap=translation"],
         ["translation is incomplete", JSON.stringify({ ok: true, keys: [key()], translation: [] }), 1, "refused: keymap=translation"],
         ["translation independently judges modifiers", JSON.stringify({ ok: true, keys: [key()], translation: [key({ modifiers: ["META"] })] }), 1, "refused: keymap=reply"],
@@ -132,7 +134,7 @@ function keyFactsChecks(state) {
 
 const client = extra => Object.assign({ address: "0xabc", mapped: true, visible: true, class: "Editor", at: [100, 100], size: [200, 100],
     monitor: 0, workspace: { id: 1, name: "1" } }, extra);
-const monitor = { id: 0, activeWorkspace: { id: 1 }, specialWorkspace: { id: 0 } };
+const monitor = { id: 0, name: "WL-1", x: 0, y: 0, activeWorkspace: { id: 1 }, specialWorkspace: { id: 0 } };
 const layers = (extra = {}) => ({ "WL-1": { levels: { "3": [Object.assign({ namespace: "vgs:layer", x: 0, y: 30, w: 400, h: 30 }, extra)] } } });
 const lowerLayers = level => ({ "WL-1": { levels: { [level]: [{ namespace: "vgs:background", x: 0, y: 0, w: 800, h: 600 }] } } });
 const cursor = { x: 150, y: 150 };
@@ -148,6 +150,14 @@ function dispatchChecks(dispatch) {
     const rows = [
         ["focused application", {}, null, false, target("application", "editor", "0xabc")],
         ["pointed application", {}, { x: 150, y: 150 }, false, target("application", "editor", "0xabc")],
+        ...[[1000, 400], [-1000, -400]].flatMap(([x, y]) => [
+            ["translated overlay " + x, { clients: [client({ at: [x + 100, y + 100] })], monitors: [{ ...monitor, x, y }],
+                layers: layers({ y: 100, h: 100 }) }, { x: x + 150, y: y + 150 }, false, target("vgs", "vgs:layer")],
+            ["translated lower layer under application " + x, { clients: [client({ at: [x + 100, y + 100] })], monitors: [{ ...monitor, x, y }],
+                layers: lowerLayers("0") }, { x: x + 150, y: y + 150 }, false, target("application", "editor", "0xabc")],
+            ["translated lower layer without application " + x, { clients: [], active: {}, monitors: [{ ...monitor, x, y }],
+                layers: lowerLayers("1") }, { x: x + 150, y: y + 150 }, false, target("vgs", "vgs:background")]
+        ]),
         ["application covers VGS background", { layers: lowerLayers("0") }, { x: 150, y: 150 }, false, target("application", "editor", "0xabc")],
         ["application covers VGS bottom layer", { layers: lowerLayers("1") }, { x: 150, y: 150 }, false, target("application", "editor", "0xabc")],
         ["retired overlay cannot receive input", { layers: layers({ pid: -1, y: 100, h: 100 }) }, { x: 150, y: 150 }, false, target("application", "editor", "0xabc")],
@@ -172,6 +182,10 @@ function dispatchChecks(dispatch) {
         ["unread cursor", { cursor: {} }, null, false, "observation"],
         ["unknown keyboard protection", {}, null, null, "observation"],
         ["fractional point", {}, { x: 150.5, y: 150 }, false, "point"],
+        ...[{ ...monitor, name: "other" }, { ...monitor, name: undefined }, { ...monitor, x: undefined },
+            { ...monitor, y: null }, { ...monitor, x: "0" }].map(m =>
+            ["unresolved layer output " + JSON.stringify(m), { monitors: [m], layers: layers() }, { x: 150, y: 150 }, false, "layer-output"]),
+        ["ambiguous layer output", { monitors: [monitor, monitor], layers: layers() }, { x: 150, y: 150 }, false, "layer-output"],
         ["missing layer levels", { layers: { "WL-1": {} } }, { x: 150, y: 150 }, false, "layers"],
         ["missing layer output", { layers: { "WL-1": null } }, { x: 150, y: 150 }, false, "layers"],
         ["invalid layer level", { layers: { "WL-1": { levels: { "3": {} } } } }, { x: 150, y: 150 }, false, "layers"],
@@ -224,6 +238,10 @@ const controls = [
     [stateFile, stateChecks, "XKB code floor", " || key.keycode < 8", ""],
     [stateFile, stateChecks, "symbol type", 'typeof key.keysym !== "string"', "false"],
     [stateFile, stateChecks, "nonempty symbol", " || key.keysym.length === 0", ""],
+    [stateFile, stateChecks, "symbol character type", "!Number.isInteger(key.codepoint)", "false"],
+    [stateFile, stateChecks, "symbol character floor", " || key.codepoint < 0", ""],
+    [stateFile, stateChecks, "symbol character ceiling", " || key.codepoint > 0x10ffff", ""],
+    [stateFile, stateChecks, "symbol character scalar", " || key.codepoint >= 0xd800 && key.codepoint <= 0xdfff", ""],
     [stateFile, stateChecks, "translation list", "!Array.isArray(read.value.translation)", "false"],
     [stateFile, stateChecks, "translation exact count", " || read.value.translation.length !== count", ""],
     [stateFile, stateChecks, "translation independent narrowing", "lists.push(read.value.translation);", "lists.push([]);"],
@@ -250,10 +268,14 @@ const controls = [
     [dispatchFile, dispatchChecks, "layer levels are not an array", " || Array.isArray(layers[output].levels)", ""],
     [dispatchFile, dispatchChecks, "known layer level", 'if (!/^[0-3]$/.test(level)) return refusal("layers");', 'if (false) return refusal("layers");'],
     [dispatchFile, dispatchChecks, "layer level list", 'if (!Array.isArray(surfaces)) return refusal("layers");', 'if (false) return refusal("layers");'],
+    [dispatchFile, dispatchChecks, "layer output identity", "origins.length !== 1", "false"],
+    [dispatchFile, dispatchChecks, "layer output origin", "!Number.isFinite(origins[0].x) || !Number.isFinite(origins[0].y)", "false"],
+    [dispatchFile, dispatchChecks, "layer horizontal translation", "surface.x + origin.x", "surface.x"],
+    [dispatchFile, dispatchChecks, "layer vertical translation", "surface.y + origin.y", "surface.y"],
     [dispatchFile, dispatchChecks, "retired layers have no input recipient", "if (surface && surface.pid === -1) continue;", "if (false) continue;"],
     [dispatchFile, dispatchChecks, "numeric rectangle coordinates", "[r.x, r.y, r.w, r.h].every(Number.isFinite)", "true"],
     [dispatchFile, dispatchChecks, "layer namespace", 'typeof surface.namespace !== "string"', "false"],
-    [dispatchFile, dispatchChecks, "VGS layer pointer protection", 'surface.namespace.indexOf("vgs:") === 0 && contains(surface, point)', 'surface.namespace.indexOf("vgs:") === 0 && false'],
+    [dispatchFile, dispatchChecks, "VGS layer pointer protection", 'surface.namespace.indexOf("vgs:") === 0 && contains(absolute, point)', 'surface.namespace.indexOf("vgs:") === 0 && false'],
     [dispatchFile, dispatchChecks, "application covers only lower VGS layers", "if (Number(level) >= 2)", "if (true)"],
     [dispatchFile, dispatchChecks, "desktop lower-layer protection", "lowerLayer = surface.namespace;", "lowerLayer = null;"],
     [dispatchFile, dispatchChecks, "window rectangle observation", 'if (!rect(box)) return refusal("window-shape");', 'if (false) return refusal("window-shape");'],

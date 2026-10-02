@@ -55,12 +55,12 @@ class Mapping(unittest.TestCase):
         self.assertEqual(self.run_helper(request(["SUPER+CTRL+ALT+SHIFT+A", "PAGE_UP", "PRIOR",
                                                 "XF86AUDIOMUTE", "PLUS", "AT"])), {
             "ok": True, "keys": [
-                {"modifiers": ["SUPER", "CTRL", "ALT", "SHIFT"], "keycode": 38, "keysym": "a"},
-                {"modifiers": [], "keycode": 112, "keysym": "Prior"},
-                {"modifiers": [], "keycode": 112, "keysym": "Prior"},
-                {"modifiers": [], "keycode": 121, "keysym": "XF86AudioMute"},
-                {"modifiers": [], "keycode": 21, "keysym": "plus"},
-                {"modifiers": [], "keycode": 11, "keysym": "at"},
+                {"modifiers": ["SUPER", "CTRL", "ALT", "SHIFT"], "keycode": 38, "keysym": "a", "codepoint": 97},
+                {"modifiers": [], "keycode": 112, "keysym": "Prior", "codepoint": 0},
+                {"modifiers": [], "keycode": 112, "keysym": "Prior", "codepoint": 0},
+                {"modifiers": [], "keycode": 121, "keysym": "XF86AudioMute", "codepoint": 0},
+                {"modifiers": [], "keycode": 21, "keysym": "plus", "codepoint": 43},
+                {"modifiers": [], "keycode": 11, "keysym": "at", "codepoint": 64},
             ]})
 
     def test_codes_use_xkb_numbering(self):
@@ -68,28 +68,28 @@ class Mapping(unittest.TestCase):
         for layout, name in rows:
             with self.subTest(layout=layout):
                 self.assertEqual(self.run_helper(request(["code:108"], layout=layout)), {
-                    "ok": True, "keys": [{"modifiers": [], "keycode": 108, "keysym": name}]})
+                    "ok": True, "keys": [{"modifiers": [], "keycode": 108, "keysym": name, "codepoint": 0}]})
 
     def test_active_layout_and_variant(self):
         self.assertEqual(self.run_helper(request(["Z", "Y", "PLUS", "AT", "code:108"],
                                                layout="us,de", activeLayoutIndex=1)), {
             "ok": True, "keys": [
-                {"modifiers": [], "keycode": 29, "keysym": "z"},
-                {"modifiers": [], "keycode": 52, "keysym": "y"},
-                {"modifiers": [], "keycode": 35, "keysym": "plus"},
-                {"modifiers": [], "keycode": 24, "keysym": "at"},
-                {"modifiers": [], "keycode": 108, "keysym": "ISO_Level3_Shift"},
+                {"modifiers": [], "keycode": 29, "keysym": "z", "codepoint": 122},
+                {"modifiers": [], "keycode": 52, "keysym": "y", "codepoint": 121},
+                {"modifiers": [], "keycode": 35, "keysym": "plus", "codepoint": 43},
+                {"modifiers": [], "keycode": 24, "keysym": "at", "codepoint": 64},
+                {"modifiers": [], "keycode": 108, "keysym": "ISO_Level3_Shift", "codepoint": 0},
             ]})
         self.assertEqual(self.run_helper(request(["Q"], variant="dvorak")), {
-            "ok": True, "keys": [{"modifiers": [], "keycode": 53, "keysym": "q"}]})
+            "ok": True, "keys": [{"modifiers": [], "keycode": 53, "keysym": "q", "codepoint": 113}]})
 
     def test_nonstandard_options(self):
         self.assertEqual(self.run_helper(request(["code:108", "code:134", "code:66"],
                                                options="altwin:swap_ralt_rwin,caps:escape")), {
             "ok": True, "keys": [
-                {"modifiers": [], "keycode": 108, "keysym": "Super_R"},
-                {"modifiers": [], "keycode": 134, "keysym": "Alt_R"},
-                {"modifiers": [], "keycode": 66, "keysym": "Escape"},
+                {"modifiers": [], "keycode": 108, "keysym": "Super_R", "codepoint": 0},
+                {"modifiers": [], "keycode": 134, "keysym": "Alt_R", "codepoint": 0},
+                {"modifiers": [], "keycode": 66, "keysym": "Escape", "codepoint": 27},
             ]})
 
     def test_unknown_options(self):
@@ -145,16 +145,27 @@ class Mapping(unittest.TestCase):
     def test_empty_keys(self):
         self.assertEqual(self.run_helper(request([])), {"ok": True, "keys": []})
 
+    def test_symbol_characters(self):
+        self.assertEqual(self.run_helper(request(["ESCAPE", "RETURN", "TAB", "XF86AUDIOMUTE"])), {
+            "ok": True, "keys": [
+                {"modifiers": [], "keycode": 9, "keysym": "Escape", "codepoint": 27},
+                {"modifiers": [], "keycode": 36, "keysym": "Return", "codepoint": 13},
+                {"modifiers": [], "keycode": 23, "keysym": "Tab", "codepoint": 9},
+                {"modifiers": [], "keycode": 121, "keysym": "XF86AudioMute", "codepoint": 0},
+            ]})
+        self.assertEqual(self.run_helper(request(["GREEK_ALPHA"], layout="gr")), {
+            "ok": True, "keys": [{"modifiers": [], "keycode": 38, "keysym": "Greek_alpha", "codepoint": 0x3b1}]})
+
     def test_dual_active_and_translation_layouts(self):
         value = request(["code:29", "Z"], layout="us,de", activeLayoutIndex=1)
         value["translation"] = request(["code:29", "Z"], layout="us,de", activeLayoutIndex=0)
         self.assertEqual(self.run_helper(value), {
             "ok": True, "keys": [
-                {"modifiers": [], "keycode": 29, "keysym": "z"},
-                {"modifiers": [], "keycode": 29, "keysym": "z"},
+                {"modifiers": [], "keycode": 29, "keysym": "z", "codepoint": 122},
+                {"modifiers": [], "keycode": 29, "keysym": "z", "codepoint": 122},
             ], "translation": [
-                {"modifiers": [], "keycode": 29, "keysym": "y"},
-                {"modifiers": [], "keycode": 52, "keysym": "z"},
+                {"modifiers": [], "keycode": 29, "keysym": "y", "codepoint": 121},
+                {"modifiers": [], "keycode": 52, "keysym": "z", "codepoint": 122},
             ]})
         self.assertEqual(self.run_helper({**request([]), "translation": request([])}),
                          {"ok": True, "keys": [], "translation": []})
@@ -270,7 +281,7 @@ class Mapping(unittest.TestCase):
         self.assertEqual(self.run_helper(request(["code:108"]), XKB_DEFAULT_LAYOUT="de",
                                         XKB_CONFIG_ROOT=str(self.root / ".config/xkb"),
                                         XDG_CONFIG_HOME=str(self.root / ".config")), {
-            "ok": True, "keys": [{"modifiers": [], "keycode": 108, "keysym": "Alt_R"}]})
+            "ok": True, "keys": [{"modifiers": [], "keycode": 108, "keysym": "Alt_R", "codepoint": 0}]})
 
     def test_resources_released_after_refusal(self):
         lib = helper.load_library()
@@ -287,6 +298,8 @@ class Controls(unittest.TestCase):
     """Keep each rule's matched text and remove its behavior in a copy."""
 
     PLANTS = (
+        ("symbol Unicode identity", '"codepoint": lib.xkb_keysym_to_utf32(symbol)',
+         '"codepoint": 0', "test_symbol_characters"),
         ("input fields", 'set(value) != {"keyboard", "keys"}', "False", "test_input_shape"),
         ("keyboard fields", 'set(keyboard) != {"layout", "variant", "options", "activeLayoutIndex"}',
          "False", "test_keyboard_shape"),

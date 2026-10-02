@@ -2,7 +2,7 @@
 """Resolve normalized Hyprland keys against the supplied keyboard layout.
 
 stdin: {keyboard: {layout, variant, options, activeLayoutIndex}, keys: [str]}.
-stdout: {ok: true, keys: [{modifiers: [str], keycode: int, keysym: str}]}
+stdout: {ok: true, keys: [{modifiers: [str], keycode: int, keysym: str, codepoint: int}]}
 or {ok: false, error: str}; failure exits 1. A dual request adds
 translation: {keyboard, keys}; its success also includes translation: [row].
 Both requests must resolve before the helper writes a success response.
@@ -63,6 +63,7 @@ def load_library():
                 (ctypes.c_int, [pointer, uint, uint, uint, ctypes.POINTER(ctypes.POINTER(uint))]),
             "xkb_keysym_from_name": (uint, [ctypes.c_char_p, ctypes.c_int]),
             "xkb_keysym_get_name": (ctypes.c_int, [uint, ctypes.c_char_p, ctypes.c_size_t]),
+            "xkb_keysym_to_utf32": (uint, [uint]),
         }
         for name, (result, arguments) in signatures.items():
             function = getattr(lib, name)
@@ -176,7 +177,8 @@ def map_keys(lib, keymap, layout, keys):
             if len(matches) != 1:
                 raise Refusal("keysym-ambiguous")
             code = next(iter(matches))
-        result.append({"modifiers": modifiers, "keycode": code, "keysym": symbol_name(lib, symbol)})
+        result.append({"modifiers": modifiers, "keycode": code, "keysym": symbol_name(lib, symbol),
+                       "codepoint": lib.xkb_keysym_to_utf32(symbol)})
     return result
 
 

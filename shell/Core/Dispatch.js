@@ -238,6 +238,9 @@ function inputTarget(text, point, keyboardProtected, entries) {
         if (!point || !Number.isInteger(point.x) || !Number.isInteger(point.y)) return refusal("point");
         for (var output of Object.keys(layers)) {
             if (!layers[output] || !layers[output].levels || typeof layers[output].levels !== "object" || Array.isArray(layers[output].levels)) return refusal("layers");
+            var origins = monitors.filter(function (m) { return m.name === output; });
+            if (origins.length !== 1 || !Number.isFinite(origins[0].x) || !Number.isFinite(origins[0].y)) return refusal("layer-output");
+            var origin = origins[0];
             for (var level of Object.keys(layers[output].levels)) {
                 if (!/^[0-3]$/.test(level)) return refusal("layers");
                 var surfaces = layers[output].levels[level];
@@ -247,7 +250,9 @@ function inputTarget(text, point, keyboardProtected, entries) {
                     // have no client that can receive input (pid -1).
                     if (surface && surface.pid === -1) continue;
                     if (!rect(surface) || typeof surface.namespace !== "string") return refusal("layer-shape");
-                    if (surface.namespace.indexOf("vgs:") === 0 && contains(surface, point)) {
+                    // layersRequest reports monitor-local logical geometry.
+                    var absolute = { x: surface.x + origin.x, y: surface.y + origin.y, w: surface.w, h: surface.h };
+                    if (surface.namespace.indexOf("vgs:") === 0 && contains(absolute, point)) {
                         if (Number(level) >= 2)
                             return { ok: true, target: { kind: "vgs", id: surface.namespace }, cursor: cursor };
                         lowerLayer = surface.namespace;
