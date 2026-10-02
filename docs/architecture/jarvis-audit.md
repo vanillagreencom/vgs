@@ -49,7 +49,7 @@ Before appending, the writer removes expired daily files. The cutoff uses UTC da
 
 The writer flushes each complete append and the audit and state directory entries before the action callback. A short append rolls back to the previous file length and refuses. An incomplete final line refuses subsequent appends. A failure to remove, append, set permissions, flush or close refuses new work. Removal can succeed before its record fails; the returned failure still prevents the requested action. Shutdown remains available.
 
-This is a user record, not tamper evidence. It has no hash chain. Another process running as the user can alter it. Filesystem checks are not protection against a concurrent same-user attacker. [Denied](jarvis-policy.md#real-paths) already refuses VGS state to typed file calls. The planned sandbox must consume its masks so executors cannot write this directory. The audit API does not implement that executor confinement.
+This is a user record, not tamper evidence. It has no hash chain. Another process running as the user can alter it. Filesystem checks are not protection against a concurrent same-user attacker. [Denied](jarvis-policy-paths.md#real-paths) already refuses VGS state to typed file calls. The planned sandbox must consume its masks so executors cannot write this directory. The audit API does not implement that executor confinement.
 
 ## Evidence
 

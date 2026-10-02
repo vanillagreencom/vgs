@@ -1,6 +1,6 @@
 # Jarvis action policy
 
-Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/backend/Tools.js, shell/plugins/vgs.jarvis/backend/Denied.js, scripts/test-jarvis-policy.js, scripts/test-jarvis-tools.js, scripts/test-jarvis-denied.js, scripts/fixtures/jarvis/policy.js
+Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/backend/Tools.js, scripts/test-jarvis-policy.js, scripts/test-jarvis-tools.js, scripts/fixtures/jarvis/policy.js
 
 [Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
 
@@ -53,27 +53,7 @@ Terminal keys, clicks and scrolling refuse as `terminal-input` in every profile,
 
 ## Real paths
 
-`Denied.create({ home, config, data, state, runtime, install, accountRoots })` takes absolute trusted roots. HOME must exist as a directory. `accountRoots` must be a list: the explicit `CLAUDE_CONFIG_DIR` and `CODEX_HOME` roots and the hand-added roots from `Accounts.js::accountRoots`. Construction fails only when a root cannot be resolved: an invalid or relative path, a dangling or looping link, or an unreadable component on the way to it. It reads no folder's entries. The daemon's one producer is described in [Jarvis file tools](jarvis-files.md#owners).
-
-Its `inspect(path, role)` returns `{ kind: "path", path, exists, execution }` or `{ kind: "refuse", reason, error? }`. The tool table owns path roles. Callers do not select them. Resolution uses filesystem metadata only.
-
-Its `inspectPaths([[path, role], ...])` judges every path of one call and is the entry Policy and each executor's rejudge use. It returns `{ kind: "paths", paths }` in order, or the first refusal with the refused input as `file`. It also judges a move where it lands: a `move` source that is a folder refuses `protected-path` when an entry inside it would land, below a `write` destination of the same call, within the account name rule's depth. Policy reads `context.denied` only for a call that carries a path, so a producer may build the snapshot on that read.
-
-Its frozen `masks` list contains the configured and resolved protected roots. J23 consumes that list for its filesystem masks, including roots that do not yet exist. It must not maintain another credential inventory. The first read of `masks` adds the rule-named account entries present then, found by reading entry names two levels below each base and never entering a link. A folder it cannot list is skipped, and a dangling or looping rule-named link is masked by its own path; neither fails the snapshot. Judgments never read `masks`, so only the sandbox pays for that scan. The masks are a launch-time snapshot; the sandbox rebuilds `Denied` before each launch.
-
-The account name rule protects without a scan or a bound. `inspect` refuses a resolved path, or any physical component on the way to it, whose component one or two levels below HOME, the config home or the data home is rule-named (`.claude*`, `.codex*`). Depth counts per base, and the config home is a base of its own. A changing or recursive role also refuses a folder one level below a base that holds a rule-named entry; that judgment reads the folder's entry names at inspection, so an entry created after the snapshot still counts. A folder it cannot list refuses `path-resolution`. A base itself already holds static credential roots. Deeper paths are not account directories. The rule also covers Claude Code and Codex project folders such as `~/myapp/.claude`: [Jarvis file tools](jarvis-files.md#account-name-rule) states the effect. A rule-named link directly in a base, such as a dotfile manager's `~/.claude-work` pointing to `~/dotfiles/claude-work`, also protects its resolved target by that target's own path. The first judgment of a snapshot reads the three bases' own entries for those links, once per snapshot and never a subfolder. A dangling or looping one is protected by its own path, by name. A base that cannot be listed refuses that judgment as `path-resolution`. A rule-named link two levels below a base protects its target only through the link and in `masks`; reading that target by its own path is not refused.
-
-- Existing links resolve before an absent write suffix is appended. A dangling link, loop, unreadable component or non-directory parent refuses as `path-resolution`. Only `ENOENT` means absence.
-- Resolution processes `..` after the preceding link. It refuses `..` after an absent component rather than guessing what a future directory means.
-- Containment checks path components, not string prefixes. A sibling whose name starts with a protected root's name is not that root.
-- Credential, browser, VGS and supplied account roots protect both their configured paths and their resolved aliases. The credential list includes the common CLI stores: `~/.aws`, `~/.azure`, `~/.kube`, `~/.docker/config.json`, `~/.npmrc`, `~/.pypirc`, `~/.cargo/credentials.toml` and its older `~/.cargo/credentials`, and the config home's `gcloud` and `rclone`. Only the listed stores are protected; another tool's credential file outside them is readable. Reads and writes inside them refuse as `protected-path`.
-- A move, removal, writable workspace or recursive search that contains a protected root also refuses. A one-level directory list may return names. [Jarvis file tools](jarvis-files.md) judge each child before opening it and enforce containment while opening.
-- A move source and a removal are the named entry. A final link is judged as the link itself, never its target, and a dangling final link exists as that link.
-- Other file paths must remain inside the physical HOME. Link escapes refuse as `outside-home`.
-- Writes, moves, removals and writable workspaces that intersect an execution root are destructive. Reads alone are not. The execution-root declaration lives in `Denied.js`.
-- A file write or move destination that already exists is destructive. An absent ordinary write stays persistent. A move to an absent ordinary destination stays persistent.
-
-The answer describes a filesystem snapshot. It is not a file descriptor or race-proof permission. J19 and each executor rejudge paths and targets immediately before execution; the [file tools](jarvis-files.md#rejudge-and-the-anchored-walk) then open through held descriptors. J23 masks the same protected roots inside its kernel sandbox.
+[Jarvis protected paths](jarvis-policy-paths.md#real-paths) defines `Denied.create`, its `inspect`, `inspectPaths` and `masks`, and the account name rule.
 
 ## Taint
 

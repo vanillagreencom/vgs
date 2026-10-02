@@ -70,7 +70,7 @@ These are recovery and resource ceilings for a large tree or file, not measured 
 
 ## Account name rule
 
-`Denied` protects every `.claude*` and `.codex*` entry one or two levels below HOME, the config home or the data home, by name ([policy](jarvis-policy.md#real-paths)). The rule also covers Claude Code and Codex project folders such as `~/myapp/.claude`, which sit at depth two. Such a folder cannot be read, written, searched, moved or deleted, and its project folder (`~/myapp`) cannot be searched, moved, deleted or used as a workspace. This follows the depth account discovery scans. A rule-named link directly in HOME or an XDG base also protects the folder it points to, such as a dotfile manager's target; one two levels down does not.
+`Denied` protects every `.claude*` and `.codex*` entry one or two levels below HOME, the config home or the data home, by name ([policy](jarvis-policy-paths.md#real-paths)). The rule also covers Claude Code and Codex project folders such as `~/myapp/.claude`, which sit at depth two. Such a folder cannot be read, written, searched, moved or deleted, and its project folder (`~/myapp`) cannot be searched, moved, deleted or used as a workspace. This follows the depth account discovery scans. A rule-named link directly in HOME or an XDG base also protects the folder it points to, such as a dotfile manager's target; one two levels down does not.
 
 ## Release labels and taint
 
