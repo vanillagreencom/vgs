@@ -307,6 +307,12 @@ FocusScope {
                         crossAxis: true
                         viewHeight: listScroll.flickable.height
                         rowHeight: root.look.card.maxHeight + root.look.card.gap
+                        // The list takes its cards' height a layout pass
+                        // after a refresh, so the refresh's reveal measured
+                        // the empty list and scrolled a long list's first
+                        // card under the header; reveal again at the
+                        // height the list took.
+                        onViewHeightChanged: reveal(root.currentIndex)
                         flickable: listScroll.flickable
                         itemAt: index => rowRepeater.itemAt(index)
                         labelAt: index => {

@@ -11,10 +11,10 @@
 # - the background's requested sourceSize: the held mode, in device pixels;
 # - the Gallery ImageText sample's pool image and magenta pixels: its
 #   sourceSize equals deviceSize, and deviceSize is twice imageSize;
-# - the notifications inbox at scale 2, the owner's display scale: drawn
-#   whole in its own box, its first card's top under the header and inside
-#   the list's clip (rows/notifications.sh's panel_fit, whose controls
-#   hold the predicate at scale 1).
+# - the notifications inbox at scale 2, the owner's display scale: a long
+#   inbox opened eight times shows its first card whole each time, under
+#   the header and inside the list's clip (rows/notifications-keys.sh's
+#   long_inbox_cut, whose control holds it at scale 1).
 # Controls: the scale alone drops to 1 under the hold, the compositor
 # reports that scale and the hold reads it as a reset, so the reading is
 # the scale the compositor applied; with the hold file removed, the same
@@ -115,15 +115,11 @@ print("  image-text-magenta scale=2 count=%d threshold=%d deviceSize=%d geometry
       fi
       expect "hiding the scale-2 gallery is allowed" ok ipc shell hide window vgs.gallery
       expect_poll "the scale-2 gallery window is gone" 0 window_count "VGS Components"
-      for n in 1 2 3; do
-        notify smoke-app 0 "HiDPI fit $n" "A body long enough to wrap onto a second line of the card, so the card is tall" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
-      done
-      expect "the scale-2 inbox opens" ok notes inbox
-      expect_poll "the scale-2 inbox lists the fit toasts" True has_row panel "HiDPI fit 1"
-      geometry expect_poll "the scale-2 inbox draws whole, its first card's top under the header and inside the list" fits panel_fit
-      expect "the scale-2 inbox closes" ok notes close
-      expect_poll "the scale-2 inbox leaves no panel layer" 0 layer_count vgs:panel
-      expect "dismissing the scale-2 fit toasts is allowed" ok notes dismiss-all
+      expect "the scale-2 long inbox's toasts leave the screen" 0 long_inbox_rows
+      geometry expect "a long inbox opened eight times at scale 2 shows its first card whole each time" fits long_inbox_cut notes inbox
+      ok "scale-2 long inbox cuts: $(cat -- "$sandbox/long-inbox.txt")"
+      notes dismiss-all >/dev/null # `none` once every toast's clock ran out
+      expect "clearing the scale-2 long inbox's history is allowed" ok notes clear-history
       expect "the start's follow ends before the logical-pixel control" idle theme_idle
       # Control: a copy of the background that decodes at logical pixels.
       plugin_qml="$repo/shell/plugins/vgs.themes/Background.qml"
