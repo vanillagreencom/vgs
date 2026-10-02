@@ -4,7 +4,7 @@ Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarv
 
 [Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
 
-The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon installs the [audio owner](jarvis-audio.md) and its real reducer ports and persists privacy mute. The [bubble](jarvis-bubble.md) supplies the presented-indicator handshake. The stock daemon captures no audio because it has no speech engine. It observes and stops recorded coding tasks. The [chained engine](jarvis-engine.md) connects the brain to the registered tools, but its stock speech table stays unconfigured. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
+The [Jarvis plan](../plans/v2-jarvis-plan.md) defines the voice assistant's scope. The service owns one Node child and publishes its health and Session state. The daemon installs the [audio owner](jarvis-audio.md) and its real reducer ports and persists privacy mute. The [bubble](jarvis-bubble.md) supplies the presented-indicator handshake. The stock daemon captures no audio because it has no speech engine. It observes and stops recorded coding tasks. The [chained engine](jarvis-engine.md) connects the brain to the registered tools. Its only speech row is [local speech](jarvis-local-speech.md), so the daemon stays unconfigured until local setup publishes a runtime. [D064](../decisions/D064-jarvis-child-lease.md) records the process choice. The installed [action policy](jarvis-policy.md) judges reserved calls without making them usable.
 
 The service owns metadata-only key and [account discovery](jarvis-accounts.md) readers. Settings opens the masked Add key and Accounts terminals. [Jarvis secrets](jarvis-secrets.md) owns key storage and references. The daemon still opens no provider connection.
 
@@ -24,7 +24,7 @@ The [GPT-Live engine](jarvis-live.md) defines the duplex speech session, its aud
 
 ## Local speech inputs
 
-[jarvis-local.md](jarvis-local.md) defines the artifact declaration, bounded model inputs and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the choices. [Local setup](jarvis-setup.md) verifies installation and publishes readiness. The sidecar and admission remain separate owners.
+[jarvis-local.md](jarvis-local.md) defines the artifact declaration, bounded model inputs and execution oracle. [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md) records the choices. [Local setup](jarvis-setup.md) verifies installation and publishes readiness. [jarvis-local-speech.md](jarvis-local-speech.md) defines the local speech row, its sidecar, segmentation and wire. Admission remains a separate owner.
 
 ## Coding-task records
 
@@ -38,7 +38,7 @@ The service treats a missing shell or lock value as locked. Each hello carries t
 
 ## Controls
 
-[jarvis-controls.md](jarvis-controls.md) defines the implemented keys, modes, persistent mute and wire. [jarvis-widget.md](jarvis-widget.md) defines the bar widget's states and its mute path. The stock daemon remains unconfigured. Only disposable test copies acquire scripted capture or playback.
+[jarvis-controls.md](jarvis-controls.md) defines the implemented keys, modes, persistent mute and wire. [jarvis-widget.md](jarvis-widget.md) defines the bar widget's states and its mute path. Without local setup the stock daemon remains unconfigured. Only disposable test copies acquire scripted capture or playback.
 
 ## Session
 

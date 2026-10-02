@@ -39,7 +39,7 @@ The daemon creates the chained engine with the router and the audit writer on th
 | Driver and recipient | The `Providers.js` row; its base origin is the brain recipient. `codex-app-server` is the [Codex harness](jarvis-codex.md), created with the account's directory, the generation and the daemon's bridge and gate | A row outside the driver table is an invariant error |
 | Guidance class | `local` for a loopback base, else `text` | none |
 
-Any other failure during selection is a defect and throws. The speech table ships empty, so the installed daemon stays unconfigured with `speech=no-adapter`. A speech row is `{select({settings, accounts})}`. A ready answer carries the row's recipient entries and `open({net, recipients})`. The ElevenLabs and local rows extend this table and use the same selection path. Plan § 3.10's `voiceProvider`, when it exists, chooses above this table and above the duplex engine.
+Any other failure during selection is a defect and throws. A speech row is `{select({settings, accounts, directories})}`; `directories` are the hello's roots. A ready answer carries the row's recipient entries and `open({net, recipients})`. The table ships the [local row](jarvis-local-speech.md#selection), so a daemon without local setup stays unconfigured with `speech=local-not-set-up`. The ElevenLabs row extends this table and uses the same selection path. Plan § 3.10's `voiceProvider`, when it exists, chooses above this table and above the duplex engine.
 
 ## Speech adapter contract
 
@@ -108,7 +108,7 @@ Speech is never dropped: synthesis waits for Audio. These are allocation and pro
 
 ## Boundaries
 
-- No speech row ships. The ElevenLabs and local sidecar rows add theirs. The mapped indicator also gates capture.
+- The [local row](jarvis-local-speech.md) is the only shipped speech row. The ElevenLabs row adds its own. The mapped indicator also gates capture.
 - The model setting and its choices do not exist. Selection uses the Verify probe model. Cerebras and the local rows declare none.
 - The unconfigured cause is not on the wire. A voice or brain status entry would publish it.
 - Older turns are not summarised. The 40-turn bound ends the conversation instead. A summary needs its own model call and release.
@@ -120,7 +120,7 @@ Speech is never dropped: synthesis waits for Audio. These are allocation and pro
 `scripts/test-jarvis-engine.js` runs the real Session, runner, Audio, router, audit writer, release gate, wire brain and `Speakable` in the [J09 world](validation-jarvis.md). Audio's playback clock and the runner's deadline clock are injected. Stand-in recorder and player commands carry PCM. `scripts/fixtures/jarvis/engine.js` supplies the scripted speech row and an OpenAI-compatible loopback brain. The server reads every request body whole and validates it against the pinned excerpt. `openai-chat-frames.js` validates every response frame.
 
 - Cases: partials then final; labelled frames and Speakable sentences to played PCM; barge-in after a completed reply and mid-stream, with the exact heard prefix read at the server and told once; cancel before audio; a tool round with the restated local rule; running and unstarted calls after an interruption, with the late result on the next turn; history taint on a later turn; toggle turns; a transcription failure after capture closed; speech longer than the thinking deadline; conversation end; a setting change; release markers and the audited ask; audit refusal of the request and of speech; the 40-turn bound and the next conversation; playback backpressure; partial revision order; mute during capture.
-- The selection table covers each cause, a reader failure's detail and a thrown defect. The stock engine answers `speech=no-adapter` and reads no account.
+- The selection table covers each cause, a reader failure's detail and a thrown defect. The stock engine answers `speech=local-not-set-up` without local setup and reads no account.
 - Each control plants one defect in a disposable engine copy and must turn an assertion red: six selection rules, router offers omitted, heard prefix omitted or repeated, the full reply reported as heard, no empty prefix on cancel, a partial delivered as final, raw text sent to speech, unlabelled frames, a stale result accepted, interrupted calls left unanswered, a not-started call called running, the late result dropped, history taint not reported, a concluded utterance adopted, a failure after close not reported to the turn, speech gating the brain, the transport left open, no teardown on a generation change, audit skipped, the local rule omitted, a dirty end at the bound, no playback backpressure, revision order ignored and a transcription left running.
 - `scripts/test-jarvis-daemon.js` runs a disposable daemon copy with the scripted row, a model for the local brain row and the indicator. The real engine moves the phase through listening, thinking, speaking and idle against the loopback brain. The copy with the stock speech table stays unconfigured.
 

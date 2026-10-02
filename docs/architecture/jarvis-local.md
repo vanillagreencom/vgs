@@ -6,7 +6,7 @@ Covers: shell/plugins/vgs.jarvis/artifacts.json, shell/plugins/vgs.jarvis/measur
 
 ## Boundary
 
-These feasibility inputs share the Jarvis plugin directory. [The service](jarvis.md) owns registration. [Local setup](jarvis-setup.md) owns installation and readiness. J39 owns production adapters and segmentation. J41 owns admission. J42 owns production captions.
+These feasibility inputs share the Jarvis plugin directory. [The service](jarvis.md) owns registration. [Local setup](jarvis-setup.md) owns installation and readiness. [Local speech](jarvis-local-speech.md) owns production adapters and segmentation. J41 owns admission. J42 owns production captions.
 
 The installed tree carries the pinned declaration, instrument, synthetic fixture and [setup package locks](jarvis-setup.md#inputs-and-boundary). It carries no model, Python environment, CUDA library or espeak runtime. The instrument never installs or downloads anything. Setup verifies its actual selected runtime before publishing readiness.
 
@@ -26,9 +26,9 @@ The manifest's tier maps include the resident caption model. A tier's requested 
 
 Upstream [the English export's long-file example](https://k2-fsa.github.io/sherpa/onnx/moonshine/models-v2.html#sherpa-onnx-moonshine-base-en-quantized-2026-02-27-english) uses VAD with offline ASR, not an arbitrary-length single decode. Its [Python API example](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/python-api-examples/offline-moonshine-decode-files-v2.py) creates an independent stream for a wave file. This permits independent segment decoding. It does not promise safe word boundaries or certify a maximum duration.
 
-The measured VGS bound is `80000` mono float32 samples at `16000` Hz, or `5` seconds. J39 must bound every Moonshine SDK input by this value, create a fresh offline stream per chunk, decode every chunk in input order, retain the final shorter chunk and preserve the speech samples. It must join chunk outputs once. An empty or failed chunk must not become a successful final transcript.
+The measured VGS bound is `80000` mono float32 samples at `16000` Hz, or `5` seconds. [The local speech sidecar](jarvis-local-speech.md#transcription) must bound every Moonshine SDK input by this value, create a fresh offline stream per chunk, decode every chunk in input order, retain the final shorter chunk and preserve the speech samples. It must join chunk outputs once. An empty or failed chunk must not become a successful final transcript.
 
-The feasibility instrument uses non-overlapping fixed chunks. It is not production VAD segmentation. J39 must choose speech boundaries within the measured bound. J59 owns the semantic-quality and room checks. The raw `60`-second input remains unsupported by this export/runtime pair.
+The feasibility instrument uses non-overlapping fixed chunks. It is not production VAD segmentation. The sidecar chooses speech boundaries within the measured bound. J59 owns the semantic-quality and room checks. The raw `60`-second input remains unsupported by this export/runtime pair.
 
 The test-only `scripts/fixtures/jarvis-local/probe-moonshine.py` removes the bound on a disposable artifact declaration and calls the real instrument. [The supplemental log](../measurements/jarvis-local-2026-09-30-fix.txt) preserves its source/runtime binding, command, native broadcast diagnostic and exit. This is separate from the original successful bounded-run log.
 
@@ -36,7 +36,7 @@ The test-only `scripts/fixtures/jarvis-local/probe-moonshine.py` removes the bou
 
 [OpenAI's transcribe wrapper](https://github.com/openai/whisper#python-usage) processes a file with sliding windows. The pinned [sherpa-onnx SDK](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/sherpa-onnx/csrc/offline-recognizer-whisper-impl.h) is a lower-level decoder. It clips at `2950` feature frames, reserving `50` of its `3000` frames, and reports that it discards remaining input.
 
-The artifact therefore bounds a single call to `464000` normalized mono samples at `16000` Hz, or `29` seconds. The generic bounded decoder executes independent calls in order and keeps the final shorter segment. A `60`-second input executes segments of `464000`, `464000` and `32000` samples. The completeness control observes a marker emitted only when the later segment is decoded. Submitted sample totals or prefix words cannot satisfy that control. J39 owns production segmentation and reconstruction.
+The artifact therefore bounds a single call to `464000` normalized mono samples at `16000` Hz, or `29` seconds. The generic bounded decoder executes independent calls in order and keeps the final shorter segment. A `60`-second input executes segments of `464000`, `464000` and `32000` samples. The completeness control observes a marker emitted only when the later segment is decoded. Submitted sample totals or prefix words cannot satisfy that control. The local speech sidecar owns production segmentation and reconstruction.
 
 ## Fixture outcomes
 

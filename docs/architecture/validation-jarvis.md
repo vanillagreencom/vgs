@@ -18,6 +18,8 @@ The [desktop executor suite](jarvis-desktop-tools.md#evidence) uses this world w
 
 The [chained engine suite](jarvis-engine.md#evidence) uses this world with the synthetic PipeWire commands, an injected playback clock and an OpenAI-compatible loopback brain on the Ollama row's default port. No host server can answer that port inside the private network.
 
+The [local speech suites](jarvis-local-speech.md#evidence) use this world. The adapter suite installs a stand-in sidecar as a scratch runtime's interpreter and starts it through the real `unshare` and `setpriv` boundary; the stand-in reports its own network namespace, so a sidecar sharing the world's network fails. The sidecar suite loads the real sidecar with recognizer, VAD and voice doubles. The actual-model row enters this world only with prepared inputs.
+
 The [action router suite](jarvis-approval.md#evidence-and-comparison) uses this world with real scratch audit files and stand-in executors. Its injected clock exercises confirmation timing without a wait. Reducer copies and backend copies carry the independent defects; shipped APIs contain no fixture or confirmation backdoor.
 
 The [task control suite](jarvis-task-control.md#evidence) runs the real launcher, a stand-in agent and real signals in this world. Production names its tmux socket with `-S`, which the PATH wrapper refuses, so the suite runs the bootstrap tmux with `-S` on a socket under the world's runtime directory. Every signal it sends targets a group it recorded.

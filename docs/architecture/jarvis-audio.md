@@ -29,7 +29,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Audio.js, shell/plugins/vgs.jarvis/back
 
 The [chained engine](jarvis-engine.md) supplies the speech sink and playback source. The shipping daemon's gate remains unconfigured until a speech row and the mapped indicator exist. Capture collection still belongs to speech. It never returns a successful transcript from an unavailable port.
 
-Playback consumes the speech owner's PCM stream and owns the real `pw-cat` process. [Playback accounting](jarvis-playback.md) defines its pacing, heard-prefix reports and speech-source contract. Sidecar protocol and model lifetime remain with the local-adapter row. These later owners must use Audio's existing lifetime, not start a second audio process.
+Playback consumes the speech owner's PCM stream and owns the real `pw-cat` process. [Playback accounting](jarvis-playback.md) defines its pacing, heard-prefix reports and speech-source contract. [Local speech](jarvis-local-speech.md) owns the sidecar protocol and model lifetime. These later owners must use Audio's existing lifetime, not start a second audio process.
 
 ## Device discovery
 

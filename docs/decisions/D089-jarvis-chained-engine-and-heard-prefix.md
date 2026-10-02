@@ -48,3 +48,25 @@
 **Verification**: `scripts/test-jarvis-engine.js` runs scripted adapters and an OpenAI-compatible loopback brain through the real Session, runner, Audio, router and audit writer, with a disposable mutant per rule. `scripts/test-jarvis-daemon.js` moves an instrumented daemon through listening, thinking, speaking and idle and keeps the stock daemon unconfigured. `scripts/test-jarvis-brain-openai.js`, `scripts/test-jarvis-brain-anthropic.js`, `scripts/test-jarvis-session.js`, `scripts/test-jarvis-session-runner.js`, `scripts/test-jarvis-router.js`, `scripts/test-jarvis-accounts.js` and `scripts/test-jarvis-providers.js` cover the changed owners.
 
 **References**: [Jarvis chained engine](../architecture/jarvis-engine.md), [wire brain](../architecture/jarvis-brain.md), [playback](../architecture/jarvis-playback.md), [D079](D079-brains-wire-and-harness-adapters.md), [D082](D082-jarvis-approval-bound-to-the-action.md).
+
+## Refined by VGS-652 (2026-10-02)
+
+The speech table ships one row, `local`, the local speech row this record named for J39. It changes no rule above. [Jarvis local speech](../architecture/jarvis-local-speech.md) states its contract.
+
+- A row's `select` also receives the hello's directories. The local row is ready only when local setup's marker names a declared tier for this data root, so a daemon without local setup stays unconfigured, now with `speech=local-not-set-up`.
+- The row's recipient is local. Its items reach no network, so the release rule sends them.
+- One sidecar per conversation is the adapter's own resource: `open` starts it, `close()` kills it. It runs in a private network namespace under the daemon's parent-death signal, holds setup's lock shared and loads only after setup's readiness judge answers ready.
+- `transcribe` yields no partial, only one final, once capture ends. The sidecar cuts speech within each recognizer's measured input bound, decodes each chunk on a fresh stream in order and joins the texts once. An empty or failed chunk fails the utterance.
+- `speak` sends no word alignment, so Audio credits each sentence whole.
+
+**Alternatives**:
+
+| Alternative | Reason rejected |
+|---|---|
+| One sidecar for the daemon's lifetime, resident across conversations | Residency, idle unload and the one-load rule belong with admission (J41); a per-conversation owner releases every resource with the conversation. |
+| Let the SDK resample Audio's 24 kHz input | The measured `80000`-sample bound counts 16 kHz samples; the adapter resamples so every SDK input is counted in the measured unit. |
+| Fixed non-overlapping chunks, as the feasibility instrument uses | A fixed cut can split a word and decodes silence, and an empty silent chunk would have to pass as success. |
+| Drop an empty chunk and join the rest | A lost chunk is lost speech; the brain would answer a transcript missing the user's words. |
+| Run setup's full readiness judge at selection | It hashes the runtime and the models, too slow for each snapshot; the sidecar runs it once per conversation. |
+
+**Verification**: `scripts/test-jarvis-local-speech.py`, `scripts/test-jarvis-local-speech.js` and `scripts/check-jarvis-local-speech.sh`; `scripts/test-jarvis-engine.js` asserts the stock answer.
