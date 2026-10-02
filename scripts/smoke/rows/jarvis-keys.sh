@@ -195,6 +195,9 @@ jarvis_key_mute
 jarvis_key_mute
 hold_barrier
 expect "repeated physical Mute during retry stays one request" '{"kind":"retry","pendingMute":"waiting"}' jarvis_key_pending
+# The fixture's retry delay is not daemon startup time. Start the hello
+# read only after the service has started its next child.
+expect_poll "the retry starts its next daemon with Mute pending" '{"kind":"starting","pendingMute":"waiting"}' jarvis_key_pending
 expect_poll "the restarted daemon consumes hello" seen jarvis_seen_hello
 : >"$jarvis_gate"
 jarvis_key_muted

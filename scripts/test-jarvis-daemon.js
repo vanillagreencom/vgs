@@ -244,7 +244,7 @@ async function inside() {
             fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis", relative), path.join(directory, relative));
         return path.join(directory, "backend/jarvisd.js");
     }
-    async function conversation(file, check, mode = "hold", expectedCode = 0, expectedError = "") {
+    async function conversation(file, check, mode = "hold", expectedCode = 0, expectedError = "", beforeState = null) {
         const child = cp.spawn("node", [file, "--tree", tree], { env: {
             PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR
         }, stdio: ["pipe", "pipe", "pipe"] });
@@ -274,6 +274,7 @@ async function inside() {
         };
         try {
             send({ ...hello, settings: { ...hello.settings, mode } });
+            if (beforeState !== null) await beforeState({ messages });
             await wait(m => m.state.gate.kind !== "down" || m.state.gate.reason === "unconfigured");
             await check({ send: name => send(intent(name)), raw: send, reply: send, wait, last, messages });
             child.stdin.end();
@@ -609,6 +610,118 @@ async function inside() {
         }
         assert.fail("desktop daemon: " + what);
     }
+    const keyRow = fs.readFileSync(path.join(tree, "scripts/smoke/rows/jarvis-keys.sh"), "utf8");
+    const retryStart = 'expect "repeated physical Mute during retry stays one request"';
+    const helloRead = 'expect_poll "the restarted daemon consumes hello" seen jarvis_seen_hello';
+    const startupRead = 'expect_poll "the retry starts its next daemon with Mute pending" '
+        + '\'{"kind":"starting","pendingMute":"waiting"}\' jarvis_key_pending';
+    for (const needle of [retryStart, helloRead, startupRead]) assert.equal(keyRow.split(needle).length - 1, 1);
+    const retryReads = keyRow.slice(keyRow.indexOf(retryStart), keyRow.indexOf(helloRead) + helloRead.length);
+    const harness = fs.readFileSync(path.join(tree, "scripts/smoke/harness.sh"), "utf8");
+    const pollers = harness.match(/^expect_poll\(\) \{[\s\S]*?^\}/gm);
+    assert.equal(pollers?.length, 1);
+    const retryClock = path.join(root, "retry-clock");
+    function retryOrdering(reads, helloTick) {
+        fs.writeFileSync(retryClock, "0");
+        // One tick is the real poller's 0.2 s sleep. The service starts
+        // after the fixture's 4.5 s retry; hello follows that child start.
+        const fixture = `
+set -euo pipefail
+failures=0
+clock=${JSON.stringify(retryClock)}
+sandbox=${JSON.stringify(root)}
+hello_tick=${helloTick}
+ok() { :; }
+fail() { failures=$((failures + 1)); printf '%s\\n' "$1"; }
+reader_stderr() { [[ ! -s $2 ]]; }
+seq() {
+    local value
+    for ((value=$1; value<=$2; value++)); do printf '%s\\n' "$value"; done
+}
+expect() {
+    local label="$1" want="$2" got
+    shift 2
+    got="$("$@")"
+    [[ $got == "$want" ]] || fail "$label: got $got want $want"
+}
+sleep() {
+    [[ $1 == 0.2 ]]
+    local tick
+    tick="$(<"$clock")"
+    printf '%s' "$((tick + 1))" >"$clock"
+}
+jarvis_key_pending() {
+    local tick
+    tick="$(<"$clock")"
+    if ((tick < 23)); then printf '%s\\n' '{"kind":"retry","pendingMute":"waiting"}'
+    else printf '%s\\n' '{"kind":"starting","pendingMute":"waiting"}'; fi
+}
+jarvis_seen_hello() {
+    local tick
+    tick="$(<"$clock")"
+    if ((tick >= hello_tick)); then echo seen; else echo pending; fi
+}
+${pollers[0]}
+${reads}
+exit "$failures"
+`;
+        const result = cp.spawnSync("bash", ["-c", fixture], { env: { PATH: process.env.PATH, HOME: process.env.HOME },
+            encoding: "utf8", timeout: 3000 });
+        assert.equal(result.error, undefined);
+        return result;
+    }
+    for (const helloTick of [24, 28]) {
+        const actual = retryOrdering(retryReads, helloTick);
+        assert.equal(actual.status, 0, actual.stdout + actual.stderr);
+        cases++;
+    }
+    const ungatedReads = retryReads.replace(startupRead, "");
+    assert.notEqual(ungatedReads, retryReads);
+    const ungated = retryOrdering(ungatedReads, 28);
+    assert.equal(ungated.status, 1, ungated.stdout + ungated.stderr);
+    assert.equal(ungated.stdout.trim(), "the restarted daemon consumes hello: got pending want seen");
+    controls++;
+    console.log("test-jarvis-daemon: control=retry-before-start killed");
+    async function gatedHello(file, dropMarker = false) {
+        const gate = path.join(path.dirname(file), "hello-gate");
+        const seen = path.join(path.dirname(file), "hello-seen");
+        const prepared = cp.spawnSync("node", [path.join(tree, "scripts/fixtures/jarvis/prepare.js"),
+            "--gate-daemon", file, gate, seen], { env: { PATH: process.env.PATH, HOME: process.env.HOME },
+            encoding: "utf8", timeout: 3000 });
+        assert.equal(prepared.status, 0, prepared.stdout + prepared.stderr);
+        if (dropMarker) {
+            const original = fs.readFileSync(file, "utf8");
+            const needle = 'fixtureFs.appendFileSync(fixtureSeen, wire + "\\n");';
+            assert.equal(original.split(needle).length - 1, 1);
+            const changed = original.replace(needle, 'fixtureFs.writeFileSync(fixtureSeen, ""); if (false) ' + needle);
+            assert.notEqual(changed, original);
+            fs.writeFileSync(file, changed);
+        }
+        // Each new child must consume hello while its response gate is shut.
+        for (const start of ["startup", "restart"]) {
+            fs.rmSync(gate, { force: true });
+            fs.rmSync(seen, { force: true });
+            await conversation(file, async () => {}, "hold", 0, "", async ({ messages }) => {
+                await desktopUntil(() => fs.existsSync(seen)
+                    && (dropMarker || lines(seen).some(message => message.type === "status" && message.daemon === "ready")),
+                start + " hello marker is absent");
+                assert.ok(lines(seen).some(message => message.type === "status" && message.daemon === "ready"),
+                    start + " consumes hello before opening the reply gate");
+                assert.deepEqual(messages, [], "the closed gate delivers no response");
+                fs.writeFileSync(gate, "");
+            });
+        }
+    }
+    const gated = daemonCopy("gated-hello");
+    instrument(gated, path.join(path.dirname(gated), "scripted-gates"));
+    await gatedHello(gated);
+    const missingMarker = daemonCopy("gated-hello-marker-control");
+    instrument(missingMarker, path.join(path.dirname(missingMarker), "scripted-gates"));
+    // Keep hello consumption and queued replies; leave the marker empty.
+    await assert.rejects(() => gatedHello(missingMarker, true),
+        error => error instanceof assert.AssertionError && error.message.includes("startup consumes hello before opening the reply gate"));
+    controls++;
+    console.log("test-jarvis-daemon: control=gated-hello-marker killed");
     const desktopTurn = (file, modes) => {
         let held = null;
         return conversation(file, async w => {
@@ -759,12 +872,21 @@ async function inside() {
     }
     const startupLost = async file => {
         const id = await goneGroup();
+        const observed = path.join(path.dirname(file), "startup-observed");
+        const original = fs.readFileSync(file, "utf8");
+        const calls = original.match(/if \(first\) void (tasks\.observe\(\)|Promise\.resolve\(\));/g);
+        assert.equal(calls?.length, 1);
+        const changed = original.replace(calls[0], calls[0].slice(0, -1)
+            + '.then(() => require("node:fs").writeFileSync(' + JSON.stringify(observed) + ', ""));');
+        assert.notEqual(changed, original);
+        fs.writeFileSync(file, changed);
         await conversation(file, async () => {
-            await until("startup observation writes lost", () => taskStore.read(id).process.kind === "lost");
+            await until("startup observation completes", () => fs.existsSync(observed));
+            assert.equal(taskStore.read(id).process.kind, "lost", "startup observation writes lost");
         });
     };
-    await startupLost(daemon);
-    await control("startup-observation", "if (first) void tasks.observe();", "if (false) void tasks.observe();", startupLost);
+    await startupLost(daemonCopy("startup-observation"));
+    await control("startup-observation", "if (first) void tasks.observe();", "if (first) void Promise.resolve();", startupLost);
     const stopIntent = async file => {
         const task = await taskGroup();
         try {

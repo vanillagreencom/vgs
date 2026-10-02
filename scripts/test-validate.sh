@@ -493,6 +493,8 @@ cases=(
   "session|shell/Core/SessionLock.qml|all|$session_plan"
   "fixture|scripts/smoke/fixtures/plugins/acme.contention/Background.qml|all|$fixture_plan"
   "smoke-row|scripts/smoke/rows/example.sh|all|$smoke_plan"
+  "jarvis-key-smoke|scripts/smoke/rows/jarvis-keys.sh|all|node scripts/test-jarvis-daemon.js"$'\n'"$smoke_plan"
+  "jarvis-poll-harness|scripts/smoke/harness.sh|all|node scripts/test-jarvis-daemon.js"$'\nscripts/test-smoke-teardown.sh\nscripts/test-sandbox-shots.sh\nnode scripts/test-jarvis-env.js\n'"$repo_plan"$'\nscripts/qml-smoke.sh\nscripts/measure-shader.sh'
   "shortcut-provider|shell/Core/ShortcutRegistry.qml|unit|scripts/qml-unit.sh"$'\nscripts/test-qml-unit.sh'
   "key-capture-owner|shell/Core/KeyCapture.qml|unit|scripts/qml-unit.sh"$'\nscripts/test-qml-unit.sh'
   "harness-render|.agents/skills/review-gate/scripts/review-policy|all|$repo_plan"

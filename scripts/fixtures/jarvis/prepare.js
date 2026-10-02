@@ -19,7 +19,7 @@ function seedTaskEvents(folder, count, from = 1) {
 function freshSuite(tree, suite, root) {
     const clone = path.join(root, "f");
     const relative = "scripts/test-jarvis-" + suite + ".js";
-    for (const folder of ["scripts/fixtures/jarvis", "scripts/fixtures/jarvis-brain", "scripts/lib", "bin/lib",
+    for (const folder of ["scripts/fixtures/jarvis", "scripts/fixtures/jarvis-brain", "scripts/lib", "scripts/smoke/rows", "bin/lib",
         "shell/Core", "shell/Commons", "shell/plugins/vgs.jarvis/backend"])
         fs.mkdirSync(path.join(clone, folder), { recursive: true });
     for (const file of [relative, "scripts/fixtures/jarvis/prepare.js", "scripts/lib/jarvis-env.sh",
@@ -30,6 +30,7 @@ function freshSuite(tree, suite, root) {
         "scripts/fixtures/jarvis/scripted.js", "shell/plugins/vgs.jarvis/backend/Audio.js",
         "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
         "scripts/fixtures/jarvis/audio-tool.py", "scripts/fixtures/jarvis/desktop.js", "scripts/fixtures/jarvis/desktop-driver.js", "scripts/fixtures/jarvis/desktop-tool.py",
+        "scripts/smoke/harness.sh", "scripts/smoke/rows/jarvis-keys.sh",
         "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Core/HyprlandLayer.js", "shell/Commons/DesktopLaunch.js",
         "scripts/fixtures/jarvis/engine.js", "scripts/fixtures/schema-check.js",
         "scripts/fixtures/jarvis-brain/openai-chat.schema.json", "scripts/fixtures/jarvis-brain/openai-chat-frames.js"])
