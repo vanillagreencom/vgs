@@ -16,7 +16,8 @@ import qs.Unit
 // Escape answering and Tab cycling through it; a Select listed in
 // `tabItems` taking Tab and Backtab ahead of the field, and skipped while
 // hidden; the card taking the press, the hover and the wheel from what lies
-// under it; and a theme change reaching the card and the roles.
+// under it, and passing the wheel on while not modal; and a theme change
+// reaching the card and the roles.
 Item {
     id: root
     width: 800
@@ -466,6 +467,28 @@ Item {
             compare(stage.wheels, 0, "the wheel on the card reaches the area");
             mouseClick(stage, x, stage.height - 5);
             compare(stage.presses, 1, "a press beside the card reaches the area");
+            stage.destroy();
+        }
+
+        // A dialog that is not modal sits inline in a page: the wheel on its
+        // card reaches the area under it, which the page's scroll is, while
+        // a press still stops at the card.
+        function test_an_inline_card_passes_the_wheel_on() {
+            const stage = Qt.createQmlObject("import QtQuick\nimport qs.Ui\nItem {\n"
+                + "    width: 400; height: 500\n"
+                + "    property int presses: 0\n"
+                + "    property int wheels: 0\n"
+                + "    property alias dialog: covering\n"
+                + "    MouseArea { anchors.fill: parent; onPressed: parent.presses++; onWheel: wheel => parent.wheels++ }\n"
+                + "    Dialog { id: covering; width: 360; modal: false; title: \"Inline\"; actions: [{ label: \"Cancel\", role: \"cancel\" }] }\n"
+                + "}", root);
+            const x = stage.dialog.width / 2;
+            tryVerify(() => stage.dialog.height > 0, 1000, "the dialog is laid out");
+            mouseWheel(stage, x, 3, 0, -120);
+            tryCompare(stage, "wheels", 1);
+            mouseClick(stage, x, 3);
+            wait(50);
+            compare(stage.presses, 0, "a press on the inline card reaches the area");
             stage.destroy();
         }
 

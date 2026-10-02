@@ -8,9 +8,9 @@ import "../foundation/KeyNavLogic.js" as KeyNavLogic
 // and a row of actions. It is a card, not a window: the host places it in
 // its own surface and owns its lifetime, so `accepted` and `rejected`
 // report the answer and the dialog hides nothing. Its card takes the
-// presses, the hover and the wheel that land on it and that no control in
-// it takes, so nothing under it answers, such as a scrim that rejects the
-// dialog on a click away.
+// presses and the hover that land on it and that no control in it takes,
+// and the wheel while `modal` holds, so nothing under it answers, such as a
+// scrim that rejects the dialog on a click away.
 //
 // `actions` is a list of `{ label, role, variant, enabled }`. `role` is
 // `accept` or `cancel`, and pressing the action emits `accepted` or
@@ -212,9 +212,10 @@ FocusScope {
             anchors.fill: parent
             acceptedButtons: Qt.AllButtons
             // A MouseArea passes hover, and a wheel no handler accepts, to
-            // the items under it.
+            // the items under it. A dialog that is not modal sits inline in
+            // a page, which the wheel over it still scrolls.
             hoverEnabled: true
-            onWheel: wheel => { wheel.accepted = true; }
+            onWheel: wheel => { wheel.accepted = root.modal; }
         }
     }
 
