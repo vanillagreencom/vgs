@@ -157,7 +157,7 @@ Singleton {
         const onScreen = screen !== undefined && screen !== null ? screen : null;
         const row = { id: id, kind: kind, origin: "core", revision: manifest.__revision, instance: instance, capabilities: manifest.capabilities, entry: layoutEntry, settingsKey: JSON.stringify(settings), providers: {}, lifetime: Lifetime.create(e => console.error("plugins: " + id + " disposer failed: " + e.message)), screen: onScreen };
         try {
-            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, locator: locator || null, onDispose: row.lifetime.register });
+            row.providers = Capabilities.providersFor({ id: id, manifest: manifest, kind: kind, hostKey: hostKey, screen: onScreen, locator: locator || null, onDispose: row.lifetime.register, get active() { return row.lifetime.active; } });
         } catch (e) {
             row.lifetime.drain();
             instance.destroy();

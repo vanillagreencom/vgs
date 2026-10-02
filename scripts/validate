@@ -122,7 +122,7 @@ rows=(
   "logic|active XKB input identities|python3 -I scripts/test-xkb-keys.py|bin/lib/xkb-keys.py"
   "logic|monitor rules judge|node scripts/test-monitor-logic.js|shell/Core/MonitorLogic.js bin/lib/qml-library.js"
   "logic|dispatch table|node scripts/test-dispatch.js|shell/Core/Dispatch.js shell/Core/HyprlandLayer.js bin/lib/qml-library.js"
-  "logic|instance lifetime cleanup|node scripts/test-lifetime.js|shell/Core/Lifetime.js bin/lib/qml-library.js"
+  "logic|instance lifetime cleanup|node scripts/test-lifetime.js|shell/Core/Lifetime.js shell/Core/Plugins.qml shell/Core/Capabilities.qml shell/Core/HyprlandState.qml bin/lib/qml-library.js"
   "logic|library loader controls|node scripts/test-qml-library.js|bin/lib/qml-library.js"
   "logic|rounded inset helper|node scripts/test-inset.js|shell/Commons/Inset.js bin/lib/qml-library.js"
   "logic|setting value helper|node scripts/test-setting-values.js|shell/Commons/SettingValues.js bin/lib/qml-library.js"

@@ -6,6 +6,7 @@ function create(reportError) {
     const pending = [];
     let closed = false;
     return {
+        get active() { return !closed; },
         get count() { return pending.length; },
         register: function(cleanup) {
             if (closed) throw new Error("lifetime: registration after teardown");

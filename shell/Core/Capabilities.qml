@@ -83,7 +83,8 @@ Singleton {
 
     // The providers for one instance: one per capability its manifest
     // names. `ctx` is { id, manifest, kind, hostKey, screen, locator,
-    // onDispose(fn) }, `locator` being a bar widget's { section, nth }; every
+    // onDispose(fn), active }, `active` reading the instance's lifetime,
+    // `locator` being a bar widget's { section, nth }; every
     // hold and registration is released through ctx.onDispose.
     function providersFor(ctx) {
         const out = {};
@@ -109,9 +110,10 @@ Singleton {
             for (const name of Dispatch.PLUGIN_DISPATCHERS)
                 out[name] = (...args) => Compositor.send(name, args);
             out.reveal = (addresses, awaitSender) => Compositor.reveal(addresses, awaitSender);
-            let alive = true;
-            ctx.onDispose(() => { alive = false; });
-            out.observeInput = (point, done) => Compositor.observeInput(point, value => { if (alive) done(value); });
+            out.observeInput = (point, done) => {
+                if (!ctx.active) return;
+                Compositor.observeInput(point, value => { if (ctx.active) done(value); });
+            };
             return out;
         },
         configure: ctx => ({

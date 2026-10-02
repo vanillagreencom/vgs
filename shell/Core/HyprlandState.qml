@@ -60,13 +60,14 @@ Scope {
 
     // The capability for one instance; it holds nothing to release.
     function provider(ctx) {
-        let alive = true;
-        ctx.onDispose(() => { alive = false; });
         return Object.freeze({
             get overridden() { return root.overriddenFor(ctx.id); },
             get devices() { return root.devices === null ? null : Logic.frozenJson(root.devices); },
             get foreignBinds() { return root.foreignKeys === null ? null : Logic.frozenJson(root.foreignKeys); },
-            resolveKeys: (keys, done) => root.resolveKeys(keys, value => { if (alive) done(value); }),
+            resolveKeys: (keys, done) => {
+                if (!ctx.active) return;
+                root.resolveKeys(keys, value => { if (ctx.active) done(value); });
+            },
             switchKeyboardLayout: target => Compositor.switchLayout(target)
         });
     }
