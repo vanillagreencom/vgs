@@ -810,7 +810,7 @@ world(async () => {
             ["config", path.join(roots.config, "vgs", "shell.json")], ["install", path.join(folder, "VERSION")]];
         try {
             child.stdin.write(JSON.stringify({ v: 1, type: "hello", gen: 0, revision: "a".repeat(64), locked: false,
-                settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" },
+                settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto", cloudVision: "ask", privateWindows: "" },
                 directories: { state, data: path.join(process.env.JARVIS_TEST_ROOT, name + "-data"),
                     runtime: path.join(process.env.JARVIS_TEST_ROOT, name + "-run") },
                 keys: { talk: "SUPER+code:108", mute: "SUPER+SHIFT+code:108", stop: "SUPER+ALT+PERIOD" } }) + "\n");
