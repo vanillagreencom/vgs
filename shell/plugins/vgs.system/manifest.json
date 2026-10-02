@@ -4,7 +4,7 @@
   "name": "System",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "One window for every System section, such as sound, displays and network: a sidebar of the enabled sections and the chosen section beside it. Open it with SUPER+COMMA or a section's own Settings link.",
+  "description": "Change your system settings, such as sound, displays and network, in one window.",
   "license": "MIT",
   "icon": "sliders-horizontal",
   "kinds": [

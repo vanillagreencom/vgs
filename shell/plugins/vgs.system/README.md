@@ -1,6 +1,6 @@
 # System
 
-`vgs.system`: one window for every System section, such as sound, displays and network. A sidebar lists the enabled sections under their groups, and the chosen section fills the page beside it. Each section is its own plugin of kind `pane`, which you enable and disable in Settings like any plugin; this window lists and shows them.
+`vgs.system`: one window for every System section, such as sound, displays and network. A sidebar lists the enabled sections under their groups, and the chosen section fills the page beside it. Each section is its own plugin of kind `pane`. You enable and disable a section in Settings like any plugin. This window lists and shows the enabled sections.
 
 ![The System window with no section enabled: the sidebar holds Shell & Plugins, and the page its empty state](../../../docs/images/plugins/vgs.system-window.webp)
 
@@ -14,7 +14,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 | A section's own Settings link | That section. |
 | IPC | `vgsh ipc call vgs.system invoke toggle '<payload>'` or `... invoke open '<payload>'`, or the host's `vgsh ipc call shell summon window vgs.system '<payload>'`. |
 
-The payload is `{}` for the section shown last, or `{"pane":"<id>"}` for that section; any other keys beside `pane` go to the section. An id no enabled section has opens the window with a notice naming it. The window remembers the last section while the shell runs.
+The payload is `{}` for the section shown last, or `{"pane":"<id>"}` for that section; any other keys beside `pane` go to the section. An id no enabled section has opens the window with the notice "That section is not available." The log keeps the id. The window remembers the last section while the shell runs.
 
 ## The window
 

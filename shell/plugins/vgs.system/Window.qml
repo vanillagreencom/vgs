@@ -30,7 +30,7 @@ import "Memory.js" as Memory
 // memory while the shell runs (Memory.js), or the first section;
 // `{"pane":"<id>", ...}` opens that section and hands the payload without
 // `pane` to its open(). An id no enabled section has opens like `{}` with
-// a notice naming it. A payload that is no object, a `pane` that is no
+// a notice and logs the id. A payload that is no object, a `pane` that is no
 // string or another key without `pane` throws out of open(), which refuses
 // the summon.
 FocusScope {
@@ -41,9 +41,13 @@ FocusScope {
     readonly property var screen: shell === null ? null : shell.screens.current
     // The id of the mounted section, or "".
     property string paneId: ""
+    // The mounted section's name, kept for the notice when its row leaves
+    // the list.
+    property string paneName: ""
     property var paneDisposer: null
-    // A line over the section, such as a deep link to an id no section has
-    // or a refusal; cleared by the next section shown.
+    // A plain sentence over the section, such as a deep link to an id no
+    // section has or a refusal; the reply goes to the log. Cleared by the
+    // next section shown.
     property string notice: ""
     readonly property var row: rowOf(paneId)
     // The keyboard opens in the section a deep link names, else on the
@@ -61,10 +65,10 @@ FocusScope {
     // unmounted by the core; the window says so and shows none.
     onPanesChanged: {
         if (paneId === "" || rowOf(paneId) !== null) return;
-        const gone = paneId;
+        notice = paneName + " is no longer enabled.";
         paneId = "";
+        paneName = "";
         paneDisposer = null;
-        notice = gone + " is no longer enabled.";
     }
 
     function open(payloadJson) {
@@ -83,7 +87,8 @@ FocusScope {
         delete rest.pane;
         if (rowOf(payload.pane) === null) {
             showLast();
-            notice = "No System section named " + payload.pane + ".";
+            notice = "That section is not available.";
+            console.warn("system: no section " + payload.pane);
             return;
         }
         show(payload.pane, JSON.stringify(rest));
@@ -102,17 +107,19 @@ FocusScope {
     }
 
     // Mount section `id` with PAYLOADJSON; answers `ok` or the capability's
-    // refusal, which the notice shows. The section takes the keyboard as it
+    // refusal, which the log keeps. The section takes the keyboard as it
     // is built (PaneHost), and keeps it.
     function show(id, payloadJson) {
+        const target = rowOf(id);
         const result = shell.panes.mount(id, mountBox, payloadJson);
         if (typeof result !== "function") {
-            notice = "Could not open " + id + ": " + result;
+            notice = "Could not open " + (target === null ? id : target.name) + ".";
             console.warn("system: mount " + id + " " + result);
             return result;
         }
         paneDisposer = result;
         paneId = id;
+        paneName = target.name;
         notice = "";
         Memory.remember(id);
         sidebar.select(id);
@@ -141,7 +148,7 @@ FocusScope {
         if (target === null) return "unknown: " + id;
         const reply = shell.panes.setPlaced(id, !target.placed);
         if (reply !== "ok") {
-            notice = "Could not change " + target.name + " in the bar: " + reply;
+            notice = "Could not change " + target.name + " in the bar.";
             console.warn("system: setPlaced " + id + " " + reply);
         }
         return reply;
@@ -153,7 +160,10 @@ FocusScope {
     // surfaces.
     function openSettings() {
         const reply = shell.run.detached(["vgsh", "ipc", "call", "shell", "summon", "window", "vgs.settings", "{}"]);
-        if (reply !== "ok") notice = "Could not open Settings: " + reply;
+        if (reply !== "ok") {
+            notice = "Could not open Settings.";
+            console.warn("system: open Settings " + reply);
+        }
         return reply;
     }
 

@@ -157,7 +157,7 @@ expect "the deep-linked section receives the payload without pane" '"{\"from\":\
 expect_poll "the deep link puts the keyboard in the section" "Pane edit" sys_focus
 expect "the sidebar selects the deep-linked section" 1 sys_current
 expect "an unknown id answers ok" ok ipc shell summon window vgs.system '{"pane":"acme.nope"}'
-expect_poll "an unknown id names itself in a notice" '"No System section named acme.nope."' sys_read notice
+expect_poll "an unknown id shows a plain notice" '"That section is not available."' sys_read notice
 expect "an unknown id keeps the section shown last" '["acme.pane-alt"]' window_panes
 
 # The plugin's own IPC: open shows a section and keeps an open window
@@ -273,7 +273,7 @@ expect_poll "Pane Alt is mounted before it is disabled" '["acme.pane-alt"]' wind
 expect "disabling the shown section is allowed" ok ipc shell setPluginEnabled acme.pane-alt false
 expect_poll "the sidebar lists exactly the sections still enabled" '[["Connectivity","Fixtures"],["Pane Net","Pane","Shell & Plugins"]]' sys_sidebar
 expect_poll "disabling the shown section drops its mount" '[]' window_panes
-expect_poll "the window names the section that left" '"acme.pane-alt is no longer enabled."' sys_read notice
+expect_poll "the window names the section that left" '"Pane Alt is no longer enabled."' sys_read notice
 expect "enabling Pane Alt again is allowed" ok ipc shell setPluginEnabled acme.pane-alt true
 expect_poll "Pane Alt returns to the sidebar" '[["Connectivity","Fixtures"],["Pane Net","Pane Alt","Pane","Shell & Plugins"]]' sys_sidebar
 
