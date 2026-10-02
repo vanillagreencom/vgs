@@ -1289,6 +1289,7 @@ shell_answers() { # TREE LOG
     return 1
   fi
   shell_qs_pid="$qs_pid"
+  shell_pids_started+=("$qs_pid")
   for _ in $(seq 1 50); do
     if instance_id="$(qs_list --all | py_reply 'import json,sys; print(next((i["id"] for i in json.load(sys.stdin) if i["pid"] == int(sys.argv[1])), "unlisted"))' "$shell_qs_pid")" \
       && [[ $instance_id != none && $instance_id != unlisted ]]; then
@@ -1360,6 +1361,51 @@ open(path, "w").write(text.replace(old, new))' "$path" "$3" "$4" && ! cmp -s -- 
     return 1
   fi
 }
+# The resident size of every shell the run starts. shell_memory_note reads
+# VmRSS and VmHWM of the shell shell_qs_pid names from /proc/<pid>/status
+# into rss_kib and hwm_kib, prints them with the pid and the row that read
+# them, and hands the resident size to shell_memory_keep, which keeps the
+# largest in rss_peak_kib and the row that read it in rss_peak_row.
+# stop_shell notes the shell before its TERM, so a shell a row replaces is
+# read at its end, as well as the shell rows/diagnostics.sh notes and
+# judges with rss_verdict; a reading a stop takes after that row is printed
+# and not judged. With no shell pid, or a pid whose status is gone or holds
+# no resident size, as after a row killed the shell, it reads 0 for both
+# and keeps nothing. rss_verdict PEAK CEILING: `unread` for a PEAK of 0,
+# `over` for one above CEILING, else `under`. shells_unread: the pids
+# shell_answers took up that no note read, or `none`, so a shell that ended
+# unread fails the row that judges. rows/diagnostics.sh holds the controls.
+rss_kib=0
+hwm_kib=0
+rss_peak_kib=0
+rss_peak_row=""
+shell_pids_started=()
+shell_pids_noted=()
+shells_unread() {
+  local pid unread=()
+  for pid in "${shell_pids_started[@]}"; do
+    [[ " ${shell_pids_noted[*]} " == *" $pid "* ]] || unread+=("$pid")
+  done
+  if [[ ${#unread[@]} -eq 0 ]]; then echo none; else echo "${unread[*]}"; fi
+}
+shell_memory_keep() { # RSS_KIB ROW
+  if [[ $1 -gt $rss_peak_kib ]]; then rss_peak_kib="$1"; rss_peak_row="$2"; fi
+}
+shell_memory_note() {
+  local status_text="" row="${smoke_row_name:-none}"
+  rss_kib=0
+  hwm_kib=0
+  [[ -z $shell_qs_pid ]] || status_text="$(cat -- "/proc/$shell_qs_pid/status" 2>/dev/null)" || status_text=""
+  [[ $status_text =~ VmRSS:[[:space:]]+([0-9]+)\ kB ]] || return 0
+  rss_kib="${BASH_REMATCH[1]}"
+  [[ $status_text =~ VmHWM:[[:space:]]+([0-9]+)\ kB ]] && hwm_kib="${BASH_REMATCH[1]}"
+  echo "  rss_kib=$rss_kib hwm_kib=$hwm_kib pid=$shell_qs_pid row=$row"
+  shell_pids_noted+=("$shell_qs_pid")
+  shell_memory_keep "$rss_kib" "$row"
+}
+rss_verdict() { # PEAK CEILING
+  if [[ $1 -le 0 ]]; then echo unread; elif [[ $1 -gt $2 ]]; then echo over; else echo under; fi
+}
 # stop_shell: TERM to the runner start_shell started, which passes it to
 # the shell, then a wait on the instance lock the runner holds, before a
 # row starts another. The runner exits after the shell and holds the lock
@@ -1371,10 +1417,12 @@ open(path, "w").write(text.replace(old, new))' "$path" "$3" "$4" && ! cmp -s -- 
 # each process that holds the lock, and it returns 1 with the runner
 # unreaped. Once the lock is free it reaps the runner and clears
 # shell_pid, so a second stop signals no stale pid. rows/start-order.sh
-# holds the controls.
+# holds the controls. It notes the shell's memory before the TERM, as
+# shell_memory_note says.
 stop_lock_wait_s=10
 stop_shell() {
   local lock="$rt_dir/vgsh.lock"
+  shell_memory_note
   [[ -z $shell_pid ]] || kill -TERM "$shell_pid" 2>/dev/null || true
   if ! flock -w "$stop_lock_wait_s" "$lock" true; then
     fail "stop_shell: lock=$lock still held ${stop_lock_wait_s}s after the TERM to pid ${shell_pid:-none}"
