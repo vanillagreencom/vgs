@@ -2,7 +2,7 @@
 
 Covers: packaging/fedora/, .copr/Makefile, scripts/test-fedora-srpm.sh, scripts/fedora-container.sh
 
-VGS ships to Fedora in 0.1.x, not 0.1.0, through COPR `vanillagreen/vgs`. The project does not exist yet: on 2026-09-28 the COPR API listed only v1's `vanillagreen/vgs-shell` for the owner. Publication waits for the 0.1.0 release tarball and a passing `scripts/fedora-container.sh`.
+VGS ships to Fedora in 0.1.x, not 0.1.0, through COPR `vanillagreen/vgs`. On 2026-10-02 the COPR API listed only that project for the owner: it has the chroots and repos of `packaging/fedora/copr-project` and the packages `vgs` and `vgs-git`, and no build has run. v1's `vanillagreen/vgs-shell` is deleted. The first builds wait for the `v0.1.0` tag, the 0.1.0 release tarball and a passing `scripts/fedora-container.sh`.
 
 ## Packages
 
@@ -47,7 +47,7 @@ Fedora carries no Quickshell at the floor and no Hyprland at all, so the project
 
 ## Publication
 
-The owner runs these once with a COPR API token, after 0.1.0 is released:
+The owner created the project and registered both packages on 2026-10-02 with a COPR API token. An owner who must recreate the project runs the same commands:
 
 ```bash
 copr-cli create vgs --chroot fedora-44-x86_64 --chroot fedora-44-aarch64 \
@@ -58,14 +58,20 @@ copr-cli add-package-scm vgs --name vgs-git --clone-url https://github.com/vanil
   --commit main --spec packaging/fedora/vgs-git.spec --method make_srpm --webhook-rebuild on
 copr-cli add-package-scm vgs --name vgs --clone-url https://github.com/vanillagreencom/vgs.git \
   --commit v0.1.0 --spec packaging/fedora/vgs.spec --method make_srpm
+```
+
+No build has run. Once the `v0.1.0` tag exists, the owner runs the first builds:
+
+```bash
 copr-cli build-package vgs --name vgs
 copr-cli build-package vgs --name vgs-git
 ```
 
-- Each later release sets `vgs.spec`'s `Version`, `Release` and `%changelog` with `VERSION`, then runs `copr-cli edit-package-scm vgs --name vgs --commit vX.Y.Z` and `copr-cli build-package vgs --name vgs`. The GitHub webhook rebuilds `vgs-git` on every push to `main`.
+- `vgs-git` has webhook rebuild on, but on 2026-10-02 the GitHub repository does not yet send the project's webhook. The owner adds it in the repository's webhook settings.
+- Each later release sets `vgs.spec`'s `Version`, `Release` and `%changelog` with `VERSION`, then runs `copr-cli edit-package-scm vgs --name vgs --commit vX.Y.Z` and `copr-cli build-package vgs --name vgs`. Once the owner has added it, the GitHub webhook rebuilds `vgs-git` on every push to `main`.
 - A user installs with `sudo dnf copr enable vanillagreen/vgs`, accepting its two dependencies, then `sudo dnf install vgs`.
 - Once the first build installs in a clean container from the published project, the README lists Fedora as supported rather than following.
 
 ## Omarchy comparison
 
-- Omarchy is Arch-only. It publishes its packages to its own pacman repository, `pkgs.omarchy.org`, in stable, rc and edge channels (`default/pacman/pacman-*.conf` at `basecamp/omarchy` `main`, read 2026-09-28), and has no Fedora channel. VGS takes the same shape on Fedora: one repository the project owns, COPR `vanillagreen/vgs`, with a release package and a `main` package in place of channels. Unlike Omarchy, VGS does not package its runtime there: v1 co-hosted `quickshell` in COPR `vanillagreen/vgs-shell`, and it went stale at 0.3.0-3, below v1's own floor. So VGS depends on the two third-party COPRs, and its versioned `Requires` catch a lag.
+- Omarchy is Arch-only. It publishes its packages to its own pacman repository, `pkgs.omarchy.org`, in stable, rc and edge channels (`default/pacman/pacman-*.conf` at `basecamp/omarchy` `main`, read 2026-09-28), and has no Fedora channel. VGS takes the same shape on Fedora: one repository the project owns, COPR `vanillagreen/vgs`, with a release package and a `main` package in place of channels. Unlike Omarchy, VGS does not package its runtime there: v1 co-hosted `quickshell` in COPR `vanillagreen/vgs-shell`, where it went stale at 0.3.0-3, below v1's own floor; that project is now deleted. So VGS depends on the two third-party COPRs, and its versioned `Requires` catch a lag.
