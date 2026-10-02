@@ -20,6 +20,8 @@ The [wire brain rows](jarvis-brain.md#evidence) select both drivers on shared hi
 
 The [Jarvis account suites](jarvis-accounts.md#evidence) select from the account judge, provider declaration, secret owner, terminal and private fixtures. Their CLI rows use the shared isolated world. The nested Jarvis row reads account status and core TUI completion.
 
+The [Claude Code harness row](jarvis-claude.md#evidence) in `cli` selects on the adapter, the bridge, shim, router, Policy and audit it carries a call through, the account judge its Verify cases run, its stand-in program and stream-json excerpt. The account rows and the audio daemon row also select on the adapter, since the account judge loads it.
+
 The [router](jarvis-approval.md#evidence-and-comparison) shares inputs with the audio daemon; `scripts/test-validate.sh` controls its edges.
 
 The [local setup contract](jarvis-setup.md#evidence) adds installer controls in `tools` and a nested Settings/TUI row. The installer doubles run inside J09 and never download or install a real runtime.
