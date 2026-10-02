@@ -81,9 +81,9 @@ python3 - "$nk_service" <<'PY'
 import sys
 path = sys.argv[1]
 text = open(path).read()
-needle = 'shell.surfaces.toggle("panel", JSON.stringify({ mode: "inbox" }))'
-assert text.count(needle) == 1, "the shortcut's toggle occurs once"
-open(path, "w").write(text.replace(needle, needle.replace("toggle", "summon")))
+needle = "if (panelOpen) return closePanel();"
+assert text.count(needle) == 1, "the shortcut's close branch occurs once"
+open(path, "w").write(text.replace(needle, "if (false) return closePanel();"))
 PY
 expect "a rescan reads the summon-only service copy" ok ipc shell rescanPlugins
 expect "enabling the summon-only service copy is allowed" ok ipc shell setPluginEnabled vgs.notifications true
