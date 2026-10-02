@@ -17,8 +17,6 @@ assert.equal(fixtures.length, 7, "class/language coverage floor");
 assert.deepEqual([...new Set(fixtures.map(row => row.class))].sort(), ["duplex", "local", "text"]);
 for (const row of fixtures) composed(Guidance, row);
 assert.equal(Guidance.compose("chained", "text", "").instructions, Guidance.compose("chained", "text", "en").instructions);
-assert.equal(Guidance.help("shell"), fs.readFileSync(path.join(backend, "skills/computer/shell.md"), "utf8").trim());
-assert.throws(() => Guidance.help("../shell"), { message: "jarvis: guidance=topic" });
 const invalid = [
     ["other", "text", "en", "engine"], ["chained", "other", "en", "class"],
     ["chained", "duplex", "en", "consumer"], ["chained", "text", "../en", "speech=language"]
@@ -29,12 +27,6 @@ for (const [engine, brain, language, cause] of invalid)
 
 let controls = 0;
 world("jg", root => {
-    control(root, "help-topic", "Guidance.js", '!Tools.TABLE.help.schema.properties.topic.enum.includes(topic)',
-        'false', logic => assert.throws(() => logic.help("../shell"), { message: "jarvis: guidance=topic" }));
-    controls++;
-    control(root, "help-asset", "Guidance.js", 'topic + ".md", path.join(__dirname, "skills/computer")',
-        '"core.md", ROOT', logic => assert.equal(logic.help("shell"), Guidance.help("shell")));
-    controls++;
     const rows = [
         ["voice-layers", '["core-short.md", "speech.md", "turns.md", "class/duplex.md"]',
             '["core.md", "speech.md", "turns.md", "class/duplex.md"]', logic => composed(logic, fixtures[0])],

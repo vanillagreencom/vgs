@@ -2,11 +2,11 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/Shell.js, shell/plugins/vgs.jarvis/backend/skills/computer/, scripts/test-jarvis-shell.js
 
-The [router](jarvis-approval.md) owns admission, approval, audit and command-labelled results. `Shell.js` translates its immutable shell call into the [kernel owner's](jarvis-sandbox.md) request. [D074](../decisions/D074-jarvis-kernel-sandbox.md) owns confinement. The daemon still has no conversation engine, so no brain calls these tools yet.
+The [router](jarvis-approval.md) owns admission, approval, audit and command-labelled results. `Shell.js` translates its immutable shell call into the [kernel owner's](jarvis-sandbox.md) request. [D074](../decisions/D074-jarvis-kernel-sandbox.md) owns confinement. The [chained engine](jarvis-engine.md) routes calls through this same owner.
 
 ## Owners
 
-- `Shell.roots` reuses `Accounts.candidates` for metadata-only account directories. It runs no vendor authentication command. Policy and Sandbox consume the same trusted producer. Each call rebuilds the protected snapshot, including hand-added and newly discovered account roots. A failed discovery provides no path authority.
+- The daemon's `trustedRoots` supplies the same facts to its `denied()` judge and Shell. `Accounts.accountRoots` supplies explicit and hand-added account directories without vendor authentication. Denied owns rule-named account folders. Each call rebuilds its protected snapshot. A failed discovery provides no path authority.
 - `Shell.install` publishes checking, then registers the sandbox executor once after protected-root construction and the real kernel probe succeed. `Shell.refresh` aborts the prior probe, rebuilds protected roots and repeats the kernel probe. Checking and unavailable states withdraw both shell offers. The router checks current readiness at offer, route and start, including after a held approval. A missing command, unsupported kernel setup or failed protected-root discovery cannot start a shell action. No unsandboxed fallback exists.
 - `Shell.close` aborts readiness and the active serial call. Late readiness cannot register tools or publish status. The kernel owner ends the namespace, including detached descendants. The adapter holds no second child or command timer.
 - `Sandbox.BOUNDS` supplies the router's action deadline. The kernel owner also holds the combined output ceiling. These are allocation and recovery bounds, not measured latency budgets. The [plan's bounds](../plans/v2-jarvis-plan.md#311-bounds) and kernel declarations own the values.
@@ -17,7 +17,7 @@ The [router](jarvis-approval.md) owns admission, approval, audit and command-lab
 
 `shell-status` carries the kernel availability to the service through the judged wire. The service publishes the manifest's Shell tools state and clears it when the daemon ends. It observes the core's `requirements.revision` and sends a judged `requirements-scan` frame to the same readiness owner. A completed installation can therefore recover readiness without a source change or service restart. The daemon ignores duplicate and older scan counters. Superseded probes cannot publish late results. Only a missing Bubblewrap binary offers the core's Install Bubblewrap action. The requirement declaration owns its package mappings. A namespace or path failure remains unavailable and names its cause.
 
-`help(shell)` reads the installed computer reference through `Guidance.help`. The tool table owns topic names. The guidance owner bounds asset reads and reports absent, empty, malformed or oversized files. Help remains registered when confinement is unavailable. Missing tool families fail explicitly. The installer preserves computer guidance as runtime data, including in read-only installations.
+`help(shell)` reads the installed computer reference through `ComputerHelp`. The tool table owns topic names. The guidance owner bounds asset reads and reports absent, empty, malformed or oversized files. Help remains registered when confinement is unavailable. Missing tool families fail explicitly. The installer preserves computer guidance as runtime data, including in read-only installations.
 
 ## Evidence
 

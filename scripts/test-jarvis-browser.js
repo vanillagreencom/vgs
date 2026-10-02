@@ -234,7 +234,7 @@ world(async () => {
         } } });
         assert.equal(records.browser, undefined, "unverified browser is not offered");
         const guidance = records.guidance;
-        assert.deepEqual(guidance.topics, ["input", "vision"], "the shipped file help is available before browser setup");
+        assert.deepEqual(guidance.topics, ["input", "shell", "vision"], "the shipped file help is available before browser setup");
         let answer;
         guidance.start({ id: "help", args: { topic: "input" } }, value => { answer = value; });
         assert.deepEqual(answer, { outcome: "completed",
@@ -245,7 +245,7 @@ world(async () => {
         assert.equal(typeof records.browser?.start, "function", "setup becomes available to the next conversation");
         assert.equal(records.guidance, guidance, "browser setup retains the shared help owner");
         assert.deepEqual(registrations, ["guidance", "browser"], "each executor registers once");
-        assert.deepEqual(guidance.topics, ["input", "vision", "browser"], "ready browser help joins the file help");
+        assert.deepEqual(guidance.topics, ["input", "shell", "vision", "browser"], "ready browser help joins the file help");
         fs.rmSync(marker, { force: true });
         let target;
         assert.doesNotThrow(() => { target = records.browser.observe(call("fill", { ref: "@e1", text: "fixture" })); },

@@ -1,20 +1,8 @@
 // Router adapter for kernel-confined commands. Sandbox owns every child and
 // its bounds; this owner binds readiness, abort and results to the service lease.
 "use strict";
-const path = require("node:path");
 const Sandbox = require("./Sandbox.js");
 const Denied = require("./Denied.js");
-const { Accounts } = require("./Accounts.js");
-const Guidance = require("./Guidance.js");
-
-/** Trusted metadata producer shared by Policy and the kernel sandbox. */
-function roots(environment, directories, install) {
-    const accounts = new Accounts(directories.state, environment);
-    return () => ({ home: accounts.home, config: accounts.config, data: accounts.data,
-        state: environment.XDG_STATE_HOME || path.join(accounts.home, ".local/state"),
-        runtime: environment.XDG_RUNTIME_DIR, install,
-        accountRoots: accounts.candidates().map(candidate => candidate.directory) });
-}
 
 function answer(result) {
     let outcome;
@@ -72,13 +60,6 @@ function install({ router, roots: currentRoots, status, failed, clock }) {
         },
         cancel() { if (active !== null) active.abort(); }
     };
-    // Help explains shell confinement even when the host cannot provide it.
-    // Guidance is the one bounded reader; missing families fail explicitly.
-    router.register("guidance", { commands: [], timeoutMs: Sandbox.BOUNDS.timeoutMs, cancellable: false,
-        start(call, done) {
-            try { done({ outcome: "completed", content: Guidance.help(call.args.topic) }); }
-            catch (error) { done({ outcome: "failed", content: error.message }); }
-        } });
     function refresh() {
         if (closed) return Promise.resolve();
         if (probe !== null) probe.abort();
@@ -113,4 +94,4 @@ function install({ router, roots: currentRoots, status, failed, clock }) {
     } });
 }
 
-module.exports = { roots, install };
+module.exports = { install };

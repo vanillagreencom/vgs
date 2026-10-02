@@ -32,8 +32,9 @@ world(async () => {
     fs.writeFileSync(w.roots.state + "/vgs/jarvis/accounts.json", JSON.stringify([
         { provider: "codex", directory: w.home + "/hand-added", label: "Fixture" }
     ]));
-    const trusted = Shell.roots(process.env, { state: w.roots.state + "/vgs/jarvis" }, w.roots.install);
-    assert.ok(trusted().accountRoots.includes(w.home + "/.claude-personal"));
+    const { accountRoots } = require(path.join(backend, "Accounts.js"));
+    const trusted = () => ({ ...w.roots, accountRoots: accountRoots(w.roots.state + "/vgs/jarvis", process.env) });
+    assert.equal(Denied.create(trusted()).inspect(w.home + "/.claude-personal", "read").kind, "refuse");
     assert.ok(trusted().accountRoots.includes(w.home + "/hand-added"));
 
     const available = await Sandbox.available();
@@ -57,6 +58,7 @@ world(async () => {
                 denied: options.roots === undefined ? Denied.create(trusted()) : null }), audit,
             result: value => { results.push(value); if (waiting) { const wake = waiting; waiting = null; wake(value); } } });
         Object.assign(ports, router.ports);
+        router.register("guidance", require(path.join(backend, "ComputerHelp.js")).create());
         const shell = implementation.install({ router, roots: options.roots ?? trusted,
             status: value => statuses.push(value), failed: error => { throw error; },
             clock: { set: (fn, ms) => { const key = {}; deadlines.set(key, { fn, ms }); return key; },
@@ -335,6 +337,7 @@ world(async () => {
                 const discovered = [];
                 const added = w.home + "/.claude-rescan";
                 fs.rmSync(added, { recursive: true, force: true });
+                fs.writeFileSync(w.roots.state + "/vgs/jarvis/accounts.json", "[]");
                 const f = make(require(path.join(root, "backend/Shell.js")), {
                     roots: () => { const value = trusted(); discovered.push(value); return value; }
                 });
@@ -346,6 +349,9 @@ world(async () => {
                 assert.equal(discovered.length, 1);
                 assert.equal(discovered[0].accountRoots.includes(added), false);
                 fs.mkdirSync(added, { recursive: true });
+                fs.writeFileSync(w.roots.state + "/vgs/jarvis/accounts.json", JSON.stringify([
+                    { provider: "codex", directory: added, label: "Rescan" }
+                ]));
                 const recovered = f.shell.refresh();
                 assert.equal(discovered.length, 2, "rescan rebuilds protected roots");
                 assert.ok(discovered[1].accountRoots.includes(added), "new account metadata reaches current protected roots");

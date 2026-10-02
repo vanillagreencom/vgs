@@ -6,7 +6,7 @@ The [voice contract](../plans/v2-jarvis-plan.md#5-voice-agent-skill) assigns gui
 
 ## Guidance
 
-`Guidance.js::compose(engine, brainClass, language)` is the only layer selector. Its header defines the accepted consumer names. It returns `instructions`, an ordered `layers` array, and `afterToolResult`. It reads assets beside the module, including from a published plugin snapshot or a read-only install. `Guidance.help` uses the same bounded reader for [computer-tool references](jarvis-shell-tools.md#status-and-reference).
+`Guidance.js::compose(engine, brainClass, language)` is the only layer selector. Its header defines the accepted consumer names. It returns `instructions`, an ordered `layers` array, and `afterToolResult`. It reads assets beside the module, including from a published plugin snapshot or a read-only install. `ComputerHelp` owns the bounded reads of [computer-tool references](jarvis-shell-tools.md#status-and-reference).
 
 - The duplex voice model gets the short core, speech, turns and persona. Its delegated brain gets core, speech and actions, even when that brain is local. Delegation does not add the chained turn rules.
 - The chained frontier brain gets core through actions and the language layer. The chained local brain also gets worked examples.

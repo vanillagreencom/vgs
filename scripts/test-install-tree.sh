@@ -53,7 +53,7 @@ check "a plugin's other Markdown is not installed" test ! -e "$dest/usr/share/vg
 check "the core input resolver is installed" test -e "$dest/usr/share/vgs/bin/lib/xkb-keys.py"
 check "Jarvis input guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/input.md"
 check "Jarvis screen guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/vision.md"
-check "installed computer help reads its packaged files" "$node_bin" -e 'const h=require(process.argv[1]).create(); if(JSON.stringify(h.topics)!==JSON.stringify(["input","vision"]))process.exit(1); h.start({id:"help",args:{topic:"input"}},r=>{if(r.outcome!=="completed"||!r.content.includes("input.text"))process.exit(1)}); h.start({id:"help",args:{topic:"vision"}},r=>{if(r.outcome!=="completed"||!r.content.includes("vision.area"))process.exit(1)});' "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/ComputerHelp.js"
+check "installed computer help reads its packaged files" "$node_bin" -e 'const h=require(process.argv[1]).create(); if(JSON.stringify(h.topics)!==JSON.stringify(["input","shell","vision"]))process.exit(1); h.start({id:"help",args:{topic:"input"}},r=>{if(r.outcome!=="completed"||!r.content.includes("input.text"))process.exit(1)}); h.start({id:"help",args:{topic:"shell"}},r=>{if(r.outcome!=="completed"||!r.content.includes("shell.argv"))process.exit(1)}); h.start({id:"help",args:{topic:"vision"}},r=>{if(r.outcome!=="completed"||!r.content.includes("vision.area"))process.exit(1)});' "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/ComputerHelp.js"
 check "Jarvis runtime guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/core.md"
 browser_standins="$tmp/browser-standins"
 mkdir -p -- "$browser_standins"
@@ -268,10 +268,10 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 text = pathlib.Path(sys.argv[2]).read_text()
-needle = '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/*.md ]] && return 1\n'
+needle = '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/voice/*.md ]] && return 1\n'
 if text.count(needle) != 1:
     raise SystemExit("install-control: voice exception did not occur once")
-changed = text.replace(needle, '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/*.md ]] && return 0\n')
+changed = text.replace(needle, '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/voice/*.md ]] && return 0\n')
 if changed == text:
     raise SystemExit("install-control: voice exception did not change")
 path.write_text(changed)
