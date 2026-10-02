@@ -15,10 +15,12 @@
 # (rows/notifications.sh) reads its top under the header and inside the
 # list's clip. Its control is a Panel.qml copy that reveals the selected
 # card only in the refresh, before the list has taken its cards' height,
-# which scrolled the first card under the header on all eight opens in
-# the sandbox on 2026-10-02, at scale 1 and at scale 2. rows/hidpi.sh
+# which scrolled the first card under the header on every open after a
+# first, uncounted one (long_inbox_warm) in the sandbox on 2026-10-02, at
+# scale 1 and at scale 2; each control asserts that every counted open
+# read its defect. rows/hidpi.sh
 # reads the same opens at scale 2. The same opens hold on the first
-# monitor held at half its height, a room shorter than the panel's
+# monitor held at a scale that leaves a room shorter than the panel's
 # panelMaxHeight, where the list takes what is under the header; their
 # control is a Panel.qml copy whose list keeps its whole height, which ran
 # the list past the panel's bottom (clipped=list) on all eight opens in the
@@ -111,6 +113,19 @@ long_inbox_cut() {
   echo "$first"
 }
 long_inbox_readings() { if [[ -f $sandbox/long-inbox.txt ]]; then cat -- "$sandbox/long-inbox.txt"; else echo "none read"; fi; }
+# long_inbox_warm TOGGLE...: one open and close of the long inbox that no
+# reading counts, before a control's eight. The first open after a service
+# starts can meet that start's status publication, whose refresh comes
+# after the list has its height and scrolls it back: on one run of four in
+# the sandbox on 2026-10-02 the refresh-only copy's first open fit and its
+# other seven were cut.
+long_inbox_warm() {
+  "$@" >/dev/null || return
+  summon_drawn panel vgs.notifications || return
+  "$@" >/dev/null || return
+  for _ in $(seq 1 25); do [[ $(layer_count vgs:panel) == 0 ]] && return 0; sleep 0.2; done
+  return 1
+}
 # PRESSES LABEL: five presses from a closed inbox, each read before the next.
 nk_presses() {
   local want=open n
@@ -170,6 +185,7 @@ expect "a rescan reads the refresh-only reveal panel copy" ok ipc shell rescanPl
 expect "enabling the notifications beside the panel copy is allowed" ok ipc shell setPluginEnabled vgs.notifications true
 expect_poll "the service is built beside the panel copy" True record_exists vgs.notifications
 expect_poll "the inbox shortcut is listed beside the panel copy" 1 note_shortcuts
+long_inbox_warm nk_press || fail "the refresh-only reveal copy's first open failed"
 geometry expect "control: a panel that reveals only in the refresh scrolls the long inbox's first card under the header on every open" "cut-top=card under-header=card" long_inbox_cut nk_press
 ok "control long inbox readings: $(long_inbox_readings)"
 cp -- "$sandbox/Panel.qml.keys-kept" "$nk_panel"
@@ -178,12 +194,25 @@ expect_poll "the service is built beside the restored panel" True record_exists 
 notes dismiss-all >/dev/null # `none` once every toast's clock ran out
 expect "clearing the long inbox's history is allowed" ok notes clear-history
 
-# The short room: the first monitor at half its height, which the running
-# shell follows.
+# The short room: the first monitor held at its own mode and the smallest
+# scale from 2 to 4 that divides it into whole logical pixels, so the
+# nested window keeps its size, and a mode the host would size back is
+# never asked for. A running shell does not follow a scale change
+# (docs/architecture/runtime-qml.md), so the shell starts again under the
+# hold, and again at scale 1 after it.
 nk_output="$(first_name)"
+nk_scale=""
 if nk_base="$(unscaled_mode_of "$nk_output")" && [[ $nk_base =~ ^([0-9]+)x([0-9]+)$ ]]; then
-  nk_short="${BASH_REMATCH[1]}x$(( BASH_REMATCH[2] / 2 ))"
-  hold_mode "the first monitor is held at half its height for the short room" "$nk_output" "$nk_short" 1
+  for nk_s in 2 3 4; do
+    if (( BASH_REMATCH[1] % nk_s == 0 && BASH_REMATCH[2] % nk_s == 0 )); then nk_scale=$nk_s; break; fi
+  done
+fi
+if [[ -n $nk_scale ]]; then
+  stop_shell || :
+  hold_mode "the first monitor is held at its own mode and scale $nk_scale for the short room" "$nk_output" "$nk_base" "$nk_scale"
+  start_shell "$repo" "$sandbox/notifications-keys-short.log" || fail "the shell starts under the short room's hold"
+  expect_poll "the service is built in the short room" True record_exists vgs.notifications
+  expect_poll "the inbox shortcut is listed in the short room" 1 note_shortcuts
   # True while the open panel is laid out shorter than its panelMaxHeight.
   room_caps() {
     local box max
@@ -213,15 +242,19 @@ PY
   expect "enabling the notifications beside the whole-height list copy is allowed" ok ipc shell setPluginEnabled vgs.notifications true
   expect_poll "the service is built beside the whole-height list copy" True record_exists vgs.notifications
   expect_poll "the inbox shortcut is listed beside the whole-height list copy" 1 note_shortcuts
+  long_inbox_warm nk_press || fail "the whole-height list copy's first open failed"
   geometry expect "control: a panel whose list keeps its whole height runs a long inbox past the short room's panel on every open" "clipped=list" long_inbox_cut nk_press
   ok "control short room readings: $(long_inbox_readings)"
   cp -- "$sandbox/Panel.qml.keys-kept" "$nk_panel"
   expect "a rescan restores the panel after the short room" ok ipc shell rescanPlugins
   notes dismiss-all >/dev/null # `none` once every toast's clock ran out
   expect "clearing the short room's history is allowed" ok notes clear-history
-  release_mode "the first monitor gets its own mode back after the short room" "$nk_output" "$nk_base"
+  stop_shell || :
+  release_mode "the first monitor gets its own mode at scale 1 back after the short room" "$nk_output" "$nk_base"
+  start_shell "$repo" "$sandbox/notifications-keys-restart.log" || fail "the shell starts again after the short room"
+  expect_poll "the service is built after the short room" True record_exists vgs.notifications
 else
-  fail "the short room reads no sized mode at scale 1 on the first monitor ${nk_output:-unread}"
+  fail "the short room finds no scale from 2 to 4 dividing the first monitor's mode ${nk_base:-unread} on ${nk_output:-unread}"
 fi
 
 # Control: a service whose shortcut summons the open inbox again. The
