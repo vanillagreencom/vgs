@@ -150,10 +150,10 @@ async function inside() {
         assert.deepEqual([row.program, row.account, row.interrupt], ["claude", { variable: "CLAUDE_CONFIG_DIR" }, { signal: "SIGINT" }]);
         const brief = Profiles.brief({ goal: "-p --dangerously-skip-permissions", engine: "/data/engine/h/task-event",
             state: "/state", id: "t1" });
-        assert.ok(!brief.startsWith("-"), "a goal that starts with - never leads the positional prompt");
         const argv = Profiles.command(row, { id: "t1", brief, cwd: "/work", account: "/acct", engine: "/data/engine/h/task-event",
             state: "/st ate", prompts: "/run/prompts", node: "/usr/bin/node" });
-        assert.deepEqual([argv.length, argv[0], argv[1], argv[3]], [4, "claude", "--settings", brief]);
+        assert.deepEqual([argv.length, argv[0], argv[1], argv[3], argv[4]], [5, "claude", "--settings", "--", brief],
+            "the brief follows --, so a goal that starts with - is no flag");
         const settings = JSON.parse(argv[2]);
         assert.deepEqual(Object.keys(settings), ["hooks"]);
         assert.deepEqual(Object.keys(settings.hooks).sort(), EVENTS);
@@ -401,7 +401,7 @@ async function inside() {
     }
     await control("exec-form", "AgentProfiles.js", "hooks: [{ type: \"command\", command: task.node, timeout,\n            args: [hook,",
         "hooks: [{ type: \"command\", command: task.node, timeout,\n            argv: [hook,", profile);
-    await control("brief-lead", "AgentProfiles.js", 'return "The user asks, through Jarvis:\\n" + goal', "return goal", profile);
+    await control("prompt-after-options", "AgentProfiles.js", 'claudeSettings(task), "--", task.brief]', "claudeSettings(task), task.brief]", profile);
     await control("prompt-submit-silent", "claude-hook", '        record(hook, "working");\n        return null;\n    case "Notification"',
         '        record(hook, "working");\n        return {};\n    case "Notification"', relay);
     await control("permission-held", "claude-hook",

@@ -81,11 +81,12 @@ function claudeSettings(task) {
 
 // Claude Code in its own interactive terminal, under its own permission
 // mode and rules: Jarvis passes no permission flag. The brief is the
-// session's first prompt.
+// session's first prompt, after "--" so a goal that starts with "-" is not
+// read as a flag.
 const TABLE = table({
     claude: {
         program: "claude",
-        argv: task => ["claude", "--settings", claudeSettings(task), task.brief],
+        argv: task => ["claude", "--settings", claudeSettings(task), "--", task.brief],
         account: { variable: "CLAUDE_CONFIG_DIR" },
         interrupt: { signal: "SIGINT" },
         interruptMs: 3000
@@ -103,18 +104,16 @@ function quote(text) {
 }
 
 /**
- * The text every agent receives: a fixed first line, the user's goal, then a
- * last step that reports the outcome through the task's recorded producer.
- * The goal is data inside the brief, never shell code; only the report
- * commands are. The first line keeps a goal that starts with "-" from
- * reading as a flag where the brief is a positional argument.
+ * The text every agent receives: the user's goal, then a last step that
+ * reports the outcome through the task's recorded producer. The goal is
+ * data inside the brief, never shell code; only the report commands are.
  */
 function brief({ goal, engine, state, id }) {
     if (typeof goal !== "string" || goal.length === 0 || !absolute(engine) || !absolute(state)
             || typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id)) fail("brief");
     const report = kind => "printf '%s' " + quote(JSON.stringify({ kind })) + " | node "
         + [engine, "--state", state, id, "outcome"].map(quote).join(" ");
-    return "The user asks, through Jarvis:\n" + goal + "\n\nAs your last step, report the outcome of this task by running exactly one of these commands:\n"
+    return goal + "\n\nAs your last step, report the outcome of this task by running exactly one of these commands:\n"
         + "- if the task succeeded: " + report("reported-ok") + "\n"
         + "- if the task failed: " + report("reported-failed") + "\n";
 }

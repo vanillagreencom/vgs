@@ -3,7 +3,7 @@
 // reference, code.claude.com/docs/en/hooks, and CLI reference --settings,
 // fetched 2026-10-02. No vendor program, login, network or recording.
 //
-// argv: --settings JSON PROMPT, exactly; anything else exits 64. It runs the
+// argv: --settings JSON -- PROMPT, exactly; anything else exits 64. It runs the
 // steps in $CLAUDE_CONFIG_DIR/script.json, in order, after it appends
 // {start: {settings, env}} to $CLAUDE_CONFIG_DIR/log.jsonl:
 //   {hook: EVENT, input: {...}}  runs every command hook settings wire for
@@ -27,10 +27,10 @@ function refuse(reason) {
 }
 
 const args = process.argv.slice(2);
-if (args.length !== 3 || args[0] !== "--settings" || args[2].startsWith("-")) refuse("argv");
+if (args.length !== 4 || args[0] !== "--settings" || args[2] !== "--") refuse("argv");
 let settings;
 try { settings = JSON.parse(args[1]); } catch { refuse("settings-json"); }
-const prompt = args[2];
+const prompt = args[3];
 const home = process.env.CLAUDE_CONFIG_DIR;
 if (typeof home !== "string" || !path.isAbsolute(home)) refuse("config-dir");
 const script = JSON.parse(fs.readFileSync(path.join(home, "script.json"), "utf8"));
