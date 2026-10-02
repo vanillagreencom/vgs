@@ -247,6 +247,8 @@ f share/vgs/shell/plugins/vgs.jarvis/Widget.qml
 f share/vgs/shell/plugins/vgs.jarvis/WidgetView.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
 f share/vgs/shell/plugins/vgs.jarvis/backend/Accounts.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/AcpClient.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/AcpHarness.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/AgentProfiles.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Anchored.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/AnthropicMessages.js

@@ -58,6 +58,10 @@ const ROWS = Object.freeze({
     // codex-cli 0.160.0; Jarvis opens no socket to it.
     codex: { driver: "codex-app-server", base: "https://chatgpt.com", key: "none", images: false,
         noStore: null, retention: { text: "Set by the OpenAI account Codex signs in with; Jarvis cannot read its data controls.", source: null } },
+    // The ACP harness's Copilot program: base is the release recipient's
+    // origin, the Copilot API host; Jarvis opens no socket to it.
+    copilot: { driver: "acp", base: "https://api.githubcopilot.com", key: "none", images: false,
+        noStore: null, retention: { text: "Set by the GitHub account Copilot signs in with; Jarvis cannot read its data controls.", source: null } },
     // A user's own server: no documentation states its image support or
     // retention, so images go to OCR text and the operator owns retention.
     custom: { driver: "openai-chat", base: null, key: "optional", images: false,

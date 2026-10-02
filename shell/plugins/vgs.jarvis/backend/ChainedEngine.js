@@ -13,13 +13,14 @@ const Speakable = require("./Speakable.js");
 const OpenAIChat = require("./OpenAIChat.js");
 const AnthropicMessages = require("./AnthropicMessages.js");
 const CodexHarness = require("./CodexHarness.js");
+const AcpHarness = require("./AcpHarness.js");
 
 // Speech adapter rows in selection order. A row is {select({settings,
 // accounts})} answering {kind:"ready", recipients, open({net, recipients})}
 // or {kind:"unconfigured", cause}. The local and ElevenLabs rows add theirs.
 const SPEECH = Object.freeze({});
 const DRIVERS = Object.freeze({ "openai-chat": OpenAIChat, "anthropic-messages": AnthropicMessages,
-    "codex-app-server": CodexHarness });
+    "codex-app-server": CodexHarness, acp: AcpHarness });
 // The hello carries no language setting; empty selects English.
 const LANGUAGE = "";
 // Object-mode chunks queued toward Audio, below its playback allowance.

@@ -45,6 +45,9 @@ function pinned(logic) {
     const codex = logic.select("codex");
     assert.deepEqual([codex.id, codex.driver, codex.base, codex.key, codex.images, codex.noStore, codex.retention.source],
         ["codex", "codex-app-server", "https://chatgpt.com", "none", false, null, null]);
+    const copilot = logic.select("copilot");
+    assert.deepEqual([copilot.id, copilot.driver, copilot.base, copilot.key, copilot.images, copilot.noStore, copilot.retention.source],
+        ["copilot", "acp", "https://api.githubcopilot.com", "none", false, null, null]);
 }
 pinned(Providers);
 
@@ -104,6 +107,7 @@ world("providers", root => {
         ["live-no-store", "images: false,\n        noStore: { store: false }", "images: false,\n        noStore: null", pinned],
         ["live-base", '"wss://api.openai.com/v1/live/sessions"', '"wss://api.openai.com/v1/realtime"', pinned],
         ["codex-key", 'base: "https://chatgpt.com", key: "none"', 'base: "https://chatgpt.com", key: "optional"', pinned],
+        ["copilot-base", 'base: "https://api.githubcopilot.com", key: "none"', 'base: "https://github.com", key: "none"', pinned],
         ["freeze", "Object.freeze(value);", "", logic => {
             const row = logic.select("openai");
             assert.throws(() => { row.noStore.store = true; }, TypeError);

@@ -5,6 +5,9 @@ var PROVIDERS = [
         prefix: ".claude", marker: ".credentials.json", command: ["claude", "auth", "status"] },
     { id: "codex", label: "Codex", kind: "cli", variable: "CODEX_HOME",
         prefix: ".codex", marker: "auth.json", command: ["codex", "login", "status"] },
+    // Copilot documents no login status command; its config.json exists signed in or not.
+    { id: "copilot", label: "GitHub Copilot", kind: "cli", variable: "COPILOT_HOME",
+        prefix: ".copilot", marker: "config.json", command: null },
     { id: "openai", label: "OpenAI", kind: "key", variable: "OPENAI_API_KEY", origin: "https://api.openai.com",
         probe: { driver: "chat", path: "/v1/chat/completions", model: "gpt-4.1-nano", limit: "max_completion_tokens", header: "authorization", prefix: "Bearer " } },
     { id: "anthropic", label: "Anthropic", kind: "key", variable: "ANTHROPIC_API_KEY", origin: "https://api.anthropic.com",

@@ -460,7 +460,7 @@ world(async () => {
 
     // The service passes exactly the CLI providers' root variables.
     const variables = folder => assert.deepEqual(require(path.join(folder, "AccountProviders.js")).accountVariables(name => "value-" + name),
-        { CLAUDE_CONFIG_DIR: "value-CLAUDE_CONFIG_DIR", CODEX_HOME: "value-CODEX_HOME" });
+        { CLAUDE_CONFIG_DIR: "value-CLAUDE_CONFIG_DIR", CODEX_HOME: "value-CODEX_HOME", COPILOT_HOME: "value-COPILOT_HOME" });
     variables(plugin);
     cases++;
     await mutant("AccountProviders.js", "account-variables",

@@ -12,6 +12,7 @@ const Audit = require("./Audit.js");
 const ClaudeCode = require("./ClaudeCode.js");
 const Providers = require("./Providers.js");
 const CodexHarness = require("./CodexHarness.js");
+const AcpHarness = require("./AcpHarness.js");
 const MAX_ENTRIES = 200;
 const MAX_ROWS = 32; // The core's presenceList and choices ceiling.
 const MAX_BYTES = 64 * 1024;
@@ -21,7 +22,7 @@ const PROBE_MS = 30000;
 // The harness probe's whole system prompt, so the probe stays one short turn.
 const HARNESS_INSTRUCTIONS = "Answer in one word.";
 // Subscriptions whose vendor program the chained engine can run as the brain.
-const HARNESS_BRAINS = Object.freeze(["codex"]);
+const HARNESS_BRAINS = Object.freeze(["codex", "copilot"]);
 
 function fail(reason) { throw new Error("jarvis-accounts: " + reason); }
 function printable(value, max) {
@@ -254,10 +255,13 @@ class Accounts {
     cliAccount(candidate) {
         const row = provider(candidate.provider);
         const opened = directory(candidate.directory, true);
-        const result = this.run(row.command[0], row.command.slice(1), { [row.variable]: candidate.directory });
-        let state;
-        try { state = login(row, result); }
-        finally { result.stdout?.fill(0); result.stderr?.fill(0); }
+        // A provider without a status command stays found; Verify proves more.
+        let state = { kind: "found" };
+        if (row.command !== null) {
+            const result = this.run(row.command[0], row.command.slice(1), { [row.variable]: candidate.directory });
+            try { state = login(row, result); }
+            finally { result.stdout?.fill(0); result.stderr?.fill(0); }
+        }
         // Fallback metadata only. No marker is opened, even when mode 000.
         let marker = "absent";
         try {
@@ -418,7 +422,7 @@ class Accounts {
             const keyed = /^jarvis-accounts: verify=([a-z0-9-]+)$/.exec(error.message);
             const network = /^jarvis: net=([a-z0-9-]+)$/.exec(error.message);
             const secret = /^jarvis-keys: secret-tool=([a-z-]+)$/.exec(error.message);
-            const harness = /^jarvis: brain=((?:harness|codex)-[a-z0-9-]+)(?: |$)/.exec(error.message);
+            const harness = /^jarvis: brain=((?:harness|codex|acp)-[a-z0-9-]+)(?: |$)/.exec(error.message);
             state = { kind: "unavailable", reason: keyed ? keyed[1] : network ? "network-" + network[1] : secret ? "key-" + secret[1]
                 : harness ? harness[1] : typeof request === "function" ? "verification-failed" : "verification-request-unavailable" };
         }
@@ -432,8 +436,8 @@ class Accounts {
      * One minimal inference request, after the user's explicit Verify. An API
      * or local route sends one non-streaming HTTP request through the outbound
      * door. A subscription never takes that route: its vendor program owns the
-     * login, so the mediated harness handoff runs it, and Claude Code and Codex each have
-     * one. Every route passes the same pass the same release and pre-transfer audit record.
+     * login, so the mediated harness handoff runs it, and Claude Code, Codex and
+     * Copilot each have one. Every route passes the same release and pre-transfer audit record.
      */
     async inference(account, requestedModel = "") {
         const row = provider(account.provider);
@@ -455,6 +459,10 @@ class Accounts {
                 return this.released(account, row.id, Providers.select(row.id).base, PROBE_TEXT, release =>
                     release.start(() => CodexHarness.probe({ directory: account.source.directory, env: this.env,
                         runtime: this.runtime, model, text: release.item.content })).then(() => true));
+            case "copilot":
+                return this.released(account, row.id, Providers.select(row.id).base, PROBE_TEXT, release =>
+                    release.start(() => AcpHarness.probe({ provider: row.id, directory: account.source.directory,
+                        env: this.env, model, text: release.item.content, runtime: this.runtime })).then(() => true));
             default:
                 fail("verify=subscription-handoff-unavailable");
             }

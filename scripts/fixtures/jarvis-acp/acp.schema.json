@@ -1,0 +1,1284 @@
+{
+ "source": {
+  "package": "@agentclientprotocol/sdk@1.7.0",
+  "tarball": "https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.7.0.tgz",
+  "tarballSha256": "51f1a3fd7b9a60a426ff56d390a5e05876be13ea3a29515fd734d96412c609a9",
+  "path": "package/schema/schema.json",
+  "sha256": "6449a87a3b3c42aa0abd30033fc9bd3236cd785078ad084ce3675766be09109e",
+  "protocolVersion": 1,
+  "fetched": "2026-10-02"
+ },
+ "rule": [
+  "Schemas are copied from $defs with $ref rewritten to #/schemas/<name>.",
+  "Annotation keywords are removed: description, title, format, default, examples, minimum, maximum, discriminator, $schema and every x- keyword. A property named title stays.",
+  "allOf is merged into the schema that holds it: properties and required are joined, so each union variant is one closed object. A lone allOf member is replaced by that member; const is rewritten as a one-member enum, and a oneOf of string consts as one enum.",
+  "A property the adapter neither writes nor reads keeps its name with the empty schema {}, so its graph stays out.",
+  "SessionUpdate keeps agent_message_chunk, agent_thought_chunk, tool_call, tool_call_update and available_commands_update; ContentBlock keeps text; ToolCallContent keeps content and diff; McpServer keeps stdio.",
+  "JSONRPCRequest, JSONRPCNotification, JSONRPCResponse and JSONRPCError are the JSON-RPC 2.0 envelopes ACP names as its base; the schema file types only their params and results."
+ ],
+ "omitted": [
+  "ContentBlock.audio",
+  "ContentBlock.image",
+  "ContentBlock.resource",
+  "ContentBlock.resource_link",
+  "McpServer.acp",
+  "McpServer.http",
+  "McpServer.sse",
+  "SessionUpdate.compaction_summary_chunk",
+  "SessionUpdate.compaction_update",
+  "SessionUpdate.config_option_update",
+  "SessionUpdate.current_mode_update",
+  "SessionUpdate.notice",
+  "SessionUpdate.plan",
+  "SessionUpdate.plan_removed",
+  "SessionUpdate.plan_update",
+  "SessionUpdate.session_info_update",
+  "SessionUpdate.session_message",
+  "SessionUpdate.session_message_chunk",
+  "SessionUpdate.subagent_update",
+  "SessionUpdate.usage_update",
+  "SessionUpdate.user_message_chunk",
+  "ToolCallContent.terminal"
+ ],
+ "schemas": {
+  "Annotations": {
+   "type": "object",
+   "properties": {
+    "audience": {
+     "type": [
+      "array",
+      "null"
+     ],
+     "items": {
+      "$ref": "#/schemas/Role"
+     }
+    },
+    "lastModified": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "priority": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   }
+  },
+  "AvailableCommand": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "description": {
+     "type": "string"
+    },
+    "input": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/AvailableCommandInput"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "name",
+    "description"
+   ]
+  },
+  "AvailableCommandInput": {
+   "$ref": "#/schemas/UnstructuredCommandInput"
+  },
+  "CancelNotification": {
+   "type": "object",
+   "properties": {
+    "sessionId": {
+     "$ref": "#/schemas/SessionId"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "sessionId"
+   ]
+  },
+  "ClientCapabilities": {
+   "type": "object",
+   "properties": {
+    "fs": {
+     "$ref": "#/schemas/FileSystemCapabilities"
+    },
+    "terminal": {
+     "type": "boolean"
+    },
+    "session": {},
+    "subagents": {},
+    "plan": {},
+    "auth": {},
+    "elicitation": {},
+    "nes": {},
+    "positionEncodings": {},
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   }
+  },
+  "ContentBlock": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "enum": [
+      "text"
+     ]
+    },
+    "annotations": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/Annotations"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "text": {
+     "type": "string"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "type",
+    "text"
+   ]
+  },
+  "EnvVariable": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "value": {
+     "type": "string"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "name",
+    "value"
+   ]
+  },
+  "FileSystemCapabilities": {
+   "type": "object",
+   "properties": {
+    "readTextFile": {
+     "type": "boolean"
+    },
+    "writeTextFile": {
+     "type": "boolean"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   }
+  },
+  "Implementation": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "title": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "version": {
+     "type": "string"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "name",
+    "version"
+   ]
+  },
+  "InitializeRequest": {
+   "type": "object",
+   "properties": {
+    "protocolVersion": {
+     "$ref": "#/schemas/ProtocolVersion"
+    },
+    "clientCapabilities": {
+     "$ref": "#/schemas/ClientCapabilities"
+    },
+    "clientInfo": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/Implementation"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "protocolVersion"
+   ]
+  },
+  "InitializeResponse": {
+   "type": "object",
+   "properties": {
+    "protocolVersion": {
+     "$ref": "#/schemas/ProtocolVersion"
+    },
+    "agentCapabilities": {},
+    "authMethods": {},
+    "agentInfo": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/Implementation"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "protocolVersion"
+   ]
+  },
+  "JSONRPCError": {
+   "type": "object",
+   "properties": {
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ]
+    },
+    "id": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "error": {
+     "type": "object",
+     "properties": {
+      "code": {
+       "type": "integer"
+      },
+      "message": {
+       "type": "string"
+      },
+      "data": {}
+     },
+     "required": [
+      "code",
+      "message"
+     ]
+    }
+   },
+   "required": [
+    "jsonrpc",
+    "id",
+    "error"
+   ]
+  },
+  "JSONRPCNotification": {
+   "type": "object",
+   "properties": {
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ]
+    },
+    "method": {
+     "type": "string"
+    },
+    "params": {}
+   },
+   "required": [
+    "jsonrpc",
+    "method"
+   ]
+  },
+  "JSONRPCRequest": {
+   "type": "object",
+   "properties": {
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ]
+    },
+    "id": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "method": {
+     "type": "string"
+    },
+    "params": {}
+   },
+   "required": [
+    "jsonrpc",
+    "id",
+    "method"
+   ]
+  },
+  "JSONRPCResponse": {
+   "type": "object",
+   "properties": {
+    "jsonrpc": {
+     "enum": [
+      "2.0"
+     ]
+    },
+    "id": {
+     "type": [
+      "string",
+      "integer"
+     ]
+    },
+    "result": {}
+   },
+   "required": [
+    "jsonrpc",
+    "id",
+    "result"
+   ]
+  },
+  "McpServer": {
+   "$ref": "#/schemas/McpServerStdio"
+  },
+  "McpServerStdio": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "command": {
+     "type": "string"
+    },
+    "args": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "env": {
+     "type": "array",
+     "items": {
+      "$ref": "#/schemas/EnvVariable"
+     }
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "name",
+    "command",
+    "args",
+    "env"
+   ]
+  },
+  "MessageId": {
+   "type": "string"
+  },
+  "NewSessionRequest": {
+   "type": "object",
+   "properties": {
+    "cwd": {
+     "type": "string"
+    },
+    "additionalDirectories": {},
+    "mcpServers": {
+     "type": "array",
+     "items": {
+      "$ref": "#/schemas/McpServer"
+     }
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "cwd",
+    "mcpServers"
+   ]
+  },
+  "NewSessionResponse": {
+   "type": "object",
+   "properties": {
+    "sessionId": {
+     "$ref": "#/schemas/SessionId"
+    },
+    "modes": {},
+    "configOptions": {},
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "sessionId"
+   ]
+  },
+  "PermissionOption": {
+   "type": "object",
+   "properties": {
+    "optionId": {
+     "$ref": "#/schemas/PermissionOptionId"
+    },
+    "name": {
+     "type": "string"
+    },
+    "kind": {
+     "$ref": "#/schemas/PermissionOptionKind"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "optionId",
+    "name",
+    "kind"
+   ]
+  },
+  "PermissionOptionId": {
+   "type": "string"
+  },
+  "PermissionOptionKind": {
+   "oneOf": [
+    {
+     "type": "string",
+     "enum": [
+      "allow_once"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "allow_always"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "reject_once"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "reject_always"
+     ]
+    }
+   ]
+  },
+  "PromptRequest": {
+   "type": "object",
+   "properties": {
+    "sessionId": {
+     "$ref": "#/schemas/SessionId"
+    },
+    "prompt": {
+     "type": "array",
+     "items": {
+      "$ref": "#/schemas/ContentBlock"
+     }
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "sessionId",
+    "prompt"
+   ]
+  },
+  "PromptResponse": {
+   "type": "object",
+   "properties": {
+    "stopReason": {
+     "$ref": "#/schemas/StopReason"
+    },
+    "usage": {},
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "stopReason"
+   ]
+  },
+  "ProtocolVersion": {
+   "type": "integer"
+  },
+  "RequestPermissionOutcome": {
+   "oneOf": [
+    {
+     "type": "object",
+     "properties": {
+      "outcome": {
+       "type": "string",
+       "enum": [
+        "cancelled"
+       ]
+      }
+     },
+     "required": [
+      "outcome"
+     ]
+    },
+    {
+     "type": "object",
+     "properties": {
+      "outcome": {
+       "type": "string",
+       "enum": [
+        "selected"
+       ]
+      },
+      "optionId": {
+       "$ref": "#/schemas/PermissionOptionId"
+      },
+      "_meta": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "outcome",
+      "optionId"
+     ]
+    }
+   ]
+  },
+  "RequestPermissionRequest": {
+   "type": "object",
+   "properties": {
+    "sessionId": {
+     "$ref": "#/schemas/SessionId"
+    },
+    "toolCall": {
+     "$ref": "#/schemas/ToolCallUpdate"
+    },
+    "options": {
+     "type": "array",
+     "items": {
+      "$ref": "#/schemas/PermissionOption"
+     }
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "sessionId",
+    "toolCall",
+    "options"
+   ]
+  },
+  "RequestPermissionResponse": {
+   "type": "object",
+   "properties": {
+    "outcome": {
+     "$ref": "#/schemas/RequestPermissionOutcome"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "outcome"
+   ]
+  },
+  "Role": {
+   "oneOf": [
+    {
+     "type": "string",
+     "enum": [
+      "assistant"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "user"
+     ]
+    }
+   ]
+  },
+  "SessionId": {
+   "type": "string"
+  },
+  "SessionNotification": {
+   "type": "object",
+   "properties": {
+    "sessionId": {
+     "$ref": "#/schemas/SessionId"
+    },
+    "update": {
+     "$ref": "#/schemas/SessionUpdate"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "sessionId",
+    "update"
+   ]
+  },
+  "SessionUpdate": {
+   "oneOf": [
+    {
+     "type": "object",
+     "properties": {
+      "sessionUpdate": {
+       "type": "string",
+       "enum": [
+        "agent_message_chunk"
+       ]
+      },
+      "content": {
+       "$ref": "#/schemas/ContentBlock"
+      },
+      "messageId": {
+       "anyOf": [
+        {
+         "$ref": "#/schemas/MessageId"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "_meta": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "sessionUpdate",
+      "content"
+     ]
+    },
+    {
+     "type": "object",
+     "properties": {
+      "sessionUpdate": {
+       "type": "string",
+       "enum": [
+        "agent_thought_chunk"
+       ]
+      },
+      "content": {
+       "$ref": "#/schemas/ContentBlock"
+      },
+      "messageId": {
+       "anyOf": [
+        {
+         "$ref": "#/schemas/MessageId"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "_meta": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "sessionUpdate",
+      "content"
+     ]
+    },
+    {
+     "type": "object",
+     "properties": {
+      "sessionUpdate": {
+       "type": "string",
+       "enum": [
+        "tool_call"
+       ]
+      },
+      "toolCallId": {
+       "$ref": "#/schemas/ToolCallId"
+      },
+      "title": {
+       "type": "string"
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "kind": {
+       "$ref": "#/schemas/ToolKind"
+      },
+      "status": {
+       "$ref": "#/schemas/ToolCallStatus"
+      },
+      "content": {
+       "type": "array",
+       "items": {
+        "$ref": "#/schemas/ToolCallContent"
+       }
+      },
+      "locations": {
+       "type": "array",
+       "items": {
+        "$ref": "#/schemas/ToolCallLocation"
+       }
+      },
+      "rawInput": {},
+      "rawOutput": {},
+      "_meta": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "sessionUpdate",
+      "toolCallId",
+      "title"
+     ]
+    },
+    {
+     "type": "object",
+     "properties": {
+      "sessionUpdate": {
+       "type": "string",
+       "enum": [
+        "tool_call_update"
+       ]
+      },
+      "toolCallId": {
+       "$ref": "#/schemas/ToolCallId"
+      },
+      "kind": {
+       "anyOf": [
+        {
+         "$ref": "#/schemas/ToolKind"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "status": {
+       "anyOf": [
+        {
+         "$ref": "#/schemas/ToolCallStatus"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "content": {
+       "type": [
+        "array",
+        "null"
+       ],
+       "items": {
+        "$ref": "#/schemas/ToolCallContent"
+       }
+      },
+      "locations": {
+       "type": [
+        "array",
+        "null"
+       ],
+       "items": {
+        "$ref": "#/schemas/ToolCallLocation"
+       }
+      },
+      "rawInput": {},
+      "rawOutput": {},
+      "_meta": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "sessionUpdate",
+      "toolCallId"
+     ]
+    },
+    {
+     "type": "object",
+     "properties": {
+      "sessionUpdate": {
+       "type": "string",
+       "enum": [
+        "available_commands_update"
+       ]
+      },
+      "availableCommands": {
+       "type": "array",
+       "items": {
+        "$ref": "#/schemas/AvailableCommand"
+       }
+      },
+      "_meta": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "sessionUpdate",
+      "availableCommands"
+     ]
+    }
+   ]
+  },
+  "StopReason": {
+   "oneOf": [
+    {
+     "type": "string",
+     "enum": [
+      "end_turn"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "max_tokens"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "max_turn_requests"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "refusal"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "cancelled"
+     ]
+    }
+   ]
+  },
+  "ToolCallContent": {
+   "oneOf": [
+    {
+     "type": "object",
+     "properties": {
+      "type": {
+       "type": "string",
+       "enum": [
+        "content"
+       ]
+      },
+      "content": {
+       "$ref": "#/schemas/ContentBlock"
+      },
+      "_meta": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "type",
+      "content"
+     ]
+    },
+    {
+     "type": "object",
+     "properties": {
+      "type": {
+       "type": "string",
+       "enum": [
+        "diff"
+       ]
+      },
+      "path": {
+       "type": "string"
+      },
+      "oldText": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "newText": {
+       "type": "string"
+      },
+      "_meta": {
+       "type": [
+        "object",
+        "null"
+       ],
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "type",
+      "path",
+      "newText"
+     ]
+    }
+   ]
+  },
+  "ToolCallId": {
+   "type": "string"
+  },
+  "ToolCallLocation": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string"
+    },
+    "line": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "path"
+   ]
+  },
+  "ToolCallStatus": {
+   "oneOf": [
+    {
+     "type": "string",
+     "enum": [
+      "pending"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "in_progress"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "completed"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "failed"
+     ]
+    }
+   ]
+  },
+  "ToolCallUpdate": {
+   "type": "object",
+   "properties": {
+    "toolCallId": {
+     "$ref": "#/schemas/ToolCallId"
+    },
+    "kind": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/ToolKind"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "status": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/ToolCallStatus"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "title": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "content": {
+     "type": [
+      "array",
+      "null"
+     ],
+     "items": {
+      "$ref": "#/schemas/ToolCallContent"
+     }
+    },
+    "locations": {
+     "type": [
+      "array",
+      "null"
+     ],
+     "items": {
+      "$ref": "#/schemas/ToolCallLocation"
+     }
+    },
+    "rawInput": {},
+    "rawOutput": {},
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "toolCallId"
+   ]
+  },
+  "ToolKind": {
+   "oneOf": [
+    {
+     "type": "string",
+     "enum": [
+      "read"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "edit"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "delete"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "move"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "search"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "execute"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "think"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "fetch"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "switch_mode"
+     ]
+    },
+    {
+     "type": "string",
+     "enum": [
+      "other"
+     ]
+    }
+   ]
+  },
+  "UnstructuredCommandInput": {
+   "type": "object",
+   "properties": {
+    "hint": {
+     "type": "string"
+    },
+    "_meta": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "hint"
+   ]
+  }
+ }
+}

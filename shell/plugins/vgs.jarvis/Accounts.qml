@@ -54,6 +54,7 @@ Item {
             XDG_DATA_HOME: Quickshell.env("XDG_DATA_HOME"), XDG_RUNTIME_DIR: Quickshell.env("XDG_RUNTIME_DIR"),
             DBUS_SESSION_BUS_ADDRESS: Quickshell.env("DBUS_SESSION_BUS_ADDRESS"),
             CLAUDE_CONFIG_DIR: Quickshell.env("CLAUDE_CONFIG_DIR"), CODEX_HOME: Quickshell.env("CODEX_HOME"),
+            COPILOT_HOME: Quickshell.env("COPILOT_HOME"),
             LANG: "C.UTF-8"
         })
         stdout: StdioCollector { onStreamFinished: root.output = text }
