@@ -75,7 +75,7 @@ Select Set up local voice in Settings or the launcher's Jarvis group. Choose a t
 
 Brain account keeps the account you select. This skeleton does not start a brain. Settings retains a saved selection when discovery no longer offers it.
 
-Select Accounts to add a directory, choose an existing keyring item by label or inspect login hints. Verify asks for a model and consent because a real inference request may cost money. API and local verification send one small request. A Claude Code account sends one small request through its own installed program, which keeps its login. Other subscriptions and speech-only verification remain unavailable. A login hint never proves inference access.
+Select Accounts to add a directory, choose an existing keyring item by label or inspect login hints. Verify asks for a model and consent because a real inference request may cost money. API and local verification send one small request. A Claude Code, Codex or GitHub Copilot account sends one small request through its own installed program, which keeps its login. Speech-only verification remains unavailable. A login hint never proves inference access.
 
 ## Browser
 

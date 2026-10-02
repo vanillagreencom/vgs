@@ -32,7 +32,7 @@ The [GPT-Live row](jarvis-live.md#evidence) in `cli` selects on the engine, the 
 
 The [wire brain rows](jarvis-brain.md#evidence) select both drivers on shared history, release, transport, secret and stream inputs. Each driver's vendor scripts select its own row. The [Messages row](jarvis-anthropic.md#evidence) includes schema-pinned loopback and cancellation controls.
 
-The [Codex harness rows](jarvis-codex.md#evidence) put the app-server judge in `logic`, selected by its excerpt and recording, and the harness in `cli`, selected by the harness, gate, account, bridge and router owners and its stub. The account, engine and audio daemon rows also select on the harness modules they load.
+The [Codex harness rows](jarvis-codex.md#evidence) put the app-server judge in `logic`, selected by its excerpt and recording, and the harness in `cli`, selected by the harness, gate, account, bridge and router owners and its stub. The account, engine and audio daemon rows also select on the harness modules they load. The [ACP harness rows](jarvis-acp.md#evidence) follow the same split: the ACP judge in `logic`, selected by its excerpt and recording, and the harness in `cli` with its stub; the rows that load the Codex harness also select on the ACP modules.
 
 The [Jarvis account suites](jarvis-accounts.md#evidence) select from the account judge, provider declaration, secret owner, terminal and private fixtures. Their CLI rows use the shared isolated world. The nested Jarvis row reads account status and core TUI completion.
 

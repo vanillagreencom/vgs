@@ -19,6 +19,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [jarvis-policy.md](jarvis-policy.md): read before touching the Jarvis action judge, tool schemas, protected paths or turn taint.
 - [jarvis-policy-paths.md](jarvis-policy-paths.md): read before touching `Denied`, its protected roots or the account name rule.
 - [jarvis-codex.md](jarvis-codex.md): read before touching the Codex harness brain, its app-server judge, a harness program's approvals or Codex Verify.
+- [jarvis-acp.md](jarvis-acp.md): read before touching the ACP harness brain, its protocol judge, Copilot's lockdown or Copilot Verify.
 - [notification-actions.md](notification-actions.md): read before touching what a click on a notification does, which window it raises, or which notifications the service keeps holding for the inbox.
 - [notification-senders.md](notification-senders.md): read before touching a notification rule's senders, a browser's site address, the copies of one message, or the Slack photo cache, its tokens and their Status rows.
 - [notification-slack-cache.md](notification-slack-cache.md): read before touching how Slack's disk cache is read, the workspace icon copy or the Slack custom emoji.
