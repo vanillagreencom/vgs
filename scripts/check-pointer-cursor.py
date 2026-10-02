@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Enforce the pointer cursor rule docs/architecture/components.md states.
+"""Enforce the pointer rules docs/architecture/components.md states.
 
 Every element of shipped QML that takes a click shows the pointing hand
-through `PointerCursor` from qs.Ui, the one owner of the hand:
+through `PointerCursor` from qs.Ui, the one owner of the hand, and no view
+scrolls by a mouse drag:
   cursor-missing   an element that takes a click declares no PointerCursor
                    among its direct children. A TapHandler holds no
                    children, so it takes one among its parent's. The
@@ -18,7 +19,12 @@ through `PointerCursor` from qs.Ui, the one owner of the hand:
                    repository's own shell/Ui/foundation/PointerCursor.qml,
                    matched by resolved path, so a file of that name under
                    any other tree, a plugin's included, is no owner.
-Both rules read code with comments blanked, through scripts/qml_source.py;
+  mouse-drag       an element of DRAG_VIEWS, Flickable and the views built
+                   on it, that does not set `acceptedButtons: Qt.NoButton`
+                   among its own properties, so a mouse press and drag
+                   scrolls it. ScrollArea in qs.Ui sets it once for every
+                   use. No marker exempts it.
+The rules read code with comments blanked, through scripts/qml_source.py;
 the structure is read with string contents blanked too, so a brace inside a
 string opens no block.
 
@@ -28,9 +34,10 @@ templates, which a plugin author copies. `vgs-plugin check` passes one
 plugin directory.
 
 Every finding is one line: `<rule> <file>:<line> <detail>`. The pass is
-`check-pointer-cursor: ok files=<n> clickable=<n> exempt=<n>`. Exit 0 when
-clean, 1 on any finding, 2 when a directory or file cannot be read, printed
-as `check-pointer-cursor: unreadable: <path>: <strerror>`. A tree the walk
+`check-pointer-cursor: ok files=<n> clickable=<n> exempt=<n> views=<n>`,
+`views` counting the elements of DRAG_VIEWS read. Exit 0 when clean, 1 on
+any finding, 2 when a directory or file cannot be read, printed as
+`check-pointer-cursor: unreadable: <path>: <strerror>`. A tree the walk
 found no QML file in is unreadable too: an empty walk certifies nothing.
 """
 import os
@@ -41,12 +48,15 @@ import sys
 # no bytecode cache beside it.
 sys.dont_write_bytecode = True
 from qml_source import Unreadable, blank_comments, source_texts
-from qml_controls import blocks, marker, takes_click, template_alias
+from qml_controls import NO_BUTTON, base_type, blocks, marker, takes_click, template_alias
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 DEFAULT_ROOTS = (os.path.join(REPO, "shell"), os.path.join(REPO, ".agents", "skills", "vgs-plugin", "templates"))
 OWNER = os.path.realpath(os.path.join(REPO, "shell", "Ui", "foundation", "PointerCursor.qml"))
 COMPONENT = "PointerCursor"
+# Flickable and the Qt Quick views built on it, each of which drags its
+# content with the left mouse button unless told otherwise.
+DRAG_VIEWS = frozenset(("Flickable", "ListView", "GridView", "TableView", "TreeView", "HorizontalHeaderView", "VerticalHeaderView"))
 
 LITERAL = re.compile(r"\bQt\.PointingHandCursor\b")
 EXEMPT = re.compile(r"^\s*//\s*pointer-cursor-exempt:\s*\S")
@@ -70,7 +80,13 @@ def check_tree(root, findings, counts):
         alias = template_alias(code)
         raw_lines = text.split("\n")
         for block in blocks(blank_comments(text, literals=False)):
-            if block.type is None or not takes_click(block, alias):
+            if block.type is None:
+                continue
+            if base_type(block.type, None) in DRAG_VIEWS:
+                counts["views"] += 1
+                if NO_BUTTON.search(block.own_text()) is None:
+                    findings.append(f"mouse-drag {path}:{block.line} {block.type}: it does not set acceptedButtons: Qt.NoButton")
+            if not takes_click(block, alias):
                 continue
             counts["clickable"] += 1
             holder = block.parent if block.type == "TapHandler" else block
@@ -89,7 +105,7 @@ def check_tree(root, findings, counts):
 def main(argv):
     roots = argv[1:] or list(DEFAULT_ROOTS)
     findings = []
-    counts = {"files": 0, "clickable": 0, "exempt": 0}
+    counts = {"files": 0, "clickable": 0, "exempt": 0, "views": 0}
     try:
         for root in roots:
             check_tree(os.path.abspath(root), findings, counts)
@@ -101,7 +117,7 @@ def main(argv):
     if findings:
         print(f"check-pointer-cursor: findings={len(findings)}")
         return 1
-    print(f"check-pointer-cursor: ok files={counts['files']} clickable={counts['clickable']} exempt={counts['exempt']}")
+    print(f"check-pointer-cursor: ok files={counts['files']} clickable={counts['clickable']} exempt={counts['exempt']} views={counts['views']}")
     return 0
 
 

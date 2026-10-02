@@ -16,8 +16,8 @@ ENV = {"PATH": os.environ.get("PATH", ""), "LC_ALL": "C"}
 # The owner's text, which only the repository's own copy may hold.
 OWNER = "import QtQuick\nHoverHandler {\n    cursorShape: Qt.PointingHandCursor\n}\n"
 HEAD = "import QtQuick\nimport QtQuick.Templates as T\nimport qs.Ui\n"
-# Every element that takes a click, each with its cursor, and the elements
-# that take none, each without one.
+# Every element that takes a click, each with its cursor, the elements
+# that take none, each without one, and views that take no mouse button.
 CLEAN = HEAD + """Item {
     MouseArea { anchors.fill: parent; PointerCursor {} }
     T.Button { PointerCursor {} }
@@ -27,6 +27,8 @@ CLEAN = HEAD + """Item {
     HoverHandler {}
     T.TextField {}
     T.ProgressBar {}
+    Flickable { acceptedButtons: Qt.NoButton }
+    ListView { acceptedButtons: Qt.NoButton }
 }
 """
 
@@ -66,6 +68,15 @@ ROWS = [
     ("an area after a JavaScript block is read", body("    function f() { if (true) { return; } }\n    MouseArea { }\n"), "cursor-missing", 6),
     ("the hand named outside the owner", body("    MouseArea { cursorShape: Qt.PointingHandCursor; PointerCursor {} }\n"), "cursor-literal", 5),
     ("the hand named in a comment is no finding", body("    // cursorShape: Qt.PointingHandCursor\n"), None, None),
+    ("a Flickable that drags with the mouse", body("    Flickable { clip: true }\n"), "mouse-drag", 5),
+    ("a ListView set as a property value", body("    property Item c: ListView { }\n"), "mouse-drag", 5),
+    ("a GridView that takes the left button", body("    GridView { acceptedButtons: Qt.LeftButton }\n"), "mouse-drag", 5),
+    ("a TableView without the setting", body("    TableView { }\n"), "mouse-drag", 5),
+    ("a NoButton inside a child object does not excuse the view", body("    Flickable {\n        Item { property int acceptedButtons: Qt.NoButton }\n    }\n"), "mouse-drag", 5),
+    ("a NoButton in a comment does not excuse the view", body("    ListView {\n        // acceptedButtons: Qt.NoButton\n    }\n"), "mouse-drag", 5),
+    ("the cursor marker exempts no view", body("    // pointer-cursor-exempt: a list\n    Flickable { }\n"), "mouse-drag", 6),
+    ("a view that takes no mouse button", body("    GridView { acceptedButtons: Qt.NoButton }\n"), None, None),
+    ("a view named in a comment is no finding", body("    // Flickable { }\n"), None, None),
 ]
 
 JS_ROWS = [
@@ -139,14 +150,14 @@ def run_impostor_owner_row():
 def run_repository_floor():
     """The repository's own trees pass and the parser found what they hold:
     142 QML files and 31 elements that take a click when this row was
-    written. A count under the floor names the extractor as broken, not the
+    written, and 7 views when the drag rule was added. A count under the floor names the extractor as broken, not the
     tree as sparse. shell/Ui/foundation/PointerCursor.qml names the hand, so
     the pass also holds the one real owner exempt."""
     proc = subprocess.run([sys.executable, CHECK], capture_output=True, text=True, check=False, env=ENV)
     fields = dict(part.split("=", 1) for part in proc.stdout.strip().split()[2:] if "=" in part) if proc.returncode == 0 else {}
-    good = proc.returncode == 0 and int(fields.get("files", 0)) >= 100 and int(fields.get("clickable", 0)) >= 25
+    good = proc.returncode == 0 and int(fields.get("files", 0)) >= 100 and int(fields.get("clickable", 0)) >= 25 and int(fields.get("views", 0)) >= 7
     if proc.returncode == 0 and not good:
-        print(f"  the extractor is broken: it found files={fields.get('files')} clickable={fields.get('clickable')}")
+        print(f"  the extractor is broken: it found files={fields.get('files')} clickable={fields.get('clickable')} views={fields.get('views')}")
     return report("the repository's trees pass above the coverage floor", good, proc)
 
 
