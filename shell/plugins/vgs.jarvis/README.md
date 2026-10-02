@@ -32,6 +32,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Desktop tools read and copy clipboard text, play, pause and skip media, set and mute the speaker volume, and show a notification. Screen brightness waits for the Displays plugin's brightness service.
 - A clipboard read refuses a copy that a password manager marks as secret, and anything that is not text.
 
+- Jarvis prepares a private browser from Set up browser in Settings.
+
 ## Requirements
 
 The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and a desktop Secret Service. Key presence needs busctl. Terminal flows need gum. Local setup needs uv, curl, Python and user namespaces. Its locked wheels target Linux x86_64. A CUDA tier also needs working CUDA libraries. The core's requirement notice offers installation of declared missing commands.
@@ -69,3 +71,9 @@ Select Set up local voice in Settings or the launcher's Jarvis group. Choose a t
 Brain account keeps the account you select. This skeleton does not start a brain. Settings retains a saved selection when discovery no longer offers it.
 
 Select Accounts to add a directory, choose an existing keyring item by label or inspect login hints. Verify asks for a model and consent because a real inference request may cost money. API and local verification send one small request. Subscription and speech-only verification remain unavailable. A login hint never proves inference access.
+
+## Browser
+
+Select Set up browser in Settings or the launcher's Jarvis group. Setup checks an installed browser on a blank page. If no browser is found, it offers a private download. Settings shows readiness after the check succeeds.
+
+The driver needs agent-browser. The requirement notice offers its installation. Browser actions use a private session. Jarvis asks for input access to each site. A site grant lets Jarvis act as you there. Submit actions need confirmation. Password entry remains with you. This skeleton has no connected brain, so browser actions are not active yet.

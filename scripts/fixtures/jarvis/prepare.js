@@ -31,6 +31,8 @@ function freshSuite(tree, suite, root) {
         "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
         "scripts/fixtures/jarvis/audio-tool.py", "scripts/fixtures/jarvis/desktop.js", "scripts/fixtures/jarvis/desktop-driver.js", "scripts/fixtures/jarvis/desktop-tool.py",
         "scripts/smoke/harness.sh", "scripts/smoke/rows/jarvis-keys.sh",
+        "scripts/fixtures/jarvis/browser.js", "scripts/fixtures/jarvis/browser.py", "scripts/fixtures/jarvis/browser-gum.py",
+        "scripts/fixtures/jarvis/policy.js",
         "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Core/HyprlandLayer.js", "shell/Commons/DesktopLaunch.js",
         "scripts/fixtures/jarvis/engine.js", "scripts/fixtures/schema-check.js",
         "scripts/fixtures/jarvis-brain/openai-chat.schema.json", "scripts/fixtures/jarvis-brain/openai-chat-frames.js"])
@@ -229,15 +231,25 @@ function service(sourceTree, tree, root) {
     fs.writeFileSync(keys, keysSource.replace(keysNeedle, keysCommand));
     const local = path.join(tree, "shell/plugins/vgs.jarvis/LocalRuntime.qml");
     const localSource = fs.readFileSync(local, "utf8");
-    const localNeedle = 'command: ["python3", "-I", root.program, "status"]';
+    const localNeedle = 'property var command: ["python3", "-I", program, "status"]';
     assert.equal(localSource.split(localNeedle).length - 1, 1, "local status instrumentation match");
-    const localCommand = 'command: ["bash", ' + JSON.stringify(launcher) + ', ' +
+    const localCommand = 'property var command: ["bash", ' + JSON.stringify(launcher) + ', ' +
         JSON.stringify(path.join(root, "standins")) + ', "--", "python3", ' +
         JSON.stringify(path.join(sourceTree, "scripts/fixtures/jarvis-setup/status.py")) + ', ' +
         JSON.stringify(path.join(root, "local-mode")) + ']';
     if (!fs.existsSync(path.join(root, "local-mode")))
         fs.writeFileSync(path.join(root, "local-mode"), "absent\n");
     fs.writeFileSync(local, localSource.replace(localNeedle, localCommand));
+    const browser = path.join(tree, "shell/plugins/vgs.jarvis/BrowserRuntime.qml");
+    const browserSource = fs.readFileSync(browser, "utf8");
+    const browserNeedle = 'command: ["node", program, "status"]';
+    assert.equal(browserSource.split(browserNeedle).length - 1, 1, "browser status instrumentation match");
+    const browserCommand = 'command: ["bash", ' + JSON.stringify(launcher) + ', ' +
+        JSON.stringify(path.join(root, "standins")) + ', "--", "node", ' +
+        JSON.stringify(path.join(sourceTree, "scripts/fixtures/jarvis/browser-status.js")) + ', ' +
+        JSON.stringify(path.join(root, "browser-mode")) + ']';
+    if (!fs.existsSync(path.join(root, "browser-mode"))) fs.writeFileSync(path.join(root, "browser-mode"), "absent\n");
+    fs.writeFileSync(browser, browserSource.replace(browserNeedle, browserCommand));
     const accounts = path.join(tree, "shell/plugins/vgs.jarvis/Accounts.qml");
     const accountsSource = fs.readFileSync(accounts, "utf8");
     const accountsNeedle = 'probe.command = ["node", program, "presence", JSON.stringify(Providers.keyPresence(name => Quickshell.env(name)))];';

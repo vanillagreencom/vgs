@@ -35,6 +35,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const Executors = require("./Executors.js");
     const Input = require("./Input.js");
     const ComputerHelp = require("./ComputerHelp.js");
+    const Browser = require("./Browser.js");
     const TaskRunner = require("./TaskRunner.js");
     const ToolBridge = require("./ToolBridge.js");
     const ChainedEngine = require("./ChainedEngine.js");
@@ -57,6 +58,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let engine = null;
     let executors = null;
     let input = null;
+    let browser = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
@@ -68,6 +70,10 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         if (engine !== null) engine.close();
         if (executors !== null) executors.close();
         if (input !== null) input.close();
+        if (browser !== null) {
+            try { browser.close(); }
+            catch (error) { process.stderr.write(error.message + "\n"); process.exitCode = 74; }
+        }
         if (requests !== null) requests.close();
         if (audit !== null) audit.close();
         if (tasks !== null) tasks.close();
@@ -297,7 +303,6 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         directory: context.directories.runtime });
                     // Executor owners register only after their real probes.
                     Object.assign(runner.ports, router.ports);
-                    router.register("guidance", ComputerHelp.create());
                     requests = ShellRequests.create({ Protocol, clock, write: fields =>
                         write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
                     executors = Executors.register(router, { find: commandFile, environment: process.env,
@@ -314,6 +319,13 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         if (record.commands.length > 0)
                             write({ v: 1, type: "input-ready", gen: runner.state.gen, revision: context.revision, commands: record.commands });
                     });
+                    browser = Browser.install({ router, environment: process.env });
+                    if (browser === null) router.register("guidance", ComputerHelp.create());
+                    const routerSync = runner.ports.tools.sync;
+                    runner.ports.tools.sync = state => {
+                        routerSync(state);
+                        if (browser !== null) browser.sync(state);
+                    };
                     // The task executor needs an agent profile and a release port
                     // for the conversation's recipients. Neither exists yet, so
                     // TaskRunner only observes and stops recorded tasks.
@@ -367,6 +379,14 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     process.stdout.on("error", error => ioFailed("stdout", error));
     process.stdin.on("error", error => ioFailed("stdin", error));
     process.stdin.on("data", chunk => read(decoder.write(chunk)));
+    function terminate() {
+        if (ending) return;
+        ending = true;
+        teardown();
+        void audio.close("lease").then(() => process.exit(process.exitCode ?? 0));
+    }
+    process.once("SIGTERM", terminate);
+    process.once("SIGINT", terminate);
     process.stdin.on("end", () => {
         read(decoder.end());
         if (ending) return;

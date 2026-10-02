@@ -14,7 +14,7 @@ Name:           vgs-git
 Version:        %{vgs_version}
 Release:        1%{?dist}
 Summary:        Desktop shell for Hyprland on Quickshell, development version
-License:        MIT AND OFL-1.1 AND ISC
+License:        MIT AND OFL-1.1 AND ISC AND Apache-2.0
 URL:            https://github.com/vanillagreencom/vgs
 Source0:        %{url}/archive/%{vgs_commit}/vgs-%{vgs_commit}.tar.gz
 BuildArch:      noarch
@@ -57,6 +57,7 @@ Recommends:     wtype
 Recommends:     ydotool
 Recommends:     systemd
 Recommends:     iproute
+Recommends:     chromium
 Recommends:     tmux
 Recommends:     ImageMagick
 Conflicts:      vgs-shell

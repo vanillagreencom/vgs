@@ -7,6 +7,8 @@ const { load } = require("../bin/lib/qml-library.js");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const routerFile = path.join(backend, "ToolRouter.js");
 const sessionFile = path.join(tree, "shell/plugins/vgs.jarvis/Session.js");
+const browserFixture = require("./fixtures/jarvis/browser.js");
+const Browser = require(path.join(backend, "Browser.js"));
 
 world(() => {
     const Router = require(routerFile);
@@ -44,6 +46,7 @@ world(() => {
             audit, result: value => results.push(value) });
         Object.assign(ports, router.ports);
         for (const executor of ["windows", "compositor", "files", "input", "sandbox", "browser"]) {
+            if (executor === "browser" && options.browser) continue;
             router.register(executor, { commands: ["hyprctl", "wtype", "wlrctl", "bwrap", "agent-browser"],
                 timeoutMs: 1000, cancellable: true,
                 observe: () => ({ target, text: { effective: [] } }),
@@ -52,6 +55,11 @@ world(() => {
                     starts.push(call);
                     answers.push(done);
                 }, cancel: call => starts.push({ cancelled: call.id }) });
+        }
+        if (options.browser) {
+            const lease = options.browser.install({ router, environment: process.env });
+            assert.ok(lease, "setup-verified browser registers its real executors");
+            cleanups.push(() => lease.close());
         }
         runner.dispatch({ type: "snapshot", locked: false, engine: "chained", configured: true, settings: {} });
         runner.dispatch({ type: "indicator", shown: true });
@@ -79,6 +87,34 @@ world(() => {
             },
             time: value => { at = value; }, lock: value => { locked = value; }, target: value => { target = value; } };
     }
+    function browserHelp(implementation) {
+        browserFixture.mode({});
+        const marker = path.join(process.env.XDG_DATA_HOME, "vgs/jarvis/browser-ready.json");
+        fs.mkdirSync(path.dirname(marker), { recursive: true });
+        fs.writeFileSync(marker, JSON.stringify({ version: "0.38.1" }));
+        try {
+            const w = make(Router, Session, { browser: implementation });
+            assert.deepEqual(w.router.offer().find(row => row.id === "help").parameters.properties.topic.enum,
+                ["input", "browser"]);
+            assert.equal(w.call("help", { topic: "input" }).kind, "proposed");
+            assert.equal(w.results.at(-1).results[0].item.content,
+                fs.readFileSync(path.join(backend, "skills/computer/input.md"), "utf8").trim());
+            assert.equal(w.call("help", { topic: "browser" }).kind, "proposed");
+            const answer = w.results.at(-1).results[0];
+            assert.equal(answer.id, "model-help");
+            assert.match(answer.item.content, /This file is a discovery stub/);
+            assert.match(answer.item.content, /fixture installed core guide/);
+            w.call("help", { topic: "browser" });
+            assert.equal(browserFixture.calls().filter(row => row.args[0] === "skills").length, 1);
+        } finally { fs.rmSync(marker, { force: true }); }
+    }
+    browserHelp(Browser);
+    mutant(path.join(backend, "Browser.js"), "browser-help-consumer", 'router.register("guidance",',
+        'router.register("wire",', (implementation, folder) => {
+            fs.cpSync(path.join(backend, "skills"), path.join(folder, "skills"), { recursive: true });
+            browserHelp(implementation);
+        });
+    controls++;
     const shell = { argv: ["fixture"], cwd: fixtures.project, network: false };
     const text = { text: "fixture text" };
     const held = w => { assert.equal(w.call("shell.argv", shell).kind, "held"); w.show(); w.time(700); };
@@ -547,4 +583,4 @@ world(() => {
         console.log("control=grant-leak detected");
         console.log("test-jarvis-router: ok cases=" + cases.length + " controls=" + controls);
     } finally { for (const cleanup of cleanups.reverse()) cleanup(); }
-});
+}, browserFixture.standins);

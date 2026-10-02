@@ -54,6 +54,22 @@ check "the core input resolver is installed" test -e "$dest/usr/share/vgs/bin/li
 check "Jarvis input guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/input.md"
 check "installed input help reads its packaged file" "$node_bin" -e 'const h=require(process.argv[1]).create(); if(JSON.stringify(h.topics)!==JSON.stringify(["input"]))process.exit(1); h.start({id:"help",args:{topic:"input"}},r=>{if(r.outcome!=="completed"||!r.content.includes("input.text"))process.exit(1)});' "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/ComputerHelp.js"
 check "Jarvis runtime guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/core.md"
+browser_standins="$tmp/browser-standins"
+mkdir -p -- "$browser_standins"
+cp -- "$repo/scripts/fixtures/jarvis/browser.py" "$browser_standins/agent-browser"
+cp -- "$repo/scripts/fixtures/jarvis/browser-gum.py" "$browser_standins/gum"
+chmod 700 "$browser_standins/agent-browser" "$browser_standins/gum"
+run_capture "$tmp/browser.out" "$tmp/browser.err" status env -i PATH=/usr/bin:/bin \
+  JARVIS_TEST_SCRATCH_ROOT="${JARVIS_TEST_SCRATCH_ROOT:-$repo/tmp}" \
+  "$repo/scripts/lib/jarvis-env.sh" "$browser_standins" -- node \
+  "$repo/scripts/test-jarvis-browser-setup.js" --inside "$dest/usr/share/vgs"
+if [[ $status == 77 ]]; then
+  unavailable=true
+  echo "test-install-tree: browser=unavailable exit=77"
+else
+  if [[ $status != 0 ]]; then cat -- "$tmp/browser.err" >&2; fi
+  check "installed browser setup and stub reach their real consumer" test "$status" = 0
+fi
 run_capture "$tmp/guidance.out" "$tmp/guidance.err" status "${voice_command[@]}" "$dest/usr/share/vgs"
 check "installed guidance composes every consumer without source-tree files" test "$status" = 0
 setup_standins="$tmp/setup-standins"

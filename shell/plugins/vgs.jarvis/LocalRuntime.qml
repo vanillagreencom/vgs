@@ -6,12 +6,15 @@ import Quickshell.Io
 Item {
     id: root
     property var shell: null
+    property string statusKey: "localRuntime"
+    property string tuiName: "setup-local"
+    property var command: ["python3", "-I", program, "status"]
     property bool pending: false
     property int code: -1
     property string output: ""
-    readonly property var tuiState: shell === null ? null : shell.tui.state["setup-local"]
+    readonly property var tuiState: shell === null ? null : shell.tui.state[tuiName]
     readonly property var endedAt: tuiState === null || tuiState === undefined ? null : tuiState.endedAt
-    readonly property string program: String(Qt.resolvedUrl("setup-local")).replace(/^file:\/\//, "")
+    property string program: String(Qt.resolvedUrl("setup-local")).replace(/^file:\/\//, "")
     onShellChanged: refresh()
     onEndedAtChanged: if (endedAt !== null) refresh()
 
@@ -30,21 +33,22 @@ Item {
         } catch (error) {
             value = { tone: "warning", text: "Setup check returned invalid status", action: true };
         }
-        const reply = shell.status.set("localRuntime", value);
+        const reply = shell.status.set(statusKey, value);
         if (reply !== "ok") {
-            const fallback = shell.status.set("localRuntime",
+            const fallback = shell.status.set(statusKey,
                 { tone: "warning", text: "Setup check returned invalid status", action: true });
             if (fallback !== "ok") throw new Error("jarvis-setup: status=refused");
         }
     }
     Process {
         id: probe
-        command: ["python3", "-I", root.program, "status"]
+        command: root.command
         clearEnvironment: true
         environment: ({
             PATH: Quickshell.env("PATH"), HOME: Quickshell.env("HOME"),
             XDG_STATE_HOME: Quickshell.env("XDG_STATE_HOME"),
-            XDG_DATA_HOME: Quickshell.env("XDG_DATA_HOME"), LC_ALL: "C.UTF-8"
+            XDG_DATA_HOME: Quickshell.env("XDG_DATA_HOME"),
+            XDG_RUNTIME_DIR: Quickshell.env("XDG_RUNTIME_DIR"), LC_ALL: "C.UTF-8"
         })
         stdout: StdioCollector { onStreamFinished: root.output = text }
         stderr: StdioCollector {}

@@ -236,6 +236,7 @@ f share/vgs/shell/plugins/vgs.gallery/manifest.json
 f share/vgs/shell/plugins/vgs.gallery/sample-emoji.png
 f share/vgs/shell/plugins/vgs.jarvis/AccountProviders.js
 f share/vgs/shell/plugins/vgs.jarvis/Accounts.qml
+f share/vgs/shell/plugins/vgs.jarvis/BrowserRuntime.qml
 f share/vgs/shell/plugins/vgs.jarvis/Bubble.qml
 f share/vgs/shell/plugins/vgs.jarvis/JarvisProtocol.js
 f share/vgs/shell/plugins/vgs.jarvis/Keys.qml
@@ -250,6 +251,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/AgentProfiles.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/AnthropicMessages.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audio.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Browser.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ChainedEngine.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Child.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ComputerHelp.js
@@ -280,12 +282,15 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/WireBrain.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/accounts.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/audio-child.py
+f share/vgs/shell/plugins/vgs.jarvis/backend/browser-setup.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/input-check.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/jarvisd.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/keys.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/mcp-shim
 f share/vgs/shell/plugins/vgs.jarvis/backend/net.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/session-runner.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/skills/browser/LICENSE
+f share/vgs/shell/plugins/vgs.jarvis/backend/skills/browser/SKILL.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/input.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/actions.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/duplex.md
@@ -308,6 +313,7 @@ f share/vgs/shell/plugins/vgs.jarvis/requirements-local.lock
 f share/vgs/shell/plugins/vgs.jarvis/setup-local
 f share/vgs/shell/plugins/vgs.jarvis/tui/accounts.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/add-key.sh
+f share/vgs/shell/plugins/vgs.jarvis/tui/setup-browser.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/setup-input.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/setup-local.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/task.sh

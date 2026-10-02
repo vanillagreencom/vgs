@@ -4,7 +4,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 
 [Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
 
-[D070](../decisions/D070-jarvis-action-policy.md) records the action boundary. The [Jarvis plan § Policy](../plans/v2-jarvis-plan.md#37-policy-authority-effects-approval-audit) defines its authority. This code judges calls but executes none. The daemon registers only the [desktop executors](jarvis-desktop-tools.md), and no brain calls them yet. It exposes no account, capture or network connection.
+[D070](../decisions/D070-jarvis-action-policy.md) records the action boundary. The [Jarvis plan § Policy](../plans/v2-jarvis-plan.md#37-policy-authority-effects-approval-audit) defines its authority. This code judges calls but executes none. The daemon registers the [desktop executors](jarvis-desktop-tools.md) and setup-verified [browser executor](jarvis-browser.md), and no brain calls them yet. It exposes no account, capture or network connection.
 
 ## Owners
 
@@ -22,7 +22,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 
 `Tools.TABLE` holds closed JSON Schema object descriptors, typed sentence templates, effects, executor ids and required commands. `Tools.BROWSER` holds the browser subcommands. They are frozen data. Refined call snapshots are frozen too. The table supports the schema types it declares, not an arbitrary schema supplied by a model. The [tool bridge](jarvis-bridge.md#calls-and-results) offers these same descriptors as each tool's `inputSchema` instead of writing a second schema.
 
-Browser arguments are named fields, not vendor argv. Unknown commands and extra flags refuse. Action references use snapshot element ids, not flags or arbitrary selectors. URLs admit HTTP and HTTPS without userinfo. This prevents a caller from selecting a host browser profile or passing browser security overrides. J51 still owns the private session and vendor action policy.
+Browser arguments are named fields, not vendor argv. Unknown commands and extra flags refuse. Action references use snapshot element ids, not flags or arbitrary selectors. URLs admit HTTP and HTTPS without userinfo. This prevents a caller from selecting a host browser profile or passing browser security overrides. [The browser owner](jarvis-browser.md) supplies the private session and vendor action policy.
 
 The exact read-only argv table belongs to `Tools.js`. Extra options, an absolute executable path, wrappers and shell lines do not inherit that classification. Requested command networking makes the effect `external`. J49 must use fixed system implementations, never a caller-controlled PATH substitute, for those read-only argv. J23 must confine even a read-only command.
 

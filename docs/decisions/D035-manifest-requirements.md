@@ -38,6 +38,10 @@ Omarchy (`basecamp/omarchy`, `main`) probes a command where it is used, `omarchy
 | The install runs in the floating terminal when the user picks the row. | The same: Install on the requirement notice opens a core TUI running `vgsh pkg run install`. | The package manager asks for root in a terminal the user watches; the shell never elevates ([D034](D034-one-package-manager-table.md)). |
 | `omarchy-default-terminal` finds its terminal missing and runs itself again with `--install` in its floating terminal (`e332dc97`). | The core notice asks first, for any plugin's declared commands, then installs in its floating TUI. | One core path serves every plugin; a plugin names its commands as data and never runs a package manager itself. |
 
+## Jarvis browser
+
+[The browser owner](../architecture/jarvis-browser.md) uses an optional `agent-browser` requirement. Its user-started setup verifies a private browser. VGS ships the adapted discovery stub with its Apache-2.0 licence. The installed driver supplies the version-matched core guide on demand. VGS ships no vendor binary or full guide. The executor sets the vendor action policy and refuses raw arguments through `Tools.js`.
+
 ## Alternatives considered
 
 - **A plugin-to-plugin dependency key.** Refused by D005: a load order, refusals to explain, and a plugin that breaks when another is disabled.

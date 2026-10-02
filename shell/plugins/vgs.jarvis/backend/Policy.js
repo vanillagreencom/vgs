@@ -182,6 +182,7 @@ function decide(call, context) {
         if (refined.input === "browser") {
             if (input.target.kind !== "site") return { kind: "refuse", reason: "browser-target" };
             if (input.target.password !== false) return { kind: "refuse", reason: "password-target" };
+            if (input.target.submit === true) effect = "external";
         } else if (input.target.kind === "site") return { kind: "refuse", reason: "desktop-target" };
         // J47 keys and pointer calls can enter or paste commands without
         // showing their text. Only the explicit text tool can hold that text.

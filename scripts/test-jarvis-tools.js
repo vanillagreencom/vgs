@@ -50,9 +50,9 @@ world(() => {
         ["task.start", { goal: "synthetic task", cwd: project }, "exec", "agent"],
         ["browser", { command: "open", args: { url: "https://example.test/" } }, "read", "web"],
         ["browser", { command: "read", args: {} }, "read", "web"],
-        ["browser", { command: "click", args: { ref: "@e1" } }, "input", null, "browser"],
-        ["browser", { command: "fill", args: { ref: "@e1", text: "literal" } }, "input", null, "browser"],
-        ["browser", { command: "submit", args: { ref: "@e1" } }, "external", null, "browser"]
+        ["browser", { command: "click", args: { ref: "@e1" } }, "input", "web", "browser"],
+        ["browser", { command: "fill", args: { ref: "@e1", text: "literal" } }, "input", "web", "browser"],
+        ["browser", { command: "submit", args: { ref: "@e1" } }, "external", "web", "browser"]
     ];
     const check = (logic, [id, args, effect, source = null, input = null]) => {
         const result = logic.refine({ id, args });

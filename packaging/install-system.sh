@@ -9,7 +9,7 @@
 # $DESTDIR$PREFIX/bin/vgsh and points to ../share/vgs/bin/vgsh. Root README.md
 # and LICENSE land under share/doc/vgs and share/licenses/vgs.
 # The installed shell tree drops developer Markdown under shell/.
-# Jarvis's backend/skills/voice Markdown is runtime guidance and ships.
+# Jarvis's backend/skills Markdown is runtime guidance and ships.
 # Install into a fresh DESTDIR, or remove an
 # old runtime tree before running this script. Refusals print one keyed first
 # line.
@@ -55,6 +55,7 @@ skip_shell_markdown() { # RELATIVE_PATH
   [[ $1 == shell/* ]] || return 1
   [[ $1 == shell/plugins/vgs.jarvis/backend/skills/voice/*.md ]] && return 1
   [[ $1 == shell/plugins/vgs.jarvis/backend/skills/computer/*.md ]] && return 1
+  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/browser/SKILL.md ]] && return 1
   [[ $1 == *.md ]]
 }
 

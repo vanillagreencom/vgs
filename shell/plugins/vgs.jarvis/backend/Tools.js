@@ -82,9 +82,9 @@ const TABLE = {
 const BROWSER = {
     open: { effect: "read", schema: { url: url }, source: "web" },
     read: { effect: "read", schema: {}, source: "web" },
-    click: { effect: "input", schema: { ref: reference }, input: "browser" },
-    fill: { effect: "input", schema: { ref: reference, text: text }, input: "browser" },
-    submit: { effect: "external", schema: { ref: reference }, input: "browser" }
+    click: { effect: "input", schema: { ref: reference }, input: "browser", source: "web" },
+    fill: { effect: "input", schema: { ref: reference, text: { ...text, pattern: "^(?!-)[^\\u0000]*$" } }, input: "browser", source: "web" },
+    submit: { effect: "external", schema: { ref: reference }, input: "browser", source: "web" }
 };
 const ELEVATION = new Set(["sudo", "pkexec", "doas", "run0", "su", "sudoedit"]);
 // Exact argv only. A wrapper, an extra option or a shell line stays exec.

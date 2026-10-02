@@ -6,17 +6,19 @@ const path = require("node:path");
 const Tools = require("./Tools.js");
 const ROOT = path.join(__dirname, "skills/computer");
 const LIMIT = 8192;
-function create(root = ROOT) {
+function create(root = ROOT, browser = null) {
     const topics = Tools.TABLE.help.schema.properties.topic.enum.filter(topic => {
         try { return fs.lstatSync(path.join(root, topic + ".md")).isFile(); }
         catch (error) { if (error.code === "ENOENT") return false; throw error; }
     });
-    return { commands: [], topics, timeoutMs: 2000, cancellable: false,
+    if (browser !== null) topics.push("browser");
+    return { commands: [], topics, timeoutMs: browser === null ? 2000 : browser.timeoutMs, cancellable: false,
         start(call, done) {
             let fd;
             try {
                 const topic = call.args.topic;
                 if (!topics.includes(topic)) throw new Error("help-topic-unavailable");
+                if (topic === "browser" && browser !== null) { browser.start(call, done); return; }
                 fd = fs.openSync(path.join(root, topic + ".md"), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
                 if (!fs.fstatSync(fd).isFile()) throw new Error("help-file-invalid");
                 const buffer = Buffer.alloc(LIMIT + 1);

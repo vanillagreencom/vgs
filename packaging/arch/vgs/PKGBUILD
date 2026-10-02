@@ -11,7 +11,7 @@ pkgrel=1
 pkgdesc='Desktop shell for Hyprland, built on Quickshell'
 arch=('any')
 url='https://github.com/vanillagreencom/vgs'
-license=('MIT AND OFL-1.1 AND ISC')
+license=('MIT AND OFL-1.1 AND ISC AND Apache-2.0')
 depends=(
   'quickshell>=0.3.1'
   'hyprland>=0.56'
@@ -30,6 +30,8 @@ optdepends=(
   'wtype: Jarvis text and key input'
   'wlrctl: Jarvis pointer input without an input service'
   'ydotool: Jarvis pointer fallback with an already running input service'
+  'agent-browser-bin: private Jarvis browser driver'
+  'chromium: browser for Jarvis setup'
   'pipewire: Jarvis half-duplex audio capture, playback and discovery'
   'fd: launcher file and folder search'
   'fzf: launcher file search matching and the package pickers in floating TUIs'
