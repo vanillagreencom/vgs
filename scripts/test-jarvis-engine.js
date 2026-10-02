@@ -61,7 +61,8 @@ function rig(kit, server, options = {}) {
         context: () => ({ profile: "standard", locked: false, denied: null }),
         result: value => runner.ports.brain.outcome(value) });
     Object.assign(ports, router.ports);
-    router.register("compositor", { commands: [], timeoutMs: 30000, cancellable: false, start(call, done) {
+    // The callback stands in for a command-ready executor; it never starts hyprctl.
+    router.register("compositor", { commands: ["hyprctl"], timeoutMs: 30000, cancellable: false, start(call, done) {
         executions.push(call);
         if (options.holdTools) held.push(done);
         else done({ outcome: "completed", content: "focused " + call.args.window });
@@ -164,6 +165,7 @@ async function cases(kit, server, only = null) {
         assert.deepEqual(w.partials, ["what", "what time"], "partials reach Session in revision order");
         assert.deepEqual(user(body), ["What time is it?"]);
         assert.equal(body.messages[0].role, "system");
+        assert.ok(Array.isArray(body.tools), "router offers reach the brain as a tool list");
         assert.ok(body.tools.some(tool => tool.function.name === "windows_focus"), "router offers reach the brain");
         server.replies.push(text("It is **noon**. ", "Anything else?"));
         await until(() => w.s().playback.kind === "playing", "speech starts playback");
@@ -568,6 +570,7 @@ world(async () => {
         assert.deepEqual(server.faults, [], "every request matched the pinned schema");
         // Each control plants one defect in a disposable engine copy.
         const plants = [
+            ["router-offers", "tools: router.offer()", "tools: []", "turn-loop"],
             ["heard-omitted", "if (c.heard !== null) items.push(heardItem(c.heard));", "", "barge-in"],
             ["heard-once", "            c.heard = null;\n", "", "barge-in"],
             ["full-reply-heard", 'heard(c, turn, report === null ? "" : report.heardText);',
