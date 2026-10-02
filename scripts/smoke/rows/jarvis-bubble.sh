@@ -1,6 +1,9 @@
 # Runs inside jarvis-keys' private scripted ports and physical keyboard.
-# No real audio, provider, authentication or network runs. Presentation
-# and state poll once per IPC round trip; no latency budget is claimed.
+# Its engine copy selects the scripted chained plan, so each thinking turn
+# runs through the real chained engine and its words are the engine's own
+# captions. No real audio, provider, authentication or network runs.
+# Presentation and state poll once per IPC round trip; no latency budget is
+# claimed.
 set -euo pipefail
 
 jarvis_bubble_state() {
@@ -95,12 +98,13 @@ s=json.load(sys.stdin)["status"]; t=s.get("transcript")
 print("none" if t is None else "current" if t["gen"]==s["detail"]["state"]["gen"] else "stale")
 '
 }
-# After jarvis_bubble_begin: one thinking turn, with its caption on request.
+# After jarvis_bubble_begin: one thinking turn; on request, the engine's
+# scripted reply releases its words.
 jarvis_bubble_think() { # [caption]
   jarvis_key_talk_up
   jarvis_key_commit
   [[ ${1-} == caption ]] || return 0
-  jarvis_key_gate reply-caption
+  jarvis_key_gate reply
   expect_poll "the service publishes this conversation's assistant caption" current jarvis_bubble_caption
 }
 jarvis_bubble_no_capture() {
@@ -149,6 +153,12 @@ jarvis_bubble_begin() {
   expect_poll "the listening bubble has presented on its own host" presented jarvis_bubble_state
 }
 
+jarvis_bubble_engine="$repo/shell/plugins/vgs.jarvis/backend/ChainedEngine.js"
+cp -- "$jarvis_bubble_engine" "$sandbox/jarvis-bubble-engine-before"
+jarvis_disable
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/scripted.js" --chained-engine "$jarvis_bubble_engine"
+jarvis_rescan
+jarvis_enable
 expect_poll "ready idle maps no bubble" 0 layer_count vgs:layer
 expect "the Jarvis widget unplaces without disabling its service" ok ipc shell setPluginPlaced vgs.jarvis false
 expect "the build contains no Jarvis bar widget" 0 jarvis_bubble_widgets
@@ -329,6 +339,7 @@ jarvis_key_talk_up
 jarvis_key_stop
 jarvis_disable
 cp -- "$sandbox/jarvis-bubble-before" "$jarvis_bubble_file"
+cp -- "$sandbox/jarvis-bubble-engine-before" "$jarvis_bubble_engine"
 jarvis_rescan
 jarvis_enable
 jarvis_key_mode hold

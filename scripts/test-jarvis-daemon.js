@@ -8,7 +8,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { once } = require("node:events");
 const { freshSuite } = require("./fixtures/jarvis/prepare.js");
-const { instrument } = require("./fixtures/jarvis/scripted.js");
+const { instrument, chainedEngine } = require("./fixtures/jarvis/scripted.js");
 const { standins } = require("./fixtures/jarvis/audio.js");
 const desktopFixture = require("./fixtures/jarvis/desktop.js");
 const { instrument: instrumentDesktop } = require("./fixtures/jarvis/desktop-driver.js");
@@ -711,6 +711,40 @@ async function inside() {
     await assert.rejects(() => captions(silent), assert.AssertionError, "a dropped transcript port must turn red");
     controls++;
     console.log("test-jarvis-daemon: control=transcript-wire killed");
+    // The bubble row's world: the scripted ports hand each turn to the real
+    // engine under the fixture's chained plan, and the reply gate releases
+    // the scripted driver's words. They reach the wire only as the engine's
+    // captions of the sentence it released.
+    const chainedGates = path.join(root, "chained-gates");
+    const scriptedReply = Array(24).fill("scripted reply").join(" ");
+    const replyWords = file => conversation(file, async w => {
+        w.send("talk-down");
+        await w.wait(m => m.phase === "listening");
+        w.send("talk-up");
+        const thinking = await w.wait(m => m.phase === "thinking");
+        fs.writeFileSync(path.join(chainedGates, "reply"), "");
+        await w.wait(m => m.phase === "speaking" && m.state.turn.kind === "none");
+        assert.deepEqual(w.messages.filter(m => m.type === "transcript").map(m => [m.gen, m.role, m.stage, m.rev, m.text]),
+            [[thinking.gen, "assistant", "partial", 1, scriptedReply], [thinking.gen, "assistant", "final", 2, scriptedReply]],
+            "the bubble fixture's words come from the chained engine");
+        w.send("stop");
+        await w.wait(m => m.state.conversation.kind === "ended" && m.state.brain.kind === "closed");
+    });
+    for (const [name, plant] of [["chained-scripted", null], ["chained-scripted-silent", "        caption(c, turn, sentence);\n"]]) {
+        const file = daemonCopy(name);
+        instrument(file, chainedGates);
+        const engineFile = path.join(path.dirname(file), "ChainedEngine.js");
+        chainedEngine(engineFile);
+        if (plant === null) { await replyWords(file); continue; }
+        const source = fs.readFileSync(engineFile, "utf8");
+        assert.equal(source.split(plant).length - 1, 1, "caption producer mutation match");
+        fs.writeFileSync(engineFile, source.replace(plant, ""));
+        await assert.rejects(() => replyWords(file), error => error instanceof assert.AssertionError
+            && error.message.startsWith("the bubble fixture's words come from the chained engine"),
+        "a dropped producer must turn the bubble fixture's words red");
+        controls++;
+        console.log("test-jarvis-daemon: control=bubble-chained-caption killed");
+    }
 
     // The shipped executor seam inside the real daemon. A disposable copy
     // changes only its brain port, which routes one media.play to the
