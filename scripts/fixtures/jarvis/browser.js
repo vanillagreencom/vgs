@@ -59,7 +59,7 @@ async function daemonLease(ending, removeClose = false) {
         fs.writeFileSync(file, mutant);
     }
     const hello = { v: 1, type: "hello", gen: 0,
-        settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" },
+        settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto", cloudVision: "ask", privateWindows: "" },
         directories: {
             state: path.join(process.env.JARVIS_TEST_ROOT, "state/vgs/jarvis"),
             data: path.join(process.env.JARVIS_TEST_ROOT, "data/vgs/jarvis"),
