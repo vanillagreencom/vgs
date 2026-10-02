@@ -21,6 +21,7 @@ The daemon creates the chained engine with the router and the audit writer on th
 |---|---|
 | `configure(settings)` | The daemon, before each snapshot. The gate rises only on `ready`. |
 | `observe(state)` | The daemon's publish callback. A generation change ends the conversation. |
+| `images()` | Whether the conversation's brain row, or the next conversation's, takes images. [Vision](jarvis-vision.md#release-and-route) routes a capture by it; a tool result's image reaches the brain beside its text. |
 | `brain` | Session's brain port: `send`, `cancel`, `close`, and the router's `outcome`. |
 | `collect(e, done, failed)` | Session's collect port. |
 | `captureSink(e)`, `playbackSource(op)` | Audio's speech sink and source factories. |

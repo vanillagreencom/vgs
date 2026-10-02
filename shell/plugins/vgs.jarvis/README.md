@@ -32,6 +32,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Stopping a coding task interrupts its agent, escalates until every one of its processes has ended, and only then records it as stopped.
 - Desktop tools read and copy clipboard text, play, pause and skip media, set and mute the speaker volume, and show a notification. Screen brightness waits for the Displays plugin's brightness service.
 - A clipboard read refuses a copy that a password manager marks as secret, and anything that is not text.
+- Screen tools read the screen, a monitor, a window, a region or an area you draw, at most four times a turn and never while the screen is locked.
+- Windows of password managers and private browsing are painted black before a screenshot leaves Jarvis. This is limited protection: a title cannot always show private browsing.
 
 - Jarvis prepares a private browser from Set up browser in Settings.
 
@@ -43,7 +45,7 @@ The optional command sandbox needs bubblewrap and available user namespaces. Thi
 
 Several coding tasks at once need tmux, which is optional. Without it, a coding task opens in a floating terminal, one task at a time. Task records need flock and Python.
 
-The desktop tools need wl-clipboard, playerctl, WirePlumber and libnotify. A missing command removes only its own tools; Jarvis finds a newly installed one when it next starts.
+The desktop tools need wl-clipboard, playerctl, WirePlumber and libnotify. The screen tools need grim and ImageMagick 7's magick; drawing an area needs slurp, and screen text for a brain that takes no image needs tesseract. A missing command removes only its own tools; Jarvis finds a newly installed one when it next starts.
 
 ## How it works
 
@@ -56,6 +58,8 @@ No coding agent is connected yet, so Jarvis starts no coding task. It still watc
 ## Settings
 
 Task terminal chooses where a coding task opens. Auto uses tmux when it is installed, so several tasks can run at once, and the floating terminal otherwise. Floating opens one task at a time.
+
+Screen to cloud decides whether a screenshot or its text goes to a brain or voice outside your computer: Ask, the default, withholds it unless granted, Allow sends it and Never withholds it. A brain on your computer always receives it. Private windows lists the words that mark a window to paint out, matched in its class or title.
 
 Talk mode defaults to Hold. Toggle keeps conversation demand open until the next press. No mode captures audio until a speech engine is available and the listening bubble has drawn.
 

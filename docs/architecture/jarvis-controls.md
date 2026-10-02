@@ -42,7 +42,7 @@ The daemon owns generation identity. Hello and intent carry the service's last o
 
 A `transcript` message carries one speaker's caption segment: `role` user or assistant, `text` of at most 4096 characters without control characters, `stage` partial or final, and a rising `rev`. The daemon writes Session's `transcript` effects. The service publishes the current generation's caption, with its `gen`, as the `transcript` data status, and drops one from another generation.
 
-Key presence uses a separate service-owned reader, not a new daemon wire type. The coding-task types `task-stop`, `tui-state`, `tasks` and `task-answer` belong to [task control](jarvis-task-control.md#display). Task display uses the shared `request` and `reply` owner below. Hello also carries `taskTerminal`.
+Key presence uses a separate service-owned reader, not a new daemon wire type. The coding-task types `task-stop`, `tui-state`, `tasks` and `task-answer` belong to [task control](jarvis-task-control.md#display). Task display uses the shared `request` and `reply` owner below. Hello also carries `taskTerminal`, and the [vision](jarvis-vision.md) settings `cloudVision`, one of `ask`, `allow` and `never`, and `privateWindows`, printable text of at most 1024 characters.
 
 The daemon asks the service to act with `request`; the service answers each with one `reply`. [Jarvis desktop tools § Request wire](jarvis-desktop-tools.md#request-wire) defines their kinds, bounds and stale replies.
 

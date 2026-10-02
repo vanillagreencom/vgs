@@ -30,6 +30,8 @@ The [desktop tool suite](jarvis-tools.md#evidence) puts one Python stand-in unde
 
 The [Claude Code harness suite](jarvis-claude.md#evidence) plants a stand-in `claude` among the world's stand-ins; the host's program is never reached. Each account directory holds that case's script, and the stand-in records its argv, environment, input lines and tool results there. It starts the real `mcp-shim` from the adapter's configuration, so a scripted call crosses the real bridge and router. Its stream-json fixtures pass the shared schema checker against an excerpt that names its package, version, file hash and date. Timers run for real; the unanswered-interrupt case fires its timer by hand.
 
+The [vision suite](jarvis-vision.md#evidence) puts one Python stand-in under `grim`, `slurp`, `tesseract` and `magick`, beside the desktop suite's `hyprctl`. Its grim draws a PNG from the stand-in hyprctl's own state file, so no compositor or screen is read. Its `magick` records the call and runs the host's ImageMagick by absolute path, on fixture files in the world's runtime directory only; without it the suite exits 77. Its probe cases point PATH at scratch directories of copied stand-ins.
+
 ## Ownership
 
 - `scripts/lib/jarvis-env.sh::jarvis_env_run` owns one scratch world per invocation. Its header defines the caller contract. A suite starts its fixture servers, daemon and children inside that invocation, so they share the same loopback network.

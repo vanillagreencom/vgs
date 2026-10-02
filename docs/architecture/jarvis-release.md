@@ -24,7 +24,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 | Grant `{recipients, labels}` | The approval owner supplies a reference to the exact frozen recipient set and its approved labels. A grant from any other set has no effect, even when its provider names match. |
 | `Policy.release(item, recipients, grants?)` | The transport or context assembler supplies the whole current set. `send` contains a copied payload. `ask` and `withhold` contain only a marker. All answers retain every label. `ask.needed` names the labels that require a grant. No original content survives in non-send answers. |
 
-The release judge derives offline state from the full set. Loopback and local recipients need no cloud grant. Provider selection covers only speech and desktop content for remote recipients. The other labels follow the plan's profile rules. Screen content, including OCR text, follows `cloudVision` in every profile.
+The release judge derives offline state from the full set. Loopback and local recipients need no cloud grant. Provider selection covers only speech and desktop content for remote recipients. The other labels follow the plan's profile rules. Screen content, including OCR text, follows `cloudVision` in every profile. The daemon reads it from the plugin's setting; a change ends the conversation ([vision](jarvis-vision.md#release-and-route)).
 
 An adapter receives a marker rather than withheld data. It encodes that marker into its provider's request format. The session retains the contributing labels separately. It must not relabel an original or summary as speech to evade consent. The gate cannot discover missing source labels from arbitrary bytes.
 

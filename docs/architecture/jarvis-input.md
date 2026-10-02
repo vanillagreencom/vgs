@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/Input.js, shell/plugins/vgs.jarvis/backend/ComputerHelp.js, shell/plugins/vgs.jarvis/backend/input-check.js, shell/plugins/vgs.jarvis/backend/skills/computer/input.md, shell/plugins/vgs.jarvis/tui/setup-input.sh, scripts/test-jarvis-input.js
 
-The [plan's input family](../plans/v2-jarvis-plan.md#6-computer-use-and-browser-reference-set) uses the existing [Policy](jarvis-policy.md) and [router](jarvis-approval.md). [Core input facts](input-facts.md) owns the target and keymap observations. Input owns only its command children and transport readiness. `ComputerHelp.js` reads installed family files on demand. Its file topics come from those files. The setup-verified [browser owner](jarvis-browser.md) supplies the browser topic to the same guidance executor.
+The [plan's input family](../plans/v2-jarvis-plan.md#6-computer-use-and-browser-reference-set) uses the existing [Policy](jarvis-policy.md) and [router](jarvis-approval.md). [Core input facts](input-facts.md) owns the target and keymap observations. Input owns only its command children and transport readiness. `ComputerHelp.js` reads installed family files on demand. Its file topics come from those files: input help and [vision](jarvis-vision.md) help ship. The setup-verified [browser owner](jarvis-browser.md) supplies the browser topic to the same guidance executor.
 
 ## Authority
 

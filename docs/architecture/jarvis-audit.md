@@ -34,6 +34,7 @@ The writer does not decide whether an action is allowed or whether confirmation 
 | `decision` | Action: `allow`, `confirm`, `refuse`. Release: `send`, `ask`, `withhold`. |
 | `confirmed` | Approval owner's observation: `none`, `physical`, `voice`. It contains no name, transcript or model text. |
 | `outcome` | `pending`, `completed`, `failed`, `unknown`, `cancelled`. No executor output or exception body enters it. |
+| `capture` | Optional, on an action record of a `vision` tool only: `{box, scale, width, height, bytes, sha256, masks}`, four integers, a positive number, two positive integers, two non-negative integers and a lowercase hex digest. Any other field or value refuses the record as `capture`, so no image byte enters the store ([vision](jarvis-vision.md#release-and-route)). |
 
 Each JSON line adds `time` in UTC. The store uses `audit/<UTC date>.jsonl`. The line ceiling includes its newline. Unknown event fields are not copied.
 

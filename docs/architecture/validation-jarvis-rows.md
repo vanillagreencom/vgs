@@ -24,6 +24,8 @@ The [Jarvis account suites](jarvis-accounts.md#evidence) select from the account
 
 The [Claude Code harness row](jarvis-claude.md#evidence) in `cli` selects on the adapter, the bridge, shim, router, Policy and audit it carries a call through, the account judge its Verify cases run, its stand-in program and stream-json excerpt. The account rows and the audio daemon row also select on the adapter, since the account judge loads it.
 
+The [vision row](jarvis-vision.md#evidence) in `cli` selects on the executor, its geometry judge, the seam and the desktop owners it shares, the router, Policy, Audit, the manifest and its fixtures. The desktop executor and desktop tool rows and the audio daemon row also select on the two vision files the seam loads.
+
 The [router](jarvis-approval.md#evidence-and-comparison) shares inputs with the audio daemon; `scripts/test-validate.sh` controls its edges.
 
 The [file tools row](jarvis-files.md#evidence) in `cli` selects on the whole plugin directory, as the daemon row does, because its end-to-end case drives a disposable daemon copy through the desktop driver. It also selects on the core dispatch and launch modules that daemon loads, the shared policy and scripted fixtures, and the private environment.

@@ -78,6 +78,7 @@ The sources are the specification pages above and the [2025-11-25 schema](https:
 - A held approval leaves the MCP request open until the router delivers. While a call holds the router's serial slot, another call answers the router's `busy` refusal.
 - Each result passes `Policy.release` against the session's recipient set. `ask` and `withhold` send the marker: no release-grant owner exists yet, so the bridge fails closed. `Audit.before` records the release before the bridge writes. A failed record answers `{"kind":"refuse","reason":"audit-write"}`.
 - The answer is `{content: [{type: "text", text}], isError}`. `isError` is false only for a completed outcome. Refusals, failed, unknown and cancelled outcomes set it.
+- A [screen image](jarvis-vision.md#release-and-route) passes `Policy.release` as its own item. The router gives it its text's labels, so both get one decision, and the release record names it. A sent image follows the text as `{type: "image", data, mimeType}`; an asked or withheld one follows as a second text block holding its marker. The pinned excerpt keeps the `ImageContent` branch for this.
 - A result for a closed connection is dropped without a release record. The router marks each result `final` unless it is a timeout whose actual completion follows; the bridge forgets a call only on its final result, so that completion is dropped too and never reaches the brain.
 
 ## Bounds

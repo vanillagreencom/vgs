@@ -1,6 +1,6 @@
 # Jarvis decisions
 
-Covers: docs/decisions/D064-*, docs/decisions/D066-*, docs/decisions/D070-*, docs/decisions/D072-*, docs/decisions/D074-*, docs/decisions/D079-*, docs/decisions/D082-*, docs/decisions/D087-*, docs/decisions/D089-*
+Covers: docs/decisions/D064-*, docs/decisions/D066-*, docs/decisions/D070-*, docs/decisions/D072-*, docs/decisions/D074-*, docs/decisions/D079-*, docs/decisions/D082-*, docs/decisions/D087-*, docs/decisions/D089-*, docs/decisions/D093-*
 
 The assistant's decision records. [Decisions](decisions.md) holds the other architecture records. [INDEX.md](../decisions/INDEX.md) holds the full log with dates, rationale and status.
 
@@ -13,3 +13,4 @@ The assistant's decision records. [Decisions](decisions.md) holds the other arch
 - [D082](../decisions/D082-jarvis-approval-bound-to-the-action.md): Jarvis routes serial immutable actions; Session judges confirmation identity and time, Policy rejudges fresh facts and Audit gates starts. Refines D070.
 - [D087](../decisions/D087-jarvis-task-control.md): a launcher records a coding task's process-group identity before the agent execs; stops verify it before every signal and write `stopped` only after the group reads empty; tmux or the floating TUI only display the task. Refines D072 and D033.
 - [D089](../decisions/D089-jarvis-chained-engine-and-heard-prefix.md): the chained speech engine owns one conversation's resources, routes the brain's calls and tells the brain the prefix Audio reports as heard after a barge-in; the speech table ships empty.
+- [D093](../decisions/D093-jarvis-screenshots.md): Jarvis captures the screen only for the user's live turn, reads Hyprland before and after, paints private windows out before the image leaves the executor and releases it by `cloudVision`; masking is limited protection. Refines D070 and D082.

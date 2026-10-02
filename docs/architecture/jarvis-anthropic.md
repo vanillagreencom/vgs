@@ -14,7 +14,7 @@ Covers: shell/plugins/vgs.jarvis/backend/AnthropicMessages.js, scripts/test-jarv
 
 The driver posts to `/v1/messages`. Authentication uses the origin-bound `x-api-key` record through `net.js`. The request sets `anthropic-version: 2023-06-01`. Instructions use the top-level `system` field, not a message role.
 
-Tools use `{name, description, input_schema}`. Assistant history preserves the ordered text and `tool_use` blocks. Tool results use a following user message with `tool_result` blocks and their `tool_use_id`. The shared owner requires every pending call to receive exactly one result before a new user turn.
+Tools use `{name, description, input_schema}`. Assistant history preserves the ordered text and `tool_use` blocks. Tool results use a following user message with `tool_result` blocks and their `tool_use_id`. A result's image becomes a second block of its `tool_result` content, after the text. The shared owner requires every pending call to receive exactly one result before a new user turn.
 
 Images use base64 `image` blocks with `source: {type, media_type, data}`. The shared contract admits PNG and JPEG from the screen producer. It does not use image URLs, upload files or capture images. An unreleased image becomes its text marker. Every text item, image, result and history reply passes the shared release owner.
 
