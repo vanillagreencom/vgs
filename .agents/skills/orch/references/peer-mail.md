@@ -7,7 +7,7 @@ The overseer-to-overseer channel: one repository's overseer writes another's mai
 | Command | What it writes |
 | --- | --- |
 | `lane-mail peer ask --repo [NAME_OR_PATH] --file [PATH] [--options a,b]` | one ask, one id, in the peer's mailbox and then in this overseer's own record; prints `id=[MESSAGE_ID]`. A delivery that refuses records nothing, so nothing is owed for a question the peer never received |
-| `lane-mail peer send --repo [NAME_OR_PATH] --re [MESSAGE_ID] --file [PATH]` | the answer to a peer's ask, releasing that overseer's `wait` |
+| `lane-mail peer send --repo [NAME_OR_PATH] --re [MESSAGE_ID] --file [PATH]` | the answer to a peer's ask, releasing that overseer's `wait`; after delivery, the same answer enters this overseer's own record so compaction can close the inbound ask |
 | `lane-mail peer send --repo [NAME_OR_PATH] --file [PATH]` | a note that answers no ask |
 | `lane-mail pending --item overseer` | the asks this overseer SENT that a peer or the owner has not answered, then the directives in its own mailbox no reader has taken yet; `--to peer` keeps the peer asks alone, `--to owner` the owner's |
 | `lane-mail wait --item overseer --id [MESSAGE_ID]` | blocks for a peer's answer to this overseer's own ask |
@@ -17,6 +17,8 @@ Every `peer-note` line carries `kind=`, and only `kind=ask` is owed a reply: an 
 An overseer running the § 4 watch reads a peer's reply there, as the `kind=answer` line carrying `re=`; `wait --item overseer --id` is for a caller that blocks on one answer and runs no watch. Both read the same file, so an overseer that uses each records one reply twice.
 
 ## Addressing
+
+Launch only this repository's items and send prioritized foreign tracker issues with `lane-mail peer send --repo [REPO]`; with no live repository overseer, ask a live registered master, else the owner, with a recommendation to launch that repository's overseer in its repository-named tmux session with `overseer` at the base index.
 
 - `--repo` names ANOTHER repository's checkout: a value holding `/` is a path, a bare name is a checkout beside this one. It resolves to that repository's main checkout, so a path inside the peer reaches the same mailbox; a path that is no checkout is refused as `repo-unresolved`, and one resolving to this checkout as `repo-self`, since both sides of an exchange in one mailbox would make this repository its own peer. A note to this overseer is `lane-mail send --item overseer`.
 - Add `--host` for a peer on another host, `--repo` naming its path there.

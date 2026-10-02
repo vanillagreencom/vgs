@@ -141,9 +141,10 @@
 #         bound: `lanes list --json` shows its `claims` and
 #         `projected_headroom_pct`, and it comes back as those lanes end, not
 #         at a reset. And `seats=N` counts the overseer seats omitted before
-#         any judgement, each named on a `lanes: pick-seat-omitted` line: a
-#         fleet whose every account is a seat has none a lane may launch on,
-#         and the remedy is a lane on another account. Under --json that exit
+#         window-account judgement, each named on a `lanes: pick-seat-omitted`
+#         line. Copilot and Pi pool picks keep seats and charge their claims
+#         at the monthly burn; they read no fleet state for seats. A window
+#         fleet with only seats needs another account. Under --json that exit
 #         also prints `{"walled":N,"unmeasured":N,"seats":N}` on stdout, the
 #         same counts, so a caller walking several picks can report what each
 #         sweep found instead of parsing the message written for a person.
@@ -169,10 +170,13 @@
 #         failed. Every other host status is the provider's reading of its own
 #         copy, `refused` and `expired` included, and stands as above, except
 #         for a successful Claude reading with no window for --model: where a
-#         fresh local reading measures that model window, pick uses the local
-#         reading under `pick-local-model-reading`. It keeps an account neither
-#         reading measures for the model unmeasured, not empty. An absent
-#         or failed verb leaves the local reading alone, as it does for `list`.
+#         fresh local reading carries a model window, pick uses the local
+#         reading under `pick-local-model-reading`, judged on the shared
+#         windows alone where none of its model windows names the model. It
+#         keeps an account unmeasured, not empty, where the local reading
+#         reads nothing, carries no model window or is older than that usage
+#         window. An absent or failed verb leaves the local reading alone, as
+#         it does for `list`.
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
 #         does not reach it. The overseer's own picks (oversee launch, the
@@ -190,7 +194,7 @@
 #         close, an overseer's own mark. --projected judges the projected wall
 #         the chooser judges instead, for a launcher about to add a lane, so a
 #         lane a person names is refused on the rule the chooser drops it on.
-#         It omits no overseer seat: the account named is the one judged.
+#         It omits no overseer seat for any harness: the account named is judged.
 #         Exit 0 has room and prints the env prefix, or the lane's record under
 #         --json; 3 is a wall at or above --max-pct; 5 is a lane nothing
 #         measured for this launch, whether no window names --model or the
@@ -337,7 +341,11 @@
 #                    spends — instead of the binding bucket. A lane
 #                    whose windows answer nothing for NAME is never picked.
 #                    The scoped model window alone is not enough because either
-#                    shared window can wall every model on the account.
+#                    shared window can wall every model on the account. A
+#                    reading whose model windows name none of NAME is judged
+#                    on the shared windows alone; behind a host row with no
+#                    window for NAME, a local reading with no model window, or
+#                    a stale one, stays unmeasured (see pick).
 #   --binding-floor  pick: hold the account's own binding bucket to the same
 #                    bound as well, so a lane is room only where BOTH clear it.
 #                    With --model the two can differ: an account whose binding
@@ -758,7 +766,7 @@ message() {
       ;;
     pick-local-model-reading)
       printf 'lanes: pick-local-model-reading lane=%s host=%s model=%s age-s=%s\n' "$1" "$2" "$3" "$4"
-      printf '%s\n' "the provider has no window for this model, so this machine's fresh measured model reading is judged in its place"
+      printf '%s\n' "the provider has no window for this model, so this machine's fresh reading is judged in its place, on the shared windows alone where none of its model windows names this model"
       ;;
     pick-local-model-unmeasured)
       printf 'lanes: pick-local-model-unmeasured lane=%s model=%s\n' "$1" "$2"
@@ -2883,18 +2891,20 @@ pick_host_rows() { # HARNESS
 	host_lane_rows "$1" readings
 }
 
-# The fix= line for each unmeasured Pi record in RECORDS, a JSON array: a
+# The fix= line for each unmeasured pool record in RECORDS, a JSON array: a
 # provider row that stands names its own status and detail, and any other the
 # accounts read HOSTED_READ names.
 copilot_pool_records_fix() { # RECORDS
-	local through dir status detail
-	while IFS=$'\x1f' read -r through dir status detail; do
-		if [[ "$through" == host ]]; then
+	local harness through dir status detail
+	while IFS=$'\x1f' read -r harness through dir status detail; do
+		if [[ "$harness" == copilot ]]; then
+			lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" cli "$dir" "$status" "$detail"
+		elif [[ "$through" == host ]]; then
 			lane_copilot_pool_fix "$ORCH_LANE_HOST" row "$dir" "$status" "$detail"
 		else
 			lane_copilot_pool_fix "${ORCH_LANE_HOST:-local}" "$HOSTED_READ" "$dir"
 		fi || return 1
-	done < <(jq -r '.[] | [.measured_through, .config_dir, .status, .detail // ""] | join("\u001f")' <<<"$1")
+	done < <(jq -r '.[] | [.harness, .measured_through, .config_dir, .status, .detail // ""] | join("\u001f")' <<<"$1")
 }
 
 cmd_pick_lane() {
@@ -3005,7 +3015,7 @@ cmd_pick_lane() {
 				return 1
 			fi
 			message pick-lane-unmeasured "$dir" "${model:-none}" >&2
-			[[ "$harness" != pi ]] || copilot_pool_records_fix "[$record]" >&2 || return 1
+			[[ "$harness" != pi && "$harness" != copilot ]] || copilot_pool_records_fix "[$record]" >&2 || return 1
 			# Under --json only, as on 0 and 3. The record's `status` is the
 			# whole of what a launcher needs here: `expired` names a credential
 			# this machine could not renew, which is an owner's login to fix
@@ -3090,7 +3100,7 @@ cmd_pick() {
 	# onto an account already running one.
 	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die pick-claims "$@"
 	SEATS=""
-	if [[ "$for_overseer" != true ]]; then
+	if [[ "$for_overseer" != true && "$harness" != copilot && "$harness" != pi ]]; then
 		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
 	fi
 	# After the claim load: emit_lane counts claims on every host row it writes.

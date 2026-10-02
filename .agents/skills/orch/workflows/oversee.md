@@ -4,6 +4,8 @@ Standing fleet mode: burn down unblocked work items by launching one orch sessio
 
 ## 1. Resolve The Launch Surface
 
+Launch only this repository's items; file foreign work in its own tracker, then follow [peer-mail.md § Addressing](../references/peer-mail.md#addressing).
+
 Once per session, first match wins:
 
 1. `$TMUX` set → tmux lanes: launch each item with `open-terminal` (`handoff.md` § 2), a claude, codex or copilot item, or a pi item on a `pi-claude/` or `github-copilot/` model, under § 3 Lane directive.
@@ -12,7 +14,7 @@ Once per session, first match wins:
 
 A lane's questions arrive at least once as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface. Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
 
-The owner sends the overseer a note without typing into its pane: `.agents/skills/orch/scripts/lane-mail send --item overseer --directive --file [PATH]`, run from any checkout of the project (`lane-mail --help`), and the § 4 watch reports it at least once as `owner-note`; a note typed into the chat is acted on the same way. A reply owed to a note is `lane-mail notice --item overseer --to owner --ref [NOTE_ID] --file [PATH]`, so the owner reads it where the note was written. Every question for the owner is an owner ask ([references/communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks)), never a question dialog. A peer repository's overseer writes the same mailbox, reported as `peer-note` ([references/peer-mail.md](../references/peer-mail.md)). Both are the watch's to report while it runs as a repeat; with the watch in single passes, this session's own lane-mail hooks hand those notes over instead, as `lane-mail-check: unread=` lines at its turn end and after its tool calls, and no pass reports them ([references/peer-mail.md § Who reads a note](../references/peer-mail.md#who-reads-a-note)).
+Owner notes use `.agents/skills/orch/scripts/lane-mail send --item overseer --directive --file [PATH]` from any project checkout (`lane-mail --help`). The § 4 watch reports them at least once as `owner-note`. Reply to mailbox notes with `lane-mail notice --item overseer --to owner --ref [NOTE_ID] --file [PATH]`. One notice covers several owed refs: name the others in its text and use one as `--ref` (`lane-mail` accepts one ref). Owner questions use [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks), never a question dialog. Peer overseers write the same mailbox, reported as `peer-note` ([peer-mail.md](../references/peer-mail.md)). The repeat watch reports both. With single passes, lane-mail hooks hand them over as `lane-mail-check: unread=` at turn end and after tool calls; the watch reports neither ([peer-mail.md § Who reads a note](../references/peer-mail.md#who-reads-a-note)).
 
 A session a person opened by hand registers itself first, so the hooks and the watch know which session is the overseer: `.agents/skills/orch/scripts/oversee register`. The master registers as its checkout's overseer the same way so the turn-end hook judges its wake. A session `oversee launch` or a succession opened is already recorded.
 
@@ -34,15 +36,17 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 
 ## 3. Launch
 
+Foreign work follows [§ 1](#1-resolve-the-launch-surface).
+
 ### Item Tier
 
 Every selected item takes a tier before it launches. `item-tier` assigns it, and its `--help` owns the rule:
 
 ```bash
-.agents/skills/orch/scripts/item-tier --production [ESTIMATE] --path [LOCATION_PATH] --repo [MAIN_REPO_ROOT]
+.agents/skills/orch/scripts/item-tier --production [ESTIMATE] --body [ITEM_BODY_FILE] --path [LOCATION_PATH] --repo [MAIN_REPO_ROOT]
 ```
 
-`[ESTIMATE]` is this session's estimate of the production lines the item adds, made from the body read once under § Lane directive step 2. An `**Expected delta**` line is one input to that estimate and never the tier source; `branch-size-check --help` owns that line. Pass one `--path` per file the item's `**Location**` names, and none when it names none. The output line's `brief=` word is the brief § Lane directive mints:
+`[ESTIMATE]` is this session's estimate of the production lines the item adds, made from the body read once under § Lane directive step 2. Save that body as `[ITEM_BODY_FILE]` and pass it with `--body`; `item-tier` floors the estimate with its Expected delta production count. `branch-size-check --help` owns the header format. Pass every Location path, one `--path` per file, and none when it names none. No Location and no Expected delta means standard. Copy the complete `item-tier` output line into the launch brief so `open-terminal` records `tier_inputs`. The output line's `brief=` word is the brief § Lane directive mints:
 
 - `micro`: `/orch micro [ISSUE_ID]`, which runs [micro.md](micro.md): no dev subagent, no review cycle, no QA cycle.
 - `small`: `/orch small [ISSUE_ID]`, which runs [small.md](small.md): the standard session under thin review bounds.
@@ -79,7 +83,7 @@ Resolve `ORCH_USER_MODE` once for every question this fleet relays to the user:
 .agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
 ```
 
-The launch brief names the implementer selected through [dev § Implementer selection](../../dev/SKILL.md#implementer-selection). The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` and the mailbox `tmp/lane-mail/[ISSUE_ID]/`, both under the lane's worktree, which its record carries as `mail_root`. It directs the lane to initialize and rewrite the status file with its current step, blocker, handoff paths and validation minutes per round. The file holds at most 40 non-empty lines. The lane follows [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals and for every ask. Build the terminal command under step 4 and [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference). Deliver its brief under [§ Brief file](../references/lane-directive.md#brief-file).
+The launch brief names the implementer selected through [dev § Implementer selection](../../dev/SKILL.md#implementer-selection). The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` and the mailbox `tmp/lane-mail/[ISSUE_ID]/`, both under the lane's worktree, which its record carries as `mail_root`. It directs the lane to initialize and rewrite the status file with its current step, blocker, handoff paths, validation minutes per round and one merge-attempt record: the attempt's exit, exact `--expected-head` value and returned `merge-route: admin|queue cause=...` line. Later status rewrites retain that record. The file holds at most 40 non-empty lines. The lane follows [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals and for every ask. Build the terminal command under step 4 and [lane-directive.md § Lane preference](../references/lane-directive.md#lane-preference). Deliver its brief under [§ Brief file](../references/lane-directive.md#brief-file).
 
 ### Recovery relaunch
 
@@ -165,6 +169,8 @@ Write owner summaries with [communication-modes.md § Owner messages](../referen
 
 - Judgement rules for every event: [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules).
 - Handling per event kind: [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds).
+
+- Direct push: `oversee-cycle record --commit SHA ITEM` has no PR-opened, gate-green, CI-green or armed stamp. Record it before lane close per [oversee-events.md § Direct-push cycle records](../references/oversee-events.md#direct-push-cycle-records).
 
 ### Outside contributions
 

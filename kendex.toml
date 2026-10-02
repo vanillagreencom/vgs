@@ -578,14 +578,6 @@ reviewer = """
 Read root `AGENTS.md § Code Review Rules` and the generated `.github/instructions/` files for the changed paths.
 """
 
-[agent-frontmatter.claude.generalist]
-color = "green"
-deny-tools = [
-    "Agent",
-    "AskUserQuestion",
-]
-background = false
-
 [agent-frontmatter.claude.planner]
 color = "blue"
 deny-tools = ["Agent"]
@@ -679,16 +671,13 @@ deny-tools = [
 ]
 background = true
 
-[agent-frontmatter.codex.generalist]
-sandbox-mode = "danger-full-access"
-nickname-candidates = [
-    "Generalist-Atlas",
-    "Generalist-Delta",
-    "Generalist-Echo",
-    "Generalist-Nova",
-    "Generalist-Orion",
-    "Generalist-Vector",
+[agent-frontmatter.claude.maintainer]
+color = "green"
+deny-tools = [
+    "Agent",
+    "AskUserQuestion",
 ]
+background = false
 
 [agent-frontmatter.codex.planner]
 sandbox-mode = "workspace-write"
@@ -822,17 +811,16 @@ nickname-candidates = [
     "Scout-Vector",
 ]
 
-[agent-frontmatter.pi.generalist]
-color = "green"
-deny-tools = [
-    "subagent",
-    "get_subagent_result",
-    "steer_subagent",
-    "stop_subagent",
-    "question",
+[agent-frontmatter.codex.maintainer]
+sandbox-mode = "danger-full-access"
+nickname-candidates = [
+    "Generalist-Atlas",
+    "Generalist-Delta",
+    "Generalist-Echo",
+    "Generalist-Nova",
+    "Generalist-Orion",
+    "Generalist-Vector",
 ]
-allowed-subagents = ["scout"]
-pane = true
 
 [agent-frontmatter.pi.planner]
 color = "blue"
@@ -997,6 +985,18 @@ deny-tools = [
 ]
 allowed-subagents = []
 pane = false
+
+[agent-frontmatter.pi.maintainer]
+color = "green"
+deny-tools = [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+    "question",
+]
+allowed-subagents = ["scout"]
+pane = true
 
 [agent-additional-instructions]
 all = "Problems with a kendex-owned skill go through `kendex report`; check ownership in the file first."

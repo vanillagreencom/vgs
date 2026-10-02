@@ -1,5 +1,5 @@
 name = "maintainer"
-nickname_candidates = ["Maintainer-Atlas", "Maintainer-Delta", "Maintainer-Echo", "Maintainer-Nova", "Maintainer-Orion", "Maintainer-Vector"]
+nickname_candidates = ["Generalist-Atlas", "Generalist-Delta", "Generalist-Echo", "Generalist-Nova", "Generalist-Orion", "Generalist-Vector"]
 description = "Maintenance specialist for documentation, stale references, links, lint, and file or configuration organization. Use for changes settled by reading."
 model_reasoning_effort = "high"
 sandbox_mode = "danger-full-access"

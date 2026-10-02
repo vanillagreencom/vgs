@@ -8,12 +8,12 @@ orch takes Linear or GitHub issues from implementation to merge with coding and 
 kendex add vanillagreencom/kendex --skill orch
 ```
 
-Requires jq, Bash 3.2, flock, setsid and timeout or gtimeout; the included SSH host provider also needs Python 3.8+ on the controlling machine. kendex installs the required skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
+Requires jq, Bash 3.2, Python 3.8+, flock, setsid and timeout or gtimeout. Local lane-mail and the included SSH host provider use Python on the controlling machine. kendex installs the required skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
 
 ## Features
 
 - `orch start` takes one issue from its worktree to merge.
-- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, usage limits, new Linear issues and GitHub security alerts as events through `oversee-watch`, takes each PR to merge, then runs the post-merge steps and, off a hosted fleet, refreshes the consumer repositories when a merge changes shipped packages.
+- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, new Linear issues and GitHub security alerts as events through `oversee-watch`, takes each PR to merge, then runs the post-merge steps and, off a hosted fleet, refreshes the consumer repositories when a merge changes shipped packages.
 - `lane-mail` carries questions, notices and directives between a lane and the overseer as files in the lane's worktree, so messages need no tmux pane and also reach a lane on another machine.
 - `oversee launch` opens a fleet's first overseer and `oversee register` records one opened by hand. `oversee-succeed` replaces an overseer in the same tmux position when its context, headroom, projected wall time, or qualifying-account trigger fires, or once it has ended or walled.
 - `lanes` reads the usage of each Claude Code, Codex and Copilot CLI account it discovers or is configured with, and picks on projected room weighted by time to reset, never an overseer's; the watch reports an account that hit its usage limit and when the limit resets.
@@ -34,7 +34,9 @@ The primary agent opens the PR and, by the merge policy, arms auto-merge where t
 
 ## Settings
 
-Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secrets in `.env.local`. Nothing is marked required, so installing writes nothing to your settings file; [kendex.settings.toml.example](kendex.settings.toml.example) comments the keys worth changing first.
+Set defaults in `kendex.settings.toml` `[env]` and secrets in `.env.local`; installation adds no settings ([guide](kendex.settings.toml.example)).
+
+Until KEN-2466 lands, the Claude Code agent renderer maps `haiku` to `sonnet` and prints one warning per run.
 
 | Variable | Purpose | Default |
 |---------|---------|---------|
@@ -59,7 +61,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_ROUND_PRUNE_DISK_PCT` | Disk use percent at or past which `round-prune` clears the item worktree's Cargo output before a dev round: [skill-rules.md](references/skill-rules.md) § Round Closure | `75` |
 | `ORCH_HANDOFF_CONTEXT_PCT` | Earlier handoff percentage (1 to 100, capped at 90); strict comparison and independent token limit: [context rule](references/oversee-events.md#judgement-rules) | `90` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff and the `lane-mail-check` turn-end hook refuses that lane's turn end, read against the binding bucket | `3` |
-| `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:model:effort` entries `oversee launch` and `oversee-succeed` try in order; grammar: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet. Empty names none | `claude:fable:high,claude:claude-opus-5-5:high,codex:gpt-6-astra:high,codex:gpt-5.6-sol:high` |
+| `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:model:effort` entries `oversee launch` and `oversee-succeed` try in order; grammar: [kendex.settings.toml.example](kendex.settings.toml.example) § Fleet. Empty names none | `claude:claude-opus-5-5:high,codex:gpt-6.1-sol:high` |
 | `ORCH_LANE_PREFERENCE` | Default-model order; explicit models keep the caller's route. [Lane preference](references/lane-directive.md#lane-preference) | unset |
 | Owner-ask settings | `ORCH_QUESTION_TOOL`, `ORCH_ASK_WAIT_MINUTES`: [kendex.settings.toml.example](kendex.settings.toml.example) § Talking to you | |
 | `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches none and turns off the account-mark turn-end refusals, not the context one. A live overseer asks the user to start the next session; `oversee-watch --help` states the rest | `on` |
@@ -79,7 +81,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
 | Review-gate settings | `PR_REVIEW_WAIT_SECS`: [references/gates.md](references/gates.md) | |
 | `ORCH_LANE_MAX_PCT` | Usage share at or above which `lanes pick` refuses an account; the bucket it reads and its overrides: `lanes --help`, `open-terminal --help` | `95` |
-| Lane settings | `ORCH_LANE_BURN_PCT_PER_HOUR`, `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_EXCLUDE`, `ORCH_LANE_RETIRE`, `ORCH_LANE_COPILOT_POOL` (overrides the Copilot pool read live from the lane host), `ORCH_LANES_USAGE_TTL`, `ORCH_LANES_USAGE_MAX_AGE`, `ORCH_TMUX_VERIFY_SECS`, `ORCH_LANE_SSH_PROMPT_SECS`, `ORCH_TMUX_SESSION`: `lanes --help`, `open-terminal --help` | |
+| Lane settings | Account selection and terminal launch settings: `lanes --help`, `open-terminal --help` | |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
 

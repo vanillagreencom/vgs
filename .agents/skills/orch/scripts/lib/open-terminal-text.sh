@@ -108,6 +108,9 @@ ot_message() { # REASON FIELD=VALUE...
     issue-canonical-failed) text='The git-context helper could not canonicalize the issue identifier. Nothing was created.' ;;
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository when GitHub cannot resolve it.' ;;
+    item-repo-unresolved) text='The checkout repository or configured Linear team could not be resolved. Nothing was launched.' ;;
+    item-foreign) text='This item belongs to another repository. Nothing was launched.
+fix=File a prioritized issue in that repository and send it with lane-mail peer send --repo [REPO]; with no live repository overseer, ask a live registered master, else the owner, with a recommendation to launch its overseer.' ;;
     claim-unrecorded) text='The previous claim is missing, so under --lane auto the next item cannot be spread off its account. The batch stops.' ;;
     item-owned) text='Another session owns this work item. Its worktree was skipped. Where no session runs it, a dead lane or a hosted create that failed after its sandbox started, launch it again with --relaunch. Without --cmd, a hosted Codex or Pi relaunch selects a matching session on the host, or runs the start brief in the same call when none exists.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
@@ -380,6 +383,9 @@ Options:
                         names in its detail the codex command that renews it;
                       anything else is refused as lane-model-unreadable, an
                         unread window being neither a full one nor an empty one.
+                        This includes a Copilot CLI account with no pool reading.
+                        status= and detail= follow step=windows; the fix= line
+                        names the pool override or provider accounts row repair.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
                     account and when a named lane is judged. The window judged
                     is the one walling the model the launch runs, named in the
