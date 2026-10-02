@@ -196,7 +196,7 @@ expect_poll "key-unload restore: disabling drops the pane" '[]' window_panes
 expect "key-unload restore: re-enabling the pane is allowed" ok ipc shell setPluginEnabled acme.pane true
 expect "key-unload restore: mounting the pane is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
 
-restart_control_shell pane-hide-teardown shell/Hosts/PluginSlot.qml 'Component.onDestruction: unload()' 'Component.onDestruction: {}'
+restart_control_shell pane-hide-teardown shell/Hosts/PluginSlot.qml $'Component.onDestruction: {\n        if (releaseInputSurface !== null) releaseInputSurface();\n        unload();\n    }' $'Component.onDestruction: {\n        if (releaseInputSurface !== null) releaseInputSurface();\n        if (false) unload();\n    }'
 expect "control: hide-teardown host summons" ok ipc shell summon window acme.panehost '{}'
 expect "control: hide-teardown mounts the pane" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
 expect "control: hide-teardown hides the holder" ok ipc shell hide window acme.panehost
