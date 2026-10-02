@@ -17,7 +17,12 @@
 # card only in the refresh, before the list has taken its cards' height,
 # which scrolled the first card under the header on all eight opens in
 # the sandbox on 2026-10-02, at scale 1 and at scale 2. rows/hidpi.sh
-# reads the same opens at scale 2.
+# reads the same opens at scale 2. The same opens hold on the first
+# monitor held at half its height, a room shorter than the panel's
+# panelMaxHeight, where the list takes what is under the header; their
+# control is a Panel.qml copy whose list keeps its whole height, which ran
+# the list past the panel's bottom (clipped=list) on all eight opens in the
+# sandbox on 2026-10-02.
 # No latency is measured; each reading polls every 200 ms for up to 5 s.
 # A press that reaches nothing changes nothing to poll for, so the
 # controls read their press once nk_quiet_s has passed.
@@ -153,6 +158,52 @@ expect "a rescan restores the panel" ok ipc shell rescanPlugins
 expect_poll "the service is built beside the restored panel" True record_exists vgs.notifications
 notes dismiss-all >/dev/null # `none` once every toast's clock ran out
 expect "clearing the long inbox's history is allowed" ok notes clear-history
+
+# The short room: the first monitor at half its height, which the running
+# shell follows.
+nk_output="$(first_name)"
+if nk_base="$(unscaled_mode_of "$nk_output")" && [[ $nk_base =~ ^([0-9]+)x([0-9]+)$ ]]; then
+  nk_short="${BASH_REMATCH[1]}x$(( BASH_REMATCH[2] / 2 ))"
+  hold_mode "the first monitor is held at half its height for the short room" "$nk_output" "$nk_short" 1
+  # True while the open panel is laid out shorter than its panelMaxHeight.
+  room_caps() {
+    local box max
+    box="$(ipc smoke instanceGeometry panel vgs.notifications)" || return
+    max="$(ipc smoke readInstance panel vgs.notifications panelMaxHeight)" || return
+    python3 -c 'import json,sys; print(json.loads(sys.argv[1])[3] < float(sys.argv[2]))' "$box" "$max"
+  }
+  expect "the short room's long inbox toasts leave the screen" 0 long_inbox_rows
+  nk_press || fail "the short room's open press failed"
+  expect_poll "the short room lays the inbox out shorter than its panelMaxHeight" True room_caps
+  nk_press || fail "the short room's close press failed"
+  expect_poll "the short room's inbox closes" closed inbox_shown
+  geometry expect "a long inbox opened by the key eight times in a short room shows its first card whole each time" fits long_inbox_cut nk_press
+  ok "short room long inbox cuts: $(cat -- "$sandbox/long-inbox.txt")"
+  expect "disabling the notifications before the whole-height list copy is allowed" ok ipc shell setPluginEnabled vgs.notifications false
+  expect_poll "the compositor lists no inbox shortcut before the whole-height list copy" 0 note_shortcuts
+  cp -- "$nk_panel" "$sandbox/Panel.qml.keys-kept"
+  python3 - "$nk_panel" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+needle = "            Layout.fillHeight: true\n            Layout.minimumHeight: 0\n            Layout.maximumHeight: listScroll.implicitHeight\n"
+assert text.count(needle) == 1, "the list's room under the header occurs once"
+open(path, "w").write(text.replace(needle, ""))
+PY
+  expect "a rescan reads the whole-height list copy" ok ipc shell rescanPlugins
+  expect "enabling the notifications beside the whole-height list copy is allowed" ok ipc shell setPluginEnabled vgs.notifications true
+  expect_poll "the service is built beside the whole-height list copy" True record_exists vgs.notifications
+  expect_poll "the inbox shortcut is listed beside the whole-height list copy" 1 note_shortcuts
+  geometry expect "control: a panel whose list keeps its whole height runs a long inbox past the short room's panel" cut long_inbox_cut nk_press
+  ok "control short room cuts: $(cat -- "$sandbox/long-inbox.txt")"
+  cp -- "$sandbox/Panel.qml.keys-kept" "$nk_panel"
+  expect "a rescan restores the panel after the short room" ok ipc shell rescanPlugins
+  notes dismiss-all >/dev/null # `none` once every toast's clock ran out
+  expect "clearing the short room's history is allowed" ok notes clear-history
+  release_mode "the first monitor gets its own mode back after the short room" "$nk_output" "$nk_base"
+else
+  fail "the short room reads no sized mode at scale 1 on the first monitor ${nk_output:-unread}"
+fi
 
 # Control: a service whose shortcut summons the open inbox again. The
 # plugin goes off before the copy is planted and on after, so the shortcut

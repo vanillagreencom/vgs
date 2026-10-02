@@ -271,6 +271,12 @@ FocusScope {
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: listScroll.implicitWidth
             Layout.preferredHeight: listScroll.implicitHeight
+            // A room shorter than the panel asks for leaves the list what
+            // is under the header, and it scrolls inside that; a fixed
+            // height would run it past the panel's bottom.
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            Layout.maximumHeight: listScroll.implicitHeight
             implicitHeight: Layout.preferredHeight
 
             CardScroll {
