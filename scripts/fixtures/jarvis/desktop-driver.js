@@ -67,7 +67,7 @@ function instrument(daemon, root) {
     fs.copyFileSync(__filename, path.join(path.dirname(daemon), "desktop-driver-fixture.js"));
 }
 
-module.exports = { drive };
+module.exports = { drive, instrument };
 if (require.main === module) {
     if (process.argv[2] === "--readback-defect" && process.argv.length === 4)
         edit(process.argv[3], "if (verdict.met) return { kind: \"met\", seen: verdict.seen };", "return { kind: \"met\", seen: verdict.seen };");

@@ -11,7 +11,7 @@ set -euo pipefail
 
 jd_dir="$repo/shell/plugins/vgs.jarvis"
 jd_backend="$jd_dir/backend/jarvisd.js"
-jd_desktop="$jd_dir/backend/Desktop.js"
+jd_desktop="$jd_dir/backend/DesktopSession.js"
 jd_service="$jd_dir/Service.qml"
 jd_driver="$sandbox/jarvis-desktop-driver"
 jd_gates="$sandbox/jarvis-desktop-gates"

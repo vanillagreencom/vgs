@@ -23,6 +23,8 @@ const groupOf = pid => Number(fs.readFileSync("/proc/" + pid + "/stat", "utf8").
 
 async function main() {
     const Session = load(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"));
+    const Dispatch = load(path.join(tree, "shell/Core/Dispatch.js"));
+    const Launch = load(path.join(tree, "shell/Commons/DesktopLaunch.js"));
     const world = process.env.JARVIS_TEST_ROOT;
     const desktop = path.join(world, "desktop");
     fs.mkdirSync(desktop);
@@ -86,8 +88,12 @@ async function main() {
             context: () => ({ profile, locked: false, denied: null }), audit, result: value => ports.brain.outcome(value) });
         Object.assign(ports, router.ports);
         const registered = [];
-        Executors.register({ register(id, executor) { registered.push(id); router.register(id, executor); } },
-            { find: commandFile, environment: ENVIRONMENT, clock });
+        const executors = Executors.register({ register(id, executor) { registered.push(id); router.register(id, executor); } },
+            { find: commandFile, environment: ENVIRONMENT, clock,
+                desktop: { Dispatch, Launch, request: () => assert.fail("no desktop request"),
+                    clock: { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) },
+                    environment: { PATH: process.env.PATH, LANG: "C.UTF-8", XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR },
+                    commands: [] } });
         runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} });
         runner.dispatch({ type: "indicator", shown: true });
         runner.dispatch({ type: "talk-down" });
@@ -103,7 +109,7 @@ async function main() {
                 return { outcome: value.outcome, item: value.results[0].item };
             });
         }
-        function close() { runner.close(); audit.close(); }
+        function close() { runner.close(); executors.close(); audit.close(); }
         return { router, runner, registered, send, close };
     }
     async function once(folder, modes, tool, args, options) {
@@ -245,8 +251,8 @@ async function main() {
                     process.env.PATH = directory;
                     const w = make(folder);
                     try {
-                        assert.deepEqual(w.router.offer().map(tool => tool.id), offered, name);
-                        assert.deepEqual(w.registered, registered, name + " registrations");
+                        assert.deepEqual(w.router.offer().map(tool => tool.id), [...offered, "notify.toast"], name);
+                        assert.deepEqual(w.registered, ["wire", ...registered], name + " registrations");
                         assert.equal(fs.existsSync(path.join(directory, "ran")), false, "the probe runs no command");
                         const turn = w.runner.state.turn;
                         assert.deepEqual(w.router.route({ kind: "tool-call", id: "model-brightness", tool: "media.brightness",

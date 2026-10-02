@@ -114,10 +114,10 @@ cp -- "$tests/stand-ins/UnitTheme.qml" "$imports/qs/Unit/UnitTheme.qml"
 # Where the module under test is, for the test that reads its qmldir.
 printf '.pragma library\nvar UI_DIR = %s;\n' "$(python3 -c 'import json, sys; print(json.dumps("file://" + sys.argv[1]))' "$ui")" >"$imports/qs/Unit/UnitPaths.js"
 printf 'module qs.Unit\nsingleton UnitTheme 1.0 UnitTheme.qml\nUnitPaths 1.0 UnitPaths.js\n' >"$imports/qs/Unit/qmldir"
-for file in Singleton.qml Scope.qml PopupWindow.qml Edges.qml PopupAdjustment.qml Quickshell.qml; do
+for file in Singleton.qml Scope.qml PopupWindow.qml Edges.qml PopupAdjustment.qml Quickshell.qml DesktopEntries.qml; do
   cp -- "$tests/stand-ins/$file" "$imports/Quickshell/$file"
 done
-printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nScope 1.0 Scope.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\nsingleton Quickshell 1.0 Quickshell.qml\n' >"$imports/Quickshell/qmldir"
+printf 'module Quickshell\nSingleton 1.0 Singleton.qml\nScope 1.0 Scope.qml\nPopupWindow 1.0 PopupWindow.qml\nEdges 1.0 Edges.qml\nPopupAdjustment 1.0 PopupAdjustment.qml\nsingleton Quickshell 1.0 Quickshell.qml\nsingleton DesktopEntries 1.0 DesktopEntries.qml\n' >"$imports/Quickshell/qmldir"
 mkdir -p -- "$imports/Quickshell/Hyprland"
 cp -- "$tests/stand-ins/GlobalShortcut.qml" "$imports/Quickshell/Hyprland/GlobalShortcut.qml"
 cp -- "$tests/stand-ins/Hyprland.qml" "$imports/Quickshell/Hyprland/Hyprland.qml"

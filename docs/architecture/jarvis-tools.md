@@ -6,15 +6,15 @@ The clipboard, media and notify executors run the J46 rows of `Tools.TABLE`. [Th
 
 ## Owners
 
-- `Executors.register` is the daemon's one registration seam. Its `OWNERS` table maps a Tools executor id to the function that builds it. J45 adds its `compositor`, `apps` and `windows` executors as rows there.
+- `Executors.register` is the daemon's one registration seam. Its `OWNERS` table selects the shared [window and application owner](jarvis-desktop-tools.md) through `DesktopSession.install`, and each command executor through `Desktop.create`. It returns the installed lifetimes for teardown after the router closes.
 - `Desktop.create` builds the `clipboard`, `media` and `notify` executors. Its `ARGV` table is the one map from a frozen call to a command's arguments and stdin. The command name comes from the call's Tools row.
 - `Child.run` owns one bounded child: no shell, a whole explicit environment, a deadline, one byte ceiling over stdout and stderr, cancellation and one end. [The kernel sandbox](jarvis-sandbox.md) and the desktop executors both use it. The sandbox ends bwrap alone, whose die-with-parent ends the namespace. A desktop child leads its own session and process group, and its end kills that group.
-- `notify.toast` stays unregistered. Its executor, `wire`, needs the daemon-to-shell request wire that J45 owns.
+- `notify.toast` uses the registered `wire` executor and [daemon-to-shell request wire](jarvis-desktop-tools.md#request-wire). It stays offered even when Hyprland cannot answer the window owner's probe.
 - `media.brightness` is not offered. [D083](../decisions/D083-brightness-helper-and-uaccess-rule.md) makes `vgs.displays` the one brightness owner, so Jarvis will route the row through its brightness service once System S16 exposes it. `ARGV` has no entry for it, so the seam never looks up `brightnessctl`. The row keeps its schema, from 1 to 100, as the reserved call contract that route uses.
 
 ## Registration
 
-On the first hello, the daemon passes its router, `commandFile` from `bin/lib/judge-files.js` and its own environment to the seam. `commandFile` is the shared PATH lookup: the first executable regular file in an absolute PATH directory. The seam looks up each command the executor's Tools rows declare and runs none of them. It registers the executor with the commands found and their absolute files. An executor none of whose rows can run registers nothing. The router's `offer()` already drops a row whose command is absent. A command installed later appears at the daemon's next start.
+On the first hello, the daemon passes its router, `commandFile` from `bin/lib/judge-files.js`, its own environment and the desktop installation options to the seam. `commandFile` is the shared PATH lookup: the first executable regular file in an absolute PATH directory. For command executors the seam looks up each command the executor's Tools rows declare and runs none of them. It registers the executor with the commands found and their absolute files. An executor none of whose rows can run registers nothing. The router's `offer()` already drops a row whose command is absent. A command installed later appears at the daemon's next start. The shared desktop owner retains its own Hyprland probe and lifetime.
 
 `Service.qml` gives the daemon `WAYLAND_DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` beside its other variables. The daemon passes them only to the commands below. `scripts/qml-tests/tst_jarvis_service.qml` pins the daemon's whole environment.
 

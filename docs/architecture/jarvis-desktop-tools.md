@@ -1,20 +1,20 @@
 # Jarvis desktop tools
 
-Covers: shell/plugins/vgs.jarvis/backend/Desktop.js, shell/Commons/DesktopLaunch.js, scripts/test-desktop-launch.js, shell/plugins/vgs.jarvis/backend/ShellRequests.js, scripts/test-jarvis-desktop.js, scripts/test-jarvis-requests.js, scripts/fixtures/jarvis/desktop.js, scripts/fixtures/jarvis/desktop-driver.js, scripts/smoke/rows/jarvis-desktop.sh
+Covers: shell/plugins/vgs.jarvis/backend/DesktopSession.js, shell/Commons/DesktopLaunch.js, scripts/test-desktop-launch.js, shell/plugins/vgs.jarvis/backend/ShellRequests.js, scripts/test-jarvis-desktop.js, scripts/test-jarvis-requests.js, scripts/fixtures/jarvis/desktop.js, scripts/fixtures/jarvis/desktop-driver.js, scripts/smoke/rows/jarvis-desktop.sh
 
 The [Jarvis plan § 6](../plans/v2-jarvis-plan.md#6-computer-use-and-browser-reference-set) defines the window, workspace and application tools. [The router](jarvis-approval.md) proposes each call after [Policy](jarvis-policy.md) and [Audit](jarvis-audit.md). This file defines the executors behind those calls and the request wire they use.
 
 ## Owners
 
-- `Desktop.js::create` owns four executor records: `windows`, `compositor`, `apps` and `wire`. They share one Hyprland reader, one read-back judge and one lifetime.
-- `Desktop.js::install` registers `wire` at once. It registers `windows`, `compositor` and `apps` only after one Hyprland state read answers. That read is the probe that proves `hyprctl` reaches this session. Without it the router offers none of their tools.
+- `DesktopSession.js::create` owns four executor records: `windows`, `compositor`, `apps` and `wire`. They share one Hyprland reader, one read-back judge and one lifetime.
+- `DesktopSession.js::install`, called by [the registration seam](jarvis-tools.md#owners), registers `wire` at once. It registers `windows`, `compositor` and `apps` only after one Hyprland state read answers. That read is the probe that proves `hyprctl` reaches this session. Without it the router offers none of their tools.
 - `ShellRequests.js::create` owns the daemon's side of the request wire: request ids, the pending bound and reply matching. `JarvisProtocol.accept` judges every message on both sides.
 - `Service.qml::serve` answers each request from one handler table keyed by kind. Each handler calls the capability that owns the act: `shell.compositor`, `shell.run.detached`, `shell.toasts` or Quickshell's `DesktopEntries`. The compositor handlers come from the `compositor.` kinds of `JarvisProtocol.REQUESTS`. The reply carries that capability's own answer. The service reads no effect back.
 - `JarvisProtocol.lockedRefusal` is the service's lock rule. A request that changes the desktop (`acts` in `REQUESTS`: every `compositor.` kind, `run.detached` and `desktop.launch`) answers `refused: locked` while the service observes the session locked. Policy judged the lock when the action started; this stops the steps that remain after a later lock.
 - `shell/Commons/DesktopLaunch.js` is the one launch rule, shared with the launcher: `entry()` for a desktop entry and `open()` for a file or link.
 - The daemon never runs `hyprctl dispatch`. Every change is a request, so `shell/Core/Dispatch.js` stays the one dispatch judge.
 
-The daemon's lease closes `Desktop` and `ShellRequests` after the router. A read in flight is killed, a poll starts no new read, and no request deadline holds the process.
+The daemon's lease closes the seam's installed `DesktopSession` lifetime and `ShellRequests` after the router. A read in flight is killed, a poll starts no new read, and no request deadline holds the process.
 
 ## Tools
 
@@ -49,9 +49,9 @@ The daemon's lease closes `Desktop` and `ShellRequests` after the router. A read
 
 ## Read-back judge
 
-`settle(judge, deadline)` in `Desktop.js` is the one read-back for every changing tool. It polls one Hyprland state read until the judge sees the effect or the deadline passes. Each verdict also names what Hyprland showed, and that text becomes the brain's result either way.
+`settle(judge, deadline)` in `DesktopSession.js` is the one read-back for every changing tool. It polls one Hyprland state read until the judge sees the effect or the deadline passes. Each verdict also names what Hyprland showed, and that text becomes the brain's result either way.
 
-- The state read is `hyprctl --batch` of `Dispatch.REVEAL_STATE_REQUEST`, parsed by `Dispatch.revealState`; the workspace list reads `Dispatch.WORKSPACE_STATE_REQUEST` through `Dispatch.workspaceState`. Both parsers use `Dispatch.jsonReplies`, so the batch requests, their split and each reply's top-level shape have one reader. The daemon loads `Dispatch.js` from the VGS tree through `bin/lib/qml-library.js`. The expectations in `Desktop.js` read the client and monitor fields themselves.
+- The state read is `hyprctl --batch` of `Dispatch.REVEAL_STATE_REQUEST`, parsed by `Dispatch.revealState`; the workspace list reads `Dispatch.WORKSPACE_STATE_REQUEST` through `Dispatch.workspaceState`. Both parsers use `Dispatch.jsonReplies`, so the batch requests, their split and each reply's top-level shape have one reader. The daemon loads `Dispatch.js` from the VGS tree through `bin/lib/qml-library.js`. The expectations in `DesktopSession.js` read the client and monitor fields themselves.
 - The outcome is `completed` only when the judge sees the effect. A dispatcher that answers `ok` and moves nothing ends `failed`, or `unknown` for close and launch.
 - A reply refused by the shell ends `failed` with the shell's answer. A request with no reply before its deadline ends `unknown`, because the shell may still act on it. A state read that fails after a request ends `unknown`.
 
@@ -110,4 +110,5 @@ VGS keeps Omarchy's `hyprctl -j` read and its watch for a new window. It differs
 - `scripts/test-desktop-launch.js` pins `DesktopLaunch.js`, with a control that drops the terminal rule and one that changes the opener. `scripts/test-dispatch.js` pins `jsonReplies` through both state parsers.
 - `scripts/test-jarvis-requests.js` pins the pending bound, a timed-out request's slot, the late reply drop, unknown, repeated and mismatched replies, writer refusal and close. A control removes each rule.
 - `scripts/test-jarvis-protocol.js` pins the request and reply shapes, the kind table, the entry builders and the lock rule per kind, with a control per guard. `scripts/test-jarvis-daemon.js` proves a reply before hello or for an unsent request exits 65, and that the probe's `hyprctl` sees only its four variables. It also pins the disposable desktop driver's result delivery after the engine and scripted ports are installed. A control installs that driver too early and loses the result.
+- The desktop suite also installs through `Executors.register`. It pins one registration per record, toast availability without Hyprland and close during a pending probe. Its controls remove the seam's install and lifetime close. The daemon suite runs the smoke's desktop driver against the stand-in shell for a focus request and a toast.
 - `scripts/smoke/rows/jarvis-desktop.sh` drives a disposable daemon through `scripts/fixtures/jarvis/desktop-driver.js`, which routes each call through the real router, Policy, Audit, executors, wire and service. The daemon's `hyprctl` stand-in is pinned to the nested instance and refuses a dispatch. The row reads each effect from the nested Hyprland itself: focus, float, move, resize, fullscreen, workspace moves and focus, reveal, special workspaces, monitor focus, a planted entry's launch, close and a toast. A shell `hyprctl` that answers `ok` without dispatching must not report completed; a planted read-back that never waits fails that assertion once. J09 gives the daemon no session identifier, so the row reads the signature the service hands its launcher from `/proc`; a service copy that drops it fails that reading once.

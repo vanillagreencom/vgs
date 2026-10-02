@@ -25,7 +25,7 @@ Item {
             verify(process.clearEnvironment, "the daemon inherits nothing");
             const expected = { LANG: "C.UTF-8" };
             for (const name of ["PATH", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME",
-                "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"])
+                "XDG_RUNTIME_DIR", "HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"])
                 expected[name] = "env:" + name;
             const sorted = value => Object.keys(value).sort().map(name => name + "=" + value[name]).join("\n");
             compare(sorted(process.environment), sorted(expected));

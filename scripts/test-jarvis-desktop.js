@@ -7,7 +7,7 @@ const { assert, fs, path, tree, world, mutant } = require("./fixtures/jarvis/pol
 const { standins, desktopWorld, client } = require("./fixtures/jarvis/desktop.js");
 const { load } = require("../bin/lib/qml-library.js");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
-const file = path.join(backend, "Desktop.js");
+const file = path.join(backend, "DesktopSession.js");
 
 world(async () => {
     const Protocol = load(path.join(tree, "shell/plugins/vgs.jarvis/JarvisProtocol.js"));
@@ -23,7 +23,7 @@ world(async () => {
     ];
     const desk = desktopWorld(runtime, entries, Launch);
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
-    // Small real bounds keep the suite short; production's are in Desktop.js.
+    // Small real bounds keep the suite short; production's are in DesktopSession.js.
     const bounds = { hyprctlMs: 3000, hyprctlBytes: 1024 * 1024, requestMs: 250, settleMs: 300, launchMs: 400, pollMs: 20, slackMs: 1000 };
     // The longest paths, near their bounds: each stand-in read sleeps 1 s
     // under a 1.3 s hyprctl bound, and each reply waits 1.05 s under a 1.2 s
@@ -181,12 +181,14 @@ world(async () => {
     } finally { fs.writeFileSync(standin, saved, { mode: 0o700 }); }
 
     // Registration: wire at once, the Hyprland executors after their probe.
-    async function installed(Desktop, fail, closeEarly = false) {
+    async function installed(Desktop, fail, closeEarly = false, Executors) {
         desk.reset();
         if (fail) fs.writeFileSync(path.join(runtime, "hyprctl.fail"), "");
         const ids = [];
-        const owner = Desktop.install({ router: { register: (id, record) => ids.push([id, record.commands]) },
-            Dispatch, Launch, request: () => assert.fail("no request at install"), clock, bounds, environment, commands: [] });
+        const router = { register: (id, record) => ids.push([id, record.commands]) };
+        const options = { Dispatch, Launch, request: () => assert.fail("no request at install"), clock, bounds, environment, commands: [] };
+        const owner = Executors === undefined ? Desktop.install({ router, ...options })
+            : Executors.register(router, { find: () => null, environment, desktop: options });
         if (closeEarly) {
             owner.close();
             // Close kills the probe's read; its rejection follows the kill.
@@ -208,6 +210,17 @@ world(async () => {
         assert.deepEqual(await installed(Desktop, false, true), [["wire", []]], "a closed owner registers nothing");
     };
     await registration(require(file));
+    const integrated = async Executors => {
+        assert.deepEqual(await installed(null, false, false, Executors),
+            [["wire", []], ["windows", ["hyprctl"]], ["compositor", ["hyprctl"]], ["apps", ["hyprctl"]]],
+            "the shared seam installs each desktop record once");
+        assert.deepEqual(await installed(null, true, false, Executors), [["wire", []]],
+            "toast stays offered without Hyprland");
+        assert.deepEqual(await installed(null, false, true, Executors), [["wire", []]],
+            "the seam closes the shared desktop lifetime before its probe registers");
+    };
+    const executorsFile = path.join(backend, "Executors.js");
+    await integrated(require(executorsFile));
     assert.deepEqual(make(require(file), ["gio", "other"]).desktop.records.apps.commands, ["hyprctl", "gio"]);
     assert.deepEqual(make(require(file), []).desktop.records.apps.commands, ["hyprctl"]);
     for (const id of ["windows", "compositor", "apps", "wire"])
@@ -235,7 +248,7 @@ world(async () => {
 
     let controls = 0;
     async function control(name, needle, replacement, assertion) {
-        await mutant(file, name, needle, replacement, assertion, "Desktop.js");
+        await mutant(file, name, needle, replacement, assertion, "DesktopSession.js");
         controls++;
     }
     const red = names => Desktop => (async () => { for (const name of names) await check(Desktop, byName(name)); })();
@@ -260,5 +273,12 @@ world(async () => {
     await control("probe-first", "router.register(\"wire\", desktop.records.wire);",
         "for (const id of [\"wire\", \"windows\", \"compositor\", \"apps\"]) router.register(id, desktop.records[id]);", registration);
     await control("close-reads", "if (closed) { reject(new Error(\"closed\")); return; }", "", closing);
+    for (const [name, needle, replacement] of [
+        ["seam-install", "lifetimes.push(owner.install({ router, ...desktop }));", "void owner;"],
+        ["seam-close", "for (const lifetime of lifetimes) lifetime.close();", "void lifetimes;"]
+    ]) {
+        await mutant(executorsFile, name, needle, replacement, integrated, "Executors.js");
+        controls++;
+    }
     console.log("test-jarvis-desktop: ok cases=" + cases.length + " controls=" + controls);
 }, standins);

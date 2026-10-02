@@ -11,6 +11,7 @@ const { freshSuite } = require("./fixtures/jarvis/prepare.js");
 const { instrument } = require("./fixtures/jarvis/scripted.js");
 const { standins } = require("./fixtures/jarvis/audio.js");
 const desktopFixture = require("./fixtures/jarvis/desktop.js");
+const { instrument: instrumentDesktop } = require("./fixtures/jarvis/desktop-driver.js");
 const tree = path.resolve(__dirname, "..");
 const daemon = path.join(tree, "shell/plugins/vgs.jarvis/backend/jarvisd.js");
 const source = fs.readFileSync(daemon, "utf8");
@@ -601,7 +602,7 @@ async function inside() {
         catch (error) { if (error.code === "ESRCH") return false; throw error; }
     };
     // Bounded reads of files the daemon and the stand-in write.
-    async function until(predicate, what) {
+    async function desktopUntil(predicate, what) {
         for (let attempts = 0; attempts < 400; attempts++) {
             if (predicate()) return;
             await new Promise(resolve => setTimeout(resolve, 5));
@@ -621,9 +622,9 @@ async function inside() {
             // The routed call can move the phase on to acting at once.
             await w.wait(m => m.state.turn.kind === "thinking");
             if (modes.playerctl?.hold) {
-                await until(() => fs.existsSync(path.join(desktop, "playerctl.held")), "the held stand-in never started");
+                await desktopUntil(() => fs.existsSync(path.join(desktop, "playerctl.held")), "the held stand-in never started");
                 held = JSON.parse(fs.readFileSync(path.join(desktop, "playerctl.held"), "utf8")).pid;
-            } else await until(() => lines(answers).length === 2, "no tool result reached the brain port");
+            } else await desktopUntil(() => lines(answers).length === 2, "no tool result reached the brain port");
         }).then(() => held);
     };
     const routed = async file => {
@@ -640,7 +641,9 @@ async function inside() {
         assert.equal(call.deathsig, 9);
     };
     await routed(desktopDaemon("desktop"));
-    const register = "Executors.register(router, { find: commandFile, environment: process.env });";
+    const register = "executors = Executors.register(router, { find: commandFile, environment: process.env,\n"
+        + "                        desktop: { Dispatch, Launch, request: requests.send, clock,\n"
+        + '                            environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) } });';
     await assert.rejects(() => routed(desktopDaemon("desktop-unregistered", [[register, "void Executors;"]])),
         assert.AssertionError, "a daemon that registers no executor must fail the routed call");
     controls++;
@@ -656,6 +659,30 @@ async function inside() {
     assert.AssertionError, "a daemon whose router drops the cancel must keep its command running");
     controls++;
     console.log("test-jarvis-daemon: control=desktop-cancel killed");
+    const driverRoot = path.join(root, "desktop-driver");
+    const driverDaemon = daemonCopy("desktop-driver");
+    instrument(driverDaemon, gates);
+    instrumentDesktop(driverDaemon, driverRoot);
+    const Protocol = require(path.join(tree, "bin/lib/qml-library.js")).load(path.join(tree, "shell/plugins/vgs.jarvis/JarvisProtocol.js"));
+    for (const [tool, arguments_, kind, content] of [
+        ["windows.focus", { window: "0xa1" }, "compositor.focusWindow", /Read back: window 0xa1 has the focus/],
+        ["notify.toast", { title: "Fixture", body: "Notice" }, "toast", /^The notice was posted\.$/]
+    ]) {
+        desk.reset();
+        fs.rmSync(path.join(driverRoot, "results.jsonl"), { force: true });
+        await conversation(driverDaemon, async w => {
+            fs.writeFileSync(path.join(driverRoot, "call.json"), JSON.stringify({ id: "driver-" + tool, tool, arguments: arguments_ }));
+            await desktopUntil(() => w.messages.some(message => message.type === "request"), "the driver sent no desktop request");
+            const request = w.messages.find(message => message.type === "request");
+            assert.equal(request.kind, kind);
+            w.reply(desk.serve(Protocol, request));
+            await desktopUntil(() => lines(path.join(driverRoot, "results.jsonl")).some(result => result.outcome !== undefined),
+                "the driver received no desktop result");
+            const result = lines(path.join(driverRoot, "results.jsonl")).find(value => value.outcome !== undefined);
+            assert.equal(result.outcome, "completed");
+            assert.match(result.content, content);
+        });
+    }
     async function blockedReader(file) {
         fs.writeFileSync(path.join(process.env.HOME, "audio-flood"), "");
         const child = cp.spawn("node", [file, "--tree", tree], {
