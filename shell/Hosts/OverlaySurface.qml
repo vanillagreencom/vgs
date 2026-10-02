@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
+import qs.Core
 
 // The layer window for passive plugin content and core notices, on the
 // overlay layer. The compositor keeps it in the area other layers leave
@@ -22,6 +23,13 @@ PanelWindow {
     required property int inset
     property var inputItems: []
     property bool inputAll: false
+    property var releaseInputSurface: null
+    readonly property var inputWindow: surface.contentItem.Window.window
+    onInputWindowChanged: {
+        if (releaseInputSurface !== null) releaseInputSurface();
+        releaseInputSurface = Compositor.inputSurface(inputWindow);
+    }
+    Component.onDestruction: if (releaseInputSurface !== null) releaseInputSurface()
 
     readonly property var edges: edgesOf(placement)
 

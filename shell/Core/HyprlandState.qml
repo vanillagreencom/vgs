@@ -2,6 +2,7 @@ import QtQuick
 import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 import "HyprlandState.js" as State
 import "PluginLogic.js" as Logic
 
@@ -39,6 +40,7 @@ Scope {
     property var foreignKeys: null
     // The last binds read's keyed failure, "" once one succeeds.
     property string bindsFailure: ""
+    property var keyResolution: null
 
     onActiveChanged: {
         if (active) {
@@ -47,6 +49,8 @@ Scope {
             readBinds();
             return;
         }
+        finishKeys({ ok: false, error: "refused: keymap=inactive" });
+        keyResolver.running = false;
         devices = null;
         devicesFailure = "";
         overriddenRows = null;
@@ -56,10 +60,13 @@ Scope {
 
     // The capability for one instance; it holds nothing to release.
     function provider(ctx) {
+        let alive = true;
+        ctx.onDispose(() => { alive = false; });
         return Object.freeze({
             get overridden() { return root.overriddenFor(ctx.id); },
             get devices() { return root.devices === null ? null : Logic.frozenJson(root.devices); },
             get foreignBinds() { return root.foreignKeys === null ? null : Logic.frozenJson(root.foreignKeys); },
+            resolveKeys: (keys, done) => root.resolveKeys(keys, value => { if (alive) done(value); }),
             switchKeyboardLayout: target => Compositor.switchLayout(target)
         });
     }
@@ -71,6 +78,52 @@ Scope {
     function readDevices() {
         if (!active) return;
         devicesReader.read(State.DEVICES_REQUEST, null);
+    }
+
+    function resolveKeys(keys, done) {
+        if (typeof done !== "function") throw new Error("refused: keymap=callback");
+        if (!active || keyResolution !== null || keyResolver.running) { done({ ok: false, error: "refused: keymap=busy" }); return; }
+        keyResolution = { keys: keys, done: done };
+        keyDeadline.start();
+        readDevices();
+    }
+
+    function finishKeys(value) {
+        const pending = keyResolution;
+        keyResolution = null;
+        keyDeadline.stop();
+        if (pending !== null) pending.done(value);
+    }
+
+    Process {
+        id: keyResolver
+        property var completion: null
+        property string requestText: ""
+        command: ["python3", "-I", Quickshell.shellDir + "/../bin/lib/xkb-keys.py"]
+        clearEnvironment: true
+        environment: ({ PATH: Quickshell.env("PATH") || "/usr/bin:/bin", LANG: "C.UTF-8" })
+        stdinEnabled: true
+        stdout: StdioCollector { id: keyOutput }
+        onStarted: { write(requestText); stdinEnabled = false; }
+        onExited: (code, status) => { completion = { code: code, status: status }; }
+        onRunningChanged: {
+            if (running) return;
+            keyDeadline.stop();
+            const done = completion;
+            completion = null;
+            const value = done !== null && done.code === 0 && root.keyResolution !== null
+                ? State.resolvedKeys(keyOutput.text, root.keyResolution.keys.length)
+                : { ok: false, error: "refused: keymap=resolver-failed" };
+            root.finishKeys(value);
+        }
+    }
+    Timer {
+        id: keyDeadline
+        interval: 2000
+        onTriggered: {
+            root.finishKeys({ ok: false, error: "refused: keymap=timeout" });
+            keyResolver.running = false;
+        }
     }
 
     function readOptions() {
@@ -134,6 +187,25 @@ Scope {
             } else {
                 root.devicesFailure = "";
                 if (!root.same(read.devices, root.devices)) root.devices = read.devices;
+            }
+            if (root.keyResolution !== null) {
+                const request = State.keyRequest(root.devices, root.keyResolution.keys);
+                if (!request.ok) root.finishKeys(request);
+                else {
+                    const wire = JSON.stringify(request.request) + "\n";
+                    if (keyResolution.resolving) {
+                        if (wire !== keyResolver.requestText) {
+                            root.finishKeys({ ok: false, error: "refused: keymap=layout-changed" });
+                            keyResolver.running = false;
+                        }
+                    } else {
+                        keyResolution = Object.assign({}, keyResolution, { resolving: true });
+                        keyResolver.requestText = wire;
+                        keyResolver.stdinEnabled = true;
+                        keyResolver.running = true;
+                        keyDeadline.start();
+                    }
+                }
             }
         }
     }

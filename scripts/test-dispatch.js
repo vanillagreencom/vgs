@@ -271,8 +271,7 @@ const dispatchFile = path.join(__dirname, "..", "shell", "Core", "Dispatch.js");
 const source = fs.readFileSync(dispatchFile, "utf8");
 fs.mkdirSync(path.join(__dirname, "..", "tmp"), { recursive: true });
 const scratch = fs.mkdtempSync(path.join(__dirname, "..", "tmp", "test-dispatch-"));
-// A copy sits beside the Hyprland layer it imports.
-fs.symlinkSync(path.join(__dirname, "..", "shell", "Core", "HyprlandLayer.js"), path.join(scratch, "HyprlandLayer.js"));
+fs.copyFileSync(path.join(path.dirname(dispatchFile), "HyprlandLayer.js"), path.join(scratch, "HyprlandLayer.js"));
 try {
     const dispatchControls = [
         ["known dispatcher", "if (!Object.prototype.hasOwnProperty.call(DISPATCHERS, name))", "if (false)"],

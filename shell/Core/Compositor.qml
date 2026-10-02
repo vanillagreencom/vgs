@@ -26,6 +26,46 @@ Singleton {
     property string reply: ""
     property var queue: []
     property var completion: null
+    property var inputSurfaces: []
+    property var inputObservation: null
+
+    // Host-owned raw QQuickWindows supply activation, including layer focus
+    // absent from Hyprland's activewindow reply. Each host releases its record.
+    function inputSurface(window) {
+        if (window === null) return () => {};
+        const record = { window: window };
+        inputSurfaces = inputSurfaces.concat([record]);
+        return () => { inputSurfaces = inputSurfaces.filter(r => r !== record); };
+    }
+
+    function observeInput(point, done) {
+        if (typeof done !== "function") throw new Error("refused: input=callback");
+        if (inputObservation !== null) { done({ ok: false, error: "refused: input=busy" }); return; }
+        inputObservation = { point: point, done: done };
+        inputReader.read(["hyprctl", "--batch", Dispatch.INPUT_STATE_REQUEST], null);
+        inputDeadline.start();
+    }
+
+    function finishInput(value) {
+        const pending = inputObservation;
+        inputObservation = null;
+        inputDeadline.stop();
+        if (pending !== null) pending.done(value);
+    }
+
+    HyprctlReader {
+        id: inputReader
+        label: "input"
+        onReadDone: (request, text, failure) => {
+            if (root.inputObservation === null) return;
+            const protectedKeyboard = root.inputSurfaces.some(record => record.window !== null && record.window.visible && record.window.active);
+            const entries = DesktopEntries.applications.values.map(entry => ({ id: entry.id.replace(/\.desktop$/, "").toLowerCase(),
+                startupClass: entry.startupClass.toLowerCase(), terminal: entry.categories.indexOf("TerminalEmulator") !== -1 }));
+            root.finishInput(failure === "" ? Dispatch.inputTarget(text, root.inputObservation.point, protectedKeyboard, entries)
+                : { ok: false, error: "refused: input=read-failed " + failure });
+        }
+    }
+    Timer { id: inputDeadline; interval: 2000; onTriggered: root.finishInput({ ok: false, error: "refused: input=timeout" }) }
 
     // The screen a surface lands on when nothing chose one: the focused
     // monitor, or the first screen when Hyprland names none Quickshell

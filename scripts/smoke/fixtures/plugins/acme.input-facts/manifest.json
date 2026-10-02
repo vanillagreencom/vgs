@@ -1,0 +1,11 @@
+{
+    "schemaVersion": 1,
+    "id": "acme.input-facts",
+    "name": "Input facts",
+    "version": "0.1.0",
+    "author": "Smoke",
+    "description": "Reads resolved keys and protected input targets in the nested compositor",
+    "kinds": ["service"],
+    "entryPoints": { "service": "Service.qml" },
+    "capabilities": ["compositor", "hyprland", "ipc"]
+}

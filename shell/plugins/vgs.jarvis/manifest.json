@@ -9,7 +9,7 @@
   "icon": "mic",
   "kinds": ["bar-widget", "service"],
   "entryPoints": { "bar-widget": "Widget.qml", "service": "Service.qml" },
-  "capabilities": ["compositor", "ipc", "run", "session", "status", "toasts", "tui", "shortcut", "layers"],
+  "capabilities": ["compositor", "ipc", "run", "session", "status", "toasts", "tui", "shortcut", "layers", "hyprland"],
   "defaultSection": "right",
   "settings": { "mode": "hold", "microphone": "", "speaker": "", "brain": "", "taskTerminal": "auto" },
   "schema": {
@@ -57,7 +57,10 @@
     { "command": "gio", "packages": { "pacman": "glib2", "apt": "libglib2.0-bin", "dnf": "glib2" }, "optional": true, "purpose": "Opens a file or web link for Jarvis with its default application" },
     { "command": "claude", "packages": {}, "optional": true, "purpose": "Checks Claude Code login hints in each account directory" },
     { "command": "codex", "packages": {}, "optional": true, "purpose": "Checks Codex login hints in each account directory" },
-    { "command": "tmux", "packages": { "pacman": "tmux", "apt": "tmux", "dnf": "tmux" }, "optional": true, "purpose": "Runs several coding tasks at once, each in its own session" }
+    { "command": "tmux", "packages": { "pacman": "tmux", "apt": "tmux", "dnf": "tmux" }, "optional": true, "purpose": "Runs several coding tasks at once, each in its own session" },
+    {"command": "wtype", "packages": {"pacman": "wtype", "apt": "wtype", "dnf": "wtype"}, "optional": true, "purpose": "Types text and key chords through the Wayland virtual keyboard"},
+    {"command": "wlrctl", "packages": {"aur": "wlrctl", "apt": "wlrctl"}, "optional": true, "purpose": "Sends pointer clicks and scrolling without an input service"},
+    {"command": "ydotool", "packages": {"pacman": "ydotool", "apt": "ydotool", "dnf": "ydotool"}, "optional": true, "purpose": "Pointer fallback only while its input service already runs"}
   ],
   "status": {
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },
@@ -72,7 +75,8 @@
       "action": { "label": "Set up local voice", "tui": "setup-local" } },
     "accounts": { "type": "presenceList", "label": "Accounts", "hint": "Login hints are not inference proof. Accounts offers explicit API or local verification, which may cost money." },
     "brains": { "type": "choices", "label": "Brain accounts", "hidden": true },
-    "tasks": { "type": "count", "label": "Coding tasks", "hint": "Coding tasks whose agent is starting or running." }
+    "tasks": { "type": "count", "label": "Coding tasks", "hint": "Coding tasks whose agent is starting or running." },
+    "input": {"type": "state", "label": "Desktop input", "hint": "Protected layer rectangles include pass-through gaps. Unrecognized applications refuse input.", "action": {"label": "Check input", "tui": "setup-input"}}
   },
   "tui": {
     "add-key": { "script": "tui/add-key.sh", "title": "Add Jarvis key",
@@ -81,6 +85,7 @@
       "entry": { "label": "Set up local voice", "icon": "mic", "group": "Jarvis" } },
     "accounts": { "script": "tui/accounts.sh", "title": "Jarvis accounts",
       "entry": { "label": "Accounts", "icon": "users", "group": "Jarvis" } },
-    "task": { "script": "tui/task.sh", "title": "Jarvis coding task", "presentation": "plain" }
+    "task": { "script": "tui/task.sh", "title": "Jarvis coding task", "presentation": "plain" },
+    "setup-input": {"script": "tui/setup-input.sh", "title": "Check Jarvis input", "entry": {"label": "Check input", "icon": "mouse-pointer", "group": "Jarvis"}}
   }
 }

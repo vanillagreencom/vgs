@@ -19,11 +19,16 @@ depends=(
   'util-linux'
   'nodejs>=18'
   'python'
+  'libxkbcommon'
+  'xkeyboard-config'
   'git'
   'gum'
   'xdg-terminal-exec'
 )
 optdepends=(
+  'wtype: Jarvis text and key input'
+  'wlrctl: Jarvis pointer input without an input service'
+  'ydotool: Jarvis pointer fallback with an already running input service'
   'pipewire: Jarvis half-duplex audio capture, playback and discovery'
   'fd: launcher file and folder search'
   'fzf: launcher file search matching and the package pickers in floating TUIs'

@@ -2,6 +2,8 @@
 
 Covers: shell/Core/HyprlandLayer.js, shell/Core/HyprlandState.qml, shell/Core/HyprlandState.js, shell/Core/Compositor.qml, shell/Core/Dispatch.js, scripts/test-hyprland-layer.js, scripts/test-hyprland-state.js, scripts/test-dispatch.js, scripts/smoke/rows/hyprland-options.sh, scripts/smoke/fixtures/plugins/acme.hyprland
 
+[Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
+
 How a plugin's settings set Hyprland input options through the Hyprland layer, and what the `hyprland` capability reads back. The layer itself is [hyprland.md](hyprland.md); the Hyprland facts these rest on are [runtime-hyprland-input.md](runtime-hyprland-input.md). [D080](../decisions/D080-hyprland-options-rendered-from-data.md) records the choice.
 
 ## Options

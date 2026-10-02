@@ -2,6 +2,8 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/ToolRouter.js, shell/plugins/vgs.jarvis/backend/Tools.js, shell/plugins/vgs.jarvis/Session.js, shell/plugins/vgs.jarvis/backend/session-runner.js, shell/plugins/vgs.jarvis/backend/jarvisd.js, shell/plugins/vgs.jarvis/JarvisProtocol.js, scripts/test-jarvis-router.js
 
+[Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
+
 [D082](../decisions/D082-jarvis-approval-bound-to-the-action.md) refines [D070](../decisions/D070-jarvis-action-policy.md). [Policy](jarvis-policy.md) judges the typed action. [Session](jarvis-session.md) judges confirmation identity and time. [Audit](jarvis-audit.md) persists the decision before an executor starts.
 
 ## Owners

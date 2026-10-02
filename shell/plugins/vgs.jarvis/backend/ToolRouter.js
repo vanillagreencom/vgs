@@ -101,10 +101,13 @@ function create({ session, state, dispatch, context, audit, result }) {
     }
 
     function judge(value) {
-        const facts = context();
-        return Policy.decide(value.call, { profile: facts.profile, locked: facts.locked,
-            denied: facts.denied, taint, grants: [...grants],
-            input: value.executor.observe === undefined ? undefined : value.executor.observe(value.call) });
+        const decide = input => {
+            const facts = context();
+            return Policy.decide(value.call, { profile: facts.profile, locked: facts.locked,
+                denied: facts.denied, taint, grants: [...grants], input });
+        };
+        const input = value.executor.observe === undefined ? undefined : value.executor.observe(value.call);
+        return input instanceof Promise ? input.then(decide, () => ({ kind: "refuse", reason: "input-observation" })) : decide(input);
     }
 
     /**
@@ -119,20 +122,28 @@ function create({ session, state, dispatch, context, audit, result }) {
                 || typeof executor.cancellable !== "boolean" || !Array.isArray(executor.commands)
                 || !executor.commands.every(command => typeof command === "string")
                 || (executor.cancellable && typeof executor.cancel !== "function")
-                || (executor.observe !== undefined && typeof executor.observe !== "function"))
+                || (executor.observe !== undefined && typeof executor.observe !== "function")
+                || (executor.topics !== undefined && (id !== "guidance" || !Array.isArray(executor.topics)
+                    || !executor.topics.every(topic => Tools.TABLE.help.schema.properties.topic.enum.includes(topic)))))
             throw new Error("jarvis: router=executor");
         registry.set(id, Object.freeze({ ...executor, commands: Object.freeze(executor.commands.slice()) }));
     }
 
     function available(refined) {
         const executor = registry.get(refined.executor);
-        return executor !== undefined && (refined.command === null || executor.commands.includes(refined.command)) ? executor : null;
+        return executor !== undefined && (refined.command === null || executor.commands.includes(refined.command)
+            || (refined.alternatives || []).some(command => executor.commands.includes(command))) ? executor : null;
     }
 
     function offer() {
         if (closed) return [];
         return Object.entries(Tools.TABLE).filter(([, row]) => available(row) !== null)
-            .map(([id, row]) => ({ id, description: row.sentence, parameters: structuredClone(row.schema) }));
+            .map(([id, row]) => {
+                const parameters = structuredClone(row.schema);
+                if (id === "help" && registry.get("guidance").topics !== undefined)
+                    parameters.properties.topic.enum = registry.get("guidance").topics.slice();
+                return { id, description: row.sentence, parameters };
+            });
     }
 
     /** Route only brain tool calls. There is deliberately no confirmation API. */
@@ -155,6 +166,23 @@ function create({ session, state, dispatch, context, audit, result }) {
         value.executor = available(refined);
         if (value.executor === null) return refuse(value, "executor-unavailable");
         const decision = judge(value);
+        if (decision instanceof Promise) {
+            pending = value;
+            return decision.then(answer => {
+                if (closed || pending !== value) return { kind: "refuse", reason: "router-closed" };
+                pending = null;
+                dispatch({ type: "deadline", gen: turn.gen, op: turn.op });
+                const current = state();
+                if (current.gen !== turn.gen || current.turn.kind !== "thinking" || current.turn.op !== turn.op)
+                    return refuse(value, "stale-turn");
+                return propose(value, answer);
+            });
+        }
+        return propose(value, decision);
+    }
+
+    function propose(value, decision) {
+        const turn = value.turn;
         value.decision = decision;
         if (decision.kind === "refuse") return refuse(value, decision.reason);
         if (decision.scope !== undefined && !grants.has(decision.scope) && grants.size >= GRANT_SCOPES)
@@ -185,6 +213,22 @@ function create({ session, state, dispatch, context, audit, result }) {
         const value = pending;
         if (value === null || value.id !== e.id) throw new Error("jarvis: router=start-identity");
         const fresh = judge(value);
+        if (fresh instanceof Promise) {
+            fresh.then(answer => {
+                if (closed || pending !== value) return;
+                startJudged(e, done, value, answer);
+            });
+            return;
+        }
+        startJudged(e, done, value, fresh);
+    }
+
+    function startJudged(e, done, value, fresh) {
+        dispatch({ type: "deadline", gen: e.gen, op: e.op });
+        const freshState = state();
+        if (freshState.gen !== value.turn.gen || freshState.gate.kind !== "up"
+                || freshState.action.kind !== "running" || freshState.action.gen !== e.gen || freshState.action.op !== e.op
+                || freshState.action.limit.kind !== "pending") { done("failed"); return; }
         const prior = value.decision;
         const accepted = e.confirmed !== undefined;
         const authorized = fresh.kind === "allow" && fresh.effect === prior.effect
@@ -242,7 +286,7 @@ function create({ session, state, dispatch, context, audit, result }) {
                 if (closed) return;
                 audit.cleanup("teardown", () => {
                     if (pending !== null) {
-                        record(pending, pending.decision.kind, "unknown");
+                        record(pending, pending.decision?.kind ?? "refuse", "unknown");
                         pending = null;
                     }
                     closed = true;

@@ -50,6 +50,9 @@ check "shell AGENTS.md is not installed" test ! -e "$dest/usr/share/vgs/shell/AG
 check "shell CLAUDE.md is not installed" test ! -e "$dest/usr/share/vgs/shell/CLAUDE.md"
 check "shell plugin README.md is not installed" test ! -e "$dest/usr/share/vgs/shell/plugins/vgs.bar/README.md"
 check "a plugin's other Markdown is not installed" test ! -e "$dest/usr/share/vgs/shell/plugins/vgs.updates/pipeline.md"
+check "the core input resolver is installed" test -e "$dest/usr/share/vgs/bin/lib/xkb-keys.py"
+check "Jarvis input guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/input.md"
+check "installed input help reads its packaged file" "$node_bin" -e 'const h=require(process.argv[1]).create(); if(JSON.stringify(h.topics)!==JSON.stringify(["input"]))process.exit(1); h.start({id:"help",args:{topic:"input"}},r=>{if(r.outcome!=="completed"||!r.content.includes("input.text"))process.exit(1)});' "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/ComputerHelp.js"
 check "Jarvis runtime guidance is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/core.md"
 run_capture "$tmp/guidance.out" "$tmp/guidance.err" status "${voice_command[@]}" "$dest/usr/share/vgs"
 check "installed guidance composes every consumer without source-tree files" test "$status" = 0

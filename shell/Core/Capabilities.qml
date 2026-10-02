@@ -109,6 +109,9 @@ Singleton {
             for (const name of Dispatch.PLUGIN_DISPATCHERS)
                 out[name] = (...args) => Compositor.send(name, args);
             out.reveal = (addresses, awaitSender) => Compositor.reveal(addresses, awaitSender);
+            let alive = true;
+            ctx.onDispose(() => { alive = false; });
+            out.observeInput = (point, done) => Compositor.observeInput(point, value => { if (alive) done(value); });
             return out;
         },
         configure: ctx => ({

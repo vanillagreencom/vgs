@@ -219,9 +219,11 @@ smoke_row system-steps
 smoke_row bluetooth-agent
 smoke_row jarvis
 smoke_row jarvis-setup
+smoke_row jarvis-input
 smoke_row jarvis-tasks
 smoke_row hyprland
 smoke_row hyprland-options
+smoke_row input-facts
 smoke_row monitor-rules
 smoke_row monitor-preview
 smoke_row hold-shortcuts

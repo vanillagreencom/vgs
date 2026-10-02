@@ -71,6 +71,11 @@ var TUI_WINDOWS = {
 // shell's windows and centres them; each keeps the size it asks for.
 var APP_WINDOW = { appId: "org.vgs.shell", rule: "vgs:window" };
 
+// Every shell window class comes from these existing declarations.
+function inputProtectedClass(value) {
+    return value === APP_WINDOW.appId || Object.keys(TUI_WINDOWS).some(function (size) { return value === TUI_WINDOWS[size].appId; });
+}
+
 // The Hyprland options a manifest's `hyprland.options` may map a setting
 // to: the input keys the Mouse and Keyboard settings set, each by its Lua
 // path, which `hyprctl getoption` reads too, with the type and range

@@ -1,0 +1,4 @@
+[
+  { "id": "xkbcommon", "packages": { "pacman": "libxkbcommon", "dnf": "libxkbcommon" } },
+  { "id": "xkb-layouts", "packages": { "pacman": "xkeyboard-config", "dnf": "xkeyboard-config" } }
+]

@@ -27,6 +27,12 @@ FocusScope {
     property bool closeOnUnload: false
     property Item pendingFocusTarget: null
     property int pendingFocusReason: Qt.OtherFocusReason
+    property var releaseInputSurface: null
+    readonly property var inputWindow: slot.Window.window
+    onInputWindowChanged: {
+        if (releaseInputSurface !== null) releaseInputSurface();
+        releaseInputSurface = Compositor.inputSurface(inputWindow);
+    }
 
     // Only code failures suppress a host until its source changes. A
     // temporary enablement or lending refusal must remain eligible to retry.
@@ -38,7 +44,10 @@ FocusScope {
 
     onKeyChanged: reload()
     Component.onCompleted: reload()
-    Component.onDestruction: unload()
+    Component.onDestruction: {
+        if (releaseInputSurface !== null) releaseInputSurface();
+        unload();
+    }
 
     function focusTarget() {
         let target = slot;

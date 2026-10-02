@@ -48,8 +48,8 @@ const TABLE = {
     "apps.url": { sentence: "Open {url}", effect: "reversible", executor: "apps", command: "gio", schema: { url: url } },
     "input.text": { sentence: "Type this exact text:\n{text}", effect: "input", executor: "input", command: "wtype", schema: { text: text }, input: "text" },
     "input.key": { sentence: "Press {chord}", effect: "input", executor: "input", command: "wtype", schema: { chord: text }, input: "key" },
-    "input.click": { sentence: "Click {button} at {x}, {y}", effect: "input", executor: "input", command: "wlrctl", schema: { x: integer, y: integer, button: oneOf(["left", "right", "middle"]) }, input: "pointer" },
-    "input.scroll": { sentence: "Scroll {direction} by {steps} at {x}, {y}", effect: "input", executor: "input", command: "wlrctl", schema: { x: integer, y: integer, direction: oneOf(["up", "down", "left", "right"]), steps: positive }, input: "pointer" },
+    "input.click": { sentence: "Click {button} at {x}, {y}", effect: "input", executor: "input", command: "wlrctl", alternatives: ["ydotool"], schema: { x: integer, y: integer, button: oneOf(["left", "right", "middle"]) }, input: "pointer" },
+    "input.scroll": { sentence: "Scroll {direction} by {steps} at {x}, {y}", effect: "input", executor: "input", command: "wlrctl", alternatives: ["ydotool"], schema: { x: integer, y: integer, direction: oneOf(["up", "down", "left", "right"]), steps: { ...positive, maximum: 100 } }, input: "pointer" },
     "clipboard.read": { sentence: "Read the clipboard", effect: "read", executor: "clipboard", command: "wl-paste", schema: {}, source: "clipboard" },
     "clipboard.write": { sentence: "Write clipboard text {text}", effect: "reversible", executor: "clipboard", command: "wl-copy", schema: { text: text } },
     "media.play": { sentence: "Play media", effect: "reversible", executor: "media", command: "playerctl", schema: {} },
@@ -164,7 +164,7 @@ function refine(call) {
         if (call.args.network) effect = "external";
     }
     return { kind: "call", call: freeze(structuredClone(call)), effect, executor: row.executor,
-        command: row.command, paths: row.paths || [], input: refined.input || null, source: refined.source || null };
+        command: row.command, alternatives: row.alternatives || [], paths: row.paths || [], input: refined.input || null, source: refined.source || null };
 }
 
 // The one model-facing spelling of a tool id, shared by the wire brains and

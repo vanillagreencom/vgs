@@ -26,6 +26,9 @@ var REQUESTS = {
     "compositor.moveWindow": { args: ["text", "integer", "integer"], data: "none", acts: true },
     "compositor.resizeWindow": { args: ["text", "integer", "integer"], data: "none", acts: true },
     "compositor.focusMonitor": { args: ["text"], data: "none", acts: true },
+    "compositor.moveCursor": { args: ["integer", "integer"], data: "none", acts: true },
+    "input.observe": { args: "input-point", data: "input", acts: false },
+    "input.keys": { args: "argv", data: "keys", acts: false },
     "compositor.reveal": { args: ["text"], data: "none", acts: true },
     "run.detached": { args: "argv", data: "none", acts: true },
     "desktop.launch": { args: ["text"], data: "entry", acts: true },
@@ -101,6 +104,7 @@ function argv(value) {
 
 function requestArgs(kind, args) {
     var rule = REQUESTS[kind].args;
+    if (rule === "input-point") return Array.isArray(args) && (args.length === 0 || args.length === 2 && args.every(Number.isSafeInteger));
     if (rule === "task-spec")
         return Array.isArray(args) && args.length === 1 && directory(args[0]);
     if (rule === "argv") return argv(args);
@@ -168,6 +172,27 @@ function replyData(message) {
     }
     if (shape === "entry") {
         entryShape(message.data, true);
+        return;
+    }
+    if (shape === "input" || shape === "keys") {
+        if (!object(message.data) || message.data.ok !== true) fail("input-reply");
+        if (shape === "input") {
+            keys(message.data, ["ok", "target", "cursor"], "input");
+            var target = message.data.target;
+            if (!object(target) || ["application", "terminal", "vgs", "lock", "polkit"].indexOf(target.kind) === -1
+                    || !printable(target.id, 1, TEXT_MAX) || !object(message.data.cursor)
+                    || !Number.isFinite(message.data.cursor.x) || !Number.isFinite(message.data.cursor.y)) fail("input-reply");
+        } else {
+            keys(message.data, ["ok", "keys", "effective"], "resolved-keys");
+            if (!Array.isArray(message.data.keys) || message.data.keys.length < 1 || message.data.keys.length > ARGV_MAX
+                    || !Array.isArray(message.data.effective)) fail("input-reply");
+            for (var key of message.data.keys) {
+                keys(key, ["modifiers", "keycode", "keysym"], "resolved-key");
+                if (!Array.isArray(key.modifiers) || !key.modifiers.every(text) || !Number.isSafeInteger(key.keycode)
+                        || key.keycode < 8 || !text(key.keysym)) fail("input-reply");
+            }
+            if (!message.data.effective.every(text)) fail("input-reply");
+        }
         return;
     }
     keys(message.data, ["entries", "complete"], "entries");
@@ -275,6 +300,11 @@ function accept(line, direction) {
         if (direction !== "daemon") fail("direction-tasks");
         keys(message, ["v", "type", "gen", "revision", "count"], "tasks");
         if (!Number.isSafeInteger(message.count) || message.count < 0) fail("task-count");
+        break;
+    case "input-ready":
+        if (direction !== "daemon") fail("direction-input-ready");
+        keys(message, ["v", "type", "gen", "revision", "commands"], "input-ready");
+        if (!Array.isArray(message.commands) || !message.commands.every(command => ["wtype", "wlrctl", "ydotool"].indexOf(command) !== -1)) fail("input-commands");
         break;
     case "task-answer":
         if (direction !== "daemon") fail("direction-task-answer");

@@ -72,3 +72,5 @@ One line per decision record that shapes the architecture. [Jarvis decisions](de
 - [D085](../decisions/D085-bluetooth-agent-core-lent-over-bluetoothctl.md): capability `bluetoothAgent`, exclusive, lends BlueZ's default pairing agent per counted lease over one `bluetoothctl --agent KeyboardDisplay` child, resolved after both acknowledgements; release gives the default back through BlueZ's agent stack. Refines D012.
 - [D086](../decisions/D086-key-capture-passthrough-submap.md): the Settings key field captures a pressed combo while Hyprland is in the layer's `vgs:passthrough` submap, whose one bind is Escape; `KeyCapture.qml` owns the capture and leaves the submap on commit, focus loss and teardown, and the layer leaves it on Escape, its window's close, a 10 s timeout and each load. Refines D028 and D067.
 - [D088](../decisions/D088-system-panes.md): System sections are pane plugins mounted by the one `panes` holder, and pane writes update every settings entry the plugin reads. Refines D013, D032 and D044.
+
+- [D090](../decisions/D090-core-input-facts.md): existing core owners supply fresh read-only input targets and layout-resolved key identities.

@@ -33,6 +33,8 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const ToolRouter = require("./ToolRouter.js");
     const ShellRequests = require("./ShellRequests.js");
     const Executors = require("./Executors.js");
+    const Input = require("./Input.js");
+    const ComputerHelp = require("./ComputerHelp.js");
     const TaskRunner = require("./TaskRunner.js");
     const ToolBridge = require("./ToolBridge.js");
     const ChainedEngine = require("./ChainedEngine.js");
@@ -54,6 +56,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let requests = null;
     let engine = null;
     let executors = null;
+    let input = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
@@ -64,6 +67,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         runner.close();
         if (engine !== null) engine.close();
         if (executors !== null) executors.close();
+        if (input !== null) input.close();
         if (requests !== null) requests.close();
         if (audit !== null) audit.close();
         if (tasks !== null) tasks.close();
@@ -293,11 +297,23 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         directory: context.directories.runtime });
                     // Executor owners register only after their real probes.
                     Object.assign(runner.ports, router.ports);
+                    router.register("guidance", ComputerHelp.create());
                     requests = ShellRequests.create({ Protocol, clock, write: fields =>
                         write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
                     executors = Executors.register(router, { find: commandFile, environment: process.env,
                         desktop: { Dispatch, Launch, request: requests.send, clock,
                             environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) } });
+                    const environment = hyprctlEnvironment();
+                    for (const name of ["WAYLAND_DISPLAY", "YDOTOOL_SOCKET"])
+                        if (process.env[name] !== undefined) environment[name] = process.env[name];
+                    input = Input.create({ request: requests.send, environment,
+                        commands: ["wtype", "wlrctl", "ydotool"].filter(onPath) });
+                    void input.ready().then(record => {
+                        if (ending) return;
+                        router.register("input", record);
+                        if (record.commands.length > 0)
+                            write({ v: 1, type: "input-ready", gen: runner.state.gen, revision: context.revision, commands: record.commands });
+                    });
                     // The task executor needs an agent profile and a release port
                     // for the conversation's recipients. Neither exists yet, so
                     // TaskRunner only observes and stops recorded tasks.

@@ -93,8 +93,10 @@ Records the path choices v2 has made, so a later reader can see what was chosen,
 | 2026-10-01 | D089 | VGS-646 | The chained speech engine owns one conversation's turn loop and tells the brain the heard prefix | One owner releases a conversation's resources together; Audio's flush report is the only heard account | A provider reports played frames, a brain truncates itself, or the context bound needs a summary | Active | [Full](D089-jarvis-chained-engine-and-heard-prefix.md) |
 
 | 2026-09-30 | D068 | VGS-597 | Keyboard support is a first-class design system standard | Shared components, hosts and checks keep pointer and key paths equal | Quickshell, Qt or surface classes change the keyboard model | Active | [Full](D068-keyboard-first-standard.md) |
+| 2026-10-02 | D090 | VGS-660 | Core owners supply read-only input facts for guarded Jarvis input | One device owner resolves XKB; one compositor owner checks protected windows and layers | Hyprland exposes keymaps or focused layers directly | Active | [Full](D090-core-input-facts.md) |
 
 ---
+
 
 ## Format Reference
 

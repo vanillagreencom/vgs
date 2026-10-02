@@ -22,6 +22,8 @@ Requires:       quickshell >= 0.3.1
 Requires:       hyprland >= 0.56
 Requires:       nodejs >= 1:18
 Requires:       python3
+Requires:       libxkbcommon
+Requires:       xkeyboard-config
 Requires:       git
 Requires:       util-linux-core
 Requires:       util-linux
@@ -42,6 +44,8 @@ Recommends:     libsecret
 Recommends:     bubblewrap
 Recommends:     uv
 Recommends:     glib2
+Recommends:     wtype
+Recommends:     ydotool
 Recommends:     systemd
 Recommends:     iproute
 Recommends:     tmux

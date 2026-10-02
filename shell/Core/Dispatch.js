@@ -217,6 +217,67 @@ function workspaceState(text) {
     return { ok: true, workspaces: read.values[0], monitors: read.values[1] };
 }
 
+// One compositor snapshot. Layer rectangles are deliberately protected whole,
+// including pass-through gaps: hyprctl exposes no input-region geometry.
+var INPUT_STATE_REQUEST = "j/clients;j/activewindow;j/monitors;j/layers;j/cursorpos";
+
+function inputTarget(text, point, keyboardProtected, entries) {
+    var read = jsonReplies(text, [["clients", "array"], ["active", "object"], ["monitors", "array"],
+        ["layers", "object"], ["cursor", "object"]], "input state");
+    if (!read.ok) return read;
+    var clients = read.values[0], active = read.values[1], monitors = read.values[2], layers = read.values[3], cursor = read.values[4];
+    var refusal = function (error) { return { ok: false, error: "refused: input=" + error }; };
+    var rect = function (r) { return r && [r.x, r.y, r.w, r.h].every(Number.isFinite) && r.w > 0 && r.h > 0; };
+    var contains = function (r, p) { return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h; };
+    if (!Number.isFinite(cursor.x) || !Number.isFinite(cursor.y) || typeof keyboardProtected !== "boolean" || !Array.isArray(entries))
+        return refusal("observation");
+    var target = null;
+    var lowerLayer = null;
+    if (point === null && keyboardProtected) return { ok: true, target: { kind: "vgs", id: "keyboard" }, cursor: cursor };
+    if (point !== null) {
+        if (!point || !Number.isInteger(point.x) || !Number.isInteger(point.y)) return refusal("point");
+        for (var output of Object.keys(layers)) {
+            if (!layers[output] || !layers[output].levels || typeof layers[output].levels !== "object" || Array.isArray(layers[output].levels)) return refusal("layers");
+            for (var level of Object.keys(layers[output].levels)) {
+                if (!/^[0-3]$/.test(level)) return refusal("layers");
+                var surfaces = layers[output].levels[level];
+                if (!Array.isArray(surfaces)) return refusal("layers");
+                for (var surface of surfaces) {
+                    // Hyprland retains retired rectangles until removal. They
+                    // have no client that can receive input (pid -1).
+                    if (surface && surface.pid === -1) continue;
+                    if (!rect(surface) || typeof surface.namespace !== "string") return refusal("layer-shape");
+                    if (surface.namespace.indexOf("vgs:") === 0 && contains(surface, point)) {
+                        if (Number(level) >= 2)
+                            return { ok: true, target: { kind: "vgs", id: surface.namespace }, cursor: cursor };
+                        lowerLayer = surface.namespace;
+                    }
+                }
+            }
+        }
+        var shown = clients.filter(function (c) { return c.mapped && onScreen(c, monitors); });
+        for (var client of shown) {
+            var box = { x: client.at && client.at[0], y: client.at && client.at[1], w: client.size && client.size[0], h: client.size && client.size[1] };
+            if (!rect(box)) return refusal("window-shape");
+            if (contains(box, point)) {
+                if (HyprlandLayer.inputProtectedClass(client.class))
+                    return { ok: true, target: { kind: "vgs", id: client.class }, cursor: cursor };
+                // An overlapping client has no public stacking index. Refuse
+                // that ambiguity rather than guessing which receives input.
+                if (target !== null) return refusal("overlap");
+                target = client;
+            }
+        }
+    } else target = clients.find(function (c) { return c.mapped && c.address === active.address; }) || null;
+    if (target === null && lowerLayer !== null) return { ok: true, target: { kind: "vgs", id: lowerLayer }, cursor: cursor };
+    if (target === null || typeof target.class !== "string" || target.class === "") return refusal("target");
+    if (HyprlandLayer.inputProtectedClass(target.class)) return { ok: true, target: { kind: "vgs", id: target.class }, cursor: cursor };
+    var entry = entries.find(function (e) { return [e.id, e.startupClass].indexOf(target.class.toLowerCase()) !== -1; });
+    if (entry === undefined) return refusal("unknown-application");
+    return { ok: true, target: { kind: entry.terminal ? "terminal" : "application", id: entry.id,
+        window: target.address }, cursor: cursor };
+}
+
 // Whether a client is on the screen: drawn (a background group tab is
 // not), on a special workspace some monitor shows, or on the regular
 // workspace its own monitor shows with no special workspace over it.

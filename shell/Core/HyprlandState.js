@@ -13,6 +13,38 @@
 var DEVICES_REQUEST = ["hyprctl", "-j", "devices"];
 var BINDS_REQUEST = ["hyprctl", "-j", "binds"];
 
+// The device owner supplies the resolver's layout. Missing or ambiguous main
+// keyboards cannot establish the keycode used by a compositor binding.
+function keyRequest(devices, keys) {
+    if (devices === null || !Array.isArray(keys) || keys.length === 0 || keys.length > 64)
+        return { ok: false, error: "refused: keymap=unavailable" };
+    var mains = devices.keyboards.filter(function (keyboard) { return keyboard.main; });
+    if (mains.length !== 1 || mains[0].activeLayoutIndex === null)
+        return { ok: false, error: "refused: keymap=main-keyboard" };
+    var normalized = [];
+    for (var key of keys) {
+        var read = Logic.hyprlandKey(key);
+        if (!read.ok) return { ok: false, error: "refused: keymap=key " + read.error };
+        normalized.push(read.key);
+    }
+    var kb = mains[0];
+    return { ok: true, request: { keyboard: { layout: kb.layout, variant: kb.variant,
+        options: kb.options, activeLayoutIndex: kb.activeLayoutIndex }, keys: normalized } };
+}
+
+function resolvedKeys(text, count) {
+    var read = parsed(text);
+    if (!read.ok || !read.value || read.value.ok !== true || !Array.isArray(read.value.keys)
+            || read.value.keys.length !== count)
+        return { ok: false, error: "refused: keymap=unresolved" };
+    for (var key of read.value.keys) {
+        if (!key || !Array.isArray(key.modifiers) || !key.modifiers.every(function (m) { return Logic.HYPRLAND_MODIFIERS.indexOf(m) !== -1; })
+                || !Number.isInteger(key.keycode) || key.keycode < 8 || typeof key.keysym !== "string" || key.keysym.length === 0)
+            return { ok: false, error: "refused: keymap=reply" };
+    }
+    return read.value;
+}
+
 // hyprctl names no device class, so a pointer is a touchpad when its name
 // says so, as Omarchy's omarchy-hw-touchpad reads it.
 var TOUCHPAD = /touchpad|trackpad/i;

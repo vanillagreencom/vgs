@@ -53,6 +53,10 @@ const tasks = { v: 1, type: "tasks", gen: 0, revision: hello.revision, count: 2 
 const taskAnswer = { v: 1, type: "task-answer", gen: 0, revision: hello.revision, task: taskStop.task, answer: "stop-incomplete" };
 const transcript = { v: 1, type: "transcript", gen: 0, revision: hello.revision, role: "user", text: " the time?", stage: "partial", rev: 1 };
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
+const inputReply = { ...reply, kind: "input.observe", data: { ok: true, target: { kind: "application", id: "fixture", window: "0xa1" }, cursor: { x: 1, y: 2 } } };
+const keysReply = { ...reply, kind: "input.keys", data: { ok: true, keys: [{ modifiers: ["SUPER"], keycode: 38, keysym: "a" }], effective: [] } };
+const inputReady = { ...status, type: "input-ready", commands: ["wtype", "wlrctl"] };
+delete inputReady.daemon;
 const cases = [
     ["transcript-direction", JSON.stringify(transcript), "shell", "direction-transcript"],
     ["transcript-shape", changed(transcript, { partial: true }), "daemon", "shape-transcript"],
@@ -65,6 +69,11 @@ const cases = [
     ["indicator-direction", JSON.stringify(indicator), "daemon", "direction-indicator"],
     ["indicator-shape", changed(indicator, { extra: true }), "shell", "shape-indicator"],
     ["indicator-shown", changed(indicator, { shown: 1 }), "shell", "indicator"],
+    ["input-point", changed(request, { kind: "input.observe", args: [1] }), "daemon", "request-args"],
+    ["input-target", changed(inputReply, { data: { ...inputReply.data, target: { kind: "unknown", id: "fixture" } } }), "shell", "input-reply"],
+    ["input-key", changed(keysReply, { data: { ...keysReply.data, keys: [{ modifiers: ["SUPER"], keycode: 0, keysym: "a" }] } }), "shell", "input-reply"],
+    ["input-ready-direction", JSON.stringify(inputReady), "shell", "direction-input-ready"],
+    ["input-ready-command", changed(inputReady, { commands: ["sudo"] }), "daemon", "input-commands"],
     ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
     ["audio-fault", changed(audioFault, { reason: "" }), "daemon", "audio-fault"],
     ["device-setting", changed(hello, { settings: { ...hello.settings, microphone: 1 } }), "shell", "device-setting"],
@@ -125,7 +134,7 @@ const cases = [
     ["request-shape", changed(request, { extra: 1 }), "daemon", "shape-request"],
     ["request-id", changed(request, { id: 0 }), "daemon", "request-id"],
     ["request-id-fraction", changed(request, { id: 1.5 }), "daemon", "request-id"],
-    ["request-kind", changed(request, { kind: "compositor.moveCursor" }), "daemon", "request-kind"],
+    ["request-kind", changed(request, { kind: "compositor.sendKeys" }), "daemon", "request-kind"],
     ["request-tui-invalid", changed(request, { kind: "tui.run" }), "daemon", "request-args"],
     ["request-kind-proto", changed(request, { kind: "__proto__" }), "daemon", "request-kind"],
     ["request-count", changed(request, { args: ["0xa1", 1] }), "daemon", "request-args"],
@@ -208,6 +217,7 @@ for (const message of [taskStop, tuiState, { ...tuiState, running: false }, task
 for (const taskTerminal of ["auto", "tmux", "floating"])
     assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, taskTerminal } }), "shell").settings.taskTerminal, taskTerminal);
 assert.equal(Protocol.MAX_PENDING_REQUESTS, 16);
+assert.equal(Protocol.accept(JSON.stringify(inputReady), "daemon").commands.length, 2);
 for (const value of [0, 1])
     assert.equal(Protocol.accept(changed(level, { level: { capture: value, playback: value } }), "daemon").level.capture, value);
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, microphone: "missing.mic" } }), "shell").settings.microphone, "missing.mic");
@@ -217,11 +227,11 @@ for (const message of [request, { ...request, kind: "run.detached", args: ["gio"
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
 for (const kind of Object.keys(Protocol.REQUESTS)) {
     const rule = Protocol.REQUESTS[kind].args;
-    const args = rule === "argv" ? ["program"] : rule === "task-spec" ? ["/private/task.json"]
+    const args = rule === "argv" ? ["program"] : rule === "task-spec" ? ["/private/task.json"] : rule === "input-point" ? [1, 2]
         : rule.map(type => type === "text" ? "value" : 1);
     assert.equal(Protocol.accept(changed(request, { kind, args }), "daemon").kind, kind);
 }
-for (const message of [reply, listReply, entryReply, { ...reply, answer: "refused: dispatcher=moveWindow argument=1" },
+for (const message of [inputReply, keysReply, reply, listReply, entryReply, { ...reply, answer: "refused: dispatcher=moveWindow argument=1" },
     { ...entryReply, answer: "refused: desktop=unknown", data: null }, { ...listReply, data: { entries: [], complete: false } }])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
 // The service's builders produce what the judge accepts, from Quickshell's
@@ -246,9 +256,9 @@ assert.equal(Protocol.desktopEntry(shellEntry("tool"), true).terminal, false);
 // nothing else. Expected kinds are written by hand.
 const acting = ["compositor.focusWorkspace", "compositor.focusWindow", "compositor.moveWindowToWorkspace",
     "compositor.toggleSpecialWorkspace", "compositor.closeWindow", "compositor.fullscreenWindow", "compositor.floatWindow",
-    "compositor.moveWindow", "compositor.resizeWindow", "compositor.focusMonitor", "compositor.reveal", "run.detached", "desktop.launch", "tui.run"];
+    "compositor.moveWindow", "compositor.moveCursor", "compositor.resizeWindow", "compositor.focusMonitor", "compositor.reveal", "run.detached", "desktop.launch", "tui.run"];
 function lockedRows(logic) {
-    assert.deepEqual(Object.keys(logic.REQUESTS).sort(), [...acting, "toast", "desktop.list"].sort(), "the request kinds");
+    assert.deepEqual(Object.keys(logic.REQUESTS).sort(), [...acting, "toast", "desktop.list", "input.observe", "input.keys"].sort(), "the request kinds");
     for (const kind of Object.keys(logic.REQUESTS)) {
         assert.equal(logic.lockedRefusal(kind, true), acting.includes(kind) ? "refused: locked" : "", kind + " while locked");
         assert.equal(logic.lockedRefusal(kind, false), "", kind + " while unlocked");
@@ -352,6 +362,8 @@ try {
         ["request-direction", 'if (direction !== "daemon") fail("direction-request");', 'if (false) fail("direction-request");', "request-direction"],
         ["reply-direction", 'if (direction !== "shell") fail("direction-reply");', 'if (false) fail("direction-reply");', "reply-direction"],
         ["request-id", 'if (!Number.isSafeInteger(message.id) || message.id < 1) fail("request-id");', 'if (false) fail("request-id");', "request-id", 2],
+        ["input-ready-direction", 'if (direction !== "daemon") fail("direction-input-ready");', 'if (false) fail("direction-input-ready");', "input-ready-direction"],
+        ["input-ready-command", 'fail("input-commands");', ' ;', "input-ready-command"],
         ["request-kind", 'fail("request-kind");', ';', "request-kind", 2],
         ["request-args", 'if (!requestArgs(message.kind, message.args)) fail("request-args");', 'if (false) fail("request-args");', "request-count"],
         ["request-arg-type", 'if (rule[i] === "text" ? !text(args[i]) : !Number.isSafeInteger(args[i])) return false;', ';', "request-integer"],

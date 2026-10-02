@@ -46,7 +46,7 @@ function git(...args) {
 }
 
 const pristine = path.join(tmp, "pristine");
-const files = ["VERSION", "config/requirements.json", "bin/vgsh"];
+const files = ["packaging/runtime-libraries.json", "VERSION", "config/requirements.json", "bin/vgsh"];
 for (const plugin of fs.readdirSync(path.join(repo, "shell", "plugins"))) {
     if (fs.existsSync(path.join(repo, "shell", "plugins", plugin, "manifest.json"))) files.push(`shell/plugins/${plugin}/manifest.json`);
 }
@@ -95,7 +95,8 @@ function countRequirements(tree) {
     const all = lists.flat();
     const table = fs.readFileSync(path.join(tree, "bin/vgsh"), "utf8").split("preflight_floor='\n")[1].split("\n'\n")[0];
     const probes = table.split("\n").filter(Boolean).map(line => line.trim().split(/\s+/)[3]);
-    return all.length + probes.filter(probe => !all.some(entry => entry.command === probe)).length;
+    return all.length + probes.filter(probe => !all.some(entry => entry.command === probe)).length
+        + JSON.parse(fs.readFileSync(path.join(tree, "packaging/runtime-libraries.json"), "utf8")).length;
 }
 
 function fresh(name) {
@@ -207,6 +208,13 @@ const where = (recipe = "vgs") => `channel=pacman recipe=${recipe} scope=core`;
 // arguments
 const ROWS = [
     ["the committed recipes pass", () => {}, 0, tree => ok(countRequirements(tree))],
+    ["a missing required runtime library is refused", t => edit(t, SRC, "^\\tdepends = libxkbcommon\\n", ""),
+        1, () => refused("requirement=library:xkbcommon package=libxkbcommon want=depends " + where())],
+    ["runtime library data rejects a duplicate identity", t => {
+        const file = path.join(t, "packaging/runtime-libraries.json");
+        const data = JSON.parse(fs.readFileSync(file, "utf8")); data.push(data[0]);
+        fs.writeFileSync(file, JSON.stringify(data));
+    }, 1, () => refused("libraries=shape")],
     ["a .SRCINFO older than its PKGBUILD is refused", t => edit(t, "packaging/arch/vgs/PKGBUILD", "^pkgdesc=.*$", "pkgdesc='Changed without regenerating .SRCINFO'"),
         1, () => refused("srcinfo=stale recipe=vgs")],
     ["a required core requirement in optdepends is refused", t => {

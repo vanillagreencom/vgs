@@ -161,6 +161,7 @@ function decide(call, context) {
     let scope = null;
     if (refined.input !== null) {
         const input = context.input;
+        if (input && typeof input.refusal === "string") return { kind: "refuse", reason: input.refusal };
         if (!input || !input.target || !["application", "terminal", "site", "vgs", "lock", "polkit"].includes(input.target.kind))
             return { kind: "refuse", reason: "input-target" };
         if (["vgs", "lock", "polkit"].includes(input.target.kind))

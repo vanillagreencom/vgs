@@ -82,7 +82,7 @@ expect "enabling the options fixture is allowed" ok ipc shell setPluginEnabled a
 expect "enabling the second options fixture is allowed" ok ipc shell setPluginEnabled acme.hyprland-other true
 expect_poll "the options fixture builds" True record_exists acme.hyprland
 expect_poll "the second options fixture builds" True record_exists acme.hyprland-other
-expect_poll "the fixture reads back the exact hyprland members it was given" '"devices,foreignBinds,overridden,switchKeyboardLayout"' read_options members
+expect_poll "the fixture reads back the exact hyprland members it was given" '"devices,foreignBinds,overridden,resolveKeys,switchKeyboardLayout"' read_options members
 expect_poll "the core reads Hyprland while a plugin holds hyprland" true reads_active
 expect_poll "with no option set the layer writes no options section" no layer_mentions "acme.hyprland 0.1.0: input options its settings set"
 expect_poll "the fixture's bind is written" yes layer_has 'hl.bind("SUPER + F7", hl.dsp.global("acme.hyprland:ping"), { description = "acme.hyprland:ping" })'

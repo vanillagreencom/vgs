@@ -169,6 +169,23 @@ function readRequirements() {
         floored.floor = need === "present" ? null : need;
         floored.tool = tool;
     }
+    // Libraries have no PATH command. Their package data shares the same
+    // required dependency judge as commands, without inventing a command.
+    let libraries;
+    try { libraries = JSON.parse(readText("packaging/runtime-libraries.json", "libraries=unreadable")); }
+    catch (error) { refuse("libraries=unreadable", error.message); }
+    const seen = new Set();
+    if (!Array.isArray(libraries)) refuse("libraries=shape");
+    for (const row of libraries) {
+        if (row === null || typeof row !== "object" || Object.keys(row).sort().join(",") !== "id,packages"
+                || typeof row.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(row.id) || seen.has(row.id)
+                || row.packages === null || typeof row.packages !== "object" || Array.isArray(row.packages)
+                || Object.keys(row.packages).length === 0
+                || Object.entries(row.packages).some(([manager, pkg]) => !["pacman", "dnf"].includes(manager)
+                    || typeof pkg !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9+_.-]*$/.test(pkg))) refuse("libraries=shape");
+        seen.add(row.id);
+        list.push({ scope: "core", command: "library:" + row.id, packages: row.packages, optional: false, floor: null, tool: null });
+    }
     return list;
 }
 

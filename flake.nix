@@ -32,7 +32,7 @@
           nativeBuildInputs = [ pkgs.python3 ];
           # The interpreters fixup writes into the runtime tree's
           # `#!/usr/bin/env` and `#!/bin/bash` lines.
-          buildInputs = [ pkgs.bash pkgs.nodejs pkgs.python3 ];
+          buildInputs = [ pkgs.bash pkgs.nodejs pkgs.python3 pkgs.libxkbcommon pkgs.xkeyboard_config ];
 
           dontConfigure = true;
           dontBuild = true;
@@ -47,6 +47,9 @@
           installPhase = ''
             runHook preInstall
             DESTDIR= PREFIX=$out bash packaging/install-system.sh
+            substituteInPlace $out/share/vgs/bin/lib/xkb-keys.py \
+              --replace-fail 'SYSTEM_XKB_ROOT = "/usr/share/X11/xkb"' 'SYSTEM_XKB_ROOT = "${pkgs.xkeyboard_config}/share/X11/xkb"' \
+              --replace-fail 'SYSTEM_XKB_LIBRARY = "libxkbcommon.so.0"' 'SYSTEM_XKB_LIBRARY = "${pkgs.libxkbcommon}/lib/libxkbcommon.so.0"'
             line='case :$PATH: in *:${runtimePath pkgs}:*) ;; *) PATH=${runtimePath pkgs}''${PATH:+:$PATH} ;; esac; export PATH # vgs-nix-path'
             for entry in $out/share/vgs/bin/*; do
               [[ -f $entry && ! -L $entry ]] || continue

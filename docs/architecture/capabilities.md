@@ -2,6 +2,8 @@
 
 Covers: shell/Core/Capabilities.qml, shell/Core/ShortcutRegistry.qml, shell/Core/IdleRegistry.qml, shell/Core/IpcRegistry.qml, shell/Core/NotificationHub.qml, shell/Core/SessionLock.qml, shell/Core/Lifetime.js, shell/Core/Toasts.qml, shell/Hosts/ToastHost.qml, scripts/smoke/rows/toasts.sh
 
+[Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
+
 How the core lends a plugin the APIs its manifest names, holds them for one instance and releases them. The manifest and the kinds are [plugins.md](plugins.md).
 
 A capability is a core API named in the manifest's `capabilities` and delivered as `shell.<name>`. `PluginLogic.js` owns the name list and `Capabilities.qml` holds one provider per name; an unknown name refuses the manifest, and a name without a provider is logged at start. An instance's `shell` holds exactly `manifest`, `settings` and the capabilities it named; the smoke reads the key list back from a fixture naming most capabilities and from one naming none.

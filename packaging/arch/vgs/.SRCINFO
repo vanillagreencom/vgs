@@ -12,9 +12,14 @@ pkgbase = vgs
 	depends = util-linux
 	depends = nodejs>=18
 	depends = python
+	depends = libxkbcommon
+	depends = xkeyboard-config
 	depends = git
 	depends = gum
 	depends = xdg-terminal-exec
+	optdepends = wtype: Jarvis text and key input
+	optdepends = wlrctl: Jarvis pointer input without an input service
+	optdepends = ydotool: Jarvis pointer fallback with an already running input service
 	optdepends = pipewire: Jarvis half-duplex audio capture, playback and discovery
 	optdepends = fd: launcher file and folder search
 	optdepends = fzf: launcher file search matching and the package pickers in floating TUIs

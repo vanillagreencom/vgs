@@ -16,6 +16,7 @@ f share/vgs/bin/lib/theme-render.js
 f share/vgs/bin/lib/theme-select.js
 f share/vgs/bin/lib/tmpfiles.d/vgs-sudo-grant.conf
 f share/vgs/bin/lib/tui.sh
+f share/vgs/bin/lib/xkb-keys.py
 f share/vgs/bin/migrations/1790801764-slack-photos-extra.sh
 f share/vgs/bin/vgsh
 f share/vgs/bin/vgsh-browser-policy
@@ -251,12 +252,14 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Audio.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ChainedEngine.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Child.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/ComputerHelp.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Desktop.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/DesktopSession.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Executors.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/GptLive.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Input.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Mcp.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/OpenAIChat.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Policy.js
@@ -277,11 +280,13 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/WireBrain.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/accounts.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/audio-child.py
+f share/vgs/shell/plugins/vgs.jarvis/backend/input-check.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/jarvisd.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/keys.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/mcp-shim
 f share/vgs/shell/plugins/vgs.jarvis/backend/net.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/session-runner.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/input.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/actions.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/duplex.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/local.md
@@ -303,6 +308,7 @@ f share/vgs/shell/plugins/vgs.jarvis/requirements-local.lock
 f share/vgs/shell/plugins/vgs.jarvis/setup-local
 f share/vgs/shell/plugins/vgs.jarvis/tui/accounts.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/add-key.sh
+f share/vgs/shell/plugins/vgs.jarvis/tui/setup-input.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/setup-local.sh
 f share/vgs/shell/plugins/vgs.jarvis/tui/task.sh
 f share/vgs/shell/plugins/vgs.launcher/Anim.qml

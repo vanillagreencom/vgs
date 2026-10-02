@@ -252,6 +252,7 @@ async function inside() {
         fs.cpSync(path.join(tree, "shell/plugins/vgs.jarvis/backend"), path.join(directory, "backend"), { recursive: true });
         for (const relative of ["JarvisProtocol.js", "Session.js", "AccountProviders.js"])
             fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis", relative), path.join(directory, relative));
+        fs.cpSync(path.join(path.dirname(daemon), "skills/computer"), path.join(directory, "backend/skills/computer"), { recursive: true });
         return path.join(directory, "backend/jarvisd.js");
     }
     async function conversation(file, check, mode = "hold", expectedCode = 0, expectedError = "", beforeState = null) {

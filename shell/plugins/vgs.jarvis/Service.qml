@@ -12,6 +12,7 @@ Item {
     property var shell: null
     property var lifetime: ({ kind: "new", pendingMute: "none" })
     property int retries: 0
+    property int childSerial: 0
     property string outputTail: ""
     property string errorTail: ""
     property string cause: ""
@@ -89,6 +90,7 @@ Item {
     }
 
     function start() {
+        childSerial += 1;
         lifetime = { kind: "starting", pendingMute: lifetime.pendingMute === "none" ? "none" : "waiting" };
         outputTail = "";
         errorTail = "";
@@ -110,6 +112,8 @@ Item {
         if (idle !== "ok") throw new Error("jarvis: " + idle);
         const silent = shell.status.set("transcript", null);
         if (silent !== "ok") throw new Error("jarvis: " + silent);
+        const inputStatus = shell.status.set("input", { tone: "warning", text: "Input tools unavailable", action: true });
+        if (inputStatus !== "ok") throw new Error("jarvis: " + inputStatus);
         child.completion = null;
         child.stdinEnabled = true;
         publish("info", "Starting");
@@ -253,6 +257,28 @@ Item {
     }
 
     function serve(message) {
+        if (message.kind === "input.observe" || message.kind === "input.keys") {
+            const serial = childSerial;
+            const done = value => {
+                if (serial !== childSerial || lifetime.kind !== "ready" || !child.running) return;
+                reply(message, { answer: value.ok ? "ok" : value.error, data: value.ok ? value : null });
+            };
+            try {
+                if (message.kind === "input.observe") shell.compositor.observeInput(message.args.length === 0 ? null
+                    : { x: message.args[0], y: message.args[1] }, done);
+                else {
+                    const effective = Object.values(shell.shortcut.keys).filter(key => key !== null);
+                    shell.hyprland.resolveKeys(message.args.concat(effective), value => {
+                        const current = Object.values(shell.shortcut.keys).filter(key => key !== null);
+                        if (JSON.stringify(current) !== JSON.stringify(effective))
+                            value = { ok: false, error: "refused: keymap=binds-changed" };
+                        else if (value.ok) value = { ok: true, keys: value.keys, effective: effective };
+                        done(value);
+                    });
+                }
+            } catch (error) { done({ ok: false, error: String(error.message) }); }
+            return;
+        }
         if (requests === null) requests = requestHandlers();
         const handler = requests[message.kind];
         if (handler === undefined) throw new Error("jarvis: request=unserved kind=" + message.kind);
@@ -264,6 +290,10 @@ Item {
                 result = { answer: String(error.message), data: null };
             }
         }
+        reply(message, result);
+    }
+
+    function reply(message, result) {
         const answer = Protocol.answer(result.answer);
         const wire = JSON.stringify({ v: 1, type: "reply", gen: message.gen, revision: message.revision,
             id: message.id, kind: message.kind, answer: answer, data: answer === "ok" ? result.data : null });
@@ -307,6 +337,14 @@ Item {
                 }
                 if (message.type === "request") {
                     serve(message);
+                    continue;
+                }
+                if (message.type === "input-ready") {
+                    const keys = message.commands.indexOf("wtype") !== -1;
+                    const pointer = message.commands.indexOf("wlrctl") !== -1 || message.commands.indexOf("ydotool") !== -1;
+                    const reply = shell.status.set("input", { tone: keys && pointer ? "ok" : "warning",
+                        text: "Keys " + (keys ? "ready" : "unavailable") + "; pointer " + (pointer ? "ready" : "unavailable"), action: true });
+                    if (reply !== "ok") throw new Error("jarvis: " + reply);
                     continue;
                 }
                 if (message.type === "audio-fault") {
@@ -416,6 +454,7 @@ Item {
             // The desktop tool executors hand these to their commands alone.
             WAYLAND_DISPLAY: Quickshell.env("WAYLAND_DISPLAY"),
             DBUS_SESSION_BUS_ADDRESS: Quickshell.env("DBUS_SESSION_BUS_ADDRESS"),
+            YDOTOOL_SOCKET: Quickshell.env("YDOTOOL_SOCKET"),
             LANG: "C.UTF-8"
         })
         stdout: SplitParser { splitMarker: ""; onRead: data => root.receive(data) }
