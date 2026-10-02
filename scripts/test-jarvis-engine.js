@@ -87,7 +87,8 @@ function rig(kit, server, options = {}) {
     audio.playbackSource = engine.playbackSource;
     const configure = settings => {
         const answer = engine.configure(settings);
-        runner.dispatch({ type: "snapshot", locked: false, configured: answer.kind === "ready", settings });
+        runner.dispatch({ type: "snapshot", locked: false, engine: "chained",
+            configured: answer.kind === "ready", settings });
         return answer;
     };
     assert.deepEqual(configure({ mode: options.mode ?? "hold", microphone: "", speaker: "", brain: "fixture-account" }), { kind: "ready" });

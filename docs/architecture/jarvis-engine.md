@@ -15,7 +15,7 @@ The chained engine implements the [plan's chained voice](../plans/v2-jarvis-plan
 
 ## Engine seam
 
-The daemon creates the engine with the router and the audit writer on the first hello. It installs this surface, which a later engine shape refines rather than duplicates:
+The daemon creates the chained engine with the router and the audit writer on the first hello. It installs the following ports alongside [D084's duplex speech port](../decisions/D084-duplex-speech-engine-sessions.md). The snapshot selects `chained`; voice and account selection must choose the duplex engine before the daemon can start it.
 
 | Member | Session or Audio consumer |
 |---|---|

@@ -5,7 +5,7 @@
 **Date**: 2026-10-01
 **Status**: Active
 **Research**: [Jarvis plan § Speech engines](../plans/v2-jarvis-plan.md#35-speech-engines-playback-accounting-latency), [§ 3.4 State](../plans/v2-jarvis-plan.md#34-state), [§ 3.11 Bounds](../plans/v2-jarvis-plan.md#311-bounds)
-**Refines**: none
+**Refines**: [D084](D084-duplex-speech-engine-sessions.md)
 
 **Context**: The plan needs a chained engine: speech to text, brain, `Speakable`, text to speech, playback. Session owns identity and deadlines. Audio owns pacing and a conservative heard-frame account. WireBrain owns history. ToolRouter owns calls and approval. `Policy.release` and Audit gate transfers. No owner connected them for a conversation, and no owner told the brain what the user heard after an interruption. A chained engine has no provider-side truncation.
 
@@ -41,7 +41,7 @@
 | Drop the oldest turns at the 40-turn bound | Silent context loss; a summary needs its own model call and release design. |
 | A fault at the 40-turn bound | The fault would block every later conversation until a setting changes. |
 
-**Boundaries**: J36 (the duplex GPT-Live engine) refines this record with the shared engine interface. J34 adds acknowledgements and earcons, J35 the ElevenLabs speech row, and J39 the local speech row; each refines this record. J16 owns the mapped indicator. J27 or a later row owns the model choice; Cerebras and the local servers declare no default model. No consent surface produces release grants, so asked items travel as markers. The unconfigured cause is not on the wire. Older turns are not summarised.
+**Boundaries**: [D084](D084-duplex-speech-engine-sessions.md) owns the duplex GPT-Live lifetime and Session's speech port. This record adds the chained turn loop alongside it. J34 adds acknowledgements and earcons, J35 the ElevenLabs speech row, and J39 the local speech row; each refines this record. J16 owns the mapped indicator. J27 or a later row owns the model choice; Cerebras and the local servers declare no default model. No consent surface produces release grants, so asked items travel as markers. The unconfigured cause is not on the wire. Older turns are not summarised.
 
 **Revisit When**: A speech provider reports played-frame timing, a brain offers its own truncation, or the context bound needs a summary.
 

@@ -110,7 +110,8 @@ function instrument(file, root, engine = "chained") {
         ['engine: "chained",', "engine: " + JSON.stringify(engine) + ","],
         ['audio.playbackSource = engine.playbackSource;',
             'audio.playbackSource = engine.playbackSource;\n                    const scripted = require("./scripted-fixture.js").ports(' + JSON.stringify(root) + ');\n' +
-            '                    Object.assign(runner.ports, { capture: scripted.capture, brain: scripted.brain, playback: scripted.playback, speech: scripted.speech });'],
+            '                    runner.ports.speech = scripted.speech;\n' +
+            '                    Object.assign(runner.ports, { capture: scripted.capture, brain: scripted.brain, playback: scripted.playback });'],
         ['configured: configuration.kind === "ready", settings: context.settings',
             'configured: true, settings: context.settings'],
         ['runner.dispatch({ type: "snapshot", locked: context.locked,',
