@@ -11,6 +11,8 @@ const FLOOR = "0.38.1";
 const OUTPUT_BYTES = 16384;
 const VENDOR_BYTES = 65536;
 const COMMAND_MS = 10000;
+// One bounded guide persists across private sessions, keyed by the CLI version.
+let guidanceCache = null;
 const ACTION_POLICY = Object.freeze({ default: "deny", allow: ["navigate", "snapshot", "get", "click", "fill"],
     deny: ["eval", "upload", "download", "state", "network"] });
 
@@ -91,7 +93,6 @@ function create({ environment, commandMs = COMMAND_MS }) {
     let touched = false;
     let active = null;
     let observation = null;
-    let skill = null;
 
     function options() { return { env, cwd: directory, encoding: "utf8", timeout: commandMs, maxBuffer: VENDOR_BYTES }; }
     function decode(result) {
@@ -204,13 +205,14 @@ function create({ environment, commandMs = COMMAND_MS }) {
         } finally { fs.rmSync(directory, { recursive: true, force: true }); }
     }
     function guidance() {
-        if (skill === null) {
+        if (version(environment) !== installed) throw new Error("jarvis: browser=version-changed");
+        if (guidanceCache === null || guidanceCache.version !== installed) {
             const result = cp.spawnSync("agent-browser", ["skills", "get", "core"], options());
             if (result.error || result.status !== 0 || !result.stdout.trim()) throw new Error("jarvis: browser=skill");
             const stub = fs.readFileSync(path.join(__dirname, "skills/browser/SKILL.md"), "utf8");
-            skill = bounded(stub + "\n\n" + result.stdout);
+            guidanceCache = { version: installed, text: bounded(stub + "\n\n" + result.stdout) };
         }
-        return skill;
+        return guidanceCache.text;
     }
     function verify() {
         try { fs.unlinkSync(dirs.marker); } catch (error) { if (error.code !== "ENOENT") throw error; }

@@ -64,7 +64,7 @@ world(async () => {
     scriptControl("verify-after-download", '    node "$program" verify', '    true "$program" verify', cases.find(row => row[0] === "download"));
     scriptControl("download-error", '    node "$program" download', '    node "$program" download || true', cases.find(row => row[0] === "install-failed"));
     scriptControl("only-missing-browser", '  69)', '  1|69)', cases.find(row => row[0] === "unrelated-failure"));
-    await mutant(path.join(plugin, "backend/Browser.js"), "skill-cache", 'if (skill === null) {', 'if (true) {', (implementation, folder) => {
+    await mutant(path.join(plugin, "backend/Browser.js"), "skill-cache", 'if (guidanceCache === null || guidanceCache.version !== installed) {', 'if (true) {', (implementation, folder) => {
         fs.cpSync(path.join(plugin, "backend/skills"), path.join(folder, "skills"), { recursive: true });
         mode({}); const candidate = implementation.create({ environment: process.env });
         try {

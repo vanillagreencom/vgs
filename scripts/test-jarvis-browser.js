@@ -121,6 +121,23 @@ world(async () => {
     assert.equal(skill.guidance(), skill.guidance());
     assert.equal(calls().filter(row => row.args[0] === "skills").length, 1, "one cache per version-owned session");
     skill.close();
+    function versionCache(implementation, folder) {
+        if (folder !== undefined) fs.cpSync(path.join(backend, "skills"), path.join(folder, "skills"), { recursive: true });
+        mode({ version: "0.38.2" });
+        const first = implementation.create({ environment });
+        first.guidance(); first.close();
+        const next = implementation.create({ environment });
+        next.guidance(); next.close();
+        assert.equal(calls().filter(row => row.args[0] === "skills").length, 1,
+            "the daemon reuses one version guide across private sessions");
+        fs.writeFileSync(path.join(process.env.JARVIS_TEST_ROOT, "browser-mode.json"), JSON.stringify({ version: "0.38.3" }));
+        const updated = implementation.create({ environment });
+        updated.guidance(); updated.close();
+        assert.equal(calls().filter(row => row.args[0] === "skills").length, 2,
+            "a new installed version reloads its core guide");
+    }
+    versionCache(Browser);
+    mode({});
     const stopped = Browser.create({ environment }); stopped.close();
     assert.equal((await run(stopped, "read")).outcome, "failed");
     // Remove the sole driver stand-in. There is no real-browser PATH fallback.
@@ -201,8 +218,10 @@ world(async () => {
         lease.sync({ gen: 2, conversation: { kind: "started" } });
         assert.equal(typeof records.browser?.start, "function", "setup becomes available to the next conversation");
         fs.rmSync(marker, { force: true });
-        assert.equal(records.browser.observe(call("fill", { ref: "@e1", text: "fixture" })), undefined,
-            "stale readiness produces an unavailable input target");
+        let target;
+        assert.doesNotThrow(() => { target = records.browser.observe(call("fill", { ref: "@e1", text: "fixture" })); },
+            "stale readiness cannot throw through the action judge");
+        assert.equal(target, undefined, "stale readiness produces an unavailable input target");
         assert.throws(() => records.browser.start(call("read"), () => {}), /unverified/,
             "a removed or stale verification cannot start a new session");
         lease.close();
@@ -216,6 +235,10 @@ world(async () => {
         'if (false) throw new Error("jarvis: browser=unverified");', setupAfterStart);
     await control("unverified-observation", 'try { return owner().record.observe(call); } catch { return undefined; }',
         'return owner().record.observe(call);', setupAfterStart);
+    await control("guidance-version-cache", 'guidanceCache === null || guidanceCache.version !== installed',
+        'guidanceCache === null', versionCache);
+    await control("guidance-session-cache", 'if (guidanceCache === null || guidanceCache.version !== installed) {',
+        'if (true) {', versionCache);
     await control("private-home", "HOME: privateHome, LANG:", "HOME: environment.HOME, LANG:", confinement);
     await control("private-session", 'const session = "jarvis-" + crypto.randomUUID();', 'const session = "jarvis-fixed";', confinement);
     await control("neutral-config", "AGENT_BROWSER_CONFIG: configFile", "AGENT_BROWSER_CONFIG: environment.AGENT_BROWSER_CONFIG", confinement);
