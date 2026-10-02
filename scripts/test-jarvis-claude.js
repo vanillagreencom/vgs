@@ -389,7 +389,7 @@ world(async () => {
     const verifyAccount = account({ turns: [[...say("OK")]] }, path.join(process.env.HOME, ".claude-team"));
     const presence = Object.fromEntries(require(path.join(tree, "shell/plugins/vgs.jarvis/AccountProviders.js")).PROVIDERS
         .filter(row => row.kind === "key" || row.kind === "speech-key").map(row => [row.variable, false]));
-    async function verify(folder, script) {
+    async function verify(folder, script, model = "") {
         fs.writeFileSync(path.join(verifyAccount.directory, "script.json"), JSON.stringify({ tree,
             auditDirectory: path.join(state, "audit"), ...script }));
         fs.rmSync(path.join(verifyAccount.directory, "events.jsonl"), { force: true });
@@ -398,7 +398,7 @@ world(async () => {
         const judge = new Accounts(state, env, presence);
         const chosen = judge.discover().find(row => row.source.kind === "cli" && row.source.directory === verifyAccount.directory);
         assert.ok(chosen, "discovery finds the Claude directory");
-        return { judge, result: await bounded(judge.verify(chosen.id, "user"), "verify"), chosen };
+        return { judge, result: await bounded(judge.verify(chosen.id, "user", undefined, model), "verify"), chosen };
     }
     cases.push(["verify", async folder => {
         const before = verifyAccount.calls().length;
@@ -425,6 +425,14 @@ world(async () => {
             [{ turns: [[...say("OK"), { result: "error_during_execution" }]] }, "harness-error-during-execution"],
             [{ turns: [[...say("OK"), { exit: 5 }]] }, "harness-exit"]
         ]) assert.deepEqual((await verify(folder, script)).result, { kind: "unavailable", reason }, reason);
+        // A model name argv would read as a flag refuses before any audit record or program.
+        const audited = () => fs.readdirSync(path.join(state, "audit")).map(name =>
+            fs.readFileSync(path.join(state, "audit", name), "utf8")).join("");
+        const probes = () => verifyAccount.calls().filter(call => call.args[0] === "-p").length;
+        const [recorded, started] = [audited(), probes()];
+        assert.deepEqual((await verify(folder, { turns: [[...say("OK")]] }, "-opus")).result, { kind: "unavailable", reason: "model-invalid" });
+        assert.equal(audited(), recorded, "no audit record for a refused model");
+        assert.equal(probes(), started, "no program for a refused model");
         // A stalled program: at the deadline the conversation closes, its
         // process and directory go, and Verify fails keyed.
         const ClaudeCode = require(path.join(folder, "ClaudeCode.js")), Policy = require(path.join(folder, "Policy.js"));
@@ -516,6 +524,7 @@ world(async () => {
             ["close-again", "if (closing !== null) return closing;", "if (closing !== null) return Promise.resolve();", "verify"],
             ["close-workdir", "if (workdir !== null) fs.rmSync(workdir, { recursive: true, force: true });", "", "close"],
             ["verify-result", 'if (step.value.kind === "text") text += step.value.text;', 'if (step.value.kind === "text") return step.value.text;', "verify"],
+            ["model-flag", '&& !value.startsWith("-")', "", "verify"],
             ["verify-deadline", "const timer = clock.set(() => { expired = true; void brain.close(); }, deadline);",
                 "const timer = clock.set(() => { expired = true; }, deadline);", "verify"]
         ]) await control(harnessFile, name, needle, replacement, row);
@@ -523,7 +532,8 @@ world(async () => {
             ["verify-route", 'if (row.id !== "claude") fail("verify=subscription-handoff-unavailable");', ""],
             ["verify-audit", "start: events => release.start(() => events.next())", "start: events => events.next()"],
             ["verify-text", '}).then(text => text.trim() !== ""));', "}).then(() => true));"],
-            ["verify-reason", "harness ? harness[1] : ", ""]
+            ["verify-reason", "harness ? harness[1] : ", ""],
+            ["verify-model", "const model = modelOf(requestedModel); // Refused", "const model = requestedModel; // Refused"]
         ]) await control(accountsFile, name, needle, replacement, "verify");
         console.log("test-jarvis-claude: ok cases=" + cases.length + " controls=" + controls);
         // A control that removes close leaves its mutant child running; the

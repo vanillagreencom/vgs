@@ -42,6 +42,13 @@ function fail(code) { throw new Error("jarvis: brain=" + code); }
 function plain(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 // A vendor-supplied name enters a keyed error only in this spelling.
 function named(value) { return typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : "invalid"; }
+/**
+ * The one judge of a model name: "" for the default, or at most 120
+ * printable characters. A leading "-" would read as a flag in argv.
+ */
+function isModel(value) {
+    return typeof value === "string" && value.length <= 120 && !/[\x00-\x1f\x7f]/.test(value) && !value.startsWith("-");
+}
 function textItem(item) {
     if (!item || typeof item.content !== "string") fail("item-text");
     return item;
@@ -147,8 +154,7 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
     clock = { set: setTimeout, clear: clearTimeout } }) {
     if (typeof directory !== "string" || !path.isAbsolute(directory) || path.normalize(directory) !== directory)
         fail("harness-directory");
-    if (typeof model !== "string" || model.length > 120 || /[\x00-\x1f\x7f]/.test(model) || model.startsWith("-"))
-        fail("model");
+    if (!isModel(model)) fail("model");
     Policy.assertRecipients(recipients);
     if (bridge !== null && typeof bridge?.open !== "function") fail("harness-bridge");
     if (typeof parent !== "string" || !path.isAbsolute(parent)) fail("harness-runtime");
@@ -545,4 +551,4 @@ async function verify({ directory, model, recipients, item, grants, parent, envi
     }
 }
 
-module.exports = { create, verify };
+module.exports = { create, verify, isModel };

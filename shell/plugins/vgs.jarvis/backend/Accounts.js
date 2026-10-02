@@ -23,7 +23,7 @@ function printable(value, max) {
     return typeof value === "string" && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
 }
 function modelOf(value) {
-    if (typeof value !== "string" || value.length > 120 || /[\x00-\x1f\x7f]/.test(value)) fail("verify=model-invalid");
+    if (!ClaudeCode.isModel(value)) fail("verify=model-invalid");
     return value;
 }
 function provider(id) {
@@ -415,11 +415,12 @@ class Accounts {
         const row = provider(account.provider);
         if (account.source.kind === "cli") {
             if (row.id !== "claude") fail("verify=subscription-handoff-unavailable");
+            const model = modelOf(requestedModel); // Refused before any audit record.
             // Checked again, link-free, before the vendor program starts.
             if (directory(account.source.directory).kind !== "directory") fail("verify=account-directory");
             if (!this.env.XDG_RUNTIME_DIR) fail("verify=runtime-directory");
             return this.released(account, row.id, row.origin, PROBE_TEXT, release => ClaudeCode.verify({
-                directory: account.source.directory, model: modelOf(requestedModel), recipients: release.selected, item: release.item,
+                directory: account.source.directory, model, recipients: release.selected, item: release.item,
                 grants: release.grants, parent: path.join(this.env.XDG_RUNTIME_DIR, "vgs/jarvis"),
                 environment: this.env, instructions: HARNESS_INSTRUCTIONS, deadline: PROBE_MS,
                 start: events => release.start(() => events.next())
