@@ -67,17 +67,30 @@ long_inbox_rows() {
 }
 # long_inbox_cut TOGGLE...: eight opens of the long inbox by the command
 # TOGGLE, which also closes it. Each open is read once the panel lists the
-# newest row and has drawn: `fits` when every open's panel_fit read fits
-# within long_inbox_settle_s, else `cut`; the readings that did not fit go
-# to $sandbox/long-inbox.txt. A first card scrolled under the header stays
-# there, so a reading that stays off fits for the settle is the cut.
+# newest row and has drawn, with panel_fit until it reads `fits` or
+# long_inbox_settle_s has passed: a first card scrolled under the header
+# stays there, so a reading that stays off fits for the settle is the
+# cut. Prints the one reading every open gave, such as `fits` or
+# `cut-top=card under-header=card`, `mixed` when the opens differ, or
+# `open=<n> <failure>` at the first open the instrument could not read:
+# `unlisted` when the panel never listed the newest row, `unread` when
+# panel_fit read no header, list or card, `not-drawn`, or a toggle that
+# failed. Each open's reading goes to $sandbox/long-inbox.txt, which
+# long_inbox_readings prints.
 long_inbox_settle_s=1
 long_inbox_cut() {
-  local n reading cuts="" polls
+  local n reading listed polls readings=() first
+  rm -f -- "${sandbox:?}/long-inbox.txt"
   polls="$(python3 -c 'import sys; print(max(1, int(float(sys.argv[1]) / 0.2)))' "$long_inbox_settle_s")" || return
   for n in 1 2 3 4 5 6 7 8; do
     "$@" >/dev/null || { echo "open=$n toggle-failed"; return; }
-    for _ in $(seq 1 25); do [[ $(has_row panel "Long newest") == True ]] && break; sleep 0.2; done
+    listed=False
+    for _ in $(seq 1 25); do
+      listed="$(has_row panel "Long newest")" || listed=False
+      [[ $listed == True ]] && break
+      sleep 0.2
+    done
+    [[ $listed == True ]] || { echo "open=$n unlisted"; return; }
     summon_drawn panel vgs.notifications || { echo "open=$n not-drawn"; return; }
     reading=""
     for _ in $(seq 1 "$polls"); do
@@ -85,13 +98,19 @@ long_inbox_cut() {
       [[ $reading == fits ]] && break
       sleep 0.2
     done
-    [[ $reading == fits ]] || cuts+="open=$n $reading; "
+    [[ $reading == unread* ]] && { echo "open=$n unread"; return; }
+    readings+=("$reading")
     "$@" >/dev/null || { echo "close=$n toggle-failed"; return; }
     for _ in $(seq 1 25); do [[ $(layer_count vgs:panel) == 0 ]] && break; sleep 0.2; done
   done
-  printf '%s\n' "${cuts:-none}" >"$sandbox/long-inbox.txt"
-  if [[ -z $cuts ]]; then echo fits; else echo cut; fi
+  for n in "${!readings[@]}"; do printf 'open=%d %s; ' "$((n + 1))" "${readings[n]}"; done >"$sandbox/long-inbox.txt"
+  first="${readings[0]}"
+  for reading in "${readings[@]}"; do
+    [[ $reading == "$first" ]] || { echo mixed; return; }
+  done
+  echo "$first"
 }
+long_inbox_readings() { if [[ -f $sandbox/long-inbox.txt ]]; then cat -- "$sandbox/long-inbox.txt"; else echo "none read"; fi; }
 # PRESSES LABEL: five presses from a closed inbox, each read before the next.
 nk_presses() {
   local want=open n
@@ -134,7 +153,7 @@ expect_poll "the last Escape closes the inbox" closed inbox_shown
 
 expect "the long inbox's toasts leave the screen" 0 long_inbox_rows
 geometry expect "a long inbox opened by the key eight times shows its first card whole each time" fits long_inbox_cut nk_press
-ok "long inbox cuts: $(cat -- "$sandbox/long-inbox.txt")"
+ok "long inbox readings: $(long_inbox_readings)"
 expect "disabling the notifications before the panel copy is allowed" ok ipc shell setPluginEnabled vgs.notifications false
 expect_poll "the compositor lists no inbox shortcut before the panel copy" 0 note_shortcuts
 nk_panel="$repo/shell/plugins/vgs.notifications/Panel.qml"
@@ -151,8 +170,8 @@ expect "a rescan reads the refresh-only reveal panel copy" ok ipc shell rescanPl
 expect "enabling the notifications beside the panel copy is allowed" ok ipc shell setPluginEnabled vgs.notifications true
 expect_poll "the service is built beside the panel copy" True record_exists vgs.notifications
 expect_poll "the inbox shortcut is listed beside the panel copy" 1 note_shortcuts
-geometry expect "control: a panel that reveals only in the refresh scrolls the long inbox's first card under the header" cut long_inbox_cut nk_press
-ok "control long inbox cuts: $(cat -- "$sandbox/long-inbox.txt")"
+geometry expect "control: a panel that reveals only in the refresh scrolls the long inbox's first card under the header on every open" "cut-top=card under-header=card" long_inbox_cut nk_press
+ok "control long inbox readings: $(long_inbox_readings)"
 cp -- "$sandbox/Panel.qml.keys-kept" "$nk_panel"
 expect "a rescan restores the panel" ok ipc shell rescanPlugins
 expect_poll "the service is built beside the restored panel" True record_exists vgs.notifications
@@ -178,7 +197,7 @@ if nk_base="$(unscaled_mode_of "$nk_output")" && [[ $nk_base =~ ^([0-9]+)x([0-9]
   nk_press || fail "the short room's close press failed"
   expect_poll "the short room's inbox closes" closed inbox_shown
   geometry expect "a long inbox opened by the key eight times in a short room shows its first card whole each time" fits long_inbox_cut nk_press
-  ok "short room long inbox cuts: $(cat -- "$sandbox/long-inbox.txt")"
+  ok "short room long inbox readings: $(long_inbox_readings)"
   expect "disabling the notifications before the whole-height list copy is allowed" ok ipc shell setPluginEnabled vgs.notifications false
   expect_poll "the compositor lists no inbox shortcut before the whole-height list copy" 0 note_shortcuts
   cp -- "$nk_panel" "$sandbox/Panel.qml.keys-kept"
@@ -194,8 +213,8 @@ PY
   expect "enabling the notifications beside the whole-height list copy is allowed" ok ipc shell setPluginEnabled vgs.notifications true
   expect_poll "the service is built beside the whole-height list copy" True record_exists vgs.notifications
   expect_poll "the inbox shortcut is listed beside the whole-height list copy" 1 note_shortcuts
-  geometry expect "control: a panel whose list keeps its whole height runs a long inbox past the short room's panel" cut long_inbox_cut nk_press
-  ok "control short room cuts: $(cat -- "$sandbox/long-inbox.txt")"
+  geometry expect "control: a panel whose list keeps its whole height runs a long inbox past the short room's panel on every open" "clipped=list" long_inbox_cut nk_press
+  ok "control short room readings: $(long_inbox_readings)"
   cp -- "$sandbox/Panel.qml.keys-kept" "$nk_panel"
   expect "a rescan restores the panel after the short room" ok ipc shell rescanPlugins
   notes dismiss-all >/dev/null # `none` once every toast's clock ran out

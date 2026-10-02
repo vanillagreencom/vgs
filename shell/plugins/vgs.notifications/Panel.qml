@@ -316,8 +316,9 @@ FocusScope {
                         // The list takes its cards' height a layout pass
                         // after a refresh, so the refresh's reveal measured
                         // the empty list and scrolled a long list's first
-                        // card under the header; reveal again at the
-                        // height the list took.
+                        // card under the header; reveal again whenever the
+                        // scroll view's height changes, which stops at the
+                        // panel's cap.
                         onViewHeightChanged: reveal(root.currentIndex)
                         flickable: listScroll.flickable
                         itemAt: index => rowRepeater.itemAt(index)

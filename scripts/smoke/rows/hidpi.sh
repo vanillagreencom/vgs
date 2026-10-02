@@ -117,7 +117,7 @@ print("  image-text-magenta scale=2 count=%d threshold=%d deviceSize=%d geometry
       expect_poll "the scale-2 gallery window is gone" 0 window_count "VGS Components"
       expect "the scale-2 long inbox's toasts leave the screen" 0 long_inbox_rows
       geometry expect "a long inbox opened eight times at scale 2 shows its first card whole each time" fits long_inbox_cut notes inbox
-      ok "scale-2 long inbox cuts: $(cat -- "$sandbox/long-inbox.txt")"
+      ok "scale-2 long inbox readings: $(long_inbox_readings)"
       notes dismiss-all >/dev/null # `none` once every toast's clock ran out
       expect "clearing the scale-2 long inbox's history is allowed" ok notes clear-history
       expect "the start's follow ends before the logical-pixel control" idle theme_idle
