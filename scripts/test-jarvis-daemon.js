@@ -274,7 +274,7 @@ async function inside() {
         try {
             send({ ...hello, settings: { ...hello.settings, mode } });
             await wait(m => m.state.gate.kind !== "down" || m.state.gate.reason === "unconfigured");
-            await check({ send: name => send(intent(name)), raw: send, wait, last, messages });
+            await check({ send: name => send(intent(name)), raw: send, reply: send, wait, last, messages });
             child.stdin.end();
             const [code, signal] = await closed;
             assert.equal(signal, null, "EOF releases the real child");
@@ -403,6 +403,41 @@ async function inside() {
     const scripted = daemonCopy("scripted");
     const gates = path.join(root, "gates");
     instrument(scripted, gates);
+    async function desktopDriver(file, directory) {
+        await conversation(file, async w => {
+            fs.writeFileSync(path.join(directory, "call.json"), JSON.stringify({
+                id: "fixture-toast", tool: "notify.toast", arguments: { title: "Fixture", body: "Notice" }
+            }));
+            await w.wait(() => w.messages.some(message => message.type === "request" && message.kind === "toast"));
+            const request = w.messages.find(message => message.type === "request" && message.kind === "toast");
+            const { v, gen, revision, id, kind } = request;
+            w.reply({ v, type: "reply", gen, revision, id, kind, answer: "ok", data: null });
+            const results = path.join(directory, "results.jsonl");
+            await w.wait(() => fs.existsSync(results) && fs.readFileSync(results, "utf8").includes('"outcome"'));
+            const result = fs.readFileSync(results, "utf8").trim().split("\n").map(JSON.parse).at(-1);
+            assert.deepEqual(result, { id: "fixture-toast", outcome: "completed", content: "The notice was posted." });
+        });
+    }
+    const desktopDriverFile = daemonCopy("desktop-driver");
+    instrument(desktopDriverFile, path.join(root, "desktop-driver-gates"));
+    const driverRoot = path.join(root, "desktop-driver-results");
+    const driver = cp.spawnSync(process.execPath, [path.join(tree, "scripts/fixtures/jarvis/desktop-driver.js"),
+        desktopDriverFile, driverRoot], { env: { PATH: process.env.PATH, HOME: process.env.HOME }, encoding: "utf8" });
+    assert.equal(driver.status, 0, driver.stderr);
+    await desktopDriver(desktopDriverFile, driverRoot);
+    const driverSource = fs.readFileSync(desktopDriverFile, "utf8");
+    const driverCall = '                    require("./desktop-driver-fixture.js").drive('
+        + JSON.stringify(driverRoot) + ', runner, router);\n';
+    assert.equal(driverSource.split(driverCall).length - 1, 1);
+    const driverStart = "                    desktop = Desktop.install(";
+    assert.equal(driverSource.split(driverStart).length - 1, 1);
+    const earlyDriver = driverSource.replace(driverCall, "").replace(driverStart, driverCall + driverStart);
+    assert.notEqual(earlyDriver, driverSource);
+    fs.writeFileSync(desktopDriverFile, earlyDriver);
+    fs.rmSync(path.join(driverRoot, "results.jsonl"));
+    await assert.rejects(() => desktopDriver(desktopDriverFile, driverRoot), assert.AssertionError,
+        "an engine port replacement must not discard the driver's result sink");
+    controls++;
     const count = kind => fs.readFileSync(path.join(gates, "effects.jsonl"), "utf8").trim().split("\n")
         .filter(line => JSON.parse(line).kind === kind).length;
     const gate = name => fs.writeFileSync(path.join(gates, name), "");

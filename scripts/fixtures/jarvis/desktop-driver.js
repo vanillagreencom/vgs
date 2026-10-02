@@ -61,9 +61,9 @@ function edit(file, needle, replacement) {
 }
 
 function instrument(daemon, root) {
-    edit(daemon, "                    desktop = Desktop.install(",
-        "                    require(\"./desktop-driver-fixture.js\").drive(" + JSON.stringify(root) + ", runner, router);\n"
-        + "                    desktop = Desktop.install(");
+    const ports = "Object.assign(runner.ports, { capture: scripted.capture, brain: scripted.brain, playback: scripted.playback });";
+    edit(daemon, ports, ports + "\n                    require(\"./desktop-driver-fixture.js\").drive("
+        + JSON.stringify(root) + ", runner, router);");
     fs.copyFileSync(__filename, path.join(path.dirname(daemon), "desktop-driver-fixture.js"));
 }
 
