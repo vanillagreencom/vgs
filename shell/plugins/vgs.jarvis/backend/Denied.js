@@ -134,6 +134,29 @@ function create({ home, config, data, state, runtime, install, accountRoots }) {
     const protectedRoots = roots(protectedPaths);
     const executionRoots = roots(execution);
     let masks = null;
+    // The resolved targets of rule-named links directly in each base, read
+    // once per snapshot on its first judgment: a dotfile manager's
+    // ~/.claude-work link must protect the folder it points to. Only the
+    // bases' own entries are read; a link two levels down is in masks only.
+    // A dangling or looping link is protected by its own path, by name.
+    let linkTargets = null;
+    function accountLinkTargets() {
+        if (linkTargets === null) {
+            linkTargets = bases.flatMap(base => {
+                let entries;
+                try { entries = fs.readdirSync(base, { withFileTypes: true }); }
+                catch (error) {
+                    if (error.code === "ENOENT") return [];
+                    throw error;
+                }
+                return entries.filter(entry => entry.isSymbolicLink() && accountDirectory(entry.name, 1) !== null)
+                    .flatMap(entry => {
+                        try { return [resolve(path.join(base, entry.name)).path]; } catch { return []; }
+                    });
+            });
+        }
+        return linkTargets;
+    }
     /**
      * Judge a typed path role. Refuse protected descendants and destructive
      * ancestors. Recursive readers must not scan across a protected root.
@@ -153,6 +176,10 @@ function create({ home, config, data, state, runtime, install, accountRoots }) {
         if (target.trail.concat(target.path).some(named) || protectedRoots.some(root => within(target.path, root)
                 || (ancestor && within(root, target.path))))
             return { kind: "refuse", reason: "protected-path" };
+        try {
+            if (accountLinkTargets().some(link => within(target.path, link) || (ancestor && within(link, target.path))))
+                return { kind: "refuse", reason: "protected-path" };
+        } catch (error) { return { kind: "refuse", reason: "path-resolution", error: error.code || error.message }; }
         try {
             if (ancestor && target.exists && holdsNamed(target.path)) return { kind: "refuse", reason: "protected-path" };
         } catch (error) { return { kind: "refuse", reason: "path-resolution", error: error.code || error.message }; }

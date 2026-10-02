@@ -272,6 +272,16 @@ world(async () => {
     };
     await landing(require(file));
 
+    // A dotfile manager's rule-named link in HOME protects the folder it
+    // points to, read by its own path.
+    const dotfiles = path.join(home, "dotfiles", "codex-work");
+    fs.mkdirSync(dotfiles, { recursive: true });
+    fs.writeFileSync(path.join(dotfiles, "auth.json"), "beta protected secret\n");
+    fs.symlinkSync(dotfiles, path.join(home, ".codex-dotfiles"));
+    const dotfileTarget = async (Files, Judge = Denied) => expectRun("dotfile-link-target", make(Files, () => Judge.create(options)),
+        "files.read", { path: path.join(dotfiles, "auth.json") }, "failed", /^Refused: protected-path for /);
+    await dotfileTarget(require(file));
+
     // A component swapped for a link between the judge and the act.
     const swapFolder = path.join(t, "swap");
     const plantSwap = () => {
@@ -680,6 +690,8 @@ world(async () => {
         brokenSnapshot);
     await control("move-landing", [["if (landsNamed(source.path, destination.path))", "if (false && landsNamed(source.path, destination.path))"]],
         (Files, folder) => landing(Files, require(path.join(folder, "Denied.js"))), path.join(backend, "Denied.js"));
+    await control("dotfile-link-target", [["if (accountLinkTargets().some(", "if (false && accountLinkTargets().some("]],
+        (Files, folder) => dotfileTarget(Files, require(path.join(folder, "Denied.js"))), path.join(backend, "Denied.js"));
     await control("walk-nofollow", [["O_RDONLY | O_DIRECTORY | O_NOFOLLOW); }", "O_RDONLY | O_DIRECTORY); }"]], walkRace,
         path.join(backend, "Anchored.js"));
     await control("final-nofollow", [["return fs.openSync(Anchored.child(parent, name), flags | O_NOFOLLOW);", "return fs.openSync(Anchored.child(parent, name), flags);"]], finalRace);

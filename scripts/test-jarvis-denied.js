@@ -202,10 +202,10 @@ world(() => {
     };
     const lazyMasks = logic => {
         let judge;
-        assert.equal(readdirs(() => {
-            judge = logic.create(options);
-            allowed(judge, path.join(project, "existing"), "read");
-        }), 0, "a build and a plain judgment list no folder");
+        assert.equal(readdirs(() => { judge = logic.create(options); }), 0, "a build lists no folder");
+        assert.equal(readdirs(() => allowed(judge, path.join(project, "existing"), "read")), 3,
+            "the first judgment lists the three bases' own entries alone");
+        assert.equal(readdirs(() => allowed(judge, path.join(project, "existing"), "read")), 0, "later judgments reuse them");
         assert.equal(readdirs(() => allowed(judge, plain, "remove")), 1, "a one-level target lists itself alone");
         assert.ok(readdirs(() => void judge.masks) > 1, "the masks scan the bases");
     };
@@ -241,6 +241,23 @@ world(() => {
         }
     };
     brokenLinks(Denied);
+    // A rule-named link directly in a base protects its resolved target, as
+    // a dotfile manager's ~/.claude-work link to ~/dotfiles/claude-work.
+    const dotfiles = path.join(home, "dotfiles", "claude-work");
+    fs.mkdirSync(dotfiles, { recursive: true });
+    fs.writeFileSync(path.join(dotfiles, ".credentials.json"), "synthetic credentials: never opened\n");
+    fs.symlinkSync(dotfiles, path.join(home, ".claude-dotfiles"));
+    const linkedTarget = logic => {
+        const judge = logic.create(options);
+        refused(judge, path.join(dotfiles, ".credentials.json"), "read", "protected-path");
+        refused(judge, path.dirname(dotfiles), "remove", "protected-path");
+    };
+    linkedTarget(Denied);
+    // A base that cannot be listed refuses every judgment rather than guess.
+    fsFault("readdirSync", (original, target, ...args) => {
+        if (target === home) throw Object.assign(new Error("denied"), { code: "EACCES" });
+        return original(target, ...args);
+    }, () => refused(Denied.create(options), path.join(project, "existing"), "read", "path-resolution"));
     // A middle link is resolved for a removal; only a final one is not.
     refused(linkJudge, path.join(alias, "x"), "remove", "protected-path");
     // A move is judged where it lands, against each write destination.
@@ -274,7 +291,7 @@ world(() => {
         logic => refused(logic.create(options), path.join(ssh, "sentinel"), "read", "protected-path"));
     control("ancestors", '(ancestor && within(root, target.path))',
         '(false && ancestor && within(root, target.path))',
-        logic => refused(logic.create(options), home, "remove", "protected-path"));
+        logic => refused(logic.create(options), roots.config, "remove", "protected-path"));
     control("recursive-read", 'changes || role === "tree-read"', 'changes',
         logic => refused(logic.create(options), home, "tree-read", "protected-path"));
     control("home", 'if (!within(target.path, realHome.path))', 'if (false && !within(target.path, realHome.path))',
@@ -319,6 +336,8 @@ world(() => {
         "if (false || protectedRoots", logic => ruleRefused(logic, "home-depth-1"));
     control("account-trail", "target.trail.concat(target.path).some(named)", "[target.path].some(named)", logic => {
         const judge = logic.create(options);
+        // Its first judgment reads the bases before the link exists.
+        allowed(judge, path.join(project, "existing"), "read");
         const after = path.join(home, ".claude-after");
         fs.symlinkSync(plain, after);
         try { refused(judge, path.join(after, "file"), "read", "protected-path"); }
@@ -350,6 +369,7 @@ world(() => {
     control("account-mask-links", "else if (depth < ACCOUNT_DEPTH && entry.isDirectory())",
         "else if (depth < ACCOUNT_DEPTH && (entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(file).isDirectory())))",
         logic => assert.equal(logic.create(options).masks.some(root => root.startsWith(scanLink + "/")), false));
+    control("account-link-target", "if (accountLinkTargets().some(", "if (false && accountLinkTargets().some(", linkedTarget);
     control("lazy-masks", "let masks = null;", "let masks = null; void bases.flatMap(base => present(base, 1, [], true));", lazyMasks);
     control("unlisted-skip", 'if (error.code === "ENOENT" || skipUnlisted) return found;', 'if (error.code === "ENOENT") return found;', unlistable);
     control("broken-link-mask", "try { return [file, resolve(file).path]; } catch { return [file]; }", "return [file, resolve(file).path];", brokenLinks);
