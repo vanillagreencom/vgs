@@ -309,13 +309,8 @@ world(async () => {
         }],
         ["bounds", async folder => {
             // One output line at 1 MiB passes; one byte more ends the conversation.
-            const line = bytes => {
-                const shell = { type: "assistant", parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "text", text: "" }] } };
-                const text = "x".repeat(bytes - Buffer.byteLength(JSON.stringify(shell)));
-                return JSON.stringify({ ...shell, message: { ...shell.message, content: [{ type: "text", text }] } });
-            };
             for (const [bytes, accepted] of [[1024 * 1024, true], [1024 * 1024 + 1, false]]) {
-                const w = await make(folder, { turns: [[{ raw: line(bytes) }]] });
+                const w = await make(folder, { turns: [[{ sized: bytes }]] });
                 const reply = w.say("big");
                 if (accepted) assert.equal((await w.read(reply)).texts[0].length > 1000000, true);
                 else await w.fails(reply, "harness-line-limit");
@@ -323,11 +318,14 @@ world(async () => {
             // A line that never ends fails once it passes the line bound.
             const open = await make(folder, { turns: [[{ unterminated: 1024 * 1024 + 1 }]] });
             await open.fails(open.say("endless"), "harness-line-limit");
-            // A turn's replies at 8 MiB: eight lines of 1 MiB and the result pass the line bound, not the turn bound.
-            const turn = await make(folder, { turns: [[...Array.from({ length: 9 }, () => ({ raw: line(1024 * 1024 - 64) }))]] });
-            await turn.fails(turn.say("many"), "harness-turn-limit");
-            const fits = await make(folder, { turns: [[...Array.from({ length: 7 }, () => ({ raw: line(1024 * 1024 - 64) }))]] });
-            assert.equal((await fits.read(fits.say("several"))).texts.length, 7);
+            // A turn's output, init, text lines and result with their newlines,
+            // at exactly 8 MiB passes; one byte more fails at the result.
+            for (const [bytes, accepted] of [[8 * 1024 * 1024, true], [8 * 1024 * 1024 + 1, false]]) {
+                const w = await make(folder, { turns: [[{ fill: bytes }]] });
+                const reply = w.say("many");
+                if (accepted) assert.equal((await w.read(reply)).texts.length, 8);
+                else await w.fails(reply, "harness-turn-limit");
+            }
             // Forty user turns pass; the forty-first refuses before it is sent.
             const long = await make(folder, { turns: [[...say("ok")]] });
             for (let index = 0; index < 40; index++) await long.read(long.say("turn " + index));
@@ -476,7 +474,8 @@ world(async () => {
             ["line-raised", "const LINE_BYTES = 1024 * 1024;", "const LINE_BYTES = 1024 * 1024 + 1;", "bounds"],
             ["line-lowered", "const LINE_BYTES = 1024 * 1024;", "const LINE_BYTES = 1024 * 1024 - 1;", "bounds"],
             ["line-tail", 'if (Buffer.byteLength(tail) > LINE_BYTES) fault(record, new Error("jarvis: brain=harness-line-limit"));', "", "bounds"],
-            ["turn-bound", "const TURN_BYTES = 8 * 1024 * 1024;", "const TURN_BYTES = 16 * 1024 * 1024;", "bounds"],
+            ["turn-raised", "const TURN_BYTES = 8 * 1024 * 1024;", "const TURN_BYTES = 8 * 1024 * 1024 + 1;", "bounds"],
+            ["turn-lowered", "const TURN_BYTES = 8 * 1024 * 1024;", "const TURN_BYTES = 8 * 1024 * 1024 - 1;", "bounds"],
             ["context-bound", "const TURNS = 40;", "const TURNS = 41;", "bounds"],
             ["request-bound", "const REQUEST_BYTES = 20 * 1024 * 1024;", "const REQUEST_BYTES = 20 * 1024 * 1024 - 1;", "bounds"],
             ["tools-bound", "const TOOLS = 64;", "const TOOLS = 65;", "bounds"],
