@@ -116,6 +116,8 @@ expect_poll "the pane widget leaves the bar after panes.setPlaced" False pane_wi
 expect "the holder panes.setPlaced can place it again" ok ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":true}'
 expect_poll "the holder list follows placement" true host_list_placed
 expect_poll "the pane widget returns to the bar" True pane_widget_placed
+expect "placing the non-pane widget precondition is allowed" ok ipc shell setPluginEnabled acme.tick true
+expect_poll "the non-pane widget precondition is placed" True tick_widget_placed
 expect "panes.setPlaced refuses a non-pane widget as unknown" "unknown: acme.tick" ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.tick","placed":false}'
 expect_poll "the non-pane widget remains placed after refused panes.setPlaced" True tick_widget_placed
 expect "panes.setPlaced refuses a non-boolean placement" "refused: placed=1 want=boolean" ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":1}'
