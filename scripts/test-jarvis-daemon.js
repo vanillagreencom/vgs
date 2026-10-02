@@ -899,7 +899,7 @@ exit "$failures"
         assert.equal(call.deathsig, 9);
     };
     await routed(desktopDaemon("desktop"));
-    const register = "executors = Executors.register(router, { find: commandFile, environment: process.env,\n"
+    const register = "executors = Executors.register(router, { find: commandFile, environment: process.env, clock,\n"
         + "                        desktop: { Dispatch, Launch, request: requests.send, clock,\n"
         + '                            environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) },\n'
         + "                        // The engine exists before the first turn that could route a capture.\n"
@@ -1057,12 +1057,16 @@ exit "$failures"
     // disposable copy adds the scripted row, a model for the local brain row
     // and the indicator, then drives phases through the real engine.
     const Engine = require("./fixtures/jarvis/engine.js");
-    function engineCopy(name) {
+    // said is the scripted utterance; recipients, when given, the speech row's.
+    function engineCopy(name, said = "What time is it?", recipients = null) {
         const file = daemonCopy(name);
         const directory = path.dirname(path.dirname(file));
+        const utterances = "[fixture.utterance(" + JSON.stringify(said) + ")]";
         for (const [relative, needle, replacement] of [
             ["backend/ChainedEngine.js", "const SPEECH = Object.freeze({});",
-                "const SPEECH = Object.freeze({ scripted: (fixture => (fixture.reset({ utterances: [fixture.utterance(\"What time is it?\")] }), fixture.row))(require(" + JSON.stringify(require.resolve("./fixtures/jarvis/engine.js")) + ")) });"],
+                "const SPEECH = Object.freeze({ scripted: (fixture => (fixture.reset({ utterances: " + utterances
+                + (recipients === null ? "" : ", recipients: " + JSON.stringify(recipients)) + " }), fixture.row))(require("
+                + JSON.stringify(require.resolve("./fixtures/jarvis/engine.js")) + ")) });"],
             ["AccountProviders.js", 'probe: { driver: "ollama", path: "/api/generate", model: "" }',
                 'probe: { driver: "ollama", path: "/api/generate", model: "fixture-model" }'],
             ["backend/jarvisd.js", 'runner.dispatch({ type: "snapshot", locked: context.locked,',
@@ -1081,6 +1085,114 @@ exit "$failures"
         .account(ollama, "local", { kind: "found" }, { kind: "local", origin: ollama.origin }).id;
     const loopback = Engine.brain(11434);
     await loopback.ready;
+    // The daemon carries cloudVision to Policy and privateWindows to the
+    // vision executor. A network speech row makes the recipient set
+    // non-offline, so the loopback brain receives screen content only as
+    // cloudVision allows. grim and magick are vision-tool.py, which draws the
+    // stand-in hyprctl's windows and runs the host's ImageMagick.
+    const VisionWorld = require("./fixtures/jarvis/vision.js");
+    const hostMagick = ["/usr/bin/magick", "/bin/magick"].find(file => fs.existsSync(file));
+    let notMeasured = false;
+    const SCREEN_SPEECH = [{ kind: "network", provider: "scripted-voice", account: "fixture", origin: "http://192.0.2.1:9" }];
+    const SECRET = [200, 40, 40], VAULT = [40, 40, 200];
+    function screenCopy(name, edits = []) {
+        const file = engineCopy(name, "Look at my screen.", SCREEN_SPEECH);
+        const registered = path.join(path.dirname(file), "vision-registered");
+        for (const [target, needle, replacement] of [[path.join(path.dirname(file), "ToolRouter.js"), "function register(id, executor) {",
+            "function register(id, executor) {\n        if (id === \"vision\") require(\"node:fs\").writeFileSync(" + JSON.stringify(registered) + ", \"\");"],
+        ...edits.map(([needle, replacement]) => [file, needle, replacement])]) {
+            const original = fs.readFileSync(target, "utf8");
+            assert.equal(original.split(needle).length - 1, 1, name + " screen instrumentation");
+            fs.writeFileSync(target, original.replace(needle, replacement));
+        }
+        return { file, registered };
+    }
+    async function screenConversation({ file, registered }, settings) {
+        const screen = VisionWorld.world(process.env.XDG_RUNTIME_DIR, process.env.JARVIS_TEST_ROOT);
+        screen.set({ monitors: [VisionWorld.monitor(0, "FIX-1", { width: 320, height: 200, scale: 1 })],
+            outputs: [{ name: "FIX-1", box: [0, 0, 320, 200] }],
+            clients: [VisionWorld.client("0xa1", { class: "Fixture-Secret", initialClass: "Fixture-Secret", at: [20, 30], size: [100, 50] }),
+                VisionWorld.client("0xc3", { class: "Bitwarden", initialClass: "Bitwarden", title: "Vault", initialTitle: "Vault",
+                    at: [150, 40], size: [100, 80] })],
+            colors: { "0xa1": SECRET, "0xc3": VAULT } });
+        const child = cp.spawn("node", [file, "--tree", tree], { env: {
+            PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR
+        }, stdio: ["pipe", "pipe", "pipe"] });
+        const states = [];
+        let tail = "", err = "";
+        child.stdout.on("data", data => {
+            const lines = (tail + data).split("\n");
+            tail = lines.pop();
+            for (const message of lines.map(line => JSON.parse(line))) if (message.type === "state") states.push(message);
+        });
+        child.stderr.on("data", data => { err += data; });
+        child.stdin.on("error", error => { if (error.code !== "EPIPE") throw error; });
+        const closed = once(child, "close");
+        const send = message => child.stdin.write(JSON.stringify(message) + "\n");
+        // Bounded polls of the daemon's own messages and files, not latencies.
+        const wait = async (predicate, label) => {
+            for (let attempts = 0; attempts < 1000 && child.exitCode === null; attempts++) {
+                if (predicate(states.at(-1))) return;
+                await new Promise(resolve => setTimeout(resolve, 5));
+            }
+            assert.fail((typeof label === "function" ? label() : label) + ": " + JSON.stringify(states.at(-1)?.state) + " stderr=" + err);
+        };
+        try {
+            const before = loopback.requests.length;
+            // A control's unconsumed reply never answers this conversation.
+            loopback.replies.splice(0);
+            loopback.replies.push(Engine.calls({ id: "call_screen", name: "vision_screen", arguments: {} }), Engine.text("I see it."));
+            send({ ...hello, settings: { ...hello.settings, brain: brainId, ...settings } });
+            await wait(m => m?.state.gate.kind === "up", "the engine raises the gate");
+            await wait(() => fs.existsSync(registered), "vision registers after the Hyprland probe");
+            send(intent("talk-down"));
+            await wait(m => m.phase === "listening", "listening");
+            send(intent("talk-up"));
+            await wait(m => loopback.requests.length === before + 2 && m.phase === "idle" && m.state.turn.kind === "none",
+                () => "the screen result reaches the brain, requests=" + (loopback.requests.length - before) + " last="
+                + JSON.stringify(loopback.requests.at(-1)?.body.messages.slice(1)).slice(0, 600));
+            child.stdin.end();
+            const [code] = await closed;
+            assert.equal(code, 0, err);
+            cases++;
+            return { body: loopback.requests.at(-1).body, magick: screen.calls().filter(call => call.name === "magick") };
+        } finally { if (child.exitCode === null) { child.kill("SIGKILL"); await closed; } }
+    }
+    // The user message right after the tool message holds the image or its marker.
+    const pictured = body => body.messages[body.messages.findLastIndex(message => message.role === "tool") + 1].content;
+    async function screenNever(copy) {
+        const { body, magick } = await screenConversation(copy, { cloudVision: "never", privateWindows: "fixture-secret" });
+        assert.equal(body.messages.find(message => message.role === "tool").content, "[withheld: screen content]");
+        assert.deepEqual(pictured(body), [{ type: "text", text: "Image from tool call call_screen:" },
+            { type: "text", text: "[withheld: screen content]" }], "never withholds the image from a non-offline set");
+        assert.equal(JSON.stringify(body).includes("data:image/png"), false);
+        assert.equal(magick.length, 1, "the setting's pattern is painted");
+        assert.deepEqual(magick[0].argv.slice(1, -1), ["+antialias", "-fill", "black", "-draw", "rectangle 20,30 119,79"],
+            "only the setting's window is painted, not the shipped list's");
+    }
+    async function screenSettings() {
+        const standins = path.join(process.env.JARVIS_TEST_ROOT, "standins");
+        for (const name of ["grim", "magick"]) {
+            fs.copyFileSync(path.join(tree, "scripts/fixtures/jarvis/vision-tool.py"), path.join(standins, name));
+            fs.chmodSync(path.join(standins, name), 0o700);
+        }
+        try {
+            await screenNever(screenCopy("screen-never"));
+            const { body } = await screenConversation(screenCopy("screen-allow"), { cloudVision: "allow", privateWindows: "fixture-secret" });
+            const part = pictured(body).at(-1);
+            assert.equal(part.type, "image_url", "allow sends the image");
+            const image = VisionWorld.decode(Buffer.from(part.image_url.url.slice("data:image/png;base64,".length), "base64"));
+            assert.deepEqual([image.pixel(20, 30), image.pixel(119, 79)], [[0, 0, 0, 255], [0, 0, 0, 255]], "the setting's window is painted");
+            assert.deepEqual(image.pixel(160, 50), [...VAULT, 255], "a window the setting does not name is not");
+            for (const [name, needle, replacement] of [
+                ["cloud-vision-setting", "cloudVision: context.settings.cloudVision })", "cloudVision: \"allow\" })"],
+                ["private-windows-setting", "privateWindows: () => context.settings.privateWindows }", "privateWindows: () => \"\" }"]]) {
+                await assert.rejects(() => screenNever(screenCopy("screen-" + name, [[needle, replacement]])), assert.AssertionError, name);
+                controls++;
+                console.log("test-jarvis-daemon: control=" + name + " killed");
+            }
+        } finally { for (const name of ["grim", "magick"]) fs.rmSync(path.join(standins, name), { force: true }); }
+    }
     async function engineConversation(file) {
         const child = cp.spawn("node", [file, "--tree", tree], { env: {
             PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR
@@ -1134,9 +1246,15 @@ exit "$failures"
         await assert.rejects(() => engineConversation(unconfigured), assert.AssertionError,
             "the stock speech table keeps the daemon unconfigured");
         controls++;
+        if (hostMagick === undefined) {
+            console.log("test-jarvis-daemon: screen=not-measured missing=magick");
+            notMeasured = true;
+        } else await screenSettings();
         assert.deepEqual(loopback.faults, []);
     } finally { await loopback.close(); }
     console.log("test-jarvis-daemon: ok cases=" + cases + " controls=" + controls);
+    // A row that could not run is not a pass.
+    if (notMeasured) process.exitCode = 77;
 }
 
 async function main() {
@@ -1154,7 +1272,7 @@ async function main() {
         const result = cp.spawnSync("/bin/bash", [launcher, path.join(root, "standins"), "--", "node", __filename, "--inside"],
             { env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
                 // Bounds a hung world, not a latency: the suite runs real children.
-                encoding: "utf8", timeout: 90000 });
+                encoding: "utf8", timeout: 180000 });
         process.stdout.write(result.stdout || "");
         process.stderr.write(result.stderr || "");
         if (result.error) throw result.error;

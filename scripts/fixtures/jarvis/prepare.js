@@ -30,6 +30,7 @@ function freshSuite(tree, suite, root) {
         "scripts/fixtures/jarvis/scripted.js", "shell/plugins/vgs.jarvis/backend/Audio.js",
         "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
         "scripts/fixtures/jarvis/audio-tool.py", "scripts/fixtures/jarvis/desktop.js", "scripts/fixtures/jarvis/desktop-driver.js", "scripts/fixtures/jarvis/desktop-tool.py",
+        "scripts/fixtures/jarvis/vision.js", "scripts/fixtures/jarvis/vision-tool.py",
         "scripts/smoke/harness.sh", "scripts/smoke/rows/jarvis-keys.sh",
         "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Core/HyprlandLayer.js", "shell/Commons/DesktopLaunch.js",
         "scripts/fixtures/jarvis/engine.js", "scripts/fixtures/schema-check.js",
@@ -44,7 +45,7 @@ function freshSuite(tree, suite, root) {
         cwd: clone, env: { PATH: "/usr/bin:/bin", HOME: clone, LC_ALL: "C",
             JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
         // Bounds a hung suite, not a latency: the daemon suite runs real children.
-        encoding: "utf8", timeout: 90000
+        encoding: "utf8", timeout: 180000
     });
     assert.equal(fs.existsSync(path.join(clone, "tmp")), false);
     const good = run();
