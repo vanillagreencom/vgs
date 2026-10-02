@@ -190,7 +190,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `Badge`, `Kbd`, `KeyCaps`, `KeyHints` | `Rectangle`, `Row` | `text`, `iconName`, `tone` (`neutral`, `accent`, `success`, `warning`, `danger`, `info`); `text`; `shortcut`; `hints` |
 | `CodeLine` | `Rectangle` | `text`, a command or path, wrapped whole; `copyLabel`, the Copy button's label; `copy()`, `copied()`, `confirming` while the button shows its check mark |
 | `CommandDisclosure` | `Column` | `command`; `expanded`; `copyLabel`: the "Show command" disclosure of a step's command, beside the button that runs the step, never alone (D061) |
-| `ScrollArea` | `Flickable` | its children; `keyboardScroll`, `reveal(item)`, `overflowing`, and `bar`, the embedded bar, which a gutter keeps clear of the content |
+| `ScrollArea` | `Flickable` | its children; `keyboardScroll`, `reveal(item)`, `overflowing`, and `bar`, the embedded bar, which a gutter keeps clear of the content. It scrolls by the wheel, the keys, its bar and a touch drag, never a mouse drag; a plugin's own `Flickable`, `ListView` or `GridView` sets `acceptedButtons: Qt.NoButton` too, which `vgs-plugin check` holds it to ([components.md](../../../../docs/architecture/components.md)) |
 | `Pane` | `Item` | one inset box for a container: `header`, body children and `footer`; `container` (`window`, `dialog`, `popover`, `panel`); `padding`, `cornerRadius`, `gap`, `bodySpacing` for a plugin that owns its look; `fitToContent`, `maximumHeight` |
 | `SlimScrollBar` | `Item` | a slim bar beside a plugin's own `Flickable`, for a plugin that owns its look: `flickable` and every look value it draws with; the caller places it and sets its width |
 | `Tabs` | `T.TabBar` | `model`, `currentIndex` |

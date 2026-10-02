@@ -29,6 +29,7 @@ A string with `optionsFrom` gets its model from the manager row's `settingChoice
 5. An edit in progress survives an unrelated configuration change: the same drawn field keeps its focus, text and cursor. Escape restores an uncommitted edit before a later Escape pops the page. Enforced by `scripts/smoke/rows/settings.sh`.
 6. The window is a Hyprland window: its border, its focus, its keyboard and the dispatches that move, tile, float, focus and close it are Hyprland's. Enforced by `scripts/smoke/rows/windows.sh`, [surfaces.md § Invariants](surfaces.md#invariants).
 7. A status action's button opens the plugin's own TUI or the requirement notice for its own commands, Connect and Disconnect store and clear the listed account through the core, and Show command reveals the command a step runs. Enforced by `scripts/smoke/rows/settings.sh`, `scripts/smoke/rows/manager.sh` for the page's own command, and each plugin's row, [status-actions.md § Invariants](status-actions.md#invariants) 1.
+8. A mouse drag on a page leaves it where it was, while a wheel notch scrolls it and Tab scrolls each focused row into view. Enforced by `scripts/smoke/rows/settings.sh`, whose control gives the page Qt's left-button drag back, [components.md](components.md).
 
 ## Decisions
 
