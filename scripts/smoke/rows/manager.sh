@@ -364,10 +364,10 @@ if counts != [want_settings, want_keys]: out.append("settings,keys=%s want=%s" %
 for n, i in enumerate(fields):
     name = "%s%d" % (rows[i]["type"], n)
     left = rows[i]["box"][0]
-    lines = [j for j, r in enumerate(rows) if r["type"] == "QQuickRow" and r["parent"] == i]
+    lines = [j for j, r in enumerate(rows) if r.get("name") == "fieldRow" and r["parent"] == i]
     if len(lines) != 1: out.append("%s rows=%d" % (name, len(lines))); continue
     labels = [j for j, r in enumerate(rows) if r["parent"] == lines[0] and r["type"] == "Label" and r.get("role") == "label"]
-    slots = [j for j, r in enumerate(rows) if r["parent"] == lines[0] and r["type"] != "Label"]
+    slots = [j for j, r in enumerate(rows) if r["parent"] == lines[0] and r["type"] == "QQuickItem"]
     if len(labels) != 1 or len(slots) != 1: out.append("%s labels=%d slots=%d" % (name, len(labels), len(slots))); continue
     label, slot = rows[labels[0]], rows[slots[0]]
     values = [r for r in rows if r["parent"] == slots[0]]
