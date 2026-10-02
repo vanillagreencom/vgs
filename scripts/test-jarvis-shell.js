@@ -269,7 +269,7 @@ world(async () => {
     });
     await control("cancel", "Shell.js", [["if (active !== null) active.abort();", "void active;"]], s => teardown(s, "cancel"));
     await control("close", "Shell.js", [["executor.cancel();", "void executor;"]], s => teardown(s, "close"));
-    await control("timeout-tool", "Sandbox.js", [['end("timeout")', 'void child.stdin']], timeout);
+    await control("timeout-tool", "Child.js", [['end("timeout")', 'void child.stdout']], timeout);
     await control("output-tool", "Sandbox.js", [["const LIMIT = 64 * 1024;", "const LIMIT = 128 * 1024;"]], async s => {
         const f = make(s); await f.shell.ready;
         assert.equal((await f.run("shell.argv", { ...a, argv: js("process.stdout.write('x'.repeat(65537))") })).answer.reason, "output-limit");

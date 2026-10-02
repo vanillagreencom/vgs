@@ -851,7 +851,7 @@ world(async () => {
     refusal(noProducer.ordinary, "path-context");
     controls++;
     const noAccountRoots = await daemon("no-account-roots",
-        ["accountRoots: accountRoots(context.directories.state, process.env) });", "accountRoots: [] });"]);
+        ["accountRoots: accountRoots(context.directories.state, process.env) };", "accountRoots: [] };"]);
     for (const id of ["explicit", "hand"]) assert.equal(noAccountRoots[id].outcome, "completed", id + " control turns red");
     controls++;
     const defaultConfig = await daemon("default-config",

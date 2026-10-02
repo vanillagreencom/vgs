@@ -6,7 +6,10 @@ const path = require("node:path");
 const backend = path.join(process.argv[2], "shell/plugins/vgs.jarvis/backend");
 const Guidance = require(path.join(backend, "Guidance.js"));
 const Speakable = require(path.join(backend, "Speakable.js"));
-assert.equal(Guidance.help("shell"), require("node:fs").readFileSync(path.join(backend, "skills/computer/shell.md"), "utf8").trim());
+require(path.join(backend, "ComputerHelp.js")).create().start({ id: "help", args: { topic: "shell" } }, result => {
+    assert.equal(result.outcome, "completed");
+    assert.equal(result.content, require("node:fs").readFileSync(path.join(backend, "skills/computer/shell.md"), "utf8").trim());
+});
 for (const language of ["en", "es"]) {
     for (const [engine, brain] of [["duplex", "duplex"], ["duplex", "text"], ["duplex", "local"], ["chained", "text"], ["chained", "local"]])
         assert.ok(Guidance.compose(engine, brain, language).instructions.length > 0);

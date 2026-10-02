@@ -299,8 +299,8 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/session-runner.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/browser/LICENSE
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/browser/SKILL.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/input.md
-f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/vision.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/shell.md
+f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/vision.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/actions.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/duplex.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/local.md

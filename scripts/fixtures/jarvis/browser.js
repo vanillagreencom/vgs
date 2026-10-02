@@ -95,6 +95,7 @@ async function daemonLease(ending, removeClose = false) {
             assert.equal(actual, 0, err);
             assert.equal(err, "");
             assert.deepEqual(out.trim() === "" ? [] : out.trim().split("\n").map(JSON.parse), [
+                { v: 1, type: "shell-status", gen: 0, revision: hello.revision, availability: { kind: "checking" } },
                 { v: 1, type: "status", gen: 0, revision: hello.revision, daemon: "ready" },
                 { v: 1, type: "state", gen: 1, revision: hello.revision, seq: 1, state: {
                     gen: 1, nextOp: 1, stale: 0, settings: hello.settings,
