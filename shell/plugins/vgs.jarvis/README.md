@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API or local account when you request it. The installed daemon has no speech or conversation engine, so nothing calls its desktop tools yet.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API, local or Claude Code account when you request it. The installed daemon has no speech or conversation engine, so nothing calls its desktop tools yet.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -70,7 +70,7 @@ Select Set up local voice in Settings or the launcher's Jarvis group. Choose a t
 
 Brain account keeps the account you select. This skeleton does not start a brain. Settings retains a saved selection when discovery no longer offers it.
 
-Select Accounts to add a directory, choose an existing keyring item by label or inspect login hints. Verify asks for a model and consent because a real inference request may cost money. API and local verification send one small request. Subscription and speech-only verification remain unavailable. A login hint never proves inference access.
+Select Accounts to add a directory, choose an existing keyring item by label or inspect login hints. Verify asks for a model and consent because a real inference request may cost money. API and local verification send one small request. A Claude Code account sends one small request through its own installed program, which keeps its login. Other subscriptions and speech-only verification remain unavailable. A login hint never proves inference access.
 
 ## Browser
 

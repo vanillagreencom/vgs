@@ -13,6 +13,8 @@
 
 - A wire adapter speaks a vendor's HTTP API with Node's global `fetch` through `net.js`. Its key comes from libsecret and is bound to its origin. Its wire contract is a pinned excerpt of the vendor's published schema, and its tests replay scripts validated against that excerpt.
 - A harness adapter starts the vendor's own program, which owns its login. A subscription runs only that way. Jarvis never opens a vendor credential file, copies a login token or offers a vendor sign-in.
+- A harness program's own tools are off, and the [tool bridge](../architecture/jarvis-bridge.md) is its only tool server, so every call it makes reaches the router. The adapter verifies that from the program's own report of its tools and refuses the brain otherwise. Claude Code runs in print mode with stream-json, `--tools ""`, `--strict-mcp-config` and its hooks off, one process per conversation ([jarvis-claude.md](../architecture/jarvis-claude.md)).
+- Account Verify for a subscription is one tool-less harness turn through that adapter, released and audited like the API probe.
 - One provider table, `Providers.js`, holds a row per provider: driver, base URL, key need, image input, no-store request fields and documented retention. One OpenAI-compatible Chat Completions driver serves every row that speaks that wire. Every wire adapter reuses one bounded event stream reader, `Sse.js`.
 - No adapter depends on an npm package or a vendor SDK.
 
@@ -28,15 +30,17 @@
 | Alternative | Reason rejected |
 |---|---|
 | Vendor npm SDKs | VGS ships no npm tree and has no install route for one ([review finding 21](../plans/v2-jarvis-plan-review.md)). The Claude path must stay the unmodified program. |
+| Claude Code's permission prompt tool asking Policy for each built-in operation | A built-in tool takes a program, path or URL that Policy cannot classify from its arguments, and the bridge already carries every typed tool. Off is the simpler rule to verify. |
+| A Claude Code process per turn, resumed by session id | Resuming needs session files in the account directory, which keep conversation text outside Jarvis's retention settings. |
 | A subscription token read from a vendor's credential files | Vendor terms forbid it, and it copies a credential Jarvis does not own. |
 | One adapter per OpenAI-compatible vendor | Each would repeat the stream reader, tool assembly, release and bounds. |
 | The OpenAI Responses API for the OpenAI row | Only OpenAI serves it; a second driver would serve one row. |
 | Yield tool calls as fragments arrive | A lost chunk would yield a partial call to the policy gate. |
 
-**Boundaries**: J25 lands the wire driver, the table and the reader. J26 adds the Anthropic Messages driver and its rows. J29 to J31 add harness adapters and refine this record. J27 chooses accounts and publishes model choices. J33 connects a brain to the session's ports.
+**Boundaries**: J25 lands the wire driver, the table and the reader. J26 adds the Anthropic Messages driver and its rows. J29 adds the Claude Code harness and its subscription Verify; J30 and J31 add the ACP and Codex harnesses and refine this record. J27 chooses accounts and publishes model choices. J33 connects a wire brain to the session's ports; the chained engine does not yet select a harness brain.
 
 **Revisit When**: A provider the table needs speaks neither a compatible wire nor a harness program, VGS gains an npm install route, or a vendor permits a subscription outside its own program.
 
-**Verification**: `scripts/test-jarvis-brain-openai.js` replays the pinned scripts on loopback inside the Jarvis test world, with a disposable mutant per rule. `scripts/test-jarvis-providers.js`, `scripts/test-jarvis-sse.js` and `scripts/test-schema-check.js` cover the table, the reader and the schema checker.
+**Verification**: `scripts/test-jarvis-brain-openai.js` replays the pinned scripts on loopback inside the Jarvis test world, with a disposable mutant per rule. `scripts/test-jarvis-claude.js` replays a stand-in `claude` against a stream-json excerpt and carries a scripted call through the real bridge and router; a mutant that leaves built-in tools on turns it red. `scripts/test-jarvis-providers.js`, `scripts/test-jarvis-sse.js` and `scripts/test-schema-check.js` cover the table, the reader and the schema checker.
 
-**References**: [Jarvis wire brain](../architecture/jarvis-brain.md), [release and network](../architecture/jarvis-release.md), [D073](D073-jarvis-release-and-origin-bound-keys.md).
+**References**: [Jarvis wire brain](../architecture/jarvis-brain.md), [Claude Code harness](../architecture/jarvis-claude.md), [release and network](../architecture/jarvis-release.md), [D073](D073-jarvis-release-and-origin-bound-keys.md).

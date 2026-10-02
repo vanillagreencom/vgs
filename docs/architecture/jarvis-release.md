@@ -11,7 +11,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 - `Policy.recipients` copies and freezes the whole brain and speech set. `Policy.release` judges that set, not just the adapter's destination.
 - `net.create` owns transport handles for that immutable set. The session closes it when the conversation ends. The daemon and adapters must use this door rather than create their own sockets.
 - Session owns ending the conversation. The chained engine closes the context and transport when the generation changes, including a provider, account or policy change. [The action router](jarvis-approval.md) owns application and site grants only. The engine keeps the recipient-labelled grant list; no consent producer exists yet. The engine uses [Audit.before](jarvis-audit.md) before each transfer. The [tool bridge](jarvis-bridge.md#calls-and-results) does so for each harness tool result.
-- A harness brain still needs release consent for its cloud provider. Its vendor owns its sockets. The harness integration must enforce that handoff boundary; `net.js` does not intercept another program's networking.
+- A harness brain still needs release consent for its cloud provider. Its vendor owns its sockets. The harness integration enforces that handoff boundary: the [Claude Code harness](jarvis-claude.md#release) releases each user turn against the set and its caller records it first. `net.js` does not intercept another program's networking.
 
 ## Recipient and item contract
 
