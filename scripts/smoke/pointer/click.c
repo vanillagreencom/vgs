@@ -11,7 +11,11 @@
  * With `right` it clicks the right button, as a context menu wants, and
  * prints `clicked X Y`.
  * With `drag X2 Y2` it presses at (X, Y), moves to (X2, Y2) in ten steps
- * with the button held, releases there and prints `dragged X Y X2 Y2`.
+ * DRAG_STEP_MS apart with the button held, releases there and prints
+ * `dragged X Y X2 Y2`. The steps are paced as a hand moves a mouse, one
+ * 60 Hz frame apart: sent back to back, a loaded client can read the
+ * press, the moves and the release in one batch, and a Flickable that
+ * takes the left button then reads no drag.
  * With `wheel STEPS` it turns a vertical wheel STEPS notches at (X, Y),
  * positive down, as one discrete axis event of WHEEL_NOTCH per notch, and
  * prints `wheeled X Y STEPS`.
@@ -29,6 +33,7 @@
 #define BTN_RIGHT 0x111
 /* The axis length of one wheel notch, libinput's 15 degrees. */
 #define WHEEL_NOTCH 15
+#define DRAG_STEP_MS 16
 
 static struct wl_seat *seat = NULL;
 static struct zwlr_virtual_pointer_manager_v1 *manager = NULL;
@@ -117,6 +122,7 @@ int main(int argc, char **argv) {
             zwlr_virtual_pointer_v1_motion_absolute(pointer, now_ms(), at_x, at_y, width, height);
             zwlr_virtual_pointer_v1_frame(pointer);
             wl_display_roundtrip(display);
+            nanosleep(&(struct timespec){ .tv_nsec = DRAG_STEP_MS * 1000000L }, NULL);
         }
         zwlr_virtual_pointer_v1_button(pointer, now_ms(), button, WL_POINTER_BUTTON_STATE_RELEASED);
         zwlr_virtual_pointer_v1_frame(pointer);
