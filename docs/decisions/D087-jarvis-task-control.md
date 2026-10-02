@@ -23,7 +23,7 @@
 **Deviations from the plan**:
 - The tmux server uses `-S $XDG_RUNTIME_DIR/vgs/jarvis/tmux.sock`, not `-L vgs-jarvis`. The socket then lies in the 0700 Jarvis runtime directory, and tests reach a private server without `TMUX_TMPDIR`.
 - A failed stop reaches the user as a `task-answer` message the service toasts and logs, not as a daemon stderr line, because the service treats daemon stderr as the cause of the daemon's end.
-- The daemon registers no task executor until an agent profile and a release port for the conversation's recipients exist. Neither exists yet; a fake release would let a goal leave the machine without a release decision.
+- The daemon registers no task executor until a release port for the conversation's recipients exists. The Claude Code profile exists; the port does not yet, and a fake release would let a goal leave the machine without a release decision.
 
 **Alternatives considered**: Signalling the terminal's or the tmux pane's process tree reaches the shell and the terminal, not only the agent, and gives no identity across a pid reuse. A stop that trusts SIGKILL without the empty read reports an end the kernel has not finished. Passing the goal as TUI arguments exceeds the core's argument bounds and puts the goal in a process list.
 

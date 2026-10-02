@@ -78,3 +78,4 @@ One line per architecture document: the change to read it before. [overview.md](
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.
 - [decisions.md](decisions.md): read for the one-line lists of decisions, and add each new record to its topic list.
 - [jarvis-tasks.md](jarvis-tasks.md): read before changing coding-task records, their event producer or consumers.
+- [jarvis-task-claude.md](jarvis-task-claude.md): read before changing the Claude Code task profile, its hooks or the permission and question relay.

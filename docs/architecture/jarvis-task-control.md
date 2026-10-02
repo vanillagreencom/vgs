@@ -8,7 +8,7 @@ This file holds how Jarvis launches a coding agent, judges which processes belon
 
 | Owner | Does |
 |---|---|
-| `AgentProfiles.js` | The profile row contract and its validation, the goal brief and the agent's explicit environment. Production ships an empty table |
+| `AgentProfiles.js` | The profile row contract and its validation, the goal brief and the agent's explicit environment. Production ships the [Claude Code row](jarvis-task-claude.md) |
 | `TaskRunner.js` | The router's `task` executor and the controller: launch, identity checks, observation, stop escalation, the floating one-at-a-time rule and the live-task count |
 | `task-run.py` | The launcher the terminal runs: the process-group leader, the `started` and `exited` records |
 | `tui/task.sh` | The plugin's `task` floating TUI. It runs the launcher with the spec path as its one argument |
@@ -22,17 +22,17 @@ Every record goes through the task's recorded producer, `node ENGINE --state STA
 The executor is `register("task", { start, timeoutMs: 20000, cancellable: false, commands: [] })`. The timeout bounds the launch only. `start` resolves these in order and refuses before any record:
 
 1. The agent: `args.agent`, else the first profile whose program is on PATH. An unknown or absent agent is `task-agent-unavailable`.
-2. The account: an account for a row with no account variable is `task-account-unsupported`.
+2. The account: an account for a row with no account variable is `task-account-unsupported`. Otherwise the `accounts(agent, reference)` port, `Accounts::cliDirectory` in the daemon, gives the variable's value; a reference it does not find is `task-account-unknown`.
 3. The terminal: setting `taskTerminal`. `auto` is tmux when `tmux` is on PATH, else floating. `tmux` without tmux is `task-tmux-missing`. A floating start while the TUI runs or before the service reported the TUI is `task-floating-display-busy`. The router runs one action at a time, so no second start overlaps a launch.
 4. The release: `release(goal, agent, account)` must answer `send`, else `task-release-refused`.
 
 Then `start` creates the record through the current engine, writes the spec and opens the terminal. A launch that fails after creation removes the spec and writes `lost`: a tmux failure is `task-tmux-failed`, the core's `busy` answer is `task-floating-display-busy`, and any other refusal is `task-floating-launch-refused`. Success answers `{ task, terminal }`.
 
-The daemon registers no executor. A task needs an agent profile, which the Claude Code and Codex issues add, and a release port for the conversation's recipients, which the conversation owner adds. Neither exists, so the daemon only observes and stops recorded tasks.
+The daemon registers no executor. A task needs a release port for the conversation's recipients, which the conversation owner adds. It does not exist yet, so the daemon only observes and stops recorded tasks.
 
 ### The spec
 
-The daemon writes `$XDG_RUNTIME_DIR/vgs/jarvis/tasks/<id>.json`, directory 0700, file 0600, whole and renamed. It holds `{ v, id, state, engine, cwd, argv, env }`. `argv` is the profile's list, never a command line. `env` holds `PATH`, `HOME`, `LANG` and the XDG directories from the daemon's environment, plus the profile's account variable when an account is selected. It carries no key and no `VGSH_RUNNER_PID`. The launcher adds only `TERM` and `COLORTERM` from its terminal.
+The daemon writes `$XDG_RUNTIME_DIR/vgs/jarvis/tasks/<id>.json`, directory 0700, file 0600, whole and renamed. It holds `{ v, id, state, engine, cwd, argv, env }`. `argv` is the profile's list, never a command line. `env` holds `PATH`, `HOME`, `LANG` and the XDG directories from the daemon's environment, plus the profile's account variable, set to the resolved value, when an account is selected. It carries no key and no `VGSH_RUNNER_PID`. The launcher adds only `TERM` and `COLORTERM` from its terminal.
 
 The launcher opens the spec with `O_NOFOLLOW`, requires a private regular file of its own user, reads at most 64 KiB, unlinks it, then judges its exact shape. A spec launches at most once.
 

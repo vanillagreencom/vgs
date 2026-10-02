@@ -8,7 +8,7 @@ The [Jarvis Session](jarvis-session.md#session) has pure reducer and effect-owne
 
 The pure Jarvis guidance, speech text and language suites select from their modules, runtime assets and fixtures. Their [voice text contract](jarvis-voice.md) defines the consumer boundary and mutation evidence. The installed consumer runs in the install-tree suite and nested read-only prefix row.
 
-The task record, event-producer and [task runner](jarvis-task-control.md#evidence) rows exercise the [coding-task contract](jarvis-tasks.md) in that environment. Each selects on its owners, the isolation helper and its fixtures.
+The task record, event-producer, [task runner](jarvis-task-control.md#evidence) and [Claude Code task profile](jarvis-task-claude.md#evidence) rows exercise the [coding-task contract](jarvis-tasks.md) in that environment. Each selects on its owners, the isolation helper and its fixtures. A row whose suite publishes the task engine also selects on the hook and relay the engine copies.
 
 The [playback rows](jarvis-playback.md#evidence) select on Audio, its child bootstrap, the Session judge and their shared test world. The private PipeWire row also selects on its null-sink configuration. It reads actual monitor PCM after interruption, not bytes sent to the player.
 

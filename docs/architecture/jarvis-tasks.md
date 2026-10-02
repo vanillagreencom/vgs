@@ -13,7 +13,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Tasks.js, shell/plugins/vgs.jarvis/back
 | `jarvisd.js` | Publishes the data engine and validates existing records before answering hello; a store failure withholds ready |
 | `TaskRunner.js` | Creates a task before launch; writes `lost` from observation and `stopped` after the group reads empty ([jarvis-task-control.md](jarvis-task-control.md)) |
 | `task-run.py` | Supplies the started identity before the agent runs and the process exit |
-| J54/J55 profiles | Translate documented vendor hooks into turn and wait facts; return vendor prompt responses outside the record producer |
+| Agent profiles | Translate documented vendor hooks into turn and wait facts; return vendor prompt responses outside the record producer. Claude Code's `claude-hook` and `TaskRelay.js` ([jarvis-task-claude.md](jarvis-task-claude.md)); Codex's is later work |
 | Agent's final goal step | Supplies the explicit reported outcome through the copied producer |
 | J56 voice and J58 task display | Consume `Store.read` or `Store.list`; use the returned facts and derived state, not vendor logs |
 
@@ -61,7 +61,7 @@ The state directory holds `tasks.lock` and `tasks/<id>/`. Each task holds `task.
 
 Records are whole-file writes followed by rename. Directories use private mode 0700 and records use 0600. The helper itself has mode 0600 because producers invoke it through Node. `flock` is a declared requirement with packages for the manifest's supported managers.
 
-The data engine uses a hash of both shipped producer files. Directory rename publishes them together. Existing copies must match their content and private modes. Runtime writes never target the plugin directory. Copies remain available for tasks that outlive a rescan or shell restart. The task runner and the launcher keep the recorded engine path rather than replace it with the new daemon's path.
+The data engine uses a hash of its four shipped files: the producer, `Tasks.js`, and the Claude Code hook and relay a held hook runs. Directory rename publishes them together. Existing copies must match their content and private modes. Runtime writes never target the plugin directory. Copies remain available for tasks that outlive a rescan or shell restart. The task runner and the launcher keep the recorded engine path rather than replace it with the new daemon's path.
 
 ## Evidence
 

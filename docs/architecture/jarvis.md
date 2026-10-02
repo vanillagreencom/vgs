@@ -28,7 +28,7 @@ The [GPT-Live engine](jarvis-live.md) defines the duplex speech session, its aud
 
 ## Coding-task records
 
-[jarvis-tasks.md](jarvis-tasks.md) defines the disk record owner, copied event producer and four-fact replay. [D072](../decisions/D072-coding-task-records-and-four-fact-state.md) records the choice. The daemon validates those records before ready. [jarvis-task-control.md](jarvis-task-control.md) defines launch, identity, stop and display; the daemon observes and stops recorded tasks and registers no task executor yet. Vendor profiles and voice remain later work.
+[jarvis-tasks.md](jarvis-tasks.md) defines the disk record owner, copied event producer and four-fact replay. [D072](../decisions/D072-coding-task-records-and-four-fact-state.md) records the choice. The daemon validates those records before ready. [jarvis-task-control.md](jarvis-task-control.md) defines launch, identity, stop and display; the daemon observes and stops recorded tasks and registers no task executor yet. [jarvis-task-claude.md](jarvis-task-claude.md) defines the Claude Code profile, its hooks and the permission and question relay. The Codex profile and task voice remain later work.
 
 ## Session observation
 
