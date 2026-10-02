@@ -32,7 +32,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
 - [design-layout.md](design-layout.md): read before touching a container's inset, the corner-clearing rule, a component's spacing or the notification media tiers.
 - [design-quality.md](design-quality.md): read before judging or changing how a surface looks: its grid, type, control sizes, container class or states.
-- [components.md](components.md), [components-controls.md](components-controls.md), [components-media.md](components-media.md), [components-overlays.md](components-overlays.md) and [components-gallery.md](components-gallery.md): read before adding or changing a component of `qs.Ui` or the Gallery.
+- [components.md](components.md), [components-controls.md](components-controls.md), [components-layout.md](components-layout.md), [components-media.md](components-media.md), [components-overlays.md](components-overlays.md) and [components-gallery.md](components-gallery.md): read before adding or changing a component of `qs.Ui` or the Gallery.
 - [keyboard.md](keyboard.md): read before adding a pointer action, a focusable control or a keyboard path.
 - [motion.md](motion.md): read before touching a list's highlight, a row's entrance, a `motion.list` token or how hover and keys share a list's selection.
 - [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
