@@ -1,6 +1,6 @@
 # Runtime: QML focus
 
-Covers: shell/Hosts/PluginSlot.qml, shell/Hosts/SummonHost.qml, shell/Hosts/SummonPopup.qml, shell/Hosts/LayerHost.qml, shell/Ui/feedback/Dialog.qml, scripts/qml-tests/tst_dialog.qml, scripts/smoke/app-window.sh, scripts/smoke/rows/layers.sh, scripts/smoke/rows/surfaces.sh, scripts/smoke/rows/windows.sh, scripts/smoke/fixtures/plugins/acme.layers/**, scripts/smoke/fixtures/plugins/acme.surfaces/**
+Covers: shell/Hosts/PluginSlot.qml, shell/Hosts/SummonHost.qml, shell/Hosts/SummonLayer.qml, shell/Hosts/SummonPopup.qml, shell/Hosts/LayerHost.qml, shell/Ui/feedback/Dialog.qml, scripts/qml-tests/tst_dialog.qml, scripts/smoke/app-window.sh, scripts/smoke/rows/layers.sh, scripts/smoke/rows/surfaces.sh, scripts/smoke/rows/windows.sh, scripts/smoke/fixtures/plugins/acme.layers/**, scripts/smoke/fixtures/plugins/acme.surfaces/**
 
 The Quickshell 0.3.1 and Qt facts the shell's QML hosts rest on: how the shell's hosts receive keyboard focus, how Qt Quick moves focus inside a window, and how Qt's Wayland client activates a window when the compositor hands it the keyboard. [runtime-qml.md](runtime-qml.md) holds the other QML facts; [runtime-hyprland.md](runtime-hyprland.md) holds what Hyprland does with the keyboard.
 

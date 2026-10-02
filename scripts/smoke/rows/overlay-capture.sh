@@ -249,7 +249,7 @@ control_bind_wrapper() {
 
 control_on_demand_typing() {
   local marker="$sandbox/overlay-capture-on-demand-marker" tree
-  tree="$(copy_capture_tree on-demand shell/Hosts/SummonHost.qml 'WlrKeyboardFocus.Exclusive' 'WlrKeyboardFocus.OnDemand')" || { fail "the OnDemand control copy is made"; return; }
+  tree="$(copy_capture_tree on-demand shell/Hosts/SummonLayer.qml 'WlrKeyboardFocus.Exclusive' 'WlrKeyboardFocus.OnDemand')" || { fail "the OnDemand control copy is made"; return; }
   start_capture_tree "$tree" "$sandbox/overlay-capture-on-demand.log" "$marker"
   open_browser_for_capture "control OnDemand"
   # Hyprland v0.56.2 keeps the browser as the key target after the helper maps while vgs:capture is active, so this production edit does not redden the typing check on the sandbox that read D067.

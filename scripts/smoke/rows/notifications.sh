@@ -1349,6 +1349,85 @@ expect "the inbox shortcut toggles the panel" ok hypr dispatch 'hl.dsp.global("v
 expect_poll "the shortcut opened the inbox" '"inbox"' read_notes panelMode
 expect "the shortcut closes it again" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
 expect_poll "the shortcut closed the inbox" '""' read_notes panelMode
+
+# The inbox's content against its window: the header, the card list and
+# its scroll bar inside the panel's layer, every card and the key hints
+# inside the list and the layer across, and the list and its first card
+# below the header.
+# panel_fit_value reads the layer's [x, y, w, h] on its first line and the
+# panel's descendantGeometry on its second, boxes in the window's
+# coordinates: `fits`, or each violation as `clipped=<part>` or
+# `under-header=<part>`.
+panel_fit_value() {
+  py_reply 'import json,sys
+lines = sys.stdin.read().splitlines()
+w, h = json.loads(lines[0])[2:4]
+items = [i for i in json.loads(lines[1]) if i["visible"]]
+def first(pred):
+    return next((i for i in items if pred(i)), None)
+header = first(lambda i: i["type"] == "InboxHeader")
+view = first(lambda i: i["type"] == "QQuickFlickable")
+cards = [i for i in items if i["type"] == "NotificationCard"]
+if header is None or view is None or not cards:
+    print("unread header=%s list=%s cards=%d" % (header is not None, view is not None, len(cards)))
+    sys.exit()
+bad = []
+def inside(name, box, vertical=True):
+    x, y, bw, bh = box
+    if x < -0.5 or x + bw > w + 0.5 or (vertical and (y < -0.5 or y + bh > h + 0.5)):
+        bad.append("clipped=" + name)
+inside("header", header["box"])
+inside("list", view["box"])
+scrollbar = first(lambda i: i["name"] == "notificationPanelScrollBar")
+if scrollbar is not None: inside("scrollbar", scrollbar["box"])
+# The cards and the hints under them scroll in the list, which clips them
+# top and bottom; across, each sits inside the list and the window.
+vx, vw = view["box"][0], view["box"][2]
+listed = [("card%d" % n, card) for n, card in enumerate(cards)] + [("hints", i) for i in items if i["type"] == "KeyHints"]
+for name, item in listed:
+    inside(name, item["box"], vertical=False)
+    if item["box"][0] < vx - 0.5 or item["box"][0] + item["box"][2] > vx + vw + 0.5: bad.append("clipped=%s-in-list" % name)
+header_bottom = header["box"][1] + header["box"][3]
+if view["box"][1] < header_bottom - 0.5: bad.append("under-header=list")
+top = min(cards, key=lambda c: c["box"][1])
+if top["box"][1] < header_bottom - 0.5: bad.append("under-header=card")
+print(" ".join(sorted(set(bad))) if bad else "fits")'
+}
+panel_fit() {
+  local layer items
+  layer="$(surface_box vgs:panel)" || return 1
+  items="$(ipc smoke descendantGeometry panel vgs.notifications)" || return 1
+  printf '%s\n%s\n' "$layer" "$items" | panel_fit_value
+}
+# Controls: the readings the predicate must refuse. The clipped one is the
+# panel as it drew before its width followed its column, a 420 px window
+# under a 500 px column, read in the sandbox at scale 1; the other puts the
+# first card's top 18 px into the header.
+panel_fit_reading() { # WINDOW_W HEADER_X CARD_Y
+  printf '[668, 36, %s, 303]\n' "$1"
+  printf '[{"type":"InboxHeader","name":"","box":[%s,0,420,48],"visible":true},' "$2"
+  printf '{"type":"QQuickFlickable","name":"","box":[0,52,500,251],"visible":true},'
+  printf '{"type":"SlimScrollBar","name":"notificationPanelScrollBar","box":[464,52,12,251],"visible":false},'
+  printf '{"type":"KeyHints","name":"","box":[40,259,420,20],"visible":true},'
+  printf '{"type":"NotificationCard","name":"","box":[40,%s,420,61],"visible":true},' "$3"
+  printf '{"type":"NotificationCard","name":"","box":[40,129,420,61],"visible":true}]\n'
+}
+expect "the fit predicate passes the panel drawn whole" fits panel_fit_value < <(panel_fit_reading 500 40 58)
+expect "control: the fit predicate refuses the clipped panel" "clipped=card0 clipped=card1 clipped=header clipped=hints clipped=list" panel_fit_value < <(panel_fit_reading 420 40 58)
+expect "control: the fit predicate refuses a first card under the header" "under-header=card" panel_fit_value < <(panel_fit_reading 500 40 30)
+for n in 1 2 3 4 5 6 7 8; do
+  notify smoke-app 0 "Fit $n" "A body long enough to wrap onto a second line of the card, so the card is tall" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
+done
+expect_poll "the fit toasts are listed" True has_row live "Fit 8"
+expect "the inbox shortcut opens the panel for the fit check" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
+expect_poll "the fit inbox is open" '"inbox"' read_notes panelMode
+expect_poll "the fit inbox lists the eight toasts" True has_row panel "Fit 1"
+geometry expect_poll "the inbox draws whole inside its window, its list below the header" fits panel_fit
+
+expect "the fit inbox closes" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
+expect_poll "the fit inbox is closed" '""' read_notes panelMode
+expect "dismissing the fit toasts is allowed" ok notes dismiss-all
+expect_poll "the fit toasts are gone" 0 on_screen
 notify smoke-app 0 "Focus loss closes" "" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
 expect_poll "the focus-loss toast is live" True has_row live "Focus loss closes"
 expect "the inbox opens for the focus-loss check" ok notes inbox

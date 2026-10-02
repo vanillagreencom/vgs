@@ -303,6 +303,7 @@ expect "the launcher's section names its id and version" yes layer_has "$(sectio
 expect "the notifications' section names its id and version" yes layer_has "$(section_of vgs.notifications)"
 expect "the launcher's blur rule is written" yes layer_has 'hl.layer_rule({ name = "vgs.launcher:overlay", match = { namespace = "^vgs:overlay$" }, blur = true, ignore_alpha = 0.6 })'
 expect "the notifications' blur rule is written" yes layer_has 'hl.layer_rule({ name = "vgs.notifications:layer", match = { namespace = "^vgs:layer$" }, blur = true, ignore_alpha = 0.6 })'
+expect "the notifications' panel blur rule is written" yes layer_has 'hl.layer_rule({ name = "vgs.notifications:panel", match = { namespace = "^vgs:panel$" }, blur = true, ignore_alpha = 0.6 })'
 expect "the configuration with both sections holds no error" '[]' config_errors
 expect "no plugin reports a Hyprland problem" '[]' hypr_problems
 

@@ -28,7 +28,9 @@ FocusScope {
     property int refreshQueuedFor: -1
     property Item initialFocus: list
 
-    implicitWidth: look.header.width
+    // As wide as the column: the cards with their side room, where the
+    // scroll bar sits, wider than the header they sit under.
+    implicitWidth: column.implicitWidth
     readonly property real panelMaxHeight: look.header.height + look.header.gap + look.panel.rowCap * (look.card.maxHeight + look.card.gap) + look.stack.tail
     implicitHeight: Math.min(look.header.height + look.header.gap + listFrame.implicitHeight, panelMaxHeight)
 
@@ -234,6 +236,7 @@ FocusScope {
     }
 
     ColumnLayout {
+        id: column
         anchors.fill: parent
         spacing: look.header.gap
 

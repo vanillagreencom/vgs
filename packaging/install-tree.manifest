@@ -91,6 +91,7 @@ f share/vgs/shell/Hosts/OverlaySurface.qml
 f share/vgs/shell/Hosts/PluginSlot.qml
 f share/vgs/shell/Hosts/ServiceHost.qml
 f share/vgs/shell/Hosts/SummonHost.qml
+f share/vgs/shell/Hosts/SummonLayer.qml
 f share/vgs/shell/Hosts/SummonPopup.qml
 f share/vgs/shell/Hosts/ToastHost.qml
 f share/vgs/shell/Hosts/qmldir

@@ -1,6 +1,5 @@
 import QtQuick
 import Quickshell
-import Quickshell.Wayland
 import qs.Core
 import qs.Commons
 import "../Core/HyprlandLayer.js" as Layer
@@ -205,45 +204,15 @@ Scope {
 
             Component {
                 id: layer
-                PanelWindow {
-                    id: win
-
-                    readonly property var request: entry.request
-                    readonly property var place: {
-                        const settings = Registry.settingsOf(entry.modelData, host.kind);
-                        return PluginLogic.surfacePlacement(host.kind, settings, Theme.space.md);
+                SummonLayer {
+                    pluginId: entry.modelData
+                    kind: host.kind
+                    request: entry.request
+                    onBuilt: instance => {
+                        host.rememberFocuser(entry.modelData, reason => focusInitial(reason));
+                        if (host.built(entry.modelData, instance)) focusInitial(host.focusReason(entry.request));
                     }
-
-                    screen: request ? request.screen : null
-                    anchors { top: place.anchors.top; bottom: place.anchors.bottom; left: place.anchors.left; right: place.anchors.right }
-                    margins { top: place.margins.top; bottom: place.margins.bottom; left: place.margins.left; right: place.margins.right }
-                    exclusionMode: place.exclusion === "ignore" ? ExclusionMode.Ignore : ExclusionMode.Normal
-                    exclusiveZone: 0
-                    implicitWidth: slot.instance ? Math.max(1, slot.instance.implicitWidth) : 1
-                    implicitHeight: slot.instance ? Math.max(1, slot.instance.implicitHeight) : 1
-                    color: "transparent"
-                    WlrLayershell.namespace: "vgs:" + host.kind
-                    WlrLayershell.layer: place.layer === "top" ? WlrLayer.Top : WlrLayer.Overlay
-                    WlrLayershell.keyboardFocus: PluginLogic.layerKeyboardFocus(host.kind, entry.request.anchored) === "exclusive" ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
-
-                    Component.onCompleted: if (place.error !== "") console.error("summon host: " + entry.modelData + " " + place.error)
-
-                    PluginSlot {
-                        id: slot
-                        kind: host.kind
-                        pluginId: entry.modelData
-                        hostKey: host.kind
-                        screen: win.screen
-                        closeOnUnload: true
-                        anchors.fill: parent
-                        focus: true
-                        Keys.onEscapePressed: host.drop(entry.modelData)
-                        onBuilt: instance => {
-                            host.rememberFocuser(entry.modelData, reason => slot.focusInitial(reason));
-                            if (host.built(entry.modelData, instance)) slot.focusInitial(host.focusReason(entry.request));
-                        }
-                        onBuildFailed: key => Qt.callLater(() => host.drop(entry.modelData))
-                    }
+                    onDismissed: Qt.callLater(() => host.drop(entry.modelData))
                 }
             }
         }

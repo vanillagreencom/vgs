@@ -77,10 +77,11 @@ The glass, the edge light, the pills and the switch are the plugin's own files, 
 
 Where a card's text and media sit, and how the media slot's tier is chosen: [notification-layout.md](../../../docs/architecture/notification-layout.md).
 
-The toast stack draws on the core's passive layer, `vgs:layer` ([docs/architecture/layers.md](../../../docs/architecture/layers.md)). The Inbox and History draw as the plugin's summoned `panel`, because the passive layer does not take keyboard focus. Hyprland blurs what is behind the glass only when a layer rule asks it to. The manifest declares that rule, and the Hyprland layer writes it as:
+The toast stack draws on the core's passive layer, `vgs:layer` ([docs/architecture/layers.md](../../../docs/architecture/layers.md)). The Inbox and History draw as the plugin's summoned `panel`, because the passive layer does not take keyboard focus; summoned with `SUPER+N`, the panel is the summon host's `vgs:panel` layer. Hyprland blurs what is behind the glass only when a layer rule asks it to. The manifest declares one rule for each layer, and the Hyprland layer writes them as:
 
 ```lua
 hl.layer_rule({ name = "vgs.notifications:layer", match = { namespace = "^vgs:layer$" }, blur = true, ignore_alpha = 0.6 })
+hl.layer_rule({ name = "vgs.notifications:panel", match = { namespace = "^vgs:panel$" }, blur = true, ignore_alpha = 0.6 })
 ```
 
 `hyprland.lua` runs the layer from the line `vgsh hypr wire` keeps first in it, so your own settings after that line win. To change the rule, call `hl.layer_rule` with its name and new values after the line; `enabled = false` turns it off.

@@ -114,7 +114,8 @@
       { "shortcut": "inbox", "key": "SUPER+N" }
     ],
     "layerRules": [
-      { "namespace": "^vgs:layer$", "blur": true, "ignoreAlpha": 0.6 }
+      { "namespace": "^vgs:layer$", "blur": true, "ignoreAlpha": 0.6 },
+      { "namespace": "^vgs:panel$", "blur": true, "ignoreAlpha": 0.6 }
     ]
   }
 }
