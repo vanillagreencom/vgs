@@ -50,8 +50,8 @@
 # graphics stack. The default is twice the highest rss_peak_kib of three
 # runs of this script on the owner's machine (host cachy, AMD Ryzen 9
 # 9950X) on 2026-10-02, at load average 5 to 12, on one nested monitor:
-# 576964 to 587008 KiB, each the shell that ran the rows up to the first
-# stop in rows/monitor-preview.sh. docs/architecture/validation-latency.md
+# 576964 to 587008 KiB over main at 7bb195940, each the shell that ran the
+# rows up to the first stop in rows/monitor-preview.sh. docs/architecture/validation-latency.md
 # holds the readings. Each reading prints its high-water mark beside it.
 #
 # VGSH_SMOKE_FIRST_BAR_BUDGET_MS: ceiling on the time from the runner's exec
