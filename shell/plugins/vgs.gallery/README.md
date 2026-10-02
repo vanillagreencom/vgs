@@ -1,8 +1,8 @@
-# Gallery
+# VGS Components
 
-`vgs.gallery`: a window that draws every component of the design system in every variant and state, so a theme author previews a whole theme at once. It has no setting and no key.
+VGS Components previews the controls and states in the current theme. The plugin id is `vgs.gallery`.
 
-![The gallery window with its surfaces and text roles](../../../docs/images/plugins/vgs.gallery-window.webp)
+![VGS Components with background and text samples](../../../docs/images/plugins/vgs.gallery-window.webp)
 
 Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
 
@@ -12,7 +12,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 ## The window
 
-- A Hyprland window titled Gallery, of class `org.vgs.shell`. It opens floating and centred at the theme's `size.panel.lg` by `size.panel.maxHeight`, and takes the keyboard. Hyprland draws its border and moves, resizes, tiles and closes it like any other window: click another window to type there, and use your own keys to move it or tile it. To tile the shell's windows by default, add `hl.window_rule({ name = "vgs:window", enabled = false })` to `hyprland.lua` after the line that loads the VGS layer.
+- A Hyprland window titled VGS Components, of class `org.vgs.shell`. It opens floating and centred at the theme's `size.panel.lg` by `size.panel.maxHeight`, and takes the keyboard. Hyprland draws its border and moves, resizes, tiles and closes it like any other window: click another window to type there, and use your own keys to move it or tile it. To tile the shell's windows by default, add `hl.window_rule({ name = "vgs:window", enabled = false })` to `hyprland.lua` after the line that loads the VGS layer.
 - Escape closes it while it has the keyboard, unless a control in it takes the key first, as an open menu or select does. Your close key closes it too.
 - One section per group of components: the surface levels, the text roles with a text holding an inline image, buttons, choices, inputs, feedback, dialogs, cards, the carousel, titles and scrolling, and lists. Every example follows the applied theme, so applying another theme restyles the whole window at once.
 - Show a toast raises a real toast through the core. It is built only while it is open, so a closed gallery costs nothing.

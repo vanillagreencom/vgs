@@ -486,19 +486,43 @@ function applied(result) {
 // RESULT: "" for a step that did what it was asked, else what failed and
 // why. A partial apply names the Themes panel, whose row for the package
 // lists each application that did not take the theme.
+// ThemeRunner and vgsh own these reason codes. This table gives every
+// theme view the same user text, without publishing diagnostic fields.
+var REASON_TEXT = [
+    [/busy/, "Another theme action is running. Wait for it to finish."],
+    [/start-failed/, "The theme action could not start. Try again."],
+    [/output-unreadable|unreadable/, "The theme files could not be read. Try again."],
+    [/(?:redirect-)?not-https/, "VGS blocked an insecure download. Choose another theme or wallpaper."],
+    [/launcher-missing/, "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it."],
+    [/sha256|checksum|\bsize\b|\bpin\b/, "The download did not pass its safety check. Try the download again."],
+    [/download|fetch|network|http/, "The download failed. Check your connection and try again."],
+    [/unwritable|writing|permission/, "VGS could not save the theme files. Check folder permissions and try again."],
+    [/wiring-conflict|selection-refused/, "The application settings could not be changed. Check its settings and try again."],
+    [/not-detected/, "The application is not installed."],
+    [/not-found|absent|missing/, "The theme or image is missing. Choose another one."],
+    [/name-mismatch/, "The theme name does not match its folder. Choose another theme."],
+    [/malformed|schema|json|unknown|invalid|archive|symlink|outside|unsafe/, "The theme files are not supported. Choose another theme."]
+];
+
+function reasonText(reason) {
+    for (var i = 0; i < REASON_TEXT.length; i++)
+        if (REASON_TEXT[i][0].test(String(reason))) return REASON_TEXT[i][1];
+    return "The theme action failed. Try again or choose another theme.";
+}
+
 function problem(step, name, result) {
     switch (step) {
     case "install":
-        return result.state === "ok" ? "" : "Installing " + label(name) + " failed: " + result.reason;
+        return result.state === "ok" ? "" : "Could not install " + label(name) + ". " + reasonText(result.reason);
     case "apply":
-        if (result.state === "partial") return label(name) + " is applied, but some applications did not take it: the Themes panel lists them";
-        return applied(result) ? "" : "Applying " + label(name) + " failed: " + result.reason;
+        if (result.state === "partial") return label(name) + " is applied. Some applications did not change. Open the Themes panel for details.";
+        return applied(result) ? "" : "Could not apply " + label(name) + ". " + reasonText(result.reason);
     case "download":
-        return result.state === "ok" ? "" : "Downloading the wallpapers for " + label(name) + " failed: " + result.reason;
+        return result.state === "ok" ? "" : "Could not download wallpapers for " + label(name) + ". " + reasonText(result.reason);
     case "update":
-        return result.state === "ok" ? "" : "Updating the wallpapers for " + label(name) + " failed: " + result.reason;
+        return result.state === "ok" ? "" : "Could not update wallpapers for " + label(name) + ". " + reasonText(result.reason);
     case "set":
-        return result.state === "ok" ? "" : "Setting " + name + " failed: " + result.reason;
+        return result.state === "ok" ? "" : "Could not set " + name + ". " + reasonText(result.reason);
     default:
         throw new Error("step=" + JSON.stringify(step));
     }

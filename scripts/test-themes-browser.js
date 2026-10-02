@@ -48,6 +48,24 @@ const EDITS = [
 ];
 
 function verify(logic, files) {
+    // Producer diagnostics never cross the display boundary.
+    for (const diagnostic of ["busy", "start-failed", "output-unreadable", "sha256", "fetch=download", "unwritable", "wiring-conflict", "not-detected", "missing", "malformed-schema", "unexpected: key=value"]) {
+        const text = logic.reasonText(diagnostic);
+        assert.ok(text.length > 0, "a failed operation must tell the user");
+        assert.doesNotMatch(text, /[a-z][a-z-]*=|start-failed|output-unreadable/, "diagnostic fields stay in logs");
+    }
+    // theme-download refuses insecure URLs; the core TUI judge refuses a missing launcher.
+    for (const [diagnostic, cause, recovery] of [
+        ["not-https", /insecure download/, /Choose another theme or wallpaper/],
+        ["redirect-not-https", /insecure download/, /Choose another theme or wallpaper/],
+        ["refused: tui=core/theme-add reason=launcher-missing", /missing its terminal launcher, xdg-terminal-exec/, /Reinstall VGS to restore it/]
+    ]) {
+        const text = logic.reasonText(diagnostic);
+        assert.match(text, cause, diagnostic + " names its cause");
+        assert.match(text, recovery, diagnostic + " gives its recovery action");
+        assert.doesNotMatch(text, /[a-z][a-z-]*=|not-https|launcher-missing/, "diagnostic fields stay in logs");
+    }
+
     // Views and payloads.
     same(logic.VIEWS.map(v => [v.name, v.label, v.source]), [["themes", "Themes", "ThemeView.qml"], ["wallpapers", "Wallpapers", "WallpaperView.qml"]]);
     assert.equal(logic.viewSource("themes"), "ThemeView.qml");
@@ -177,18 +195,19 @@ function verify(logic, files) {
     // Results.
     for (const [state, want] of [["applied", true], ["unchanged", true], ["partial", true], ["failed", false]])
         assert.equal(logic.applied({ state }), want, "applied " + state);
+    assert.equal(logic.reasonText("name-mismatch"), "The theme name does not match its folder. Choose another theme.");
     assert.equal(logic.problem("install", "nord", { state: "ok", reason: null }), "");
-    assert.equal(logic.problem("install", "nord", { state: "failed", reason: "exists" }), "Installing Nord failed: exists");
+    assert.equal(logic.problem("install", "nord", { state: "failed", reason: "exists" }), "Could not install Nord. The theme action failed. Try again or choose another theme.");
     assert.equal(logic.problem("apply", "nord", { state: "applied", reason: null }), "");
     assert.equal(logic.problem("apply", "nord", { state: "unchanged", reason: null }), "");
-    assert.equal(logic.problem("apply", "nord", { state: "partial", reason: null }), "Nord is applied, but some applications did not take it: the Themes panel lists them");
-    assert.equal(logic.problem("apply", "nord", { state: "failed", reason: "busy" }), "Applying Nord failed: busy");
+    assert.equal(logic.problem("apply", "nord", { state: "partial", reason: null }), "Nord is applied. Some applications did not change. Open the Themes panel for details.");
+    assert.equal(logic.problem("apply", "nord", { state: "failed", reason: "busy" }), "Could not apply Nord. Another theme action is running. Wait for it to finish.");
     assert.equal(logic.problem("download", "nord", { state: "ok", reason: null }), "");
-    assert.equal(logic.problem("download", "nord", { state: "failed", reason: "sha256" }), "Downloading the wallpapers for Nord failed: sha256");
+    assert.equal(logic.problem("download", "nord", { state: "failed", reason: "sha256" }), "Could not download wallpapers for Nord. The download did not pass its safety check. Try the download again.");
     assert.equal(logic.problem("update", "nord", { state: "ok", reason: null }), "");
-    assert.equal(logic.problem("update", "nord", { state: "failed", reason: "changed" }), "Updating the wallpapers for Nord failed: changed");
+    assert.equal(logic.problem("update", "nord", { state: "failed", reason: "changed" }), "Could not update wallpapers for Nord. The theme action failed. Try again or choose another theme.");
     assert.equal(logic.problem("set", "a.jpg", { state: "ok", reason: null }), "");
-    assert.equal(logic.problem("set", "a.jpg", { state: "failed", reason: "outside" }), "Setting a.jpg failed: outside");
+    assert.equal(logic.problem("set", "a.jpg", { state: "failed", reason: "outside" }), "Could not set a.jpg. The theme files are not supported. Choose another theme.");
     assert.throws(() => logic.problem("remove", "nord", { state: "ok" }), /step="remove"/);
 
     verifyWallpapers(logic);
@@ -347,6 +366,9 @@ verify(load(logicCopy), files);
 // Each control removes one rule from a copy of the logic and keeps the
 // text around it. The suite must fail on every copy.
 const CONTROLS = [
+    ["insecure URLs are not connection failures", '/(?:redirect-)?not-https/', '/^$/'],
+    ["a missing terminal is not a missing theme", '/launcher-missing/', '/^$/'],
+    ["diagnostics stay out of display text", 'function reasonText(reason) {', 'function reasonText(reason) { return String(reason);'],
     ["payload unknown key", "if (PAYLOAD_KEYS.indexOf(keys[i]) === -1) throw", "if (false) throw"],
     ["payload view", 'if (viewNames().indexOf(raw.view) === -1) throw', "if (false) throw"],
     ["shadowed skipped", 'if (p.state === "shadowed") continue;', ""],

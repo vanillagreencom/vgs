@@ -1,6 +1,6 @@
 # Bar
 
-The bar across the top of every screen. It draws its own workspaces and clock, and holds plugin widgets in a left, a center and a right section.
+The bar shows workspaces, the clock and plugin buttons at the top of each screen.
 
 ![The bar with its workspaces, its clock and plugin widgets](../../../docs/images/plugins/vgs.bar-bar.webp)
 

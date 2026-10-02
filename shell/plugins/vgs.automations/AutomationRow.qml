@@ -24,7 +24,7 @@ ListItem {
     onClicked: root.openRequested()
     function lastText() {
         if (row.lastRun === null) return "No runs";
-        const label = row.lastRun.outcome === "succeeded" ? "Done" : row.lastRun.outcome === "failed" ? "Failed" : row.lastRun.outcome;
+        const label = View.outcomeLabel(row.lastRun.outcome);
         return label + " " + View.formatWhen(row.lastRun.startedAt).split(" ").slice(-1)[0];
     }
     trailing: [

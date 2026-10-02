@@ -36,6 +36,8 @@ Write a plugin for the v2 shell. The contract is [`docs/architecture/plugins.md`
 
 ## Rules
 
+- Consumer text follows [`docs/architecture/copy.md`](../../../docs/architecture/copy.md).
+
 - One directory, one `manifest.json` at its root, one QML entry point per kind. Copy the templates. The field table is [`docs/architecture/plugin-manifest.md` § Manifest](../../../docs/architecture/plugin-manifest.md#manifest); an unknown key is refused.
 - Declare surfaces, never dependencies. Every external command the plugin runs goes in the manifest's `requirements`, with its package per manager, `optional` when the plugin works without it, and a one-line `purpose`; a requirement names a command, never another plugin: [`docs/architecture/requirements.md`](../../../docs/architecture/requirements.md). The core shows its notice when the plugin is installed or enabled without a command it needs; a button that asks the user to install one of the plugin's own commands calls `shell.requirements.offer`, never a package manager.
 - Imports and names: the allowed table in [`references/api.md`](references/api.md) § Allowed imports, and nothing else. `scripts/check-plugin-boundary.py` refuses the rest.

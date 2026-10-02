@@ -28,7 +28,7 @@ print(json.dumps(v))' "$1"; }
 polkit_status() { ipc smoke statusValues vgs.polkit | py_reply 'import json,sys; v=json.load(sys.stdin).get("agent"); print(json.dumps(v if v is None else [v["tone"], v["text"]]))'; }
 # The summon a request would make, with no request live: the host's answer.
 flowless_summon() { ipc shell summon overlay vgs.polkit '{}'; }
-unregistered='["warning", "Not registered with polkitd: another polkit agent holds this session, or polkitd is not running"]'
+unregistered='["warning", "Password prompts are unavailable. Another prompt service may be active."]'
 
 auth_watch_start "$sandbox/polkit-auth-helpers.log"
 expect "the helper watcher scans the tree that holds the shell" yes in_harness_tree "$shell_qs_pid"

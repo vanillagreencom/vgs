@@ -77,7 +77,7 @@ Item {
         tabItems: [identityChoice, secret]
         actions: [
             { label: "Cancel", role: "cancel" },
-            { label: "Authenticate", role: "accept", enabled: root.view !== null && root.view.inputEnabled }
+            { label: "Allow", role: "accept", enabled: root.view !== null && root.view.inputEnabled }
         ]
         onAccepted: root.submit()
         onRejected: root.cancel()
@@ -93,7 +93,7 @@ Item {
 
         Field {
             width: parent.width
-            label: "Authenticate as"
+            label: "Account"
             visible: root.view !== null && root.view.identities.length > 1
 
             Select {

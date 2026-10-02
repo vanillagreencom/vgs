@@ -65,11 +65,28 @@ set -Eeuo pipefail
 _updates_digits='^[0123456789]+$'
 _updates_usage="usage: update.sh [-y] | update-source.sh <source> [-y]"
 
+_updates_diagnostic() { # RAW_LINE
+  local dir
+  dir="$(updates_state_dir)"
+  mkdir -p -- "$dir"
+  printf '%s\n' "$1" >>"$dir/diagnostics.log"
+}
+
 _updates_refuse() { # STATUS FIRST_LINE [ENGLISH...]
   local status="$1"
-  printf 'updates: refused: %s\n' "$2" >&2
-  shift 2
-  [[ $# -gt 0 ]] && printf '%s\n' "$@" >&2
+  if [[ -z ${VGS_TUI_LIB:-} ]]; then
+    printf 'updates: refused: %s\n' "$2" >&2
+  else
+    _updates_diagnostic "updates: refused: $2"
+    case "$2" in
+      log=absent*) printf 'No update has run yet. There is no log to show.\n' >&2 ;;
+      pager=missing) printf 'The log reader is unavailable. Open Updates to try again.\n' >&2 ;;
+      source=missing) printf 'No update source was selected. Open Updates and choose a source.\n' >&2 ;;
+      *reason=absent) printf 'This update source is not installed. Choose another source.\n' >&2 ;;
+      *reason=no-plan) printf 'VGS cannot update this source. Choose another source.\n' >&2 ;;
+      *) printf 'This update request is invalid. Open Updates and try again.\n' >&2 ;;
+    esac
+  fi
   exit "$status"
 }
 
@@ -78,9 +95,9 @@ _updates_refuse() { # STATUS FIRST_LINE [ENGLISH...]
 _updates_failed() { # STATUS
   [[ $BASHPID == "${_updates_pid:-}" ]] || return 0
   printf '\n' >&2
-  vgs_tui_error "updates: failed exit=$1 log=$_updates_log"
-  vgs_tui_error "The update stopped at the step above. Read its output, fix the cause and run the update again."
-  vgs_tui_error "This run's whole output is in $_updates_log."
+  _updates_diagnostic "updates: failed exit=$1 log=$_updates_log"
+  vgs_tui_error "The update stopped. Read the output above and try again from Updates."
+  vgs_tui_error "Select Open last log in Updates to read this run's output."
 }
 
 # Runs ARGV from $HOME after a step line, as vgsh pkg run runs its steps,
@@ -170,7 +187,7 @@ _updates_snapshot() { # snapper|timeshift ELEVATOR
       vgs_tui_step "Taking a snapshot"
       "$elevator" timeshift --create --comments "VGS update" --scripted || return
       ;;
-    *) vgs_tui_error "updates: snapshot-tool=$tool is neither snapper nor timeshift"; return 1 ;;
+    *) _updates_diagnostic "updates: snapshot-tool=$tool"; vgs_tui_error "The snapshot tool is not supported."; return 1 ;;
   esac
 }
 
@@ -193,14 +210,14 @@ _updates_outdated() { # plugin|theme SOURCE
   local out facts key value
   _updates_behind=()
   if ! out="$("$_updates_vgsh" "$1" outdated --json)"; then
-    vgs_tui_warn "updates: skipped=$2 reason=outdated-failed"
+    _updates_diagnostic "updates: skipped=$2 reason=outdated-failed"; vgs_tui_warn "Could not check $2 for updates. This step was skipped."
     return 0
   fi
   facts="$(_updates_facts outdated "$2" <<<"$out")"
   while read -r key value; do
     case "$key" in
       update) _updates_behind+=("$value") ;;
-      error) vgs_tui_warn "$2: $value" ;;
+      error) _updates_diagnostic "$2: $value"; vgs_tui_warn "Could not check one of the $2 for updates." ;;
     esac
   done <<<"$facts"
 }
@@ -212,7 +229,7 @@ _updates_update_each() { # plugin|theme ID...
     vgs_tui_step "Updating the $kind $id"
     status=0
     "$_updates_vgsh" "$kind" update "${_updates_yes_flag[@]}" "$id" || status=$?
-    if [[ $status -ne 0 ]]; then vgs_tui_warn "updates: $kind=$id exit=$status"; fi
+    if [[ $status -ne 0 ]]; then _updates_diagnostic "updates: $kind=$id exit=$status"; vgs_tui_warn "Could not update $id. The update continues."; fi
   done
 }
 
@@ -222,20 +239,20 @@ _updates_orphans() {
   # pacman -Qtdq exits 1 when no package is orphaned.
   if [[ $status -eq 1 && -z $out ]]; then return 0; fi
   if [[ $status -ne 0 ]]; then
-    vgs_tui_warn "updates: orphans=unreadable exit=$status"
+    _updates_diagnostic "updates: orphans=unreadable exit=$status"; vgs_tui_warn "Could not check for unused packages. Package removal was skipped."
     return 0
   fi
   mapfile -t orphans <<<"$out"
   vgs_tui_step "Orphaned packages"
   printf '  %s\n' "${orphans[@]}"
   if [[ $_updates_yes == 1 ]]; then
-    printf 'Kept. Remove them with: vgsh pkg run remove --manager pacman %s\n' "${orphans[*]}"
+    printf 'The unused packages were kept. Open Updates to review them.\n'
     return 0
   fi
   status=0
   vgs_tui_confirm "Remove ${#orphans[@]} orphaned package(s)?" --default=false || status=$?
   case "$status" in
-    0) "$_updates_vgsh" pkg run remove --manager pacman "${orphans[@]}" || vgs_tui_warn "updates: orphans=remove-failed exit=$?" ;;
+    0) "$_updates_vgsh" pkg run remove --manager pacman "${orphans[@]}" || { _updates_diagnostic "updates: orphans=remove-failed exit=$?"; vgs_tui_warn "Could not remove the unused packages. Try again from Updates."; } ;;
     1) echo "Keeping the orphaned packages." ;;
     *) exit "$status" ;;
   esac
@@ -247,7 +264,7 @@ _updates_reboot() {
   case "$status" in
     0) ;;
     1) return 0 ;;
-    *) vgs_tui_warn "updates: reboot-check=failed exit=$status"; return 0 ;;
+    *) _updates_diagnostic "updates: reboot-check=failed exit=$status"; vgs_tui_warn "Could not check whether a restart is needed."; return 0 ;;
   esac
   while read -r reason; do
     case "$reason" in
@@ -392,13 +409,13 @@ updates_main() {
         method) vgs_method="$value" ;;
         package) vgs_package="$value" ;;
         behind) vgs_behind="$value" ;;
-        error) vgs_tui_warn "VGS: $value" ;;
+        error) _updates_diagnostic "VGS: $value"; vgs_tui_warn "Could not check VGS for updates." ;;
       esac
     done <<<"$facts"
     case "$vgs_method:$vgs_behind:$vgs_package" in
-      checkout:true:*|curl:true:*) plan+=("VGS: vgsh self update") ;;
+      checkout:true:*|curl:true:*) plan+=("VGS: update VGS") ;;
       package:true:vgs-git)
-        if [[ -n $aur_binary ]]; then plan+=("VGS: $aur_binary -S vgs-git, after the AUR")
+        if [[ -n $aur_binary ]]; then plan+=("VGS: rebuild the VGS package after AUR updates")
         else plan+=("VGS: vgs-git is behind, and no AUR helper is here to rebuild it")
         fi
         ;;
@@ -417,10 +434,10 @@ updates_main() {
     esac
     if _updates_plan "$id"; then
       kept+=("$id")
-      plan+=("$label: $_updates_plan_text")
+      plan+=("$label: install available updates")
     else
       [[ $mode == all ]] || _updates_refuse 1 "source=$only reason=no-plan" "$_updates_plan_text"
-      plan+=("$label: skipped, $_updates_plan_text")
+      _updates_diagnostic "$label: $_updates_plan_text"; plan+=("$label: VGS cannot update this source")
     fi
     if [[ $id == "$primary" ]]; then
       primary_planned=1
@@ -429,7 +446,7 @@ updates_main() {
     fi
   done
   run=("${kept[@]}")
-  if [[ ${#aur_command[@]} -gt 0 ]] && _updates_in aur "${run[@]}"; then plan+=("AUR, last: ${aur_command[*]}"); fi
+  if [[ ${#aur_command[@]} -gt 0 ]] && _updates_in aur "${run[@]}"; then plan+=("AUR: install updates after system updates"); fi
   if _updates_in plugins "${run[@]}"; then
     _updates_outdated plugin plugins
     plugins=("${_updates_behind[@]}")
@@ -468,7 +485,7 @@ updates_main() {
         snapshot_line="Snapshot: $snapshot_tool through $elevator, first"
       else
         snapshot_tool=""
-        snapshot_line="Snapshot: none, no elevation command${elevator_refused:+: $elevator_refused}"
+        _updates_diagnostic "snapshot: $elevator_refused"; snapshot_line="Snapshot: unavailable because administrator access is not available"
       fi
     fi
   fi
@@ -481,7 +498,7 @@ updates_main() {
   avail="${out##*$'\n'}"
   avail="${avail//[[:space:]]/}"
   if [[ ! $avail =~ $_updates_digits ]]; then
-    vgs_tui_warn "updates: free-space=unreadable"
+    _updates_diagnostic "updates: free-space=unreadable"; vgs_tui_warn "Could not check free disk space."
   elif ((avail < 10 * 1024 * 1024 * 1024)); then
     vgs_tui_warn "Less than 10 GiB is free on /. An update can fail when the disk fills up."
   fi
@@ -511,7 +528,7 @@ updates_main() {
     status=0
     _updates_snapshot "$snapshot_tool" "$elevator" || status=$?
     if [[ $status -ne 0 ]]; then
-      vgs_tui_warn "updates: snapshot=failed exit=$status"
+      _updates_diagnostic "updates: snapshot=failed exit=$status"; vgs_tui_warn "The snapshot failed."
       vgs_tui_warn "Continuing the update without a snapshot."
     fi
   fi
@@ -537,19 +554,19 @@ updates_main() {
     fi
     if _updates_in aur "${run[@]}"; then
       if [[ ${#aur_command[@]} -gt 0 ]]; then
-        _updates_run "${aur_command[*]}" "${aur_command[@]}"
+        _updates_run "Updating AUR packages" "${aur_command[@]}"
       else
         "$_updates_vgsh" pkg run upgrade --manager aur
       fi
     fi
-    if [[ $rebuild == 1 ]]; then _updates_run "$aur_binary -S vgs-git" "$aur_binary" -S vgs-git; fi
+    if [[ $rebuild == 1 ]]; then _updates_run "Rebuilding VGS" "$aur_binary" -S vgs-git; fi
     if [[ $guarded == 1 ]]; then vgs_tui_sudo_session end; fi
   fi
 
   if [[ $primary == pacman ]] && [[ $upgrades == 1 ]]; then _updates_orphans; fi
   if [[ -n $vgs_before ]] && [[ "$(_updates_vgs_package_version)" != "$vgs_before" ]] && "$_updates_vgsh" pid >/dev/null 2>&1; then
     vgs_tui_step "Restarting the shell on the updated VGS"
-    "$_updates_vgsh" restart || vgs_tui_warn "updates: restart=failed exit=$?"
+    "$_updates_vgsh" restart || { _updates_diagnostic "updates: restart=failed exit=$?"; vgs_tui_warn "VGS could not restart. Save your work and restart the computer."; }
   fi
   _updates_reboot
 }

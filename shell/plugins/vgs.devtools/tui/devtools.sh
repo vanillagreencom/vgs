@@ -30,12 +30,20 @@ if [[ -z $lib || $tree == "$lib" || -z ${VGS_PLUGIN_DIR:-} ]]; then
   exit 2
 fi
 engine=("$VGS_PLUGIN_DIR/bin/devtools" --tree "$tree")
+
+refuse() { # STATUS DIAGNOSTIC MESSAGE
+  local dir="${XDG_STATE_HOME:-$HOME/.local/state}/vgs/devtools"
+  mkdir -p -- "$dir"
+  printf 'devtools: refused: %s\n' "$2" >>"$dir/actions.log"
+  printf '%s\n' "$3" >&2
+  exit "$1"
+}
+
 verb="${1:-}"
 case "$verb" in
   install|update|remove) ;;
   *)
-    printf 'devtools: refused: verb=%s\nusage: devtools.sh install|update|remove [<id> [flags...] | --mise <key>]\n' "${verb:-missing}" >&2
-    exit 2
+    refuse 2 "verb=${verb:-missing}" "This tool action is invalid. Open the action from Dev Tools."
     ;;
 esac
 if [[ $# -gt 1 ]]; then exec "${engine[@]}" "$@"; fi
@@ -44,7 +52,7 @@ if [[ $# -gt 1 ]]; then exec "${engine[@]}" "$@"; fi
 source "$lib"
 targets="$("${engine[@]}" targets "$verb")"
 if [[ -z $targets ]]; then
-  vgs_tui_step "No tool offers $verb now"
+  vgs_tui_step "No tools are available to $verb."
   exit 0
 fi
 labels=() words=()
@@ -66,5 +74,4 @@ for ((i = 0; i < ${#labels[@]}; i++)); do
   IFS=$'\t' read -r -a target <<<"${words[i]}"
   exec "${engine[@]}" "$verb" "${target[@]}"
 done
-printf 'devtools: refused: picked=%s reason=unlisted\nthe filter answered a line it was not offered\n' "$picked" >&2
-exit 1
+refuse 1 "picked=$picked reason=unlisted" "This tool is unavailable. Open Dev Tools and choose another tool."

@@ -36,7 +36,7 @@ user="$(id -un)"
 tools="$TMP_ROOT/tools"
 stub="$TMP_ROOT/stub"
 mkdir -p "$tools" "$stub"
-for tool in bash id cat; do ln -s -- "$(command -v "$tool")" "$tools/$tool"; done
+for tool in bash id cat mkdir; do ln -s -- "$(command -v "$tool")" "$tools/$tool"; done
 # The library draws its header with gum; the stand-in prints its words.
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*"\n' >"$tools/gum"
 chmod 755 "$tools/gum"
@@ -85,16 +85,16 @@ case_leaves_it_on() {
 }
 case_refuses_unreadable() {
   linger "$1" fail "$stub" VGS_TUI_UNATTENDED=1 --
-  [[ $status == 1 && $first == "automations: refused: linger=unreadable exit=1" && $calls == "show-user $user --property=Linger --value" ]]
+  [[ $status == 1 && $first == "Could not check whether automations can run while you are logged out. Try again." && $calls == "show-user $user --property=Linger --value" ]]
 }
 case_refuses_without_loginctl() {
   linger "$1" no "$TMP_ROOT/empty" VGS_TUI_UNATTENDED=1 --
-  [[ $status == 1 && $first == "automations: refused: loginctl=missing" ]]
+  [[ $status == 1 && $first == "Automations cannot run while you are logged out on this system." ]]
 }
 case_refuses_an_argument() {
   linger "$1" no "$stub" --
   linger "$1" no "$stub" -- extra
-  [[ $status == 2 && $first == "automations: refused: argument=extra" && -z $calls ]]
+  [[ $status == 2 && $first == "This setup request is invalid. Open Automations and try again." && -z $calls ]]
 }
 case_refuses_outside_the_presenter() {
   printf 'no\n' >"$TMP_ROOT/state"
@@ -111,7 +111,7 @@ done
 # Controls: a case, the text in the script it needs, and a replacement
 # without the rule.
 CONTROL_CASES=(case_asks_before_enabling case_keeps_off_without_an_answer case_leaves_it_on case_refuses_unreadable case_refuses_without_loginctl)
-CONTROL_NEEDLES=('loginctl enable-linger "$user"' 'if ! vgs_tui_confirm "Turn lingering on for $user?"; then' 'if [[ $state == yes ]]; then' '[[ $status == 0 ]] || refuse 1' 'command -v loginctl >/dev/null || refuse')
+CONTROL_NEEDLES=('loginctl enable-linger "$user"' 'if ! vgs_tui_confirm "Allow automations to run while $user is logged out?"; then' 'if [[ $state == yes ]]; then' '[[ $status == 0 ]] || refuse 1' 'command -v loginctl >/dev/null || refuse')
 CONTROL_REPLACEMENTS=('true' 'if false; then' 'if false; then' 'false && refuse 1' 'true || refuse')
 for i in "${!CONTROL_CASES[@]}"; do
   case="${CONTROL_CASES[i]}"

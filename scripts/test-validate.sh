@@ -346,6 +346,7 @@ recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging
 # The release suite's parity rows build the Arch recipes' host side.
 arch_recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-release.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
 cases=(
+  "devtools-window|shell/plugins/vgs.devtools/Window.qml|logic|node scripts/test-devtools-view.js"
   "orb-source|shell/Ui/feedback/shaders/voiceorb.frag|all|$orb_shader_plan"
   "orb-pack|shell/Ui/feedback/shaders/voiceorb.frag.qsb|all|$orb_shader_plan"
   "orb-compiler|scripts/check-voiceorb-shader.py|offline|$orb_check_plan"

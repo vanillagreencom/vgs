@@ -18,9 +18,18 @@ set -Eeuo pipefail
 
 refuse() { # STATUS FIRST_LINE [ENGLISH...]
   local status="$1"
-  printf 'automations: refused: %s\n' "$2" >&2
-  shift 2
-  [[ $# -gt 0 ]] && printf '%s\n' "$@" >&2
+  if [[ -z ${VGS_TUI_LIB:-} ]]; then
+    printf 'automations: refused: %s\n' "$2" >&2
+  else
+    local dir="${XDG_STATE_HOME:-$HOME/.local/state}/vgs/automations"
+    mkdir -p -- "$dir"
+    printf 'automations: refused: %s\n' "$2" >>"$dir/setup.log"
+    case "$2" in
+      loginctl=missing) printf 'Automations cannot run while you are logged out on this system.\n' >&2 ;;
+      linger=unreadable*) printf 'Could not check whether automations can run while you are logged out. Try again.\n' >&2 ;;
+      *) printf 'This setup request is invalid. Open Automations and try again.\n' >&2 ;;
+    esac
+  fi
   exit "$status"
 }
 
@@ -28,24 +37,23 @@ refuse() { # STATUS FIRST_LINE [ENGLISH...]
 # shellcheck source=SCRIPTDIR/../../../../bin/lib/tui.sh
 source "$VGS_TUI_LIB"
 [[ $# -eq 0 ]] || refuse 2 "argument=$1" "usage: linger.sh"
-command -v loginctl >/dev/null || refuse 1 "loginctl=missing" "Lingering is a systemd-logind setting; without loginctl, automations run only while you are logged in."
+command -v loginctl >/dev/null || refuse 1 "loginctl=missing" "Automations cannot run while you are logged out on this system."
 
 user="$(id -un)"
 status=0
 state="$(loginctl show-user "$user" --property=Linger --value)" || status=$?
-[[ $status == 0 ]] || refuse 1 "linger=unreadable exit=$status" "loginctl could not read your user's lingering."
+[[ $status == 0 ]] || refuse 1 "linger=unreadable exit=$status" "Could not check whether automations can run while you are logged out."
 
 vgs_tui_header "Automations while logged out" \
-  "systemd runs your automations' timers inside your user manager." \
-  "Without lingering, that manager stops when you log out, and so do the timers."
+  "Allow scheduled automations to run after you log out."
 if [[ $state == yes ]]; then
-  vgs_tui_step "Lingering is on: your automations run while you are logged out."
+  vgs_tui_step "Automations can run while you are logged out."
   exit 0
 fi
-vgs_tui_step "Lingering is off: your automations run only while you are logged in."
-if ! vgs_tui_confirm "Turn lingering on for $user?"; then
-  vgs_tui_step "Lingering stays off."
+vgs_tui_step "Automations run only while you are logged in."
+if ! vgs_tui_confirm "Allow automations to run while $user is logged out?"; then
+  vgs_tui_step "Automations still run only while you are logged in."
   exit 0
 fi
 loginctl enable-linger "$user"
-vgs_tui_step "Lingering is on: your automations run while you are logged out."
+vgs_tui_step "Automations can run while you are logged out."

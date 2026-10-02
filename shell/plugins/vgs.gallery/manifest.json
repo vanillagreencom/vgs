@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "vgs.gallery",
-  "name": "Gallery",
+  "name": "VGS Components",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Every component of the design system in every variant and state, for previewing a theme, in a window of its own. Open it with vgsh ipc call shell summon window vgs.gallery '{}'.",
+  "description": "Preview VGS controls and their states with the current theme.",
   "license": "MIT",
   "icon": "swatch-book",
   "kinds": [

@@ -897,7 +897,7 @@ Scope {
             const item = copyName === "" ? root.instance(hostKey, id) : root.popupCopies[copyName];
             if (item === null || item === undefined) return "absent";
             const orbs = copyName === "" ? root.descendants(item).filter(child => root.typeName(child) === "VoiceOrb") : [item];
-            const title = root.descendants(item).find(child => root.typeName(child) === "Label" && child.text === "Gallery");
+            const title = root.descendants(item).find(child => root.typeName(child) === "Label" && child.text === "VGS Components");
             const viewport = root.shownScrollAreas(item)[0];
             return root.json(orbs.map(orb => {
                 const shader = root.descendants(orb).find(child => child instanceof ShaderEffect);

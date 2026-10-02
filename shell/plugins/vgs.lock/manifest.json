@@ -4,7 +4,7 @@
   "name": "Lock",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "The lock screen: locks the session with SUPER+L, IPC, the launcher, after idle and before sleep, and unlocks with your password. The session stays locked if the shell stops.",
+  "description": "Lock your screen and unlock it with your password. Your session stays locked if VGS stops.",
   "license": "MIT",
   "icon": "lock",
   "kinds": [
@@ -30,7 +30,7 @@
   "schema": {
     "idleLockSeconds": {
       "type": "number",
-      "label": "Lock after idle",
+      "label": "Lock when inactive",
       "description": "Time without input before the session locks",
       "min": 0,
       "max": 86400,
@@ -52,7 +52,7 @@
     "lockBeforeSleep": {
       "type": "boolean",
       "label": "Lock before sleep",
-      "description": "Hold each suspend until the session is locked",
+      "description": "Lock the session before the computer sleeps",
       "group": "Lock"
     }
   },
@@ -60,17 +60,17 @@
     "lock": {
       "type": "state",
       "label": "Lock",
-      "hint": "Hyprland refuses a lock while another lock screen, such as hyprlock, holds the session"
+      "hint": "Another lock screen can prevent VGS from locking the session"
     },
     "sleep": {
       "type": "state",
       "label": "Before sleep",
-      "hint": "logind holds each suspend until the lock is confirmed, for at most its delay"
+      "hint": "The computer waits for the lock before it sleeps"
     },
     "lastSleep": {
       "type": "state",
-      "label": "Last suspend",
-      "hint": "Whether the session was locked before the machine last slept"
+      "label": "Last sleep",
+      "hint": "Whether the session locked before the computer last slept"
     }
   },
   "requirements": [
@@ -82,7 +82,7 @@
         "nix": "systemd"
       },
       "optional": true,
-      "purpose": "Holds each suspend until the session is locked"
+      "purpose": "Delays sleep while the session locks"
     },
     {
       "command": "dbus-monitor",
@@ -92,7 +92,7 @@
         "nix": "dbus"
       },
       "optional": true,
-      "purpose": "Hears logind announce a suspend"
+      "purpose": "Detects when the computer is about to sleep"
     },
     {
       "command": "busctl",
@@ -102,7 +102,7 @@
         "nix": "systemd"
       },
       "optional": true,
-      "purpose": "Reads how long logind waits for the lock before a suspend"
+      "purpose": "Checks how long the computer can wait for the lock"
     },
     {
       "command": "readlink",

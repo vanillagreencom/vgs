@@ -150,6 +150,22 @@ const STORE_REFUSED = [
 ];
 
 function verify(logic) {
+    // Producer diagnostics never cross the display boundary.
+    for (const diagnostic of ["run=busy", "id=unknown", "store=not-json", "directory=ENOENT", "spawn=EACCES", "definition=not-json", "schedule=invalid", "scheduler=none", "answer=not-json", "unexpected: key=value"]) {
+        const text = logic.failureText(diagnostic);
+        assert.ok(text.length > 0, "a failed operation must tell the user");
+        assert.doesNotMatch(text, /[a-z][a-z-]*=|start-failed|output-unreadable/, "diagnostic fields stay in logs");
+    }
+    // bin/automations sync refuses scheduler=none when both schedulers fail.
+    for (const [diagnostic, cause, recovery] of [
+        ["scheduler=none", /scheduler is unavailable/, /Open Automations to check its status/],
+        ["schedule=invalid", /schedule is invalid/, /Check its dates and times/]
+    ]) {
+        const text = logic.failureText(diagnostic);
+        assert.match(text, cause, diagnostic + " names its cause");
+        assert.match(text, recovery, diagnostic + " gives its recovery action");
+    }
+
     process.env.TZ = "UTC";
     for (const [label, s, calendar, cron, summary] of COMPILED) {
         assert.equal(logic.scheduleError(s), "", "accepted: " + label);
@@ -285,21 +301,21 @@ function verify(logic) {
 
     // Notifications: an error always; a start and a success only when asked.
     const failed = Object.assign(ended("backup", "1767225600000-1", 1000, "failed"), { exitCode: 3, snippet: "disk <full> & gone", transcript: "/r/t.log" });
-    same(logic.notificationFor("end", automation({}), failed), { summary: "Back up failed", body: "Exit code 3\ndisk &lt;full&gt; &amp; gone", urgency: "critical", icon: "circle-x", tone: "danger", click: "open", open: "/r/t.log" });
+    same(logic.notificationFor("end", automation({}), failed), { summary: "Back up failed", body: "The automation failed. Open Automations to read its output.", urgency: "critical", icon: "circle-x", tone: "danger", click: "open", open: "/r/t.log" });
     same(logic.notificationFor("end", automation({}), Object.assign({}, failed, { outcome: "timeout", durationMs: 61000, snippet: "" })).body, "Timed out after 1 min 1 s");
-    same(logic.notificationFor("end", automation({}), Object.assign({}, failed, { outcome: "failed-start", reason: "directory=ENOENT path=/x", snippet: "" })).body, "Failed to start: directory=ENOENT path=/x");
-    same(logic.notificationFor("end", automation({}), Object.assign({}, failed, { signal: "SIGKILL", exitCode: null, snippet: "" })).body, "Killed by SIGKILL");
+    same(logic.notificationFor("end", automation({}), Object.assign({}, failed, { outcome: "failed-start", reason: "directory=ENOENT path=/x", snippet: "" })).body, "The work folder is unavailable. Choose another folder in Automations.");
+    same(logic.notificationFor("end", automation({}), Object.assign({}, failed, { signal: "SIGKILL", exitCode: null, snippet: "" })).body, "The automation was stopped. Open Automations to read its output.");
     same(logic.notificationFor("end", automation({ notifyEveryRun: true }), failed).icon, "circle-x", "an error is an error with the toggle on");
     const good = Object.assign({}, failed, { outcome: "succeeded", durationMs: 4200 });
     same(logic.notificationFor("end", automation({}), good), null, "no success notification without the toggle");
     same(logic.notificationFor("end", automation({ notifyEveryRun: true }), good), { summary: "Back up finished", body: "Finished in 4 s", urgency: "low", icon: "circle-check", tone: "success", click: "open", open: "/r/t.log" });
     same(logic.notificationFor("start", automation({}), started("backup", "1767225600000-1", 1)), null, "no start notification without the toggle");
-    same(logic.notificationFor("start", automation({ notifyEveryRun: true, command: "a < b" }), started("backup", "1767225600000-1", 1)), { summary: "Back up started", body: "a &lt; b", urgency: "low", icon: "play", tone: "warning", click: "none", open: "" });
+    same(logic.notificationFor("start", automation({ notifyEveryRun: true, command: "a < b" }), started("backup", "1767225600000-1", 1)), { summary: "Back up started", body: "The automation is running.", urgency: "low", icon: "play", tone: "warning", click: "none", open: "" });
     assert.throws(() => logic.notificationFor("middle", automation({}), failed), /is not start or end/);
     same(logic.notifySendArgs(logic.notificationFor("end", automation({}), failed), 17), [
         "--app-name=Automations", "--urgency=critical", "--print-id",
         "--hint=string:x-vgs-icon:circle-x", "--hint=string:x-vgs-tone:danger", "--hint=string:x-vgs-click:open",
-        "--hint=string:x-vgs-open:/r/t.log", "--replace-id=17", "--", "Back up failed", "Exit code 3\ndisk &lt;full&gt; &amp; gone"]);
+        "--hint=string:x-vgs-open:/r/t.log", "--replace-id=17", "--", "Back up failed", "The automation failed. Open Automations to read its output."]);
     same(logic.notifySendArgs({ summary: "-s", body: "--b", urgency: "low", icon: "play", tone: "warning", click: "none", open: "" }, null).slice(-3), ["--", "-s", "--b"], "the text follows --");
 
     // List rows, status and the refresh.
@@ -309,7 +325,7 @@ function verify(logic) {
     same(listed.map(r => [r.id, r.state, r.nextRun === null ? null : iso(r.nextRun), r.lastRun === null ? null : r.lastRun.run]), [["backup", "scheduled", "2026-02-02T09:00:00Z", "r2"], ["off", "paused", null, null], ["done", "ended", null, null]]);
     const values = logic.statusValues({ scheduler: "cron", linger: "no", automations: listed });
     same(values, {
-        scheduler: { tone: "warning", text: "cron: no systemd user manager answered" },
+        scheduler: { tone: "warning", text: "Using the backup scheduler" },
         linger: { tone: "warning", text: "Automations run only while you are logged in", action: true },
         active: 1,
         nextRun: "Mon 2 Feb 2026 09:00",
@@ -318,7 +334,7 @@ function verify(logic) {
     assert.throws(() => logic.statusValues({ scheduler: "at", linger: "no", automations: [] }), /is not one of systemd, cron, none/);
     same(logic.statusValues({ scheduler: "systemd", linger: "yes", automations: [] }).lastRuns, { tone: "ok", text: "No automations" });
     same(logic.statusValues({ scheduler: "systemd", linger: "yes", automations: [] }).linger, { tone: "ok", text: "Automations run while you are logged out" }, "lingering on offers no action");
-    same(logic.statusValues({ scheduler: "systemd", linger: "unknown", automations: [] }).linger, { tone: "info", text: "loginctl did not answer" }, "an unanswered loginctl offers no action");
+    same(logic.statusValues({ scheduler: "systemd", linger: "unknown", automations: [] }).linger, { tone: "info", text: "Could not check whether automations run while logged out" }, "an unanswered loginctl offers no action");
     assert.equal(logic.refreshDelay({ automations: listed }, at("2026-02-02T08:00:00Z")), 3601000, "a second after the next run");
     assert.equal(logic.refreshDelay({ automations: [] }, 0), 24 * 60 * 60 * 1000, "at most a day");
     same(logic.changedKeys({ a: 1, b: { x: 1 } }, { a: 1, b: { x: 2 }, c: 3 }), ["b", "c"]);
@@ -326,11 +342,11 @@ function verify(logic) {
     // The Engine status: a failure stays until the same operation succeeds.
     let failures = logic.withOutcome({}, "sync", "sync exit=1 Failed to reload");
     failures = logic.withOutcome(failures, "list", "");
-    same(logic.engineProblem(failures), { tone: "danger", text: "sync exit=1 Failed to reload" }, "a list that succeeds keeps the sync failure");
+    same(logic.engineProblem(failures), { tone: "danger", text: "The automation request failed. Open Automations to try again." }, "a list that succeeds keeps the sync failure");
     failures = logic.withOutcome(failures, "prune", "prune exit=1 x");
-    same(logic.engineProblem(failures).text, "sync exit=1 Failed to reload", "the first operation's failure is named");
+    same(logic.engineProblem(failures ).text, "The automation request failed. Open Automations to try again.", "the first operation's failure is named");
     failures = logic.withOutcome(failures, "sync", "");
-    same(logic.engineProblem(failures), { tone: "danger", text: "prune exit=1 x" });
+    same(logic.engineProblem(failures), { tone: "danger", text: "The automation request failed. Open Automations to try again." });
     same(logic.engineProblem(logic.withOutcome(failures, "prune", "")), { tone: "ok", text: "None" });
     same(logic.withOutcome({}, "list", "x".repeat(300)).list.length, 200);
     assert.throws(() => logic.withOutcome({}, "run", ""), /is not one of sync, list, prune/);
@@ -424,6 +440,8 @@ const compared = analyze === null ? 0 : comparePreview(load(file), analyze);
 // ---------------------------------------------------------------- controls
 
 const CONTROLS = [
+    ["an unavailable scheduler is not an invalid schedule", 'scheduler=none|systemctl=|systemd-run=|crontab=', 'systemctl=|systemd-run=|crontab='],
+    ["diagnostics stay out of display text", 'function failureText(reason) {', 'function failureText(reason) { return String(reason);'],
     ["weekdays compile to their names", "weekdays = orderedWeekdays(s.weekdays).map(function (w) { return SYSTEMD_WEEKDAYS[WEEKDAYS.indexOf(w)]; }).join(\",\") + \" \";", "weekdays = \"\";"],
     ["every time of day compiles", "return s.times.map(function (time) { return weekdays + date + \" \" + time + \":00\"; });", "return [weekdays + date + \" \" + s.times[0] + \":00\"];"],
     ["a monthly date compiles to its day", "date = \"*-*-\" + pad2(s.monthly.day);", "date = \"*-*-*\";"],
@@ -478,15 +496,13 @@ const CONTROLS = [
     ["the snippet reads stdout without stderr", "var text = fromErr.length > 0 ? fromErr.join(\"\\n\") : lastLines(stdoutLines).join(\"\\n\");", "var text = fromErr.join(\"\\n\");"],
     ["a start notifies only when asked", "if (automation.notifyEveryRun !== true) return null;\n        return { summary: automation.name + \" started\"", "return { summary: automation.name + \" started\""],
     ["a success notifies only when asked", "if (automation.notifyEveryRun !== true) return null;\n        return { summary: automation.name + \" finished\"", "return { summary: automation.name + \" finished\""],
-    ["an error carries its snippet", "if (rec.snippet !== \"\") body += \"\\n\" + escapeMarkup(rec.snippet);", ""],
-    ["a body escapes markup", "return String(text).replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\");", "return String(text);"],
     ["an error is red with circle-x", "urgency: \"critical\", icon: \"circle-x\", tone: \"danger\"", "urgency: \"critical\", icon: \"circle-check\", tone: \"success\""],
     ["the text follows --", "return args.concat([\"--\", n.summary, n.body]);", "return args.concat([n.summary, n.body]);"],
     ["a finish replaces the start", "if (isWhole(replaceId) && replaceId > 0) args.push(\"--replace-id=\" + replaceId);", ""],
     ["a paused automation has no next run", "nextRun: a.enabled && next.length > 0 ? next[0] : null,", "nextRun: next.length > 0 ? next[0] : null,"],
     ["a success clears its own operation's failure alone", "if (failure === \"\") delete next[operation];", "if (failure === \"\") next = {};"],
     ["a failure is kept until its operation succeeds", "else next[operation] = String(failure).slice(0, 200);", "else next = { list: String(failure) };"],
-    ["the Engine status names a failure", "if (hasOwn(failures, ENGINE_OPERATIONS[i])) return { tone: \"danger\", text: failures[ENGINE_OPERATIONS[i]] };", "if (false) return null;"],
+    ["the Engine status names a failure", "if (hasOwn(failures, ENGINE_OPERATIONS[i])) return { tone: \"danger\", text: failureText(failures[ENGINE_OPERATIONS[i]]) };", "if (false) return null;"],
     ["a failing last run is reported", "if (rows[i].lastRun !== null && OUTCOMES[rows[i].lastRun.outcome].error) failing.push(rows[i].name);", ""]
 ];
 

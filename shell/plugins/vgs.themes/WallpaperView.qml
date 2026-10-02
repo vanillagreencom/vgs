@@ -257,7 +257,7 @@ FocusScope {
         });
         if (reply !== "ok") {
             job = null;
-            problem = reply;
+            problem = BrowserLogic.reasonText(reply);
         }
     }
 
@@ -273,7 +273,7 @@ FocusScope {
             else root.reapply(name);
         }, kind === "update" ? { update: true } : undefined);
         if (reply !== "ok") {
-            finish(reply);
+            finish(BrowserLogic.reasonText(reply));
             return;
         }
         downloading = shell.theme.last.downloading;
@@ -286,7 +286,7 @@ FocusScope {
             root.moved = false;
             root.finish(BrowserLogic.problem("apply", name, result));
         });
-        if (reply !== "ok") finish(reply);
+        if (reply !== "ok") finish(BrowserLogic.reasonText(reply));
     }
 
     function start() {
@@ -421,7 +421,7 @@ FocusScope {
                 visible: root.cards.length === 0 && root.imagesReason === ""
                 iconName: root.loaded ? "image-off" : ""
                 text: BrowserLogic.wallpaperEmpty(root.loaded, root.source, root.applied)
-                actionText: root.loaded && root.source === "theme" ? "Show every source" : ""
+                actionText: root.loaded && root.source === "theme" ? "Show all wallpapers" : ""
                 onActivated: {
                     root.flipSource();
                     Qt.callLater(root.takeKeys);
@@ -502,8 +502,8 @@ FocusScope {
                 Repeater {
                     model: [
                         root.problem,
-                        root.imagesReason === "" ? "" : "The image list failed: " + root.imagesReason,
-                        root.catalogReason === "" ? "" : "The catalog failed: " + root.catalogReason
+                        root.imagesReason === "" ? "" : "The image list is unavailable. " + BrowserLogic.reasonText(root.imagesReason),
+                        root.catalogReason === "" ? "" : "The catalog is unavailable. " + BrowserLogic.reasonText(root.catalogReason)
                     ].filter(line => line !== "")
                     Label {
                         required property string modelData

@@ -36,6 +36,7 @@ Item {
             try {
                 done(true, JSON.parse(stdoutText), "");
             } catch (e) {
+                console.warn("automations: " + args[0] + " answer=not-json");
                 done(false, null, args[0] + " answer=not-json");
             }
         });
@@ -59,6 +60,7 @@ Item {
         active = null;
         const ok = done !== null && done.code === 0;
         const failure = ok ? "" : (request.args[0] + " " + (done === null ? "start=failed" : "exit=" + done.code) + " " + firstLine(stderrText));
+        if (!ok) console.warn("automations: " + failure);
         for (const each of request.dones) each(ok, stdoutText, stderrText, failure);
         pump();
     }

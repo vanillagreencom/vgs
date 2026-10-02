@@ -45,6 +45,34 @@ function isPlainObject(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+// The launcher's helper and core capabilities produce these fields.
+// QML logs the raw reply and shows only the matching sentence.
+var FILE_ERRORS = [
+    [/missing=/, "File search tools are missing. Install them in Settings."],
+    [/refresh=busy/, "File search is updating. Try again shortly."],
+    [/vanished=/, "The file no longer exists. Choose another file."],
+    [/mime=/, "VGS could not find applications for this file. Choose another file."],
+    [/index=|walk=partial/, "The file list could not be read. Try the search again."],
+    [/start=failed/, "File search could not start. Try the search again."]
+];
+
+function fileErrorText(reason) {
+    for (var i = 0; i < FILE_ERRORS.length; i++)
+        if (FILE_ERRORS[i][0].test(String(reason))) return FILE_ERRORS[i][1];
+    return "File search failed. Try the search again.";
+}
+
+function menuErrorText(reason) {
+    if (/not-json|not-object|schemaVersion/.test(String(reason))) return "The menu file is not supported. Check the file and reopen Launcher.";
+    return "The menu settings are invalid. Check the menu file and reopen Launcher.";
+}
+
+function actionErrorText(reason) {
+    if (/reason=busy/.test(String(reason))) return "Another action is running. Wait for it to finish.";
+    if (/reason=launcher-missing/.test(String(reason))) return "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it.";
+    return "VGS could not open this action. Try again.";
+}
+
 function isStringList(value, pattern) {
     if (!Array.isArray(value)) return false;
     for (var i = 0; i < value.length; i++)
@@ -246,12 +274,12 @@ function themeRow(menuId, pkg) {
         label: pkg.name,
         title: "",
         target: "",
-        description: refused ? "refused: " + (pkg.reason || "unknown") : pkg.source || "",
+        description: refused ? "Unavailable" : pkg.source || "",
         run: [],
         provider: "",
         aliases: [],
         requires: [],
-        reason: refused ? "The theme judge refused this package: " + (pkg.reason || "unknown") : "",
+        reason: refused ? "This theme is unavailable. Open Themes to check it or choose another theme." : "",
         tui: "",
         tuiGroup: "",
         tuiKey: "",

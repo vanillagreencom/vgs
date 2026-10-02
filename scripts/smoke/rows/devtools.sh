@@ -56,9 +56,8 @@ window_shown() { [[ $(ipc smoke instanceGeometry window vgs.devtools) != absent 
 section_titles() { ipc smoke itemTexts window vgs.devtools SectionHeader | py_reply 'import json,sys; print(json.dumps([t[0] for t in json.load(sys.stdin)]))'; }
 # The texts the first row drawing NAME draws, as JSON, or null.
 row_texts() { ipc smoke itemTexts window vgs.devtools ToolRow | py_reply 'import json,sys; r=[t for t in json.load(sys.stdin) if t and t[0] == sys.argv[1]]; print(json.dumps(r[0] if r else None, ensure_ascii=False))' "$1"; }
-# The VGS row's texts with its error line, which names the sandbox's
-# path, read as `error=<key>`.
-vgs_texts() { row_texts VGS | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps(None if r is None else [t if not t.startswith("method=") else "error=" + t.split(" ")[0] for t in r], ensure_ascii=False))'; }
+# The VGS row's texts, including its plain error line.
+vgs_texts() { row_texts VGS; }
 # The ended record the presenter of KEY's last run wrote, by file name, or
 # `none`: the presenter writes it when it exits and keeps only the newest.
 ended_record() { local stem="${1/\//@}" f found=none; for f in "$rt_dir/vgs/tui/$stem@"*.ended.json; do [[ -e $f ]] && found="${f##*/}"; done; echo "$found"; }
@@ -140,17 +139,13 @@ expect_poll "the Dev Tools window is gone after Escape-equivalent hide" hidden w
 expect "IPC open summons the window again after the keyboard path" ok devtools open
 expect_poll "the window is shown again after the keyboard path" shown window_shown
 expect_poll "the window draws the VGS section and every catalog section in order" \
-  '["VGS", "Agents", "Apps", "CLI tools", "Languages", "Editors", "Databases", "Terminals", "Other mise tools"]' section_titles
-# The error line is longer than the row: it shows one elided line and a
-# Details button, which shows the whole line in a CodeLine to copy.
-expect_poll "the VGS row names the version and the install method it could not read" \
-  "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" error=method=unknown Details Unknown)" vgs_texts
-vgs_error_lines() { ipc smoke itemTexts window vgs.devtools CodeLine | py_reply 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r and r[0].startswith("method=")))'; }
-expect "the VGS row keeps its detail folded" 0 vgs_error_lines
-click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow VGS Button Details || fail "the click on the VGS row's Details failed"
-expect_poll "Details shows the whole error line to copy" 1 vgs_error_lines
-click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow VGS Button "Hide details" || fail "the click on the VGS row's Hide details failed"
-expect_poll "Hide details folds the error line again" 0 vgs_error_lines
+  '["VGS", "Agents", "Apps", "Command-line tools", "Languages", "Editors", "Databases", "Terminals", "Other tools"]' section_titles
+# The error fits at the window's width, so no Details button is drawn.
+# This wide reading controls the narrow disclosure check below.
+expect_poll "the wide VGS row shows its whole error without Details" \
+  "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" "The check failed. Open Dev Tools again after 10 minutes to retry." Unknown)" vgs_texts
+vgs_error_lines() { ipc smoke itemTexts window vgs.devtools CodeLine | py_reply 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r and r[0] == "The check failed. Open Dev Tools again after 10 minutes to retry."))'; }
+expect "the wide VGS row keeps its detail folded" 0 vgs_error_lines
 # The window's insets: the content starts, at the VGS section's heading,
 # the same distance in from the window's left side as the VGS row's last
 # chip ends from its right side, within one pixel. The control moves the
@@ -194,14 +189,40 @@ expect "the window hides before the narrow monitor" ok ipc shell hide window vgs
 expect_poll "the window is gone before the narrow monitor" hidden window_shown
 narrow_monitor="$(first_name)" || fail "the monitor is unreadable"
 narrow_main_mode="$(first_mode)" || fail "the monitor's mode is unreadable"
+narrow_saved_w="$mon_w" narrow_saved_h="$mon_h"
 hold_mode "the nested compositor makes its monitor narrower than the window" "$narrow_monitor" 360x720
+mon_w=360 mon_h=720
 expect_poll "the monitor is 360 logical pixels wide" 360 first_width
 expect "IPC open summons the window on the narrow monitor" ok devtools open
 expect_poll "the window is shown on the narrow monitor" shown window_shown
 expect_poll "the other mise tool's actions move under its name on a narrow monitor" under actions_place github:acme/extra Update
+# The same error clips here. Details must expose the whole line for copying.
+expect_poll "the narrow VGS row offers Details for its clipped error" \
+  "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" "The check failed. Open Dev Tools again after 10 minutes to retry." Details Unknown)" vgs_texts
+expect "the narrow VGS row keeps its detail folded" 0 vgs_error_lines
+# The narrow header can put Details below the body viewport. Reveal that
+# exact row's button, then press in the application window's coordinates.
+# The unique-button assertion makes its lookup unambiguous.
+devtools_details_press() {
+  local shown count
+  count="$(ipc smoke itemTexts window vgs.devtools Button | py_reply 'import json,sys; print(sum(1 for row in json.load(sys.stdin) if sys.argv[1] in row))' "$1")" || return 1
+  [[ $count == 1 ]] || { echo "devtools_details_press: buttons=$count label=$1" >&2; return 1; }
+  shown="$(ipc smoke revealScopedText window vgs.devtools ToolRow VGS Button "$1")" || return 1
+  [[ $shown =~ ^[0-9.]+$ ]] || { echo "devtools_details_press: reveal=$shown label=$1" >&2; return 1; }
+  click_scoped_in "window:Dev Tools" window vgs.devtools ToolRow VGS Button "$1"
+}
+devtools_details_press Details || fail "the click on the VGS row's Details failed"
+expect_poll "Details shows the whole error line to copy" 1 vgs_error_lines
+expect_poll "the expanded VGS row offers Hide details" \
+  "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" "The check failed. Open Dev Tools again after 10 minutes to retry." "Hide details" Unknown)" vgs_texts
+devtools_details_press "Hide details" || fail "the click on the VGS row's Hide details failed"
+expect_poll "Hide details folds the error line again" 0 vgs_error_lines
+expect_poll "the folded narrow VGS row offers Details again" \
+  "$(texts VGS "$(cat "$repo/VERSION") · Unknown install" "The check failed. Open Dev Tools again after 10 minutes to retry." Details Unknown)" vgs_texts
 expect "the narrow window hides" ok ipc shell hide window vgs.devtools
 expect_poll "the narrow window is gone" hidden window_shown
 release_mode "the nested compositor restores its monitor's mode" "$narrow_monitor" "$narrow_main_mode"
+mon_w="$narrow_saved_w" mon_h="$narrow_saved_h"
 expect_poll "the monitor has its width back" "$mon_w" first_width
 expect "IPC open summons the window again at its width" ok devtools open
 expect_poll "the window is shown again" shown window_shown
@@ -222,10 +243,10 @@ expect_poll "the list read after the run shows the agent installed" "$(texts "$a
 # The window's switch writes writeLaunchers; the service runs the launcher
 # verb it picks, so the agent's launcher is written and then removed.
 expect "the window scrolls to its switch" scrolled scroll_bottom
-click_in "window:Dev Tools" window vgs.devtools Switch "Write launchers" || fail "the click on the launcher switch failed"
+click_in "window:Dev Tools" window vgs.devtools Switch "Create tool launchers" || fail "the click on the launcher switch failed"
 expect_poll "turning launchers on writes the agent's launcher" "# vgs.devtools launcher" launcher_state "$agent_command"
 expect "the window scrolls to its switch again" scrolled scroll_bottom
-click_in "window:Dev Tools" window vgs.devtools Switch "Write launchers" || fail "the second click on the launcher switch failed"
+click_in "window:Dev Tools" window vgs.devtools Switch "Create tool launchers" || fail "the second click on the launcher switch failed"
 expect_poll "turning launchers off removes it" absent launcher_state "$agent_command"
 
 # The VGS section: a plugin's missing requirement, listed once enabling
@@ -264,13 +285,13 @@ expect "enabling Settings is allowed" ok ipc shell setPluginEnabled vgs.settings
 expect_poll "the Settings service is built" True record_exists vgs.settings
 expect "Settings opens the Dev Tools page" ok ipc vgs.settings invoke open '{"plugin":"vgs.devtools"}'
 # The sandbox's tree is no install VGS knows, so the self-status the
-# service reads reports its method unknown, and Checks names that.
-checks_text="vgsh self status failed: method=unknown path=$(readlink -f -- "$repo"); a count a failed check feeds keeps its last answer"
+# service reads reports its method unknown, and Checks reports a failure.
+checks_text="Checks failed"
 if dev_installed="$(installed_count)" && dev_missing="$(missing_count)"; then
   expect_poll "the manager row carries the published status" \
-    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "reported", {"tone": "ok", "text": "2026.9.9"}, "success", "vgsh pkg run install mise"], ["Checks", "reported", {"tone": "warning", "text": sys.argv[3]}, "warning", ""], ["Tools installed", "reported", int(sys.argv[1]), "", ""], ["Updates available", "reported", 0, "", ""], ["VGS requirements missing", "reported", int(sys.argv[2]), "", ""]]))' "$dev_installed" "$dev_missing" "$checks_text")" status_of vgs.devtools
+    "$(python3 -c 'import json,sys; print(json.dumps([["Tool manager", "reported", {"tone": "ok", "text": "2026.9.9"}, "success", "vgsh pkg run install mise"], ["Checks", "reported", {"tone": "warning", "text": sys.argv[3]}, "warning", ""], ["Tools installed", "reported", int(sys.argv[1]), "", ""], ["Tool updates", "reported", 0, "", ""], ["Missing tools", "reported", int(sys.argv[2]), "", ""]]))' "$dev_installed" "$dev_missing" "$checks_text")" status_of vgs.devtools
   expect_poll "the page draws each status row, the catalog data not" \
-    "$(python3 -c 'import json,sys; print(json.dumps([["mise", "2026.9.9", "Installs, updates and removes every tool the Dev Tools window lists", "Show command"], ["Checks", sys.argv[3], "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"], ["Tools installed", sys.argv[1]], ["Updates available", "0", "Tools mise can update, as mise outdated counts them"], ["VGS requirements missing", sys.argv[2], "Commands VGS or an enabled plugin runs that are not on PATH; the VGS section of the Dev Tools window installs each"]]))' "$dev_installed" "$dev_missing" "$checks_text")" drawn_status
+    "$(python3 -c 'import json,sys; print(json.dumps([["Tool manager", "2026.9.9", "mise manages the developer tools", "Show command"], ["Checks", sys.argv[3], "Open Dev Tools again after 10 minutes to retry all checks."], ["Tools installed", sys.argv[1]], ["Tool updates", "0"], ["Missing tools", sys.argv[2], "Install these tools from the VGS section in Dev Tools"]]))' "$dev_installed" "$dev_missing" "$checks_text")" drawn_status
   expect "no Dev Tools status row takes an edit" '[[],[],[],[],[]]' ipc smoke statusRowInputs window vgs.settings
   # Install mise, D061: the entry declares the action, which a present
   # mise does not call for, so the page draws no button and the manager

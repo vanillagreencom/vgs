@@ -1013,17 +1013,32 @@ function formatDuration(ms) {
     return Math.floor(minutes / 60) + " h " + (minutes % 60) + " min";
 }
 
-// Text for a notification body, which the server reads as markup.
-function escapeMarkup(text) {
-    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// bin/automations supplies the keyed reasons. UI callers keep the raw
+// failure in the log and use this table for notices and status.
+var FAILURE_TEXT = [
+    [/run=busy/, "This automation is already running. Wait for it to finish."],
+    [/id=unknown|id: unknown/, "This automation no longer exists. Choose another automation."],
+    [/store=|store:/, "The saved automations could not be read. Open Automations to check them."],
+    [/directory=/, "The work folder is unavailable. Choose another folder in Automations."],
+    [/shell=|spawn=|start=failed/, "The automation could not start. Check its command in Automations."],
+    [/definition=|definition:/, "The automation could not be saved. Check its fields in Automations."],
+    [/scheduler=none|systemctl=|systemd-run=|crontab=/, "The scheduler is unavailable. Open Automations to check its status."],
+    [/schedule|calendar=/, "The schedule is invalid. Check its dates and times in Automations."],
+    [/answer=not-json|file=unreadable/, "The automation result could not be read. Open Automations to try again."]
+];
+
+function failureText(reason) {
+    for (var i = 0; i < FAILURE_TEXT.length; i++)
+        if (FAILURE_TEXT[i][0].test(String(reason))) return FAILURE_TEXT[i][1];
+    return "The automation request failed. Open Automations to try again.";
 }
 
 // Why a run failed, in one line.
 function failureLine(rec) {
     switch (rec.outcome) {
-    case "failed": return rec.signal !== null ? "Killed by " + rec.signal : "Exit code " + rec.exitCode;
+    case "failed": return rec.signal !== null ? "The automation was stopped. Open Automations to read its output." : "The automation failed. Open Automations to read its output.";
     case "timeout": return "Timed out after " + formatDuration(rec.durationMs);
-    case "failed-start": return "Failed to start: " + rec.reason;
+    case "failed-start": return failureText(rec.reason);
     default: throw new Error("automations: outcome " + JSON.stringify(rec.outcome) + " is not a failure");
     }
 }
@@ -1037,15 +1052,14 @@ function failureLine(rec) {
 function notificationFor(event, automation, rec) {
     if (event === "start") {
         if (automation.notifyEveryRun !== true) return null;
-        return { summary: automation.name + " started", body: escapeMarkup(automation.command), urgency: "low", icon: "play", tone: "warning", click: "none", open: "" };
+        return { summary: automation.name + " started", body: "The automation is running.", urgency: "low", icon: "play", tone: "warning", click: "none", open: "" };
     }
     if (event !== "end") throw new Error("automations: notification event " + JSON.stringify(event) + " is not start or end");
     if (rec.outcome === "succeeded") {
         if (automation.notifyEveryRun !== true) return null;
         return { summary: automation.name + " finished", body: "Finished in " + formatDuration(rec.durationMs), urgency: "low", icon: "circle-check", tone: "success", click: "open", open: rec.transcript };
     }
-    var body = escapeMarkup(failureLine(rec));
-    if (rec.snippet !== "") body += "\n" + escapeMarkup(rec.snippet);
+    var body = failureLine(rec);
     return { summary: automation.name + " failed", body: body, urgency: "critical", icon: "circle-x", tone: "danger", click: "open", open: rec.transcript };
 }
 
@@ -1112,16 +1126,16 @@ function statusValues(listed) {
     }
     var scheduler;
     switch (listed.scheduler) {
-    case "systemd": scheduler = { tone: "ok", text: "systemd user timers" }; break;
-    case "cron": scheduler = { tone: "warning", text: "cron: no systemd user manager answered" }; break;
-    case "none": scheduler = { tone: "danger", text: "None: neither systemctl --user nor crontab answered" }; break;
+    case "systemd": scheduler = { tone: "ok", text: "Ready" }; break;
+    case "cron": scheduler = { tone: "warning", text: "Using the backup scheduler" }; break;
+    case "none": scheduler = { tone: "danger", text: "No scheduler is available" }; break;
     default: throw new Error("automations: scheduler " + JSON.stringify(listed.scheduler) + " is not one of " + SCHEDULERS.join(", "));
     }
     var linger;
     switch (listed.linger) {
     case "yes": linger = { tone: "ok", text: "Automations run while you are logged out" }; break;
     case "no": linger = { tone: "warning", text: "Automations run only while you are logged in", action: true }; break;
-    case "unknown": linger = { tone: "info", text: "loginctl did not answer" }; break;
+    case "unknown": linger = { tone: "info", text: "Could not check whether automations run while logged out" }; break;
     default: throw new Error("automations: linger " + JSON.stringify(listed.linger) + " is not one of " + LINGER_STATES.join(", "));
     }
     return {
@@ -1167,7 +1181,7 @@ function withOutcome(failures, operation, failure) {
 // The Engine status value: the first operation's failure, else ok.
 function engineProblem(failures) {
     for (var i = 0; i < ENGINE_OPERATIONS.length; i++)
-        if (hasOwn(failures, ENGINE_OPERATIONS[i])) return { tone: "danger", text: failures[ENGINE_OPERATIONS[i]] };
+        if (hasOwn(failures, ENGINE_OPERATIONS[i])) return { tone: "danger", text: failureText(failures[ENGINE_OPERATIONS[i]]) };
     return { tone: "ok", text: "None" };
 }
 

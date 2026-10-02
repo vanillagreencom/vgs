@@ -30,15 +30,16 @@ function verify(model) {
 
     const policy = { deny: 10, unlockSeconds: 120 };
     const FAILURES = [
+        ["raw PAM diagnostic", 2, "pam: result=failed", policy, "Could not unlock the screen. Check your password and try again."],
         ["the first failure", 1, "", null, "Wrong password"],
         ["later failures count", 3, "", policy, "Wrong password (3)"],
-        ["PAM's message wins before the pause", 2, "Authentication token is no longer valid.", policy, "Authentication token is no longer valid."],
+        ["PAM's message wins before the pause", 2, "Authentication token is no longer valid.", policy, "Your password has expired. Contact your system administrator."],
         ["a blank message is none", 1, "  ", policy, "Wrong password"],
-        ["the deny-th failure tells the pause", 10, "", policy, "Too many wrong passwords: wait 2 minutes before the next try"],
-        ["the pause wins over PAM's message", 11, "Authentication failure", policy, "Too many wrong passwords: wait 2 minutes before the next try"],
+        ["the deny-th failure tells the pause", 10, "", policy, "Too many wrong passwords. Wait 2 minutes before you try again."],
+        ["the pause wins over PAM's message", 11, "Authentication failure", policy, "Too many wrong passwords. Wait 2 minutes before you try again."],
         ["one failure short is the count", 9, "", policy, "Wrong password (9)"],
-        ["a one-minute pause", 3, "", { deny: 3, unlockSeconds: 60 }, "Too many wrong passwords: wait a minute before the next try"],
-        ["a pause in seconds", 3, "", { deny: 3, unlockSeconds: 90 }, "Too many wrong passwords: wait 90 seconds before the next try"],
+        ["a one-minute pause", 3, "", { deny: 3, unlockSeconds: 60 }, "Too many wrong passwords. Wait a minute before you try again."],
+        ["a pause in seconds", 3, "", { deny: 3, unlockSeconds: 90 }, "Too many wrong passwords. Wait 90 seconds before you try again."],
         ["no policy is no pause", 20, "", null, "Wrong password (20)"]
     ];
     for (const [label, failures, message, pol, want] of FAILURES) assert.equal(model.failureText(failures, message, pol), want, label);
@@ -62,9 +63,9 @@ function verify(model) {
         assert.equal(value.tone, tone, state);
         assert.ok(value.text.length > 0 && value.text.length <= 200, `${state}: a state text fits the status type`);
     }
-    assert.match(model.sleepStatus("failed", 7).text, /exited 7;/, "a failure names the exit code");
-    assert.match(model.sleepStatus("failed", "not-started").text, /could not start/, "a hook that could not start says so");
-    assert.match(model.sleepStatus("missing", ["systemd-inhibit", "busctl"]).text, /^Needs systemd-inhibit, busctl /, "missing names each command");
+    assert.doesNotMatch(model.sleepStatus("failed", 7).text, /exit|7|=/, "the sleep status hides exit codes");
+    assert.match(model.sleepStatus("failed", "not-started").text, /Lock the screen before sleep/, "a hook failure names the safe action");
+    assert.match(model.sleepStatus("missing", ["systemd-inhibit", "busctl"]).text, /Install them from the notice/, "missing tools name the install action");
     same(model.SLEEP_COMMANDS, ["systemd-inhibit", "dbus-monitor", "busctl"], "the hook's commands");
 
     assert.equal(model.lastSleep("secure").status.tone, "ok", "a confirmed lock is ok");
@@ -78,7 +79,7 @@ function verify(model) {
         assert.equal(value.toast.duration, 0, `${reason}: the toast stays until dismissed`);
         assert.ok(value.toast.message.length > 0, `${reason}: the user is told why`);
     }
-    assert.match(model.lastSleep("timeout").toast.message, /not confirmed/, "a timeout says the lock was not confirmed");
+    assert.match(model.lastSleep("timeout").status.text, /before VGS confirmed the lock/, "a timeout says the lock was not confirmed");
     assert.throws(() => model.lastSleep("other"), /lastSleep: reason "other"/, "an unknown reason throws");
 
     same(model.lockStatus(false), { tone: "ok", text: "Ready" }, "no refusal is ready");
@@ -90,7 +91,7 @@ function verify(model) {
 verify(load(file));
 
 const CONTROLS = [
-    ["PAM's message wins", 'if (text !== "") return text;', ""],
+    ["PAM diagnostics stay out of user text", 'return "Could not unlock the screen. Check your password and try again.";', 'return text;'],
     ["the pause starts at deny", "failures >= policy.deny", "failures > policy.deny"],
     ["the pause is read from the authfail line", "!/\\bauthfail\\b/.test(line)", "false"],
     ["comments are no policy", 'var line = lines[i].replace(/#.*$/, "");', "var line = lines[i];"],
@@ -100,12 +101,9 @@ const CONTROLS = [
     ["a released line names its reason", "released reason=(secure|refused|timeout|closed)$", "released reason=(secure|refused|timeout|closed|other)$"],
     ["a refused release is read", "released reason=(secure|refused|timeout|closed)$", "released reason=(secure|timeout|closed)$"],
     ["the budget is whole digits", "budget_ms=([0-9]+)$", "budget_ms=([0-9]*)$"],
-    ["a failure names its code", '"Unavailable: the sleep hook exited " + detail + "; the session', '"Unavailable: the sleep hook exited; the session'],
-    ["a hook that could not start says so", 'detail === "not-started" ?', "false ?"],
-    ["missing names the commands", '"Needs " + detail.join(", ")', '"Needs " + "a command"'],
     ["a timeout is danger", 'case "timeout": return { status: { tone: "danger"', 'case "timeout": return { status: { tone: "ok"'],
-    ["a timeout tells the user", 'toast: warn("The lock was not confirmed', 'toast: null, w: warn("The lock was not confirmed'],
-    ["a confirmed lock shows no toast", 'last suspend" }, toast: null };', 'last suspend" }, toast: warn("x") };'],
+    ["a timeout tells the user", 'case "timeout": return { status: { tone: "danger", text: "The computer slept before VGS confirmed the lock" }, toast: warn(', 'case "timeout": return { status: { tone: "danger", text: "The computer slept before VGS confirmed the lock" }, toast: null, w: warn('],
+    ["a confirmed lock shows no toast", 'last sleep" }, toast: null };', 'last sleep" }, toast: warn("x") };'],
     ["the toast stays until dismissed", 'icon: "lock-open", duration: UNTIL_DISMISSED });', 'icon: "lock-open" });'],
     ["an unknown reason throws", '    throw new Error("lastSleep: reason "', '    return null;\n    throw new Error("lastSleep: reason "'],
     ["a refusal warns", 'if (refused !== true) return { tone: "ok", text: "Ready" };', 'return { tone: "ok", text: "Ready" };'],

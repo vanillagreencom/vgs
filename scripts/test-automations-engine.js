@@ -248,7 +248,7 @@ const CASES = {
         assert.equal(manual(w, engine, id).status, 1);
         const rec = ended(w, id);
         same([rec.outcome, rec.exitCode, rec.snippet], ["failed", 3, "disk full"]);
-        same(calls(w, "notify-send"), [["--app-name=Automations", "--urgency=critical", "--print-id", "--hint=string:x-vgs-icon:circle-x", "--hint=string:x-vgs-tone:danger", "--hint=string:x-vgs-click:open", "--hint=string:x-vgs-open:" + rec.transcript, "--", "Nightly <sync> failed", "Exit code 3\ndisk full"]]);
+        same(calls(w, "notify-send"), [["--app-name=Automations", "--urgency=critical", "--print-id", "--hint=string:x-vgs-icon:circle-x", "--hint=string:x-vgs-tone:danger", "--hint=string:x-vgs-click:open", "--hint=string:x-vgs-open:" + rec.transcript, "--", "Nightly <sync> failed", "The automation failed. Open Automations to read its output."]]);
     },
 
     "notifyEveryRun sends the start, then replaces it with the finish"(engine) {
@@ -257,7 +257,7 @@ const CASES = {
         assert.equal(manual(w, engine, id).status, 0);
         const rec = ended(w, id);
         same(calls(w, "notify-send"), [
-            ["--app-name=Automations", "--urgency=low", "--print-id", "--hint=string:x-vgs-icon:play", "--hint=string:x-vgs-tone:warning", "--hint=string:x-vgs-click:none", "--", "Job started", "echo done"],
+            ["--app-name=Automations", "--urgency=low", "--print-id", "--hint=string:x-vgs-icon:play", "--hint=string:x-vgs-tone:warning", "--hint=string:x-vgs-click:none", "--", "Job started", "The automation is running."],
             ["--app-name=Automations", "--urgency=low", "--print-id", "--hint=string:x-vgs-icon:circle-check", "--hint=string:x-vgs-tone:success", "--hint=string:x-vgs-click:open", "--hint=string:x-vgs-open:" + rec.transcript, "--replace-id=41", "--", "Job finished", "Finished in 0 s"]
         ]);
     },
@@ -289,7 +289,7 @@ const CASES = {
         assert.equal(manual(w, engine, id).status, 1);
         const rec = ended(w, id);
         same([rec.outcome, rec.exitCode, rec.reason], ["failed-start", null, "directory=ENOENT path=" + path.join(w.root, "gone")]);
-        assert.equal(calls(w, "notify-send")[0].slice(-1)[0], "Failed to start: directory=ENOENT path=" + path.join(w.root, "gone"));
+        assert.equal(calls(w, "notify-send")[0].slice(-1)[0], "The work folder is unavailable. Choose another folder in Automations.");
     },
 
     "a refused store is a failed start the user is told of"(engine) {

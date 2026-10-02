@@ -128,7 +128,7 @@ updates_sources() { updates_values | py_reply 'import json,sys; print(json.dumps
 updates_source_names() { updates_values | py_reply 'import json,sys; print(json.dumps([s["source"] for s in json.load(sys.stdin).get("sources", [])]))'; }
 updates_state_text() { updates_values | py_reply 'import json,sys; print(json.load(sys.stdin).get("checkState", {}).get("text", ""))'; }
 # Whether the check state names the failing system source.
-updates_names_system_failure() { [[ $(updates_state_text) == "System: exit=1"* ]] && echo True || echo False; }
+updates_names_system_failure() { [[ $(updates_state_text) == "System: The update check failed. Select Refresh to try again." ]] && echo True || echo False; }
 # Whether the failing system row stays listed, with no count, beside AUR's.
 updates_keeps_failed_row() { updates_sources | py_reply 'import json,sys; r=json.load(sys.stdin); print(any(s[0] == "pacman" and s[1] is None and s[2] for s in r) and ["aur", 1, None] in r)'; }
 # SOURCE's [count, listed packages, more] in the accepted record.

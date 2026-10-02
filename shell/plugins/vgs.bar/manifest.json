@@ -4,7 +4,7 @@
   "name": "Bar",
   "version": "0.3.0",
   "author": "VanillaGreen",
-  "description": "The top bar. Draws its own workspaces and clock, and lays out plugin widgets in left, center and right sections.",
+  "description": "Shows workspaces, the clock and plugin buttons at the top of each screen.",
   "license": "MIT",
   "icon": "panel-top",
   "kinds": [

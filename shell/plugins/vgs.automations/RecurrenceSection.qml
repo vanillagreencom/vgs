@@ -13,7 +13,7 @@ Section {
 
     width: parent ? parent.width : implicitWidth
     title: "Repeats"
-    description: "Preset choices stay short. Custom exposes the full recurrence rule."
+    description: "Choose a schedule or select Custom to set your own."
     headerInset: 0
 
     readonly property var presets: View.presetOptions(draft.start, Engine)

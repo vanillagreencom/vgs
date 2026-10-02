@@ -146,7 +146,7 @@ const ROWS = [
         fs.writeFileSync(path.join(t, "shell/plugins/vgs.planted/manifest.json"), "{}\n");
     }, 1, tree => [`plugin README.md:${lineOf(tree, "## Shipped plugins")} missing=shell/plugins/vgs.planted`]],
     ["a row naming a missing plugin is refused", t => replaceIn(t, "README.md", "(shell/plugins/vgs.gallery/README.md)", "(shell/plugins/vgs.gone/README.md)"),
-        1, tree => [`plugin README.md:${lineOf(tree, "| [Gallery](shell/plugins/vgs.gone/README.md)", true)} link=shell/plugins/vgs.gone/README.md reason=not-a-plugin`,
+        1, tree => [`plugin README.md:${lineOf(tree, "| [VGS Components](shell/plugins/vgs.gone/README.md)", true)} link=shell/plugins/vgs.gone/README.md reason=not-a-plugin`,
             `plugin README.md:${lineOf(tree, "## Shipped plugins")} missing=shell/plugins/vgs.gallery`]],
     ["a row whose link target is gone is refused", t => fs.rmSync(path.join(t, "shell/plugins/vgs.bar/README.md")),
         1, tree => [`plugin README.md:${lineOf(tree, "| [Bar](", true)} link=shell/plugins/vgs.bar/README.md reason=missing-target`]],

@@ -4,7 +4,7 @@
   "name": "Updates",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Checks system, VGS, plugin, theme and mise updates from one service, shows them in a bar widget and its flyout, and runs every update in one floating TUI.",
+  "description": "Check and install updates for your system, VGS, plugins, themes and developer tools.",
   "license": "MIT",
   "icon": "refresh-cw",
   "kinds": ["service", "bar-widget", "panel"],
@@ -12,10 +12,10 @@
   "capabilities": ["ipc", "shortcut", "status", "surfaces", "tui"],
   "defaultSection": "right",
   "requirements": [
-    { "command": "checkupdates", "packages": { "pacman": "pacman-contrib" }, "optional": true, "purpose": "Counts Arch repository updates without root" },
-    { "command": "snapper", "packages": { "pacman": "snapper" }, "optional": true, "purpose": "Takes a snapshot before the update TUI changes system packages" },
-    { "command": "timeshift", "packages": { "pacman": "timeshift" }, "optional": true, "purpose": "Takes a snapshot before the update TUI changes system packages when snapper is absent" },
-    { "command": "less", "packages": { "pacman": "less", "apt": "less", "dnf": "less", "xbps": "less", "emerge": "sys-apps/less", "nix": "less" }, "optional": true, "purpose": "Shows the last update log from the flyout" }
+    { "command": "checkupdates", "packages": { "pacman": "pacman-contrib" }, "optional": true, "purpose": "Checks Arch system updates" },
+    { "command": "snapper", "packages": { "pacman": "snapper" }, "optional": true, "purpose": "Saves a system snapshot before updates" },
+    { "command": "timeshift", "packages": { "pacman": "timeshift" }, "optional": true, "purpose": "Saves a system snapshot when Snapper is unavailable" },
+    { "command": "less", "packages": { "pacman": "less", "apt": "less", "dnf": "less", "xbps": "less", "emerge": "sys-apps/less", "nix": "less" }, "optional": true, "purpose": "Shows the last update log" }
   ],
   "tui": {
     "update": { "script": "tui/update.sh", "title": "Update everything", "size": "tall", "entry": { "label": "Update everything", "icon": "refresh-cw", "group": "Update" } },
@@ -31,13 +31,13 @@
     "placement": "center"
   },
   "schema": {
-    "intervalHours": { "type": "number", "label": "Check interval", "description": "Hours between automatic update checks", "min": 1, "max": 48, "step": 1, "unit": "hours", "group": "Cadence" },
-    "hideWhenCurrent": { "type": "boolean", "label": "Hide when current", "description": "Hide the bar icon while the last check succeeded and no source has updates; a failed, stale or running check still shows", "group": "Display" },
+    "intervalHours": { "type": "number", "label": "Check interval", "description": "Time between automatic update checks", "min": 1, "max": 48, "step": 1, "unit": "hours", "group": "Schedule" },
+    "hideWhenCurrent": { "type": "boolean", "label": "Hide when up to date", "description": "Hide the bar icon only when a recent check finds no updates", "group": "Display" },
     "aurCommand": {
       "type": "string",
       "label": "AUR command",
-      "description": "Which AUR update command the update TUI runs",
-      "group": "Update TUI",
+      "description": "Choose how to update Arch User Repository packages",
+      "group": "Update options",
       "allowCustom": true,
       "presets": [
         { "value": "", "label": "Automatic" },
@@ -45,9 +45,9 @@
         { "value": "yay -Sua" }
       ]
     },
-    "snapshot": { "type": "enum", "label": "Snapshot", "description": "Automatic snapshots when the update TUI can find a snapshot tool", "options": ["auto", "off"], "group": "Update TUI" },
-    "trustPluginUpdates": { "type": "boolean", "label": "Trust plugin updates", "description": "Let the update TUI pass --yes to plugin and theme updates, so it shows their diffs without asking", "group": "Update TUI" },
-    "placement": { "type": "enum", "label": "Flyout placement", "description": "Where the updates flyout opens when summoned without its bar icon", "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"], "group": "Display" }
+    "snapshot": { "type": "enum", "label": "System snapshot", "description": "Save a system snapshot before updates when a snapshot tool is available", "options": ["auto", "off"], "group": "Update options" },
+    "trustPluginUpdates": { "type": "boolean", "label": "Trust plugin and theme updates", "description": "Show plugin and theme changes and apply them without confirmation", "group": "Update options" },
+    "placement": { "type": "enum", "label": "Panel position", "description": "Where the updates panel opens when you use its shortcut", "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"], "group": "Display" }
   },
   "hyprland": {
     "binds": [

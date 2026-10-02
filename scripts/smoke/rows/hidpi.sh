@@ -99,18 +99,18 @@ if ok:
 print(ok)'
       }
       expect "the scale-2 gallery summons over IPC" ok ipc shell summon window vgs.gallery '{}'
-      expect_poll "the scale-2 gallery maps one window" 1 window_count Gallery
+      expect_poll "the scale-2 gallery maps one window" 1 window_count "VGS Components"
       expect_poll "the scale-2 gallery scrolls the ImageText sample into view" True hidpi_image_text_revealed
       expect_poll "the scale-2 gallery ImageText sample loads at device pixels" True hidpi_image_text_ready
-      render expect_poll "the scale-2 gallery ImageText sample draws magenta emoji pixels" True image_text_magenta_drawn window:Gallery window vgs.gallery '' 0
-      hidpi_image_text_pixels="$(image_text_magenta_count window:Gallery window vgs.gallery '' 0)" || hidpi_image_text_pixels=""
+      render expect_poll "the scale-2 gallery ImageText sample draws magenta emoji pixels" True image_text_magenta_drawn "window:VGS Components" window vgs.gallery '' 0
+      hidpi_image_text_pixels="$(image_text_magenta_count "window:VGS Components" window vgs.gallery '' 0)" || hidpi_image_text_pixels=""
       if [[ $hidpi_image_text_pixels == \{* ]]; then
         py_reply 'import json,sys
 row=json.load(sys.stdin)
 print("  image-text-magenta scale=2 count=%d threshold=%d deviceSize=%d geometry=%s" % (row["count"], row["threshold"], row["deviceSize"], row["geometry"]))' <<<"$hidpi_image_text_pixels"
       fi
       expect "hiding the scale-2 gallery is allowed" ok ipc shell hide window vgs.gallery
-      expect_poll "the scale-2 gallery window is gone" 0 window_count Gallery
+      expect_poll "the scale-2 gallery window is gone" 0 window_count "VGS Components"
       expect "the start's follow ends before the logical-pixel control" idle theme_idle
       # Control: a copy of the background that decodes at logical pixels.
       plugin_qml="$repo/shell/plugins/vgs.themes/Background.qml"

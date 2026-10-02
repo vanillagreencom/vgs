@@ -285,6 +285,9 @@ fi
 summoned_kind() { # ID
   python3 -c 'import json,sys; print("window" if "window" in json.load(open(sys.argv[1]))["kinds"] else "panel")' "$tree/shell/plugins/$1/manifest.json"
 }
+summoned_name() { # ID
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$tree/shell/plugins/$1/manifest.json"
+}
 summoned_surface() { # KIND TITLE
   if [[ $1 == window ]]; then echo "window:$2"; else echo vgs:panel; fi
 }
@@ -292,7 +295,8 @@ surface_count() { # SURFACE
   if [[ $1 == window:* ]]; then window_count "${1#window:}"; else layer_count "$1"; fi
 }
 gallery_kind="$(summoned_kind vgs.gallery)" || fail "the gallery's manifest is unreadable"
-gallery_surface="$(summoned_surface "$gallery_kind" Gallery)"
+gallery_name="$(summoned_name vgs.gallery)" || fail "the gallery's name is unreadable"
+gallery_surface="$(summoned_surface "$gallery_kind" "$gallery_name")"
 settings_kind=panel
 if [[ $manager_scene == settings ]]; then settings_kind="$(summoned_kind vgs.settings)" || fail "the Settings manifest is unreadable"; fi
 settings_surface="$(summoned_surface "$settings_kind" Settings)"

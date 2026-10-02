@@ -116,10 +116,10 @@ Item {
         stepProblem = "";
         const reply = shell.theme.background(direction, result => {
             root.stepping = false;
-            if (result.state !== "ok") root.stepProblem = "The wallpaper step failed: " + result.reason;
+            if (result.state !== "ok") root.stepProblem = "The wallpaper could not be changed. " + BrowserLogic.reasonText(result.reason);
         });
         if (reply !== "ok") {
-            stepProblem = reply;
+            stepProblem = BrowserLogic.reasonText(reply);
             console.warn("themes panel: " + reply);
             return reply;
         }
@@ -129,7 +129,7 @@ Item {
 
     function addFromUrl() {
         const reply = shell.tui.open("core/theme-add");
-        tuiProblem = reply === "ok" ? "" : reply;
+        tuiProblem = reply === "ok" ? "" : BrowserLogic.reasonText(reply);
         if (reply !== "ok") console.warn("themes panel: " + reply);
         return reply;
     }
@@ -215,13 +215,13 @@ Item {
         const reply = shell.theme.install(name, result => {
             root.catalogAction = "";
             root.catalogActionKind = "";
-            if (result.state !== "ok") root.catalogProblem = { name: name, message: "Install failed: " + result.reason };
+            if (result.state !== "ok") root.catalogProblem = { name: name, message: BrowserLogic.problem("install", name, result) };
             root.refresh();
         });
         if (reply !== "ok") {
             catalogAction = "";
             catalogActionKind = "";
-            catalogProblem = { name: name, message: reply };
+            catalogProblem = { name: name, message: BrowserLogic.reasonText(reply) };
             console.warn("themes panel: " + reply);
         }
         return reply;
@@ -235,13 +235,13 @@ Item {
             root.catalogAction = "";
             root.catalogActionKind = "";
             if (result.state !== "ok")
-                root.catalogProblem = { name: name, message: "Wallpaper download failed: " + result.reason };
+                root.catalogProblem = { name: name, message: BrowserLogic.problem("download", name, result) };
             root.refresh();
         });
         if (reply !== "ok") {
             catalogAction = "";
             catalogActionKind = "";
-            catalogProblem = { name: name, message: reply };
+            catalogProblem = { name: name, message: BrowserLogic.reasonText(reply) };
             console.warn("themes panel: " + reply);
         }
         readLast();
@@ -269,12 +269,12 @@ Item {
         const result = last.result;
         if (result === null || result.theme !== name) return [];
         const quiet = ["written", "unchanged", "skipped"];
-        const lines = result.reason === null ? [] : [result.state + ": " + result.reason];
+        const lines = result.reason === null ? [] : [BrowserLogic.reasonText(result.reason)];
         for (const target of result.targets) {
             if (quiet.indexOf(target.state) === -1)
-                lines.push(target.name + " " + target.state + (target.reason === null ? "" : ": " + target.reason));
+                lines.push(target.name + ": " + BrowserLogic.reasonText(target.reason));
             for (const file of target.dropped === undefined ? [] : target.dropped)
-                lines.push(target.name + " dropped " + file);
+                lines.push(target.name + " uses the VGS settings for " + file);
         }
         return lines;
     }
@@ -283,7 +283,7 @@ Item {
     // the refusal a click on it was answered with.
     function linesFor(name) {
         const lines = resultLines(name);
-        if (refusal !== null && refusal.name === name) lines.push(refusal.reply);
+        if (refusal !== null && refusal.name === name) lines.push(BrowserLogic.reasonText(refusal.reply));
         return lines;
     }
 
@@ -421,7 +421,7 @@ Item {
                 role: "hint"
                 width: installedSection.width
                 visible: text !== ""
-                text: root.listReason === "" ? "" : "The theme list failed: " + root.listReason
+                text: root.listReason === "" ? "" : "The theme list is unavailable. " + BrowserLogic.reasonText(root.listReason)
                 color: Theme.color.danger
                 wrapMode: Text.Wrap
             }
@@ -458,7 +458,7 @@ Item {
                     name: modelData.name
                     source: modelData.source
                     packageState: modelData.state
-                    reason: modelData.reason === null ? "" : modelData.reason
+                    reason: modelData.reason === null ? "" : BrowserLogic.reasonText(modelData.reason)
                     swatch: modelData.state === "ok" ? root.shell.theme.swatch(modelData.name) : null
                     displayed: modelData.state === "ok" && modelData.name === Theme.name
                     modified: modelData.state === "ok" && modelData.current && root.file !== null && root.file.modified === true
@@ -480,7 +480,7 @@ Item {
                 role: "hint"
                 width: catalogSection.width
                 visible: text !== ""
-                text: root.catalogReason === "" ? "" : "The theme catalog failed: " + root.catalogReason
+                text: root.catalogReason === "" ? "" : "The theme catalog is unavailable. " + BrowserLogic.reasonText(root.catalogReason)
                 color: Theme.color.danger
                 wrapMode: Text.Wrap
             }

@@ -10,12 +10,12 @@ fi
 
 path="${1:-}"
 if [[ $path != /* || ! -f $path ]]; then
-  vgs_tui_warn "Transcript not found: ${path:-missing}"
+  vgs_tui_warn "The run output is unavailable."
   vgs_tui_close_prompt 1
   exit 1
 fi
 
-vgs_tui_step "Opening transcript"
+vgs_tui_step "Opening run output"
 if [[ -n ${EDITOR:-} ]]; then
   "$EDITOR" "$path"
 else

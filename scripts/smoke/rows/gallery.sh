@@ -8,7 +8,7 @@
 # scripts/smoke/app-window.sh), ending closed by Escape.
 set -euo pipefail
 expect "the gallery summons over IPC" ok ipc shell summon window vgs.gallery '{}'
-expect_poll "the gallery maps one window" 1 window_count Gallery
+expect_poll "the gallery maps one window" 1 window_count "VGS Components"
 expect "the gallery maps no layer surface" 0 layer_count vgs:panel
 # Every component the module's qmldir lists is drawn, read back by type
 # name; the headings have a size, so they show.
@@ -170,7 +170,7 @@ QML
 expect "the modal dialog control builds" ok ipc smoke popupLoad gallery-modal-control "$repo/shell/Core/DialogModalControl/Item.qml" window vgs.gallery '{}'
 expect "the modal dialog control takes focus" focused ipc smoke popupFocusExample gallery-modal-control "Dialog accept action"
 type_keys -k Escape || fail "Escape in the modal Gallery control failed"
-expect "control: a modal Dialog keeps Escape from closing the Gallery window" 1 window_count Gallery
+expect "control: a modal Dialog keeps Escape from closing the Gallery window" 1 window_count "VGS Components"
 expect "the modal dialog control is released" ok ipc smoke popupDrop gallery-modal-control
 rm -r -- "${repo:?}/shell/Core/DialogModalControl" || fail "removing the modal Dialog control failed"
 ipc smoke scrollTo window vgs.gallery 0 >/dev/null || fail "the gallery did not return to the top after the Tab tour"
@@ -206,7 +206,7 @@ rm -r -- "${repo:?}/shell/Core/GalleryFocusControl" || fail "removing the Galler
 gallery_sections=(Surfaces Typography Buttons Choices Inputs Groups Feedback "Voice levels" Dialogs Cards Carousel Focus "Titles and scrolling" Lists "List motion")
 gallery_stack() {
   local boxes=() title name
-  title="$(ipc smoke shownWindowGeometry window vgs.gallery Label Gallery)" || return
+  title="$(ipc smoke shownWindowGeometry window vgs.gallery Label "VGS Components")" || return
   for name in "${gallery_sections[@]}"; do boxes+=("$(ipc smoke shownWindowGeometry window vgs.gallery SectionHeader "$name")"); done
   python3 - "${1:-}" "$title" "${boxes[@]}" <<'PY'
 import json, sys
@@ -248,8 +248,8 @@ print(json.dumps({"x":x,"y":y,"boxWidth":w}))'
 }
 expect_poll "the gallery scrolls the ImageText sample into view" True image_text_revealed
 expect_poll "the gallery ImageText sample loads its pool image" True image_text_ready
-render expect_poll "the gallery ImageText sample draws magenta emoji pixels" True image_text_magenta_drawn window:Gallery window vgs.gallery '' 0
-image_text_pixels="$(image_text_magenta_count window:Gallery window vgs.gallery '' 0)" || image_text_pixels=""
+render expect_poll "the gallery ImageText sample draws magenta emoji pixels" True image_text_magenta_drawn "window:VGS Components" window vgs.gallery '' 0
+image_text_pixels="$(image_text_magenta_count "window:VGS Components" window vgs.gallery '' 0)" || image_text_pixels=""
 if [[ $image_text_pixels == \{* ]]; then
   py_reply 'import json,sys
 row=json.load(sys.stdin)
@@ -298,7 +298,7 @@ QML
 expect "the ImageText alt-only control builds" ok ipc smoke popupLoad image-text-control "$repo/shell/plugins/vgs.gallery/ImageTextControl.qml" window vgs.gallery "$(image_text_control_props)"
 # The sample's magenta fill covers much more than one fifth of its square,
 # while the alt-only text control draws no magenta image pixels.
-render expect_poll "the pixel reader rejects the alt-only ImageText control" False image_text_magenta_drawn window:Gallery window vgs.gallery image-text-control 0
+render expect_poll "the pixel reader rejects the alt-only ImageText control" False image_text_magenta_drawn "window:VGS Components" window vgs.gallery image-text-control 0
 expect "the ImageText control is released" ok ipc smoke popupDrop image-text-control
 # The cursor over the controls, with the Buttons section scrolled to the
 # top: the hand over an enabled button, switch and checkbox, and the arrow
@@ -314,7 +314,7 @@ print(len(rows)==9 and {r["tone"] for r in rows[:6]}=={"accent","info","success"
 orb_pixels() {
   local rows window sample geometry colour socket count
   rows="$(ipc smoke galleryOrbs window vgs.gallery "$1")" || return 1
-  window="$(surface_box window:Gallery)" || return 1
+  window="$(surface_box "window:VGS Components")" || return 1
   if [[ $window != \[* ]]; then printf '%s\n' "$window"; return; fi
   sample="$(py_reply 'import json,sys
 rows=json.load(sys.stdin); window=json.loads(sys.argv[1]); index=int(sys.argv[2])
@@ -399,13 +399,13 @@ render expect_poll "the pixel reader rejects the hidden shader control" False or
 expect "the orb control is released" ok ipc smoke popupDrop orb-control
 rm -r -- "${repo:?}/shell/Core/VoiceOrbControl" || fail "removing the orb control failed"
 if [[ $(ipc smoke scrollTo window vgs.gallery 0) == \[* ]] && offset="$(gallery_offset Buttons)" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
-  expect_cursor "an enabled button shows the hand" pointer window:Gallery "$(gallery_box Button Small)"
-  expect_cursor "a disabled button shows the arrow" default window:Gallery "$(gallery_box Button Disabled)"
+  expect_cursor "an enabled button shows the hand" pointer "window:VGS Components" "$(gallery_box Button Small)"
+  expect_cursor "a disabled button shows the arrow" default "window:VGS Components" "$(gallery_box Button Disabled)"
   if offset="$(gallery_offset Choices)" && [[ $(ipc smoke scrollTo window vgs.gallery "$offset") == \[* ]]; then
-  expect_cursor "an enabled switch shows the hand" pointer window:Gallery "$(gallery_box Switch Off)"
-  expect_cursor "a disabled switch shows the arrow" default window:Gallery "$(gallery_box Switch Disabled)"
-  expect_cursor "an enabled checkbox shows the hand" pointer window:Gallery "$(gallery_box Checkbox Unchecked)"
-  expect_cursor "a disabled checkbox shows the arrow" default window:Gallery "$(gallery_box Checkbox Disabled)"
+  expect_cursor "an enabled switch shows the hand" pointer "window:VGS Components" "$(gallery_box Switch Off)"
+  expect_cursor "a disabled switch shows the arrow" default "window:VGS Components" "$(gallery_box Switch Disabled)"
+  expect_cursor "an enabled checkbox shows the hand" pointer "window:VGS Components" "$(gallery_box Checkbox Unchecked)"
+  expect_cursor "a disabled checkbox shows the arrow" default "window:VGS Components" "$(gallery_box Checkbox Disabled)"
   else
     fail "the gallery did not scroll its Choices section to the top"
   fi
@@ -416,11 +416,11 @@ fi
 expect "the gallery shows a toast through its capability" ok ipc smoke invokeInstance window vgs.gallery toast ''
 expect_poll "the gallery's toast is in the record under its plugin" '["Saved"]' toast_titles visible
 expect "hiding the gallery is allowed" ok ipc shell hide window vgs.gallery
-expect_poll "the gallery's window is gone" 0 window_count Gallery
+expect_poll "the gallery's window is gone" 0 window_count "VGS Components"
 expect_poll "hiding the gallery released its toast" '[]' toast_titles visible
 expect "the gallery summons again for the window rows" ok ipc shell summon window vgs.gallery '{}'
 expect "the non-modal Gallery dialog example takes focus" focused ipc smoke focusExample window vgs.gallery "Dialog accept action"
 type_keys -k Escape || fail "Escape in the Gallery's non-modal Dialog failed"
-expect_poll "Escape from a Gallery Dialog example closes the window" 0 window_count Gallery
+expect_poll "Escape from a Gallery Dialog example closes the window" 0 window_count "VGS Components"
 expect "the gallery summons again for the app-window rows" ok ipc shell summon window vgs.gallery '{}'
-app_window_rows Gallery vgs.gallery
+app_window_rows "VGS Components" vgs.gallery

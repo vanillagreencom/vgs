@@ -5,13 +5,26 @@
 // history rows and building the engine definitions. AutomationsLogic.js is
 // passed in as `logic` for date, time, weekday, ordinal and preset rules.
 
+var OUTCOME_LABELS = {
+    succeeded: "Done",
+    failed: "Failed",
+    "failed-start": "Could not start",
+    timeout: "Time limit reached",
+    running: "Running",
+    vanished: "Stopped before the result was saved"
+};
+
+function outcomeLabel(outcome) {
+    return OUTCOME_LABELS[outcome] || "Result unavailable";
+}
+
 var PRESETS = ["once", "daily", "weekdays", "weekly", "biweekly", "monthly-date", "monthly-weekday", "yearly", "custom"];
 var FREQUENCIES = ["daily", "weekly", "monthly", "yearly"];
 var TEMPLATES = [
     {
         key: "heartbeat-weekly",
-        label: "Weekly heartbeat",
-        name: "Weekly heartbeat",
+        label: "Weekly test run",
+        name: "Weekly test run",
         command: "printf 'VGS automation heartbeat\\n'",
         preset: "weekly",
         time: "09:00",
@@ -250,7 +263,8 @@ function validation(draft, logic, nowMs) {
         else if (defect === "" && logic.nextOccurrences(schedule, nowMs === undefined ? Date.now() : nowMs, 1).length === 0)
             errors.schedule = draft.preset === "once" ? "Pick a date and time that is still ahead." : "No run of this rule is still ahead.";
     } catch (e) {
-        errors.schedule = e.message;
+        console.warn("automations: schedule " + e.message);
+        errors.schedule = friendlyScheduleError(e.message);
     }
     return { ok: Object.keys(errors).length === 0, errors: errors, schedule: schedule };
 }
@@ -259,12 +273,12 @@ function friendlyScheduleError(defect) {
     if (defect.indexOf("times") !== -1) return "Check the times.";
     if (defect.indexOf("end") !== -1) return "Check when it ends.";
     if (defect.indexOf("weekday") !== -1) return "Check the weekdays.";
-    return "Check the recurrence.";
+    return "Check the schedule.";
 }
 
 function summary(draft, logic) {
     var checked = validation(draft, logic, Date.now());
-    if (checked.schedule === null || logic.scheduleError(checked.schedule) !== "") return "Complete the recurrence to see the summary.";
+    if (checked.schedule === null || logic.scheduleError(checked.schedule) !== "") return "Complete the schedule to see the summary.";
     return logic.summaryText(checked.schedule);
 }
 

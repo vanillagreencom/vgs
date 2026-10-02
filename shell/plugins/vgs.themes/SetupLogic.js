@@ -21,7 +21,10 @@ var STATES = ["not-detected", "absent", "done"];
 // failed or does not parse reads as unknown, in the danger tone, and
 // offers nothing.
 function browserTheming(text, code) {
-    var unknown = function (why) { return { tone: "danger", text: "Unknown: vgsh theme setup " + why }; };
+    var unknown = function (why) {
+        console.warn("themes: setup=" + why);
+        return { tone: "danger", text: "Browser theme setup could not be checked. Open Settings to check Themes." };
+    };
     if (code === null) return unknown("did not start");
     if (code !== 0) return unknown("exited " + code);
     var report;
@@ -35,10 +38,10 @@ function browserTheming(text, code) {
     var row = null;
     for (var i = 0; i < rows.length; i++)
         if (rows[i] !== null && typeof rows[i] === "object" && rows[i].name === TARGET) row = rows[i];
-    if (row === null) return { tone: "info", text: "Not shipped: this VGS themes no Chromium-family browser" };
+    if (row === null) return { tone: "info", text: "This version of VGS does not support browser themes" };
     switch (row.state) {
-    case "done": return { tone: "ok", text: "Installed: Chromium-family browsers follow the theme" };
-    case "absent": return { tone: "warning", text: "Not installed: Chromium-family browsers keep their own colours", action: true };
+    case "done": return { tone: "ok", text: "Browser theme support is installed" };
+    case "absent": return { tone: "warning", text: "Browser themes are not installed", action: true };
     case "not-detected": return { tone: "info", text: "No Chromium-family browser found" };
     }
     return unknown("named the state " + JSON.stringify(row.state) + ", not one of " + STATES.join(", "));

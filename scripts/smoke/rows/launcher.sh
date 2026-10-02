@@ -15,6 +15,7 @@ launcher_rows() { ipc smoke launcherRows overlay vgs.launcher | py_reply 'import
 # The launcher's rows whose kind is $1, as [label, detail] pairs.
 rows_of() { launcher_rows | py_reply 'import json,sys; print(json.dumps([[l, d] for k, l, d in json.load(sys.stdin) if k == sys.argv[1]]))' "$1"; }
 has_row() { launcher_rows | py_reply 'import json,sys; print(any(r[0] == sys.argv[1] and r[1] == sys.argv[2] for r in json.load(sys.stdin)))' "$1" "$2"; }
+setup_notice() { launcher_rows | py_reply 'import json,sys; print(any(r[0] == "notice" and r[1].startswith("The setup window could not open.") for r in json.load(sys.stdin)))'; }
 first_row() { launcher_rows | py_reply 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r[0][:2]) if r else "none")'; }
 lent_launcher() { ipc shell lent | py_reply 'import json,sys; d=json.load(sys.stdin); print(json.dumps([[s for s in d["shortcuts"] if s.startswith("vgs.launcher")], [t for t in d["ipcTargets"] if t == "vgs.launcher"]]))'; }
 file_text() { if [[ -f $1 ]]; then python3 -c 'import sys; print(repr(open(sys.argv[1]).read()))' "$1"; else echo absent; fi; }
@@ -226,7 +227,7 @@ expect_poll "the launch that answered ok closed the launcher" 0 layer_count vgs:
 expect_poll "the launch that found no terminal leaves the launcher state missing" '"missing"' lent tui.launcher
 categories "Install refused"
 pick_tui Install
-expect_poll "the launcher-missing answer shows as a notice" True has_row notice "refused: tui=core/pkg-install reason=launcher-missing"
+expect_poll "the launcher-missing answer shows as a notice" True setup_notice
 expect_log "the launcher logs the refused TUI" 1 'launcher: tui core/pkg-install refused: tui=core/pkg-install reason=launcher-missing'
 expect "the refused row leaves the launcher open" 1 layer_count vgs:overlay
 expect_poll "the probe the refusal started ends" false lent tui.probing
@@ -261,10 +262,10 @@ expect_poll "a row with a missing command is unavailable and names it" '[["Smoke
 expected_errors+=('launcher: menu refused: file=.*/launcher/menu\.json items\.bad-item has unknown key "action"')
 write_menu '{ "schemaVersion": 1, "items": { "bad-item": { "action": "omarchy-menu" } } }'
 expect_log "a user menu the judge refuses is logged with its defect" 1 'launcher: menu refused: file=.*/launcher/menu\.json items\.bad-item has unknown key "action"'
-expect_poll "the refused user menu shows as a notice" True has_row notice "Your menu file was refused"
+expect_poll "the refused user menu shows as a notice" True has_row notice "Your menu is unavailable"
 expect_poll "the shipped menu stands after the refusal" True has_row menu System
 rm -f -- "${user_menu:?}"
-expect_poll "a removed user menu clears its notice" False has_row notice "Your menu file was refused"
+expect_poll "a removed user menu clears its notice" False has_row notice "Your menu is unavailable"
 type_keys -k Escape || fail "sending Escape failed"
 expect_poll "Escape closes the launcher" 0 layer_count vgs:overlay
 
@@ -438,7 +439,7 @@ rm -rf -- "${home:?}/.cache/vgs/launcher"
 printf 'not a directory\n' >"$home/.cache/vgs/launcher"
 expected_errors+=('launcher: file-search: index=f error=mkdir')
 expect "the launcher summons with no usable cache" ok ipc shell summon overlay vgs.launcher '{"query":"f:smoke-report"}'
-expect_poll "an index the helper cannot build is a notice" '[["File search unavailable", "file-search: index=f error=mkdir"]]' rows_of notice
+expect_poll "an index the helper cannot build is a notice" '[["File search unavailable", "The file list could not be read. Try the search again."]]' rows_of notice
 focused
 type_keys -k Escape -k Escape || fail "sending Escape failed"
 expect_poll "the failed file search closed" 0 layer_count vgs:overlay

@@ -34,6 +34,10 @@ printf '0.1.0\n' >"$tree/VERSION"
 calls="$tmp/calls"; fix="$tmp/fix"; rt="$tmp/rt"; state="$tmp/state"
 mkdir -p "$fix" "$rt" "$state"
 log="$state/vgs/updates/update.log"
+# Keep the test terminal's input open like a live terminal. An early EOF
+# from /dev/null can be echoed by the nested script(1) log recorder.
+mkfifo "$tmp/terminal-input"
+exec {terminal_input}<>"$tmp/terminal-input"
 
 # Stand-ins. Each first appends `<name> <arguments>` to $CALLS.
 stubs="$tmp/stubs"; snapper_dir="$tmp/snapper-bin"; tools="$tmp/tools"
@@ -142,7 +146,7 @@ pipeline() {
   status=0
   "${base_env[@]}" PATH="${PIPE_PATH:+$PIPE_PATH:}$stubs:$tools" VGS_TUI_LIB="$tree/bin/lib/tui.sh" VGS_PLUGIN_ID=vgs.updates VGS_PLUGIN_DIR="${PLUGIN:-$plugin}" \
     XDG_STATE_HOME="$state" XDG_RUNTIME_DIR="$rt" CALLS="$calls" FIX="$fix" \
-    script -qec "$(printf '%q ' "$BASH" "$script_path" "$@")" /dev/null </dev/null >"$tmp/out" 2>&1 || status=$?
+    script -qec "$(printf '%q ' "$BASH" "$script_path" "$@")" /dev/null <"$tmp/terminal-input" {terminal_input}>&- >"$tmp/out" 2>&1 || status=$?
   local filtered=0
   grep -v -e '^df ' -e '^uname ' -e '^pgrep ' -e '^gum style' "$calls" >"$tmp/seq" || filtered=$?
   # grep -v exits 1 when every call is filtered out, and above 1 when it failed.
@@ -209,7 +213,7 @@ row_snapshot() {
   assert "the snapshot comes before VGS" before "sudo snapper -c root cleanup number" "vgsh self update"
   touch "$fix/fail-snapper"
   PIPE_PATH="$snapper_dir" pipeline update.sh
-  assert "a failed snapshot warns" out_has "updates: snapshot=failed exit=1"
+  assert "a failed snapshot warns" out_has "The snapshot failed."
   assert "a failed snapshot does not stop the update" has_call "vgsh pkg run upgrade --manager pacman"
   assert "a failed snapshot leaves the exit 0" test "$status" == 0
 }
@@ -218,7 +222,8 @@ row_failure() {
   touch "$fix/fail-pacman"
   pipeline update.sh
   assert "a failed system step ends the run with its status" test "$status" == 9
-  assert "a failed step names the log in its recovery message" out_has "updates: failed exit=9 log=$log"
+  assert "a failed step names the log in its recovery message" out_has "Select Open last log in Updates to read this run's output."
+  assert "the failure code stays in the developer log" grep -qF "updates: failed exit=9" "$state/vgs/updates/diagnostics.log"
   assert "a failed step drops the credential last" test "$(tail -n 1 "$tmp/seq")" == "sudo -k"
   assert "a failed step runs no AUR" test "$(grep -c 'manager aur' "$tmp/seq")" == 0
 }
@@ -288,7 +293,7 @@ row_aur_failure() {
   touch "$fix/fail-paru"
   pipeline update.sh
   assert "a failed AUR step ends the run with its status" test "$status" == 7
-  assert "a failed AUR step names the log in its recovery message" out_has "updates: failed exit=7 log=$log"
+  assert "a failed AUR step names the log in its recovery message" out_has "Select Open last log in Updates to read this run's output."
   assert "a failed AUR step drops the credential it cached, last" test "$(tail -n 1 "$tmp/seq")" == "sudo -k"
   assert "the credential is dropped after the failed AUR step" before "paru -Sua --devel" "sudo -k"
 }
@@ -339,9 +344,13 @@ row_source() {
   assert "the AUR alone holds no session" test "$(grep -c '^sudo /usr/bin/true' "$tmp/seq")" == 0
   assert "the AUR alone drops the credential after it" before "vgsh pkg run upgrade --manager aur" "sudo -k"
   pipeline update-source.sh nope
-  assert "an unknown source is refused" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "2:updates: refused: source=nope reason=unknown"
+  assert "an unknown source is refused" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "2:This update request is invalid. Open Updates and try again."
+  assert "an unknown source starts no update or authorization" seq_is \
+    "vgsh plugin settings vgs.updates" "vgsh pkg detect --json"
+  assert "an unknown source keeps its diagnostic in the developer log" grep -qxF \
+    "updates: refused: source=nope reason=unknown" "$state/vgs/updates/diagnostics.log"
   pipeline update-source.sh
-  assert "a missing source is refused" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "2:updates: refused: source=missing"
+  assert "a missing source is refused" test "$status:$(head -n 1 "$tmp/out" | tr -d '\r')" == "2:No update source was selected. Open Updates and choose a source."
 }
 # log_tui KEYS [ARG...]: tui/log.sh as `pipeline` runs a script, on a
 # pseudo-terminal whose input stays open. With KEYS `yes` a key is typed
@@ -374,24 +383,24 @@ failed_prompt="Failed (exit code 1)! Press any key to close..."
 row_log() {
   reset_fix
   log_tui yes
-  assert "the log TUI before any run is refused" test "$status:$(first_line)" == "1:updates: refused: log=absent path=$log"
+  assert "the log TUI before any run is refused" test "$status:$(first_line)" == "1:No update has run yet. There is no log to show."
   assert "the log TUI's refusal ends on the Failed prompt" out_has "$failed_prompt"
   assert "the log TUI before any run opens no pager" test ! -s "$tmp/seq"
   log_tui no
-  assert "the log TUI holds its refusal until a key" test "$status:$(first_line)" == "124:updates: refused: log=absent path=$log"
+  assert "the log TUI holds its refusal until a key" test "$status:$(first_line)" == "124:No update has run yet. There is no log to show."
   assert "the held refusal shows the Failed prompt" out_has "$failed_prompt"
   pipeline update.sh
   mv -- "$stubs/less" "$tmp/less.off"
   log_tui no
   mv -- "$tmp/less.off" "$stubs/less"
-  assert "the log TUI without less holds its refusal until a key" test "$status:$(first_line)" == "124:updates: refused: pager=missing"
+  assert "the log TUI without less holds its refusal until a key" test "$status:$(first_line)" == "124:The log reader is unavailable. Open Updates to try again."
   assert "the held pager refusal shows the Failed prompt" out_has "$failed_prompt"
   log_tui yes
   assert "the log TUI opens the log the pipeline wrote, at its end" seq_is "less -R +G -- $log"
   assert "the log TUI exits with the pager's status" test "$status" == 0
   assert "the log TUI leaves the window to the pager with no prompt" out_lacks "Press any key"
   log_tui yes extra
-  assert "the log TUI refuses an argument" test "$status:$(first_line)" == "2:updates: refused: argument=extra"
+  assert "the log TUI refuses an argument" test "$status:$(first_line)" == "2:This update request is invalid. Open Updates and try again."
 }
 
 row_full; row_trusted; row_snapshot; row_failure; row_reboot; row_orphans; row_yes
@@ -424,5 +433,7 @@ control unasked-start 'vgs_tui_confirm "Start the update?" || status=$?' 'true |
 control log-elsewhere 'printf '"'"'%s\n'"'"' "$(updates_state_dir)/update.log"' 'printf '"'"'%s\n'"'"' "$(updates_state_dir)/other.log"' row_log
 control log-absent-opens '[[ -f $log ]] || _updates_refuse 1' '[[ -n $log ]] || _updates_refuse 1' row_log log.sh
 control log-closes-unread "trap 'status=\$?; [[ \$status == 0 ]] || vgs_tui_close_prompt \"\$status\"' EXIT" ':' row_log log.sh
+control unknown-source-unchecked '_updates_refuse 2 "source=$only reason=unknown"' \
+  ': 2 "source=$only reason=unknown"' row_source
 
 rows_done test-updates-pipeline

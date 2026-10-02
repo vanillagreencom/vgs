@@ -4,7 +4,7 @@
   "name": "Polkit",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "The session's polkit agent: asks for your password in a themed dialog when an application needs administrator rights.",
+  "description": "Asks for your password when an application needs administrator access.",
   "license": "MIT",
   "icon": "shield-check",
   "kinds": [
@@ -24,8 +24,8 @@
   "status": {
     "agent": {
       "type": "state",
-      "label": "Agent",
-      "hint": "polkitd accepts one agent per session; stop any other polkit agent, such as hyprpolkitagent, for the prompts to show here"
+      "label": "Password prompts",
+      "hint": "Another password prompt service can prevent VGS from showing prompts"
     }
   }
 }

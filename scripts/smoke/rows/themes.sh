@@ -210,7 +210,7 @@ expect "the light apply wrote the shell's file" "applied applied light None" app
 expect_poll "current follows the light apply" '"light"' theme_member current
 expect_poll "revision rose after the light apply" rose revision_rose
 expect "the gallery summons under the light package" ok ipc shell summon window vgs.gallery '{}'
-expect_poll "the light gallery maps one window" 1 window_count Gallery
+expect_poll "the light gallery maps one window" 1 window_count "VGS Components"
 for row in "${gallery_colours[@]}"; do
   read -r section type property token <<<"$row"
   if ! light="$(resolved_token light "$token")" || ! default="$(resolved_token vgs "$token")"; then
@@ -221,7 +221,7 @@ for row in "${gallery_colours[@]}"; do
   expect_poll "the gallery's $section example draws the light package's $token" "$light" gallery_colour "$section" "$type" "$property"
 done
 expect "hiding the light gallery is allowed" ok ipc shell hide window vgs.gallery
-expect_poll "the light gallery's window is gone" 0 window_count Gallery
+expect_poll "the light gallery's window is gone" 0 window_count "VGS Components"
 
 revision_before="$(theme_member revision)"
 expect "the fixture applies vgs after the light package" ok probe theme-apply vgs
@@ -349,7 +349,7 @@ browser_text() { status_row vgs.themes browserTheming | py_reply 'import json,sy
 themes_source_dir() { ipc shell listPlugins | py_reply 'import json,sys; print(next((p["dir"] for p in json.load(sys.stdin)["plugins"] if p["id"] == "vgs.themes"), "absent"))'; }
 expected_errors+=('settings: vgs\.themes/browserTheming refused: action=browserTheming reason=not-offered')
 settings_page_open vgs.themes
-expect_poll "a tree that ships no target reads browser theming not shipped" '"Not shipped: this VGS themes no Chromium-family browser"' browser_text
+expect_poll "a tree that ships no target reads browser theming not shipped" '"This version of VGS does not support browser themes"' browser_text
 expect "the manager refuses the install while no target ships" "refused: action=browserTheming reason=not-offered" settings_act vgs.themes browserTheming
 printf '#!/bin/sh\nexit 1\n' >"$shim/chromium"
 chmod 755 "$shim/chromium"
@@ -363,8 +363,7 @@ expect_poll "the themes service is built again" True record_exists vgs.themes
 # Each change of the plugin set queues a scan and a follow, which holds the
 # theme lock; the rows below apply only once it ends.
 expect "the follow after the themes restart ends" idle theme_idle
-settled_text() { browser_text | py_reply 'import json,sys; t=json.load(sys.stdin); print("settled" if t and not t.startswith("Not shipped") else json.dumps(t))'; }
-expect_poll "the service reads the shipped target's setup" settled settled_text
+expect_poll "the service reads the shipped target's setup" '"Browser themes are not installed"' browser_text
 first_setup="$(browser_theming)" || first_setup=unreadable
 case $first_setup in
   '["reported", "warning", true]')
@@ -503,9 +502,9 @@ mkdir -p -- "$installed/light"
 cp -- "$repo/themes/light/theme.json" "$repo/themes/light/terminal.json" "$installed/light/"
 click_centre "$themes_key" vgs.themes || fail "the click on the themes widget failed"
 expect_poll "a click on the widget opens the themes panel" open panel_open
-expect_poll "the panel lists every package with its source and badges" '[["catalog-row-smoke", "light, no wallpapers", "Install"], ["catalog-smoke", "dark, wallpapers 13 MB", "Install"], ["light", "installed"], ["light", "shipped", "Shadowed"], ["mismatch", "installed, name-mismatch", "Refused"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
+expect_poll "the panel lists every package with its source and badges" '[["catalog-row-smoke", "light, no wallpapers", "Install"], ["catalog-smoke", "dark, wallpapers 13 MB", "Install"], ["light", "installed"], ["light", "shipped", "Hidden by another copy"], ["mismatch", "installed, The theme name does not match its folder. Choose another theme.", "Unavailable"], ["smoke", "installed"], ["vgs", "shipped", "Displayed"]]' theme_rows
 expect "an accepted package's row draws its palette" '[7, true]' theme_swatch smoke installed '#12ab34ff'
-expect "a refused package's row draws no swatch" '[0, false]' theme_swatch mismatch "installed, name-mismatch" '#12ab34ff'
+expect "a refused package's row draws no swatch" '[0, false]' theme_swatch mismatch "installed, The theme name does not match its folder. Choose another theme." '#12ab34ff'
 expect "a shadowed package's row draws no swatch" '[0, false]' theme_swatch light shipped '#12ab34ff'
 expect_poll "the panel lists a catalog row with its mode, wallpaper size and install action" '[["catalog-smoke", "dark, wallpapers 13 MB", "Install"]]' theme_row catalog-smoke
 expect "the catalog row draws its palette" '[7, true]' theme_swatch catalog-smoke "dark, wallpapers 13 MB" '#3366ffff'
@@ -622,7 +621,7 @@ fixture_target smoke-fails 'accent=@{palette.nope}'
 click_row smoke || fail "the click on the smoke row failed"
 expect_poll "a click on a row applies its package" '"smoke"' lent theme.last.result.theme
 expect_poll "the shell displays the package the row applied" smoke ipc smoke themeName
-expect_poll "the applied row is displayed and shows its failed target" '[["smoke", "installed", "Displayed", "smoke-fails failed: placeholder"]]' theme_row smoke
+expect_poll "the applied row is displayed and shows its failed target" '[["smoke", "installed", "Displayed", "smoke-fails: The theme action failed. Try again or choose another theme."]]' theme_row smoke
 # The panel's layout, one finding per broken rule, `[]` the pass: the
 # title, each section heading and each row's box start on one content
 # edge, as far in from the panel's left side as a row's box ends from its
@@ -656,7 +655,7 @@ if len(title) != 1 or len(heads) != 3 or len(smoke) != 1 or len(scroll) != 1 or 
     print(json.dumps(["rows title=%d heads=%d smoke=%d scroll=%d add=%d" % (len(title), len(heads), len(smoke), len(scroll), len(add))])); sys.exit()
 title, row = title[0], rows[smoke[0]]["box"][:]
 name = [rows[j]["box"][:] for j in range(len(rows)) if rows[j]["type"] == "Label" and rows[j].get("text") == "smoke" and inside(j, smoke[0])]
-line = [r["box"][:] for r in rows if r["type"] == "Label" and r.get("text") == "smoke-fails failed: placeholder" and shown(r)]
+line = [r["box"][:] for r in rows if r["type"] == "Label" and r.get("text") == "smoke-fails: The theme action failed. Try again or choose another theme." and shown(r)]
 if plant == "edge": row[2] -= 8
 if plant == "column" and line: line[0][0] += 8
 if plant == "footer": add[0][1] -= 40
@@ -774,7 +773,7 @@ mkdir -p -- "$installed/smoke/targets"
 printf 'accent=hand\n' >"$installed/smoke/targets/smoke-drop.conf"
 click_row smoke || fail "the click applying the smoke row with a dropped file failed"
 expect "the dropped-file smoke apply ends" idle theme_idle
-expect_poll "the row names the file its apply dropped" '[["smoke", "installed", "Displayed", "smoke-drop dropped smoke-drop.conf"]]' theme_row smoke
+expect_poll "the row names the file its apply dropped" '[["smoke", "installed", "Displayed", "smoke-drop uses the VGS settings for smoke-drop.conf"]]' theme_row smoke
 
 # Control: a sandbox copy of the panel that reads no `dropped` names no
 # file for the same result, which a panel built after the apply reads from
@@ -788,7 +787,7 @@ if [[ $(grep -c -F -- "$drop_read" "$panel_qml") == 1 ]]; then
     fail "the dropless control could not be written"
   fi
   panel_source "the restored panel" "$sandbox/ThemesPanel.qml.real" \
-    && expect_poll "the restored panel names the dropped file from last" '[["smoke", "installed", "Displayed", "smoke-drop dropped smoke-drop.conf"]]' theme_row smoke
+    && expect_poll "the restored panel names the dropped file from last" '[["smoke", "installed", "Displayed", "smoke-drop uses the VGS settings for smoke-drop.conf"]]' theme_row smoke
 else
   fail "the dropless control's text occurs once in $panel_qml"
 fi
@@ -810,13 +809,13 @@ cp -p -- "$repo/bin/vgsh" "$repo/bin/vgsh.real"
 panel_gate="$sandbox/themes-panel-gate"
 stand_in_vgsh "for _ in \$(seq 1 200); do [[ -e $(printf %q "$panel_gate") ]] && break; sleep 0.05; done"
 click_row light || fail "the click on the installed light row failed"
-expect_poll "the row shows the apply running" '[["light", "installed", "Applying"], ["light", "shipped", "Shadowed"]]' theme_row light
+expect_poll "the row shows the apply running" '[["light", "installed", "Applying"], ["light", "shipped", "Hidden by another copy"]]' theme_row light
 click_outside || fail "the click outside the themes panel failed"
 expect_poll "a click outside closes the panel during the apply" closed panel_open
 touch -- "$panel_gate"
 expect_poll "the apply completes with the panel closed" '[]' theme_jobs
 click_centre "$themes_key" vgs.themes || fail "the click reopening the themes panel failed"
-expect_poll "the reopened panel shows the apply's result" '[["light", "installed", "Displayed"], ["light", "shipped", "Shadowed"]]' theme_row light
+expect_poll "the reopened panel shows the apply's result" '[["light", "installed", "Displayed"], ["light", "shipped", "Hidden by another copy"]]' theme_row light
 expect "the theme changed while the panel was closed" light ipc smoke themeName
 
 # A panel reopened while its apply runs reads the apply from last, and the
@@ -833,7 +832,7 @@ expect_poll "the panel closes during the vgs apply" closed panel_open
 click_centre "$themes_key" vgs.themes || fail "the click reopening the themes panel during the apply failed"
 expect_poll "the panel reopened during the apply reads it from last" True panel_label "Applying vgs"
 touch -- "$novel_gate"
-expect_poll "the reopened panel shows a target state it names nowhere" '[["vgs", "shipped", "smoke-novel smoke-state: smoke-reason"]]' theme_row vgs
+expect_poll "the reopened panel shows a target state it names nowhere" '[["vgs", "shipped", "smoke-novel: The theme action failed. Try again or choose another theme."]]' theme_row vgs
 expect "the panel drops the running apply once it ends" False panel_label "Applying vgs"
 
 mv -T -- "$repo/bin/vgsh.real" "$repo/bin/vgsh"
@@ -1012,7 +1011,7 @@ expect "the panel's step remembers its wallpaper for the package" '"b.png"' bg_r
 exec {wallpaper_lock}>>"$home/.config/vgs/theme.lock"
 flock "$wallpaper_lock"
 click_wallpaper "Next wallpaper" || fail "the click on Next wallpaper under the held lock failed"
-expect_poll "a refused step shows its reason" True panel_label "The wallpaper step failed: busy"
+expect_poll "a refused step shows its reason" True panel_label "The wallpaper could not be changed. Another theme action is running. Wait for it to finish."
 expect "a refused step leaves the wallpaper" "$scenic/backgrounds/b.png ready" background_image
 exec {wallpaper_lock}>&-
 click_outside || fail "the click closing the themes panel after the wallpaper rows failed"

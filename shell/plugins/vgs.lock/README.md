@@ -1,6 +1,6 @@
 # Lock
 
-`vgs.lock` is the lock screen. It locks the session and unlocks it with your password, drawn in the applied theme over the theme's background image. The session stays locked if the shell stops or crashes.
+Lock protects your session with your password. The lock screen uses the current theme and wallpaper. Your session stays locked if VGS stops or crashes.
 
 ![The lock screen after a wrong password](../../../docs/images/plugins/vgs.lock-screen.webp)
 
@@ -33,7 +33,7 @@ If the shell dies while locked, Hyprland keeps the session locked and shows its 
 
 ## Settings
 
-- **Lock after idle**: seconds without input before the session locks; 0 never locks on idle.
+- **Lock when inactive**: time without input before the session locks; 0 disables locking when inactive.
 - **Lock before sleep**: hold each suspend until the session is locked.
 - The key: the Settings window's Keys section for Lock, or `plugins[].keys.lock` in `~/.config/vgs/shell.json`.
 

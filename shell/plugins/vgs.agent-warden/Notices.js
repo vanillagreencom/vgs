@@ -289,28 +289,28 @@ function copy(kind, episodes, vsys, now) {
     switch (kind) {
     case "tasks":
         return {
-            title: "An agent is starting a lot of processes",
-            body: (e.used === null ? ViewLogic.who(e) + " is starting a lot of processes."
+            title: "An agent is near its process limit",
+            body: (e.used === null ? ViewLogic.who(e) + " is near its process limit."
                 : e.limit === null ? ViewLogic.who(e) + " is running " + ViewLogic.plural(e.used, "process", "processes") + "."
                 : ViewLogic.who(e) + " is at " + ViewLogic.grouped(e.used) + " of its " + ViewLogic.grouped(e.limit) + " limit.")
-                + " If it's a big build, you can let it finish." + (vsys ? " If not, open vsys to stop it." : "")
+                + " Let the work finish if you need it." + (vsys ? " Open vsys to stop work you do not need." : "")
         };
     case "memory":
         return {
-            title: "An agent is using a lot of memory",
-            body: (e.used === null ? ViewLogic.who(e) + " is using a lot of memory." : ViewLogic.who(e) + " is using " + ViewLogic.gb(e.used) + " GB.")
-                + (e.limit === null ? "" : " It will be slowed down at " + ViewLogic.gb(e.limit) + " GB so the rest of your computer stays responsive.")
-                + (vsys ? " If you don't need it, open vsys to stop it." : "")
+            title: "An agent is near its memory limit",
+            body: (e.used === null ? ViewLogic.who(e) + " is near its memory limit." : ViewLogic.who(e) + " is using " + ViewLogic.gb(e.used) + " GB.")
+                + (e.limit === null ? "" : " Agent Warden slows it at " + ViewLogic.gb(e.limit) + " GB to keep your computer responsive.")
+                + (vsys ? " Open vsys to stop work you do not need." : "")
         };
     case "not-moving":
         return {
             title: "Agents are close to their memory limit",
             body: (e.memory === null || e.max === null ? "" : "Agents are using " + ViewLogic.gb(e.memory) + " of " + ViewLogic.gb(e.max) + " GB. ")
-                + "Agent Warden is holding off moving " + toolsOr(e.tools, "an agent") + " into the agent group until memory frees up. Closing an agent you don't need will help."
+                + "Agent Warden needs free memory before it can limit " + toolsOr(e.tools, "an agent") + ". Close agents you do not need."
         };
     case "move-failure":
         return {
-            title: e.partial ? "Couldn't fully move an agent" : "Couldn't move an agent into its limits",
+            title: e.partial ? "Some agent processes still have no limits" : "Could not apply limits to an agent",
             body: (e.partial ? "Part of " + toolsOr(e.tools, "an agent") : toolsOr(e.tools, "An agent"))
                 + " is still running without limits. Agent Warden will try again in " + ViewLogic.plural(e.interval, "second", "seconds") + "."
         };
@@ -318,25 +318,24 @@ function copy(kind, episodes, vsys, now) {
         if (n > 1)
             return {
                 title: "Cleaned up after " + ViewLogic.grouped(n) + " finished agents",
-                body: ViewLogic.grouped(n) + " finished agents left work running. Agent Warden stopped it. Your other agents weren't affected."
+                body: ViewLogic.grouped(n) + " finished agents left work running. Agent Warden stopped that work."
             };
         return {
             title: "Cleaned up after a finished agent",
-            body: (e.processes === null ? "An agent had exited but left work running. Agent Warden stopped it."
-                : "An agent had exited but left " + ViewLogic.plural(e.processes, "process", "processes") + " running. Agent Warden stopped " + (e.processes === 1 ? "it." : "them."))
-                + " Your other agents weren't affected."
+            body: (e.processes === null ? "A finished agent left work running. Agent Warden stopped that work."
+                : "A finished agent left " + ViewLogic.plural(e.processes, "process", "processes") + " running. Agent Warden stopped " + (e.processes === 1 ? "it." : "them."))
         };
     case "moved":
         var tools = toolsIn(episodes);
         return {
             title: "Moved " + (n === 1 ? "an agent back into its limits" : ViewLogic.grouped(n) + " agents back into their limits"),
             body: (tools.length === 0 ? (n === 1 ? "It was" : "They were") : ViewLogic.listed(tools) + (tools.length === 1 ? " was" : " were"))
-                + " running without limits. " + (n === 1 ? "It's" : "They're") + " limited now, so your desktop stays responsive."
+                + " running without limits. Agent Warden applied limits to keep your computer responsive."
         };
     case "not-checking":
         return {
             title: "Agent Warden has stopped checking",
-            body: "It last checked " + ViewLogic.ago(e.checkedAt, now) + ", so agents aren't being kept within their limits. Open the Agent Warden panel to start it again."
+            body: "The last check was " + ViewLogic.ago(e.checkedAt, now) + ". Agent Warden is not applying limits. Open its panel to restart checks."
         };
     }
     throw new Error("agent-warden: notice kind=" + JSON.stringify(kind) + " unknown");

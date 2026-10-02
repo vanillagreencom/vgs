@@ -245,7 +245,7 @@ row_targets() { # PLUGIN
   reset_world
   printf 'claude\ngithub:owner/extra\n' >"$state/installed"
   engine "$1" -- targets remove
-  [[ $status == 0 ]] && [[ "$(cat "$tmp/out")" == "$(lines "Claude Code · Agents"$'\t'"claude" "github:owner/extra · Other mise tools"$'\t'"--mise"$'\t'"github:owner/extra")" ]]
+  [[ $status == 0 ]] && [[ "$(cat "$tmp/out")" == "$(lines "Claude Code · Agents"$'\t'"claude" "github:owner/extra · Other tools"$'\t'"--mise"$'\t'"github:owner/extra")" ]]
 }
 # The install entry opened with no row offers the absent rows and installs
 # the one picked, which is not the first offered.
@@ -353,7 +353,7 @@ engine "$plugin" -- launchers remove
 check "launchers remove deletes VGS's launchers" test ! -e "$home/.local/bin/codex"
 check "launchers remove keeps the owner's file" cmp -s "$home/.local/bin/claude" "$tmp/claude.orig"
 
-# Other mise tools: what the global config declares and no row does.
+# Other tools: what the global config declares and no row does.
 reset_world
 printf 'claude\ngithub:owner/extra\n' >"$state/installed"
 echo false >"$state/auto_prune"
@@ -390,6 +390,13 @@ reset_world
 echo false >"$state/auto_prune"
 ENGINE_TTY=pty tui "$plugin" install.sh -- claude
 check "the install entry installs the row it is handed" log_is "mise [use] [-g] [claude] {age=0}"
+ENGINE_TTY=pty tui "$plugin" install.sh -- claude
+check "a tool refusal shows the result without diagnostic keys" out_has "This tool is already installed."
+check "a tool refusal keeps its diagnostic in the developer log" grep -qF "devtools: refused: id=claude state=installed" "$home/.local/state/vgs/devtools/actions.log"
+engine "$plugin" VGS_TUI_LIB="$repo/bin/lib/tui.sh" -- launchers refresh
+check "launcher results use plain messages" out_has "Created the launcher for claude."
+check "launcher diagnostics stay out of the presenter output" test "$(grep -c 'launcher=' "$tmp/out" || true)" == 0
+check "launcher diagnostics stay in the developer log" grep -qF "launcher=written command=claude" "$home/.local/state/vgs/devtools/actions.log"
 : >"$log"
 ENGINE_TTY=pty tui "$plugin" update.sh -- claude
 check "the update entry updates the row it is handed" log_is "mise [up] [claude] {age=0}"
@@ -397,11 +404,11 @@ check "the update entry updates the row it is handed" log_is "mise [up] [claude]
 ENGINE_TTY=pty tui "$plugin" remove.sh -- claude
 check "the remove entry removes the row it is handed" log_is "$(lines "mise [uninstall] [--all] [claude] {age=0}" "mise [rm] [-g] [claude] {age=0}")"
 check "an entry opened with no row installs the row picked" row_picker "$plugin"
-check "the picker offers no row the verb does not take" test "$(grep -c -F "Other mise tools" "$tmp/offered" || true)" == 0
+check "the picker offers no row the verb does not take" test "$(grep -c -F "Other tools" "$tmp/offered" || true)" == 0
 reset_world
 echo false >"$state/auto_prune"
 printf 'github:owner/extra\n' >"$state/installed"
-ENGINE_TTY=pty tui "$plugin" update.sh GUM_PICK="github:owner/extra · Other mise tools" --
+ENGINE_TTY=pty tui "$plugin" update.sh GUM_PICK="github:owner/extra · Other tools" --
 check "the update picker updates an other mise tool by its key" log_is "mise [up] [github:owner/extra] {age=0}"
 : >"$log"
 ENGINE_TTY=pty tui "$plugin" install.sh GUM_STATUS=1 --
@@ -410,10 +417,11 @@ check "leaving the filter runs nothing" log_is ""
 ENGINE_TTY=pty tui "$plugin" install.sh GUM_STATUS=130 --
 check "a Ctrl-C in the filter exits 130" test "$status" == 130
 ENGINE_TTY=pty tui "$plugin" install.sh GUM_PICK="Not offered" --
-check "a pick the filter was not offered is refused" out_has "devtools: refused: picked=Not offered reason=unlisted"
+check "a pick the filter was not offered is refused" out_has "This tool is unavailable. Open Dev Tools and choose another tool."
 check "that refusal runs nothing" log_is ""
+check "the unlisted pick stays in the developer log" grep -qF "devtools: refused: picked=Not offered reason=unlisted" "$home/.local/state/vgs/devtools/actions.log"
 tui "$plugin" devtools.sh -- list --json
-check "the TUI script refuses a verb it does not run" out_has "devtools: refused: verb=list"
+check "the TUI script refuses a verb it does not run" out_has "This tool action is invalid. Open the action from Dev Tools."
 in_world -- "$plugin/tui/install.sh" claude
 check "the TUI script outside the presenter is refused" out_has "devtools: refused: tui=missing"
 check "that refusal exits 2" test "$status" == 2

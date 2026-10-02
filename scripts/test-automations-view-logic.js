@@ -19,6 +19,9 @@ function same(got, want, message) {
 }
 
 function run(view, logic) {
+    assert.equal(view.outcomeLabel("failed-start"), "Could not start");
+    assert.equal(view.outcomeLabel("timeout"), "Time limit reached");
+    assert.equal(view.outcomeLabel("unexpected: reason=unknown"), "Result unavailable");
     const now = Date.parse("2026-01-05T08:15:00Z");
     const draft = view.blankDraft(now, logic);
     assert.equal(draft.start, "2026-01-05");
@@ -91,7 +94,7 @@ function run(view, logic) {
     assert.equal(copy.enabled, false);
 
     const templated = view.templateDraft(view.TEMPLATES[0], now, logic);
-    assert.equal(templated.name, "Weekly heartbeat");
+    assert.equal(templated.name, "Weekly test run");
     assert.equal(templated.command, "printf 'VGS automation heartbeat\\n'");
     for (const template of view.TEMPLATES) {
         assert.ok(!/[;&|]|\b(sudo|pkexec|polkit|faillock|systemd-ask-password)\b/.test(template.command), "template runs unattended without auth prompts: " + template.key);
@@ -129,6 +132,7 @@ fs.rmSync(scratch, { recursive: true, force: true });
 fs.mkdirSync(scratch, { recursive: true });
 try {
     const controls = [
+        ["outcomes use plain display labels", "function outcomeLabel(outcome) {", "function outcomeLabel(outcome) { return outcome;"],
         ["Once no longer ends after one run", "if (draft.preset === \"once\") return { type: \"count\", count: 1 };", "if (draft.preset === \"once\") return { type: \"never\" };"],
         ["preset detection ignores the start date", "var expected = scheduleWithTimes(logic.presetSchedule(preset, schedule.start, time), schedule.times || []);", "var expected = scheduleWithTimes(logic.presetSchedule(preset, \"2026-01-09\", time), schedule.times || []);"],
         ["save completion ignores draft replacement", "if (requestKey !== currentKey) return null;", "if (false) return null;"],

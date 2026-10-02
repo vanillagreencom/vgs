@@ -4,7 +4,7 @@
   "name": "Launcher",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A Spotlight launcher: search applications, menus and files from one glass field. Open it with the vgs.launcher:toggle shortcut, its bar entry or IPC.",
+  "description": "Find and open applications, files and system actions.",
   "license": "MIT",
   "icon": "search",
   "kinds": [

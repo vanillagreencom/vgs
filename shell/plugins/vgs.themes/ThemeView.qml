@@ -159,7 +159,7 @@ FocusScope {
         if (busy || offer !== null || card === null) return;
         problem = "";
         if (card.state !== "ok") {
-            problem = card.label + " is refused: " + card.reason + ". The Themes panel shows its package.";
+            problem = card.label + " is unavailable. " + BrowserLogic.reasonText(card.reason);
             return;
         }
 
@@ -207,7 +207,7 @@ FocusScope {
             if (line !== "") root.finish(line);
             else root.apply(name);
         });
-        if (reply !== "ok") finish(reply);
+        if (reply !== "ok") finish(BrowserLogic.reasonText(reply));
     }
 
     // Apply NAME; once the refreshed cards hold its catalog state, offer its
@@ -222,7 +222,7 @@ FocusScope {
             }
             root.completeApply(name, line);
         });
-        if (reply !== "ok") finish(reply);
+        if (reply !== "ok") finish(BrowserLogic.reasonText(reply));
     }
 
     function completeApply(name, line) {
@@ -252,7 +252,7 @@ FocusScope {
         });
         if (reply !== "ok") {
             offer = null;
-            finish(reply);
+            finish(BrowserLogic.reasonText(reply));
             focusRail();
             return;
         }
@@ -489,7 +489,7 @@ FocusScope {
                         }
                         Badge {
                             visible: root.selected !== null && root.selected.state !== "ok"
-                            text: "Refused"
+                            text: "Unavailable"
                             tone: "danger"
                         }
                         Badge {
@@ -524,9 +524,9 @@ FocusScope {
                 Repeater {
                     model: [
                         root.problem,
-                        root.listReason === "" ? "" : "The theme list failed: " + root.listReason,
-                        root.catalogReason === "" ? "" : "The catalog failed: " + root.catalogReason,
-                        root.imagesReason === "" ? "" : "The image list failed: " + root.imagesReason
+                        root.listReason === "" ? "" : "The theme list is unavailable. " + BrowserLogic.reasonText(root.listReason),
+                        root.catalogReason === "" ? "" : "The catalog is unavailable. " + BrowserLogic.reasonText(root.catalogReason),
+                        root.imagesReason === "" ? "" : "The image list is unavailable. " + BrowserLogic.reasonText(root.imagesReason)
                     ].filter(line => line !== "")
                     Label {
                         required property string modelData

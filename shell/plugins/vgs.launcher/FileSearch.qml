@@ -8,7 +8,7 @@ import "MenuModel.js" as MenuModel
 // here, so it dies with the launcher. A request is debounced, and a result
 // lands only if it answers the newest request, so fast typing never shows
 // stale rows. A helper that fails reports its keyed first line as `error`,
-// which the launcher shows; nothing is dropped silently.
+// which is logged and mapped to user text; nothing is dropped silently.
 Item {
     id: search
 
@@ -105,7 +105,7 @@ Item {
             const failed = search.outcome(completion, refreshErr.text);
             completion = null;
             if (failed !== "") {
-                search.error = failed;
+                search.error = MenuModel.fileErrorText(failed);
                 console.warn("launcher: " + failed);
             }
             if (queued) search.refresh(queued);
@@ -138,7 +138,7 @@ Item {
             if (requestSerial !== search.serial) return;
             const failed = search.outcome(completion, queryErr.text);
             if (failed !== "") {
-                search.error = failed;
+                search.error = MenuModel.fileErrorText(failed);
                 console.warn("launcher: " + failed);
                 search.results = [];
                 return;
@@ -200,7 +200,7 @@ Item {
             done = null;
             const failed = search.outcome(completion, appsErr.text);
             if (failed !== "") {
-                search.error = failed;
+                search.error = MenuModel.fileErrorText(failed);
                 console.warn("launcher: " + failed);
                 if (finish) finish([]);
                 return;

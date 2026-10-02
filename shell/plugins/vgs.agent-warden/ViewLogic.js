@@ -99,13 +99,13 @@ function itemRow(item, now) {
         return {
             icon: ITEM_ICONS.headroom,
             text: "Agents are close to their memory limit",
-            secondary: item.waiting.length > 0 ? "Holding off limiting " + listed(item.waiting) + " until memory frees up"
+            secondary: item.waiting.length > 0 ? "Waiting for free memory before applying limits to " + listed(item.waiting)
                 : item.memory !== null && item.max !== null ? gb(item.memory) + " of " + gb(item.max) + " GB in use" : ""
         };
     case "move-failed":
         return {
             icon: ITEM_ICONS["move-failed"],
-            text: item.tools.length > 0 ? "Couldn't move " + listed(item.tools) + " into limits" : "Couldn't move an agent into limits",
+            text: item.tools.length > 0 ? "Could not apply limits to " + listed(item.tools) : "Could not apply limits to an agent",
             secondary: plural(item.count, "try", "tries") + " failed in the last 5 min"
         };
     case "partial":
@@ -124,12 +124,12 @@ function itemRow(item, now) {
         if (item.near.indexOf("memory") !== -1)
             return {
                 icon: ITEM_ICONS["near-memory"],
-                text: who(item) + " is using a lot of memory",
+                text: who(item) + " is near its memory limit",
                 secondary: item.memory === null ? "" : gb(item.memory) + " GB" + (item.memoryHigh === null ? "" : ", slowed at " + gb(item.memoryHigh) + " GB")
             };
         return {
             icon: ITEM_ICONS["near-tasks"],
-            text: who(item) + " is starting a lot of processes",
+            text: who(item) + " is near its process limit",
             secondary: item.tasks === null ? "" : grouped(item.tasks) + (item.tasksMax === null ? " running" : " of its " + grouped(item.tasksMax) + " limit")
         };
     case "slowdown":
@@ -174,25 +174,25 @@ function running(n) {
 function sentence(detail, vsysMissing) {
     switch (detail.state) {
     case "calm":
-        if (detail.agents === null) return "All good.";
-        return detail.agents === 0 ? "All good. No agents are running." : "All good. " + running(detail.agents) + ".";
+        if (detail.agents === null) return "Agents are within their limits.";
+        return detail.agents === 0 ? "No agents are running." : running(detail.agents) + ".";
     case "working":
-        return "All good. " + movedText(movedItem(detail)) + ".";
+        return movedText(movedItem(detail)) + ".";
     case "look":
-        return detail.issues === 1 ? "One thing needs a look." : grouped(detail.issues) + " things need a look.";
+        return detail.issues === 1 ? "One warning needs your attention." : grouped(detail.issues) + " warnings need your attention.";
     case "problem":
-        return detail.issues === 1 ? "Something needs your attention." : grouped(detail.issues) + " things need your attention.";
+        return detail.issues === 1 ? "One problem needs your attention." : grouped(detail.issues) + " problems need your attention.";
     case "not-checking":
         switch (detail.reason) {
         case "stale": return "Agent Warden has stopped checking.";
         case "unreadable": return "Agent Warden's status can't be read.";
-        case "schema": return "Agent Warden writes a status this version of VGS can't read. Update VGS.";
+        case "schema": return "Update VGS to read Agent Warden status.";
         }
         throw new Error("agent-warden: reason=" + JSON.stringify(detail.reason) + " unknown");
     case "not-set-up":
-        return vsysMissing ? "Agent Warden comes with vsys, which isn't installed." : "Agent Warden isn't set up.";
+        return vsysMissing ? "Install vsys to set up Agent Warden." : "Agent Warden isn't set up.";
     case "update-warden":
-        return vsysMissing ? "Agent Warden needs an update from vsys, which isn't installed." : "Agent Warden needs an update.";
+        return vsysMissing ? "Install vsys to update Agent Warden." : "Agent Warden needs an update.";
     }
     throw new Error("agent-warden: state=" + JSON.stringify(detail.state) + " unknown");
 }
@@ -203,7 +203,7 @@ function tooltip(detail, now) {
     if (detail === null) return "Agent Warden is starting";
     switch (detail.state) {
     case "calm":
-        if (detail.agents === null) return "Agent Warden is checking";
+        if (detail.agents === null) return "Agents are within their limits";
         return detail.agents === 0 ? "No agents running" : plural(detail.agents, "agent", "agents") + " running within " + (detail.agents === 1 ? "its" : "their") + " limits";
     case "working":
         var moved = movedItem(detail);
@@ -267,9 +267,9 @@ function setup(detail, vsysMissing) {
     var step = WardenLogic.setupStep(detail, vsysMissing);
     switch (step) {
     case null: return null;
-    case "get-vsys": return { label: "Get vsys", action: "get-vsys" };
+    case "get-vsys": return { label: "Install vsys", action: "get-vsys" };
     case "setup": return { label: detail.state === "update-warden" ? "Update" : "Set up", action: "setup" };
-    case "start": return { label: "Start it", action: "start" };
+    case "start": return { label: "Start checks", action: "start" };
     }
     throw new Error("agent-warden: setup step " + JSON.stringify(step) + " unknown");
 }
@@ -277,7 +277,7 @@ function setup(detail, vsysMissing) {
 // The flyout's footer link: Open vsys, or Get vsys while the last scan did
 // not find it; null when SETUP, setup's answer, already offers the same.
 function link(vsysMissing, setupButton) {
-    var out = vsysMissing ? { label: "Get vsys", action: "get-vsys" } : { label: "Open vsys", action: "open" };
+    var out = vsysMissing ? { label: "Install vsys", action: "get-vsys" } : { label: "Open vsys", action: "open" };
     return setupButton !== null && setupButton.action === out.action ? null : out;
 }
 
@@ -308,7 +308,7 @@ function meter(memory) {
 var REFUSALS = [
     [/^ok$/, function () { return ""; }],
     [/^refused: tui=[a-z0-9-]+ reason=busy$/, function () { return ""; }],
-    [/^refused: tui=[a-z0-9-]+ reason=launcher-missing$/, function () { return "No terminal was found to open it in."; }],
+    [/^refused: tui=[a-z0-9-]+ reason=launcher-missing$/, function () { return "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it."; }],
     [/^satisfied$/, function () { return "vsys is already installed."; }],
     [/^refused: requirements=\S+ reason=resting retry-ms=(\d+)$/, function (m) { return "You chose Not now. Ask again in " + Math.max(1, Math.ceil(Number(m[1]) / 60000)) + " min."; }],
     [/^refused: notices=full limit=\d+$/, function () { return "Too many install requests are waiting. Try again later."; }]
@@ -319,7 +319,7 @@ function refusal(reply) {
         var m = REFUSALS[i][0].exec(reply);
         if (m !== null) return REFUSALS[i][1](m);
     }
-    return reply;
+    return "VGS could not open this action. Try again.";
 }
 
 // Whether a press's REPLY handed off, so the flyout closes.
@@ -361,8 +361,8 @@ function readSummary(text) {
 // The flyout's line for SUMMARY, readSummary's `read` answer: { text, tone }.
 function summaryLine(summary) {
     if (summary.danger > 0)
-        return { tone: "danger", text: summary.danger === 1 ? "vsys sees a problem on this computer." : "vsys sees " + grouped(summary.danger) + " problems on this computer." };
+        return { tone: "danger", text: summary.danger === 1 ? "vsys found one problem on this computer." : "vsys found " + grouped(summary.danger) + " problems on this computer." };
     if (summary.warn > 0)
-        return { tone: "warning", text: summary.warn === 1 ? "vsys sees one thing worth a look on this computer." : "vsys sees " + grouped(summary.warn) + " things worth a look on this computer." };
-    return { tone: "neutral", text: "vsys sees nothing wrong on this computer." };
+        return { tone: "warning", text: summary.warn === 1 ? "vsys found one warning on this computer." : "vsys found " + grouped(summary.warn) + " warnings on this computer." };
+    return { tone: "neutral", text: "vsys found no problems on this computer." };
 }

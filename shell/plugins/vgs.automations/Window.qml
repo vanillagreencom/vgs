@@ -79,16 +79,12 @@ FocusScope {
     }
 
     function friendlyFailure(failure) {
-        if (failure.indexOf("definition=not-json") !== -1) return "The automation draft could not be read.";
-        if (failure.indexOf("schedule") !== -1) return "Check the recurrence fields.";
-        if (failure.indexOf("id: unknown") !== -1 || failure.indexOf("unknown=") !== -1) return "That automation no longer exists.";
-        if (failure.indexOf("systemctl=failed") !== -1) return "The scheduler refused the change.";
-        return "The automation engine refused the request.";
+        return Engine.failureText(failure);
     }
 
     function run(args, done) {
         client.request(args, (ok, stdoutText, stderrText, failure) => {
-            if (!ok) setNotice("danger", friendlyFailure(failure), failure);
+            if (!ok) setNotice("danger", friendlyFailure(failure));
             if (done !== undefined) done(ok, stdoutText, stderrText, failure);
         });
     }
@@ -96,7 +92,7 @@ FocusScope {
     function runJson(args, done) {
         client.requestJson(args, (ok, doc, failure) => {
             if (!ok) {
-                setNotice("danger", failure.indexOf("answer=not-json") !== -1 ? "The engine returned invalid JSON." : friendlyFailure(failure), failure);
+                setNotice("danger", friendlyFailure(failure));
                 if (done) done(false, null);
             }
             else if (done) done(true, doc);
@@ -400,7 +396,10 @@ FocusScope {
         id: transcriptReader
         printErrors: false
         onLoaded: root.testTranscript = text()
-        onLoadFailed: error => root.testTranscript = "Transcript could not be read: " + error
+        onLoadFailed: error => {
+            console.warn("automations: transcript=" + path + " error=" + error);
+            root.testTranscript = "The run output could not be read. Choose another run.";
+        }
     }
 
     Column {

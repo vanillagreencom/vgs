@@ -34,9 +34,13 @@ function pauseText(seconds) {
 // Before that, PAM's last error MESSAGE when it sent one, else the count.
 function failureText(failures, message, policy) {
     if (policy !== null && policy !== undefined && failures >= policy.deny)
-        return "Too many wrong passwords: wait " + pauseText(policy.unlockSeconds) + " before the next try";
+        return "Too many wrong passwords. Wait " + pauseText(policy.unlockSeconds) + " before you try again.";
     var text = String(message || "").trim();
-    if (text !== "") return text;
+    if (text !== "") {
+        console.warn("lock: pam=" + text);
+        if (/token is no longer valid|password.*expired/i.test(text)) return "Your password has expired. Contact your system administrator.";
+        return "Could not unlock the screen. Check your password and try again.";
+    }
     return failures > 1 ? "Wrong password (" + failures + ")" : "Wrong password";
 }
 
@@ -65,10 +69,10 @@ function sleepLine(line) {
 function sleepStatus(state, detail) {
     switch (state) {
     case "off": return { tone: "info", text: "Off: the session is not locked before sleep" };
-    case "missing": return { tone: "warning", text: "Needs " + detail.join(", ") + " to lock before sleep; install it from the notice" };
+    case "missing": return { tone: "warning", text: "Tools needed to lock before sleep are missing. Install them from the notice." };
     case "held": return { tone: "ok", text: "The session locks before sleep" };
-    case "starting": return { tone: "info", text: "Taking the sleep delay from logind" };
-    case "failed": return { tone: "warning", text: detail === "not-started" ? "Unavailable: the sleep hook could not start; the session is not locked before sleep" : "Unavailable: the sleep hook exited " + detail + "; the session is not locked before sleep" };
+    case "starting": return { tone: "info", text: "Preparing to lock before sleep" };
+    case "failed": return { tone: "warning", text: "Locking before sleep is unavailable. Lock the screen before sleep." };
     }
     throw new Error("sleepStatus: state " + JSON.stringify(state) + " is not off, missing, starting, held or failed");
 }
@@ -84,10 +88,10 @@ var UNTIL_DISMISSED = 0;
 function lastSleep(reason) {
     const warn = message => ({ title: "The session was not locked before sleep", message: message, tone: "danger", icon: "lock-open", duration: UNTIL_DISMISSED });
     switch (reason) {
-    case "secure": return { status: { tone: "ok", text: "The session was locked before the last suspend" }, toast: null };
-    case "refused": return { status: { tone: "danger", text: "The last suspend went ahead unlocked: Hyprland refused the lock" }, toast: warn("Hyprland refused the lock, so the machine slept unlocked. Another lock screen may hold the session.") };
-    case "timeout": return { status: { tone: "danger", text: "The last suspend went ahead before the lock was confirmed" }, toast: warn("The lock was not confirmed before logind's delay ran out, so the machine may have slept unlocked.") };
-    case "closed": return { status: { tone: "danger", text: "The last suspend went ahead without the sleep hook" }, toast: warn("The sleep hook stopped during the suspend, so the machine may have slept unlocked.") };
+    case "secure": return { status: { tone: "ok", text: "The session was locked before the last sleep" }, toast: null };
+    case "refused": return { status: { tone: "danger", text: "The computer slept without the VGS lock" }, toast: warn("Hyprland refused the VGS lock. Another lock screen may hold the session. Check the lock before sleep.") };
+    case "timeout": return { status: { tone: "danger", text: "The computer slept before VGS confirmed the lock" }, toast: warn("The computer may have slept unlocked. Lock the screen before sleep.") };
+    case "closed": return { status: { tone: "danger", text: "The lock check stopped before sleep" }, toast: warn("The computer may have slept unlocked. Lock the screen before sleep.") };
     }
     throw new Error("lastSleep: reason " + JSON.stringify(reason) + " is not secure, refused, timeout or closed");
 }

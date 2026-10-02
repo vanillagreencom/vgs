@@ -1,6 +1,6 @@
 # Automations
 
-`vgs.automations` runs a shell command of yours on a schedule, such as every weekday at 09:00, every 2 weeks on Monday, or the second Tuesday of each month. Each run keeps a transcript for up to 30 days, and a run that fails always sends a notification whose click opens that transcript. The schedules are systemd user timers, so a run happens whether or not the shell is running.
+Automations runs your commands on a schedule. It keeps each run's output and sends an alert when a run fails. Select the alert to open the output.
 
 ![The automations' status on their Settings page](../../../docs/images/plugins/vgs.automations-page.webp)
 
@@ -21,7 +21,7 @@ The plugin ships with VGS and is enabled by default. It needs `notify-send` (lib
 
 ## How it works
 
-1. You add an automation with the `automations` command below. It lands in `~/.config/vgs/automations/automations.json`.
+1. Select **New** in the Automations window to add a command and schedule.
 2. The command writes a timer and a service for it under `~/.config/systemd/user/` and enables the timer. The service runs the plugin's runner, never your command directly.
 3. At each run the runner starts your command in your login shell, so it finds what your terminal finds, and stops it at its timeout.
 4. It saves a transcript, each output line with its time, and a record of the outcome under `~/.local/state/vgs/automations/runs/`.

@@ -1,6 +1,6 @@
 # Updates
 
-`vgs.updates` is the service that owns update checks for VGS, the bar widget and flyout that show them ([§ Bar widget and flyout](#bar-widget-and-flyout)), and the floating TUIs that run the updates ([pipeline.md](pipeline.md)).
+Updates checks your system, VGS, plugins, themes and developer tools. Open its bar button to view available updates and install them.
 
 ![The updates flyout with its System row open](../../../docs/images/plugins/vgs.updates-flyout.webp)
 

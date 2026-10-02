@@ -142,7 +142,7 @@ function readArgs(argv) {
 }
 
 const args = readArgs(process.argv.slice(2));
-const { refuse, main, onPath, refuseOutsideTerminal, shellWord } = require(path.join(args.tree, "bin", "lib", "judge-files.js"));
+const { Refusal, refuse, main, onPath, refuseOutsideTerminal, shellWord } = require(path.join(args.tree, "bin", "lib", "judge-files.js"));
 const { load } = require(path.join(args.tree, "bin", "lib", "qml-library.js"));
 const PackageManagers = load(path.join(args.tree, "shell", "Core", "PackageManagers.js"));
 const Lucide = load(path.join(args.tree, "shell", "Ui", "icons", "Lucide.js"));
@@ -678,7 +678,7 @@ async function remove(catalog, id) {
     runSteps((row.postRemove || []).map(step => stepArgv(catalog, step)), buildEnv(row));
     const steps = [];
     for (const key of (typeof row.package === "string" ? [row.package] : row.tools || []).map(Catalog.specKey).reverse()) {
-        if (keptSpecs.has(key)) process.stdout.write("devtools: kept=" + key + " reason=declared-by-installed-row\n");
+        if (keptSpecs.has(key)) actionDiagnostic("devtools: kept=" + key + " reason=declared-by-installed-row", "Kept " + key + ". Another installed tool needs it.");
         else steps.push(["mise", "uninstall", "--all", key], ["mise", "rm", "-g", key]);
     }
     if (steps.length > 0) requireMise();
@@ -711,7 +711,7 @@ function removeHomeProbe(present) {
     for (const t of targets) {
         if (!fs.existsSync(t)) continue;
         fs.rmSync(t, { recursive: true, force: true });
-        process.stdout.write("devtools: removed=" + t + "\n");
+        actionDiagnostic("devtools: removed=" + t, "Removed " + path.basename(t) + ".");
     }
 }
 
@@ -729,8 +729,27 @@ async function otherTool(key, verb) {
     }
 }
 
+function actionDiagnostic(raw, message) {
+    if (!process.env.VGS_TUI_LIB) return process.stdout.write(raw + "\n");
+    logActionDiagnostic(raw);
+    process.stdout.write(message + "\n");
+}
+
+function logActionDiagnostic(raw) {
+    const log = path.join(process.env.XDG_STATE_HOME || path.join(HOME, ".local", "state"), "vgs", "devtools", "actions.log");
+    fs.mkdirSync(path.dirname(log), { recursive: true });
+    fs.appendFileSync(log, raw + "\n");
+}
+
 function launcherLine(state, command) {
-    process.stdout.write("launcher=" + state + " command=" + command + " path=" + path.join(LAUNCHER_DIR, command) + "\n");
+    const messages = {
+        foreign: "Kept the launcher for " + command + ". Another tool manages it.",
+        shadowed: "Kept the installed command for " + command + ".",
+        written: "Created the launcher for " + command + ".",
+        removed: "Removed the launcher for " + command + ".",
+        retired: "Removed the old launcher for " + command + "."
+    };
+    actionDiagnostic("launcher=" + state + " command=" + command + " path=" + path.join(LAUNCHER_DIR, command), messages[state] || "The launcher for " + command + " did not change.");
 }
 
 // The launcher script for ROW installing SPEC. It exports the release-age
@@ -849,7 +868,7 @@ function readTarget(rest, flags) {
     return out;
 }
 
-main(async () => {
+async function execute() {
     const { verb, rest } = args;
     if (verb === "list") {
         if (rest.length !== 1 || rest[0] !== "--json") bad("list=json-required");
@@ -870,5 +889,16 @@ main(async () => {
         await launchersVerb(readCatalog(), rest[0]);
     } else {
         bad("verb=" + verb);
+    }
+}
+
+main(async () => {
+    try {
+        await execute();
+    } catch (e) {
+        if (!(e instanceof Refusal) || !process.env.VGS_TUI_LIB) throw e;
+        logActionDiagnostic("devtools: refused: " + e.first + "\n" + e.detail);
+        process.stderr.write(View.actionErrorText(e.first) + "\n");
+        process.exit(e.status);
     }
 }, "devtools");

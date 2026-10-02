@@ -89,8 +89,8 @@ Column {
             Badge { visible: root.applying; text: "Applying"; tone: "info" },
             Badge { visible: root.definitionUpdate; text: "Update"; tone: "warning" },
             Badge { visible: root.imageryUpdate; text: "Wallpaper update"; tone: "warning" },
-            Badge { visible: root.packageState === "shadowed"; text: "Shadowed"; tone: "neutral" },
-            Badge { visible: root.packageState === "refused"; text: "Refused"; tone: "danger" },
+            Badge { visible: root.packageState === "shadowed"; text: "Hidden by another copy"; tone: "neutral" },
+            Badge { visible: root.packageState === "refused"; text: "Unavailable"; tone: "danger" },
             Row {
                 visible: root.busyText !== ""
                 spacing: Theme.control.gap

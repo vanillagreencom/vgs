@@ -1,6 +1,6 @@
 # Themes
 
-A bar button that opens a panel listing every theme package, a full-screen theme browser and wallpaper browser, and the applied theme's wallpaper on every screen, under every window. A click on a package applies it to the shell and to every application the theme targets.
+Themes changes your desktop colours and wallpaper. Select a theme to apply it to VGS and supported applications.
 
 ![The theme browser showing an installed theme](../../../docs/images/plugins/vgs.themes-browser.webp)
 

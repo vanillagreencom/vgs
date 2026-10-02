@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "AutomationsViewLogic.js" as View
 
 Section {
     id: root
@@ -10,20 +11,19 @@ Section {
     signal openRequested(string path)
 
     width: parent ? parent.width : implicitWidth
-    title: "Test run transcript"
+    title: "Test run output"
     description: root.run === null ? "Save the automation before running it." : outcomeLine()
     headerInset: 0
     visible: root.run !== null || root.transcript !== ""
 
     function outcomeLine() {
         if (run === null) return "";
-        const code = run.exitCode === null ? "exit unknown" : "exit " + run.exitCode;
-        return run.outcome + " · " + code;
+        return View.outcomeLabel(run.outcome);
     }
 
     CodeLine {
         width: parent.width
-        text: root.transcript === "" ? "Waiting for the run to write its transcript." : root.transcript
+        text: root.transcript === "" ? "Waiting for run output." : root.transcript
         copyLabel: "Copy transcript text"
     }
 

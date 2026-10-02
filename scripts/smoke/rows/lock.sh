@@ -305,7 +305,7 @@ expect_poll "the hook let the sleep go once the lock was confirmed" "released re
 expect "the hook announced the sleep with its budget" "sleep budget_ms=4000" bash -c 'grep -x "sleep budget_ms=[0-9]*" -- "$1" || :' _ "$sleep_log"
 release "the sleep lock"
 expect_poll "the hook is taken again after the sleep" 2 bash -c 'grep -c -x "ready budget_ms=4000" -- "$1" || :' _ "$sleep_log"
-expect "the last sleep is published as locked" '["ok", "The session was locked before the last suspend"]' status_value lastSleep
+expect "the last sleep is published as locked" '["ok", "The session was locked before the last sleep"]' status_value lastSleep
 
 # A second lock client, the harness's lock-client, holds the session. It
 # runs no authentication and is stopped by its pid. With the VGS layer's
@@ -369,7 +369,7 @@ expect_poll "timeout: the hook read the short delay" "ready budget_ms=1" tail -n
 : >"$sleep_trigger"
 expect_poll "timeout: the hook let the sleep go on its budget" "released reason=timeout" bash -c 'grep -x "released reason=timeout" -- "$1" || :' _ "$sleep_log"
 expect_poll "timeout: the sleep still locked the session" locked session_lock
-expect_poll "timeout: the last sleep is published as unconfirmed" '["danger", "The last suspend went ahead before the lock was confirmed"]' status_value lastSleep
+expect_poll "timeout: the last sleep is published as unconfirmed" '["danger", "The computer slept before VGS confirmed the lock"]' status_value lastSleep
 expect "timeout: no toast shows over the lock screen" '[]' lock_toasts
 release "the timed-out sleep lock"
 expect_poll "timeout: the user is told once back at the desktop" '[["The session was not locked before sleep", "danger"]]' lock_toasts
@@ -386,7 +386,7 @@ expect_poll "turning the setting off publishes the hook off" info sleep_status
 printf '#!/nonexistent/interpreter\n' >"$shim/systemd-inhibit"
 chmod 755 "$shim/systemd-inhibit"
 set_setting lockBeforeSleep null
-expect_poll "a hook that cannot start is published as such" '["warning", "Unavailable: the sleep hook could not start; the session is not locked before sleep"]' status_value sleep
+expect_poll "a hook that cannot start is published as such" '["warning", "Locking before sleep is unavailable. Lock the screen before sleep."]' status_value sleep
 mv -- "$sandbox/systemd-inhibit.good" "$shim/systemd-inhibit"
 set_setting lockBeforeSleep false
 expect_poll "the setting off again" info sleep_status

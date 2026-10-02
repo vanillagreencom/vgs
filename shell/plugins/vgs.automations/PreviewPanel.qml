@@ -13,7 +13,7 @@ Section {
 
     width: parent ? parent.width : implicitWidth
     title: "Next runs"
-    description: "The engine judges the next five occurrences."
+    description: "Preview the next scheduled runs."
     headerInset: 0
     rowSpacing: Theme.stack.row
 
@@ -58,7 +58,7 @@ Section {
             Label {
                 width: parent.width
                 role: "hint"
-                text: "No future run matches this draft."
+                text: "This schedule has no future runs."
                 visible: root.occurrences.length === 0
                 wrapMode: Text.Wrap
             }

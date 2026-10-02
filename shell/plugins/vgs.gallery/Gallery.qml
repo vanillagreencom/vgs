@@ -24,7 +24,7 @@ Item {
 
     function open(payloadJson) { payload = payloadJson ? JSON.parse(payloadJson) : {}; }
     function close() {}
-    function toast() { shell.toasts.show({ title: "Saved", message: "The theme was written", tone: "success", icon: "check" }); return "ok"; }
+    function toast() { shell.toasts.show({ title: "Saved", message: "The theme was saved", tone: "success", icon: "check" }); return "ok"; }
 
     implicitWidth: Theme.size.panel.lg
     implicitHeight: Theme.size.panel.maxHeight
@@ -43,8 +43,8 @@ Item {
             Column {
                 width: layout.contentWidth
                 spacing: Theme.row.lineGap
-                Label { role: "h3"; text: "Gallery" }
-                Label { role: "hint"; color: Theme.color.textMuted; text: "Every component in every variant and state, drawn from the " + Theme.name + " theme."; width: parent.width; wrapMode: Text.Wrap }
+                Label { role: "h3"; text: "VGS Components" }
+                Label { role: "hint"; color: Theme.color.textMuted; text: "Preview controls with the " + Theme.name + " theme."; width: parent.width; wrapMode: Text.Wrap }
             }
         ]
 
@@ -57,7 +57,7 @@ Item {
 
                 Section {
                     title: "Surfaces"
-                    description: "The three levels a panel draws at"
+                    description: "Panel background levels"
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline
@@ -77,7 +77,7 @@ Item {
                 Section {
                     title: "Typography"
                     rowSpacing: Theme.stack.group
-                    description: "One role per kind of text, each at its size in pixels; a key/value label beside its value"
+                    description: "Text roles, sizes and label-value pairs"
                 Column {
                     spacing: Theme.space.xxs
                     Repeater {
@@ -90,7 +90,7 @@ Item {
                     spacing: Theme.stack.row
                     Field { label: "Agents running"; inline: true; width: parent.width; Label { role: "value"; text: "3"; width: parent.width; elide: Text.ElideRight } }
                     Field { label: "Last check"; inline: true; width: parent.width; Label { role: "value"; text: "9/30/26 3:57 PM"; width: parent.width; elide: Text.ElideRight } }
-                    Field { label: "Warden"; inline: true; width: parent.width; Badge { text: "Checking"; tone: "success" } }
+                    Field { label: "Warden"; inline: true; width: parent.width; Badge { text: "Within limits"; tone: "success" } }
                 }
                 ImageText {
                     width: parent.width
@@ -197,7 +197,7 @@ Item {
                 Section {
                     title: "Inputs"
                     rowSpacing: Theme.stack.group
-                    description: "Text fields with icons, actions and errors; a field with its hint; form rows, one with a warning"
+                    description: "Text fields, actions, errors and hints"
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline
@@ -225,10 +225,10 @@ Item {
                 }
                 Field { label: "Command"; hint: "Multi-line command text"; width: parent.width; TextArea { width: parent.width; text: "echo hello\nprintf '%s\\n' done" } }
                 Field { label: "Date"; hint: "A keyboard picker"; width: parent.width; DateField { date: "2026-01-05" } }
-                Field { label: "Time"; hint: "Up and down step minutes"; width: parent.width; TimeField { text: "09:00" } }
+                Field { label: "Time"; hint: "Use Up and Down to change the minutes"; width: parent.width; TimeField { text: "09:00" } }
                 Field { label: "Folder"; hint: "A directory picker"; width: parent.width; PathField { path: "" } }
                 Field { label: "Shortcut"; hint: "Key caps and a typed combo; the Settings Keys rows also capture pressed keys"; width: parent.width; ShortcutField { id: shortcutSample; width: parent.width; key: "SUPER+SPACE"; onTyped: text => shortcutSample.key = text.toUpperCase(); onCleared: shortcutSample.key = "" } }
-                Field { label: "Weekdays"; hint: "Calendar recurrence chips"; width: parent.width; WeekdayChipGroup { selected: ["mon", "wed", "fri"] } }
+                Field { label: "Weekdays"; hint: "Choose the days for a schedule"; width: parent.width; WeekdayChipGroup { selected: ["mon", "wed", "fri"] } }
                 Field { label: "Times"; hint: "Sorted time chips"; width: parent.width; TimeChipList { width: parent.width; times: ["09:00", "17:30"] } }
                 Slider { from: 0; to: 100; value: 40; width: parent.width }
                 Slider { from: 0; to: 100; value: 70; width: parent.width; enabled: false }
@@ -236,14 +236,14 @@ Item {
                 }
                 Section {
                     title: "Groups"
-                    description: "Key/value rows, each with its hint, action and command, one group apart with a hairline between"
+                    description: "Status rows with hints and setup buttons"
                 GroupList {
                     id: groups
                     width: parent.width
                     Column {
                         width: groups.width
                         spacing: Theme.field.gap
-                        Field { id: wardenRow; label: "Warden"; inline: true; hint: "Keeps AI agents within their memory and task limits"; width: parent.width; Badge { text: "Checking"; tone: "success" } }
+                        Field { id: wardenRow; label: "Warden"; inline: true; hint: "Checks whether AI agents stay within their memory and process limits"; width: parent.width; Badge { text: "Within limits"; tone: "success" } }
                         CommandDisclosure { x: wardenRow.valueX; width: parent.width - x; command: "systemctl --user start agent-warden.timer" }
                     }
                     Field { label: "Agents running"; inline: true; width: groups.width; Label { role: "value"; text: "3"; width: parent.width; elide: Text.ElideRight } }
@@ -251,7 +251,7 @@ Item {
                     Column {
                         width: groups.width
                         spacing: Theme.field.gap
-                        Field { id: vsysRow; label: "Vsys"; inline: true; hint: "The agent dashboard that ships the warden"; width: parent.width; Badge { text: "Absent"; tone: "warning" } }
+                        Field { id: vsysRow; label: "Agent dashboard"; inline: true; hint: "vsys shows your agents and provides Agent Warden"; width: parent.width; Badge { text: "Not installed"; tone: "warning" } }
                         Button { x: vsysRow.valueX; text: "Install vsys"; iconName: "wrench"; variant: "primary"; size: "sm" }
                     }
                 }
@@ -260,7 +260,7 @@ Item {
                 Section {
                     title: "Feedback"
                     rowSpacing: Theme.stack.group
-                    description: "Progress, spinner, level displays, badges, key caps, a code line to copy and an empty result"
+                    description: "Progress, badges, keys, copyable text and empty results"
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline
@@ -337,7 +337,7 @@ Item {
                                 width: parent.width
                                 spacing: Theme.row.lineGap
                                 Label { role: "bodyStrong"; text: "A popover" }
-                                Label { role: "hint"; text: "Its own surface, under its button." }
+                                Label { role: "hint"; text: "This opens below the button." }
                             }
                         }
                         Tooltip { text: "Opens a popover under this button" }
@@ -355,7 +355,7 @@ Item {
                 }
                 Section {
                     title: "Voice levels"
-                    description: "Passive rings in every tone; synthetic levels, no audio input"
+                    description: "Animated rings with sample audio levels"
                     headerInset: 0
                     Flow {
                         width: parent.width
@@ -390,12 +390,12 @@ Item {
                         }
                     }
                     Slider { id: orbLevel; from: 0; to: 1; value: 0.4; width: parent.width }
-                    Label { role: "hint"; text: "Size, lines, amplitude, tones and timings follow voiceOrb tokens. Motion scale 0 keeps the tones and level updates without ticking."; width: parent.width; wrapMode: Text.Wrap }
+                    Label { role: "hint"; text: "These samples use no microphone input."; width: parent.width; wrapMode: Text.Wrap }
                 }
                 Section {
                     title: "Dialogs"
                     rowSpacing: Theme.stack.group
-                    description: "Waiting, destructive, busy, and with content and a disabled action"
+                    description: "Confirmations, progress and disabled actions"
                 Dialog {
                     modal: false
                     title: "Download wallpapers for Nord?"
@@ -405,7 +405,7 @@ Item {
                 Dialog {
                     modal: false
                     title: "Remove acme.weather?"
-                    message: "Its settings stay in shell.json."
+                    message: "Your settings are kept."
                     actions: [{ label: "Cancel", role: "cancel" }, { label: "Remove", role: "accept", variant: "danger" }]
                 }
                 Dialog {
@@ -418,7 +418,7 @@ Item {
                 Dialog {
                     modal: false
                     title: "Install what acme.weather needs?"
-                    message: "No known package manager was found; install these by hand."
+                    message: "VGS cannot install these tools on this system."
                     actions: [{ label: "Not now", role: "cancel" }, { label: "Install", role: "accept", enabled: false }]
                     Label { role: "itemCode"; text: "gum" }
                     Label { role: "itemCode"; text: "xdg-terminal-exec" }
@@ -428,7 +428,7 @@ Item {
                 Section {
                     title: "Cards"
                     rowSpacing: Theme.stack.group
-                    description: "Angled cards over a scrim: the middle one selected, the others dimmed"
+                    description: "Selected and unselected cards"
                 Item {
                     width: parent.width
                     height: Theme.size.panel.sm / 2
@@ -456,7 +456,7 @@ Item {
                 Section {
                     title: "Carousel"
                     rowSpacing: Theme.stack.group
-                    description: "A rail of cards at its smallest scale: a click or the wheel over it steps the rail"
+                    description: "Click a card or scroll to change the selection."
                 CardCarousel {
                     width: parent.width
                     height: Theme.carousel.expandedHeight * Theme.carousel.minScale
@@ -719,7 +719,7 @@ Item {
                             width: parent.width
                             modal: false
                             title: "Save this theme?"
-                            message: "The accept action is the focused action."
+                    message: "Save has keyboard focus."
                             actions: [{ label: "Cancel", role: "cancel" }, { label: "Save", role: "accept" }]
                         }
                     }
@@ -729,7 +729,7 @@ Item {
                 Section {
                     title: "Titles and scrolling"
                     rowSpacing: Theme.stack.group
-                    description: "A title that opens a long menu, the current choice checked; a scroll area and its bar; a slim bar beside a plain list"
+                    description: "Title menus and scroll bars"
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline
@@ -741,7 +741,7 @@ Item {
                         Menu {
                             id: titleMenu
                             Repeater {
-                                model: ["Bar", "Gallery", "Launcher", "Notifications", "Settings", "Themes", "Clock", "Weather", "Workspaces", "Battery", "Network", "Volume"]
+                                model: ["Bar", "VGS Components", "Launcher", "Notifications", "Settings", "Themes", "Clock", "Weather", "Workspaces", "Battery", "Network", "Volume"]
                                 MenuItem {
                                     required property string modelData
                                     text: modelData
@@ -809,7 +809,7 @@ Item {
                 Section {
                     title: "Lists"
                     rowSpacing: Theme.stack.group
-                    description: "Tabs, list items, a disclosure row open on its content, dividers, and device rows under one cursor"
+                    description: "Tabs, rows, expanded details and dividers"
                 Tabs { model: ["Installed", "Available", "Updates"] }
                 Column {
                     width: parent.width
@@ -828,8 +828,8 @@ Item {
                         Label { role: "code"; text: "mesa 25.1 -> 25.2" }
                     }
                     Divider { width: parent.width }
-                    MenuItem { text: "A menu entry, as the menu draws it"; iconName: "check"; shortcut: "Enter" }
-                    MenuItem { text: "The checked entry of a menu"; iconName: "palette"; checked: true }
+                    MenuItem { text: "Menu entry"; iconName: "check"; shortcut: "Enter" }
+                    MenuItem { text: "Selected menu entry"; iconName: "palette"; checked: true }
                 }
                 Item {
                     id: deviceList
@@ -903,7 +903,7 @@ Item {
                 }
                 Section {
                     title: "List motion"
-                    description: "One cursor travels between rows under Up, Down and the pointer, and rows rise in as they arrive"
+                    description: "Move the selection with Up, Down or the pointer."
                     rowSpacing: Theme.stack.group
                 Button {
                     text: "Replay the entrance"

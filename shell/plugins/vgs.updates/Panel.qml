@@ -182,7 +182,7 @@ Item {
             width: layout.contentWidth
             visible: root.rows.length === 0
             role: "hint"
-            text: "No check has listed a source yet"
+            text: "No update results yet"
             wrapMode: Text.Wrap
         }
 

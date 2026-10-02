@@ -9,6 +9,6 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source "$VGS_TUI_LIB"
 
-vgs_tui_header "Set up Agent Warden" "Keeps your AI agents within their memory and task limits."
-vgs_tui_step "vsys warden install"
+vgs_tui_header "Set up Agent Warden" "Limit your AI agents' memory and process use."
+vgs_tui_step "Setting up Agent Warden"
 vsys warden install

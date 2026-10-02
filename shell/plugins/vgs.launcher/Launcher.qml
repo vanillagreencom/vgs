@@ -472,14 +472,14 @@ Item {
             return;
         }
         console.error("launcher: tui " + key + " " + reply);
-        notice = reply;
+        notice = MenuModel.actionErrorText(reply);
         rebuildDisplay();
     }
 
     function launchApp(appId) {
         const entry = DesktopEntries.byId(appId);
         if (entry === null) {
-            notice = "The application is gone: " + appId;
+            notice = "The application is no longer installed. Choose another application.";
             rebuildDisplay();
             return;
         }
@@ -534,7 +534,7 @@ Item {
         });
         if (reply === "ok") dismiss();
         else {
-            notice = reply;
+            notice = MenuModel.actionErrorText(reply);
             rebuildDisplay();
         }
     }
@@ -545,7 +545,7 @@ Item {
     function requestRemove() {
         if (!cursorActive || selectedIndex < 0 || selectedIndex >= displayModel.count) return;
         if (displayModel.get(selectedIndex).kind !== "app") return;
-        notice = "Removing one application is not available here: use Remove to pick packages";
+        notice = "Use Remove to choose the packages to remove.";
         rebuildDisplay();
     }
 
@@ -728,7 +728,7 @@ Item {
         if (notice) rows.push(row("notice.now", "notice", "info", "", notice, "", "", ""));
         if (requestMode || fileMode || !(searching || showCategories || activeMenu !== "root")) return rows;
         for (const source of Object.keys(menuErrors))
-            rows.push(row("notice.menu." + source, "notice", "info", "", source === "user" ? "Your menu file was refused" : "The shipped menu was refused", "", menuErrors[source], ""));
+            rows.push(row("notice.menu." + source, "notice", "info", "", source === "user" ? "Your menu is unavailable" : "The VGS menu is unavailable", "", MenuModel.menuErrorText(menuErrors[source]), ""));
         return rows;
     }
 

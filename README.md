@@ -83,18 +83,18 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 
 | Plugin | What it does |
 |---|---|
-| [Bar](shell/plugins/vgs.bar/README.md) | The bar across the top of every screen, with its built-in workspaces and clock, and three sections for plugin widgets. |
+| [Bar](shell/plugins/vgs.bar/README.md) | Shows workspaces, the clock and plugin buttons at the top of each screen. |
 | [Settings](shell/plugins/vgs.settings/README.md) | A window that lists every plugin and opens a page for each, with its details, settings and keys. `SUPER+M` or the gear in the bar opens it. |
-| [Themes](shell/plugins/vgs.themes/README.md) | A bar button and a panel that list every theme package and apply one with a click, and the applied theme's wallpaper on every screen, with Previous and Next in the panel. `bin/vgsh plugin enable vgs.themes` adds the button to the bar. |
+| [Themes](shell/plugins/vgs.themes/README.md) | Choose themes and wallpapers for your desktop and supported applications. |
 | [Launcher](shell/plugins/vgs.launcher/README.md) | A search field over the screen that finds applications, menu entries and files. `SUPER+SPACE` opens it. |
 | [Notifications](shell/plugins/vgs.notifications/README.md) | The desktop notification daemon: notifications at the top of every screen, an Inbox and History panel, and Silence. `SUPER+N` opens the panel. |
-| [Updates](shell/plugins/vgs.updates/README.md) | A service that counts waiting updates for the system packages, AUR, Flatpak, mise tools, VGS itself, plugins and themes, every six hours, on demand and after each update run, without root. Its Settings page shows the count, the last check and any source that failed. |
-| [Agent Warden](shell/plugins/vgs.agent-warden/README.md) | A shield in the bar that shows whether the agent warden vsys ships keeps your AI agents within their memory and task limits. A click opens a small panel with what needs a look, the agents' memory and Open vsys, or the one step that sets the warden up. One notification, with Open vsys, tells you when something starts to need a look. It reads the warden's status and never changes an agent. `bin/vgsh plugin enable vgs.agent-warden` adds the shield to the bar. |
-| [Dev Tools](shell/plugins/vgs.devtools/README.md) | A window over a catalog of coding agents, developer apps, CLI tools, languages, editors, databases and terminals, with each tool's state and version, and Install, Update and Remove in a floating TUI. Its VGS section shows how VGS is installed and every command VGS or an enabled plugin needs that is missing, with Install. `bin/vgsh ipc call vgs.devtools invoke open` opens it. |
-| [Gallery](shell/plugins/vgs.gallery/README.md) | A window with every component of the design system in every variant and state, to preview a theme. `bin/vgsh ipc call shell summon window vgs.gallery '{}'` opens it. |
-| [Automations](shell/plugins/vgs.automations/README.md) | Runs your shell commands on a schedule through systemd user timers, such as every weekday at 09:00 or the second Tuesday of each month, keeps each run's transcript for up to 30 days, and sends a notification for every failure whose click opens the transcript. |
-| [Lock](shell/plugins/vgs.lock/README.md) | The lock screen: `SUPER+L`, `vgsh lock`, five minutes without input and every suspend lock the session, and your password unlocks it. The session stays locked if the shell stops. |
-| [Polkit](shell/plugins/vgs.polkit/README.md) | The session's polkit agent: a themed dialog asks for your password when an application needs administrator rights. |
+| [Updates](shell/plugins/vgs.updates/README.md) | Check and install updates for your system, VGS, plugins, themes and developer tools. |
+| [Agent Warden](shell/plugins/vgs.agent-warden/README.md) | Shows whether your AI agents stay within their memory and process limits. Alerts you when an agent needs attention. |
+| [Dev Tools](shell/plugins/vgs.devtools/README.md) | Install, update and remove developer tools. Check the VGS version and install missing tools. |
+| [VGS Components](shell/plugins/vgs.gallery/README.md) | Preview VGS controls and their states with the current theme. |
+| [Automations](shell/plugins/vgs.automations/README.md) | Run your commands on a schedule. View each run's output and get an alert when a run fails. |
+| [Lock](shell/plugins/vgs.lock/README.md) | Lock your screen and unlock it with your password. Your session stays locked if VGS stops. |
+| [Polkit](shell/plugins/vgs.polkit/README.md) | Asks for your password when an application needs administrator access. |
 | [Jarvis](shell/plugins/vgs.jarvis/README.md) | A service-owned child daemon with health in Settings, bounded restart and a bar icon that toggles mute. This skeleton captures no audio and connects to no provider. |
 
 ## How it works

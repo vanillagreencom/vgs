@@ -4,7 +4,7 @@
   "name": "Themes",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A bar button that opens a panel listing every theme package and the wallpaper, and a full-screen theme browser on SUPER+T that lists every shipped, installed and catalog theme, installs and applies one, and offers its wallpapers, and a full-screen wallpaper browser on SUPER+W that sets the applied theme's or any wallpaper on every monitor or on one; the applied theme's wallpaper is drawn under every window.",
+  "description": "Choose themes and wallpapers for your desktop and supported applications.",
   "license": "MIT",
   "icon": "palette",
   "kinds": [
@@ -40,26 +40,26 @@
   "schema": {
     "placement": {
       "type": "enum",
-      "label": "Placement",
-      "description": "Where the themes panel opens on its monitor when summoned without its bar button",
+      "label": "Panel position",
+      "description": "Where the panel opens when you use its shortcut",
       "options": ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"]
     },
     "setWindowBorders": {
       "type": "boolean",
-      "label": "Themes set window borders",
-      "description": "Theme border colours, border thickness and shadow colour land in the VGS Hyprland layer; a user's own Hyprland setting after the include line still wins",
+      "label": "Apply theme borders",
+      "description": "Use the theme's window borders and shadows unless your Hyprland settings override them",
       "group": "Hyprland"
     },
     "setCornerRadius": {
       "type": "boolean",
-      "label": "Themes set corner radius",
-      "description": "Theme window rounding and grouped-window tab rounding land in the VGS Hyprland layer; a user's own Hyprland setting after the include line still wins",
+      "label": "Apply theme corners",
+      "description": "Use the theme's rounded window corners unless your Hyprland settings override them",
       "group": "Hyprland"
     },
     "setWindowAnimations": {
       "type": "boolean",
-      "label": "Themes set window animations",
-      "description": "Theme animation presets land in the VGS Hyprland layer; a user's own Hyprland setting after the include line still wins",
+      "label": "Apply theme animations",
+      "description": "Use the theme's window animations unless your Hyprland settings override them",
       "group": "Hyprland"
     }
   },
@@ -67,7 +67,7 @@
     "browserTheming": {
       "type": "state",
       "label": "Browser theming",
-      "hint": "Chromium, Google Chrome, Microsoft Edge and Brave take the theme's colour through a writer installed once, with your password",
+      "hint": "Apply theme colours to Chromium, Chrome, Edge and Brave after setup",
       "action": { "label": "Install browser theming", "tui": "browser-policy" },
       "command": "vgsh theme browser-policy install"
     }

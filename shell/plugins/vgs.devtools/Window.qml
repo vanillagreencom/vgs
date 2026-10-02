@@ -166,19 +166,20 @@ Item {
             spacing: root.look.row.lineGap
 
             Switch {
-                text: "Write launchers"
+                text: "Create tool launchers"
                 checked: root.writeLaunchers
                 onToggled: {
                     const wanted = checked;
                     checked = Qt.binding(() => root.writeLaunchers);
                     const reply = root.shell.configure.set("writeLaunchers", wanted);
-                    root.problem = reply === "ok" ? "" : reply;
+                    root.problem = ViewLogic.replyLine(reply, "setting");
+                    if (root.problem !== "") console.warn("devtools window: configure " + JSON.stringify(reply));
                 }
             }
             Label {
                 width: parent.width
                 role: "hint"
-                text: "A launcher in ~/.local/bin installs its tool through mise on first run; VGS never touches a file it did not write"
+                text: "Install each tool the first time you open its launcher."
                 wrapMode: Text.Wrap
             }
         }

@@ -18,6 +18,13 @@ function probe(value, status = 0, stderr = "") {
 }
 
 function verify(logic) {
+    // Producer diagnostics never cross the display boundary.
+    for (const diagnostic of ["spawn=failed", "unparseable pkg", "timeout=120", "fetch=failed", "helper-missing=checkupdates", "unexpected: key=value"]) {
+        const text = logic.errorText(diagnostic);
+        assert.ok(text.length > 0, "a failed operation must tell the user");
+        assert.doesNotMatch(text, /[a-z][a-z-]*=|start-failed|output-unreadable/, "diagnostic fields stay in logs");
+    }
+
   const now = 1000000;
   const snapshot = logic.normalizeSnapshot({
     pkg: probe([
@@ -34,7 +41,7 @@ function verify(logic) {
   same(snapshot.sources.map(s => [s.source, s.count, s.label]), [["pacman", 2, "System"], ["aur", 1, "AUR"], ["flatpak", 0, "Flatpak"], ["mise", null, "mise"], ["vgs", 1, "VGS"], ["plugins", 1, "Plugins"], ["themes", 0, "Themes"]]);
   same(snapshot.sources[4].packages, [{ name: "vgs", old: "0.1.0.r1.g1111111", new: "0.1.0.r2.g2222222" }]);
   assert.equal(logic.pendingCount(snapshot), 5);
-  same(logic.checkState(snapshot, false, now, 6 * 60 * 60 * 1000, ""), { tone: "warning", text: "mise: skipped=no-check" });
+  same(logic.checkState(snapshot, false, now, 6 * 60 * 60 * 1000, ""), { tone: "warning", text: "mise: The update check failed. Select Refresh to try again." });
   const clean = JSON.parse(JSON.stringify(snapshot));
   clean.sources[3].error = null;
   clean.sources[3].count = 0;
@@ -43,9 +50,9 @@ function verify(logic) {
   same(logic.checkState(clean, false, now, 6 * 60 * 60 * 1000, ""), { tone: "ok", text: "Up to date" });
   same(logic.checkState(clean, true, now, 6, ""), { tone: "info", text: "Checking" });
   clean.checkedAt = now - 13;
-  same(logic.checkState(clean, false, now, 6, ""), { tone: "warning", text: "Check stale" });
+  same(logic.checkState(clean, false, now, 6, ""), { tone: "warning", text: "The last check is old. Select Refresh to check again." });
   clean.error = "exit=1";
-  same(logic.checkState(clean, false, now, 6, ""), { tone: "danger", text: "exit=1" });
+  same(logic.checkState(clean, false, now, 6, ""), { tone: "danger", text: "The update check failed. Select Refresh to try again." });
   same(logic.publishValues(snapshot, false, now, 6 * 60 * 60 * 1000, "").pending, 5);
   assert.equal(logic.publishValues(snapshot, false, now, 6, "").lastCheck, now);
   assert.equal(logic.nextCheckDelay(null, false, now, 6, null), 0);
@@ -54,7 +61,7 @@ function verify(logic) {
   assert.equal(logic.intervalMs({ intervalHours: 0 }), 3600000);
   assert.equal(logic.intervalMs({ intervalHours: 49 }), 48 * 3600000);
   same(snapshot.sources[5].packages, [{ name: "acme.one", old: "a", new: "b", behind: 2 }]);
-  same(logic.checkState(clean, false, now, 6, "exit=2 failed"), { tone: "danger", text: "exit=2 failed" });
+  same(logic.checkState(clean, false, now, 6, "timeout=120"), { tone: "danger", text: "The update check took too long. Select Refresh to try again." });
   same(logic.statusWrites({}, { pending: 1, lastCheck: null, checkState: { tone: "ok", text: "Up to date" }, sources: [] }).map(w => w.key), ["pending", "checkState", "sources"]);
   same(logic.statusWrites({ pending: 1 }, { pending: 1, checkState: { tone: "ok", text: "Up to date" } }).map(w => w.key), ["checkState"]);
   assert.equal(logic.nextCheckDelay(snapshot, false, now + 1000, 99999999, now), logic.RETRY_AFTER_FAILURE_MS - 1000);
@@ -83,7 +90,7 @@ function verify(logic) {
   const failedPlugins = logic.normalizeSnapshot({ pkg: probe([]), self: probe({ behind: false, error: null }), plugins: probe([{ id: "bad", behind: null, head: null, upstream: null, error: "fetch=bad" }, { id: "good", behind: 3, head: "a", upstream: "b", error: null }]), themes: probe([]) }, now);
   const pluginRow = failedPlugins.sources.find(s => s.source === "plugins");
   same([pluginRow.count, pluginRow.error], [1, "bad: fetch=bad"]);
-  same(logic.checkState(failedPlugins, false, now, 6 * 60 * 60 * 1000, ""), { tone: "warning", text: "Plugins: bad: fetch=bad" });
+  same(logic.checkState(failedPlugins, false, now, 6 * 60 * 60 * 1000, ""), { tone: "warning", text: "Plugins: The update source could not be reached. Check your connection and select Refresh." });
   const untracked = logic.normalizeSnapshot({ pkg: probe([]), self: probe({ behind: false, error: null }), plugins: probe([{ id: "local", behind: null, head: null, upstream: null, error: "not-a-checkout=/home/u/.config/vgs/plugins/local" }]), themes: probe([]) }, now);
   const untrackedRow = untracked.sources.find(s => s.source === "plugins");
   same([untrackedRow.count, untrackedRow.packages, untrackedRow.error], [0, [], null]);
@@ -153,9 +160,9 @@ function verifyView(logic) {
   assert.equal(logic.widgetTooltip({}, now, when), "Not checked yet\nNever checked");
   same(logic.panelRows(values), [
     { key: "pacman", source: "pacman", label: "System", icon: "package", secondary: "2 updates", badge: "2", badgeTone: "accent", updatable: true, lines: ["linux 6.1 → 6.2", "mesa → 25.2"], more: "+3 more" },
-    { key: "aur", source: "aur", label: "AUR", icon: "package-open", secondary: "exit=1 network down", badge: "Failed", badgeTone: "warning", updatable: false, lines: [], more: "" },
+    { key: "aur", source: "aur", label: "AUR", icon: "package-open", secondary: "The update check failed. Select Refresh to try again.", badge: "Failed", badgeTone: "warning", updatable: false, lines: [], more: "" },
     { key: "flatpak", source: "flatpak", label: "Flatpak", icon: "boxes", secondary: "Up to date", badge: "0", badgeTone: "neutral", updatable: false, lines: [], more: "" },
-    { key: "plugins", source: "plugins", label: "Plugins", icon: "puzzle", secondary: "bad: fetch=bad", badge: "1", badgeTone: "warning", updatable: true, lines: ["acme.one: 2 commits behind"], more: "" },
+    { key: "plugins", source: "plugins", label: "Plugins", icon: "puzzle", secondary: "The update source could not be reached. Check your connection and select Refresh.", badge: "1", badgeTone: "warning", updatable: true, lines: ["acme.one: 2 commits behind"], more: "" },
     { key: "later", source: "later", label: "later", icon: "package", secondary: "1 update", badge: "1", badgeTone: "accent", updatable: true, lines: ["x"], more: "" }
   ]);
   same(logic.panelRows({}), []);
@@ -165,23 +172,27 @@ function verifyView(logic) {
   same(logic.tuiRequest("log"), { name: "log", args: [] });
   assert.throws(() => logic.tuiRequest("source", ""), /needs a source/);
   assert.throws(() => logic.tuiRequest("everything"), /is not one of all, source, log/);
-  same(["ok", "started", "queued", "refused: tui=update reason=busy"].map(logic.replyLine), ["", "", "", "refused: tui=update reason=busy"]);
+  same(["ok", "started", "queued", "refused: tui=update reason=busy"].map(logic.replyLine), ["", "", "", ""]);
+  assert.equal(logic.replyLine("refused: tui=update reason=launcher-missing"), "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it.");
+  assert.equal(logic.replyLine("refused: tui=update reason=launcher-failed"), "VGS could not open the update action. Try again.");
 }
 
 verify(load(file));
 
 const controls = [
+  ["a missing launcher needs installation repair", 'if (/reason=launcher-missing/.test(reply))', 'if (false)'],
+    ["diagnostics stay out of display text", 'function errorText(reason) {', 'function errorText(reason) { return String(reason);'],
   ["package rows count", "total += snapshot.sources[i].count;", "total += 0;"],
   ["outdated rows count once", "count += 1;", "count += behind;"],
   ["outdated packages keep behind", "behind: behind", "oldBehind: behind"],
-  ["check failure wins state", "if (checkFailure !== null && checkFailure !== undefined && checkFailure !== \"\") return { tone: \"danger\", text: String(checkFailure).slice(0, 200) };", "if (false) return { tone: \"danger\", text: \"\" };"],
+  ["check failure wins state", "if (checkFailure !== null && checkFailure !== undefined && checkFailure !== \"\") return { tone: \"danger\", text: errorText(checkFailure) };", "if (false) return { tone: \"danger\", text: \"\" };"],
   ["status writes skip unchanged", "if (!hasOwn(before, key) || !sameJson(before[key], next[key])) out.push({ key: key, value: clone(next[key]) });", "out.push({ key: key, value: clone(next[key]) });"],
   ["failure retry uses short delay", "failedAt + RETRY_AFTER_FAILURE_MS - now", "failedAt + interval - now"],
   ["a failed package probe is one packages row", "if (!parsed.ok) return [sourceRow(\"packages\", null, [], null, parsed.error)];", "if (!parsed.ok) return [];"],
   ["published packages are bounded", "var limit = Math.min(row.packages.length, PUBLISHED_PACKAGES_PER_SOURCE_MAX);", "var limit = row.packages.length;"],
   ["published rows carry the omitted package count", "made.more = Math.max(0, row.packages.length - packages.length);", "made.more = 0;"],
   ["published package text is bounded", "return text.length > PUBLISHED_PACKAGE_TEXT_MAX ? text.slice(0, PUBLISHED_PACKAGE_TEXT_MAX) : text;", "return text;"],
-  ["source errors set warning", "if (source !== null) return { tone: \"warning\", text: (source.label || source.source) + \": \" + String(source.error).slice(0, 180) };", "if (false) return { tone: \"warning\", text: \"\" };"] ,
+  ["source errors set warning", "if (source !== null) return { tone: \"warning\", text: ((source.label || source.source) + \": \" + errorText(source.error)).slice(0, 200) };", "if (false) return { tone: \"warning\", text: \"\" };"] ,
   ["stale after twice the interval", "now - snapshot.checkedAt >= 2 * intervalMs", "now - snapshot.checkedAt > 3 * intervalMs"],
   ["TUI endedAt advances", "if (Number(next.endedAt) > Number(prior.endedAt)) return true;", "if (false) return true;"],
   ["outdated error makes a source error", "if (!UNTRACKED_REFUSAL.test(String(row.error))) errors.push(row.id + \": \" + row.error);", "count += 0;"],

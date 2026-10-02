@@ -4,7 +4,7 @@
   "name": "Agent Warden",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A shield in the bar that shows whether the agent warden vsys ships keeps your AI agents within their memory and task limits, a small panel with what needs a look and a link that opens vsys, and one notification when something starts to need a look. It reads the warden's status and never changes an agent itself.",
+  "description": "Shows whether your AI agents stay within their memory and process limits. Alerts you when an agent needs attention.",
   "license": "MIT",
   "icon": "shield-check",
   "kinds": [
@@ -36,20 +36,20 @@
   "schema": {
     "showCount": {
       "type": "boolean",
-      "label": "Show a count",
-      "description": "Show beside the shield how many agents run, or how many things need a look",
+      "label": "Show count",
+      "description": "Show the number of running agents or problems beside the shield",
       "group": "Display"
     },
     "hideWhenIdle": {
       "type": "boolean",
       "label": "Hide when idle",
-      "description": "Hide the shield while no agent runs and nothing needs a look",
+      "description": "Hide the shield when no agents run and no problems need attention",
       "group": "Display"
     },
     "notify": {
       "type": "enum",
       "label": "Notifications",
-      "description": "Which notifications Agent Warden sends: problems only, also each move back into limits, or none",
+      "description": "Choose alerts for problems, all events or none",
       "options": ["problems", "everything", "off"],
       "group": "Notifications"
     }
@@ -61,12 +61,12 @@
         "aur": "vsys"
       },
       "optional": true,
-      "purpose": "The agent dashboard that ships the warden"
+      "purpose": "Shows your agents and provides Agent Warden"
     },
     {
       "command": "systemctl",
       "optional": true,
-      "purpose": "Starts the warden's timer again from the panel when it has stopped checking"
+      "purpose": "Restarts Agent Warden checks"
     },
     {
       "command": "notify-send",
@@ -75,14 +75,14 @@
         "dnf": "libnotify"
       },
       "optional": true,
-      "purpose": "Sends Agent Warden's desktop notifications, with a button that opens vsys"
+      "purpose": "Sends Agent Warden alerts"
     }
   ],
   "status": {
     "warden": {
       "type": "state",
       "label": "Warden",
-      "hint": "Keeps AI agents within their memory and task limits",
+      "hint": "Checks whether AI agents stay within their memory and process limits",
       "action": { "label": "Set up", "tui": "setup" },
       "command": "vsys warden install"
     },
@@ -96,8 +96,8 @@
     },
     "vsys": {
       "type": "presence",
-      "label": "vsys",
-      "hint": "The agent dashboard that ships the warden",
+      "label": "Agent dashboard",
+      "hint": "vsys shows your agents and provides Agent Warden",
       "action": { "label": "Install vsys", "install": ["vsys"] },
       "command": "curl -fsSL https://raw.githubusercontent.com/vanillagreencom/vsys/main/install.sh | bash"
     },

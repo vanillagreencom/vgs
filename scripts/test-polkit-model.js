@@ -36,10 +36,10 @@ const flow = fields => Object.assign({
 
 function verify(model) {
     const TITLES = [
-        ["pkexec names its program", "Authentication is needed to run `/usr/bin/true' as the super user", "Authorize running /usr/bin/true"],
-        ["pkexec with straight quotes", "Authentication is required to run '/usr/bin/id' as the user bob", "Authorize running /usr/bin/id"],
-        ["another action keeps the default", "Authentication is required to change the system time.", "Authentication required"],
-        ["no message", "", "Authentication required"]
+        ["pkexec names its program", "Authentication is needed to run `/usr/bin/true' as the super user", "Allow /usr/bin/true to run"],
+        ["pkexec with straight quotes", "Authentication is required to run '/usr/bin/id' as the user bob", "Allow /usr/bin/id to run"],
+        ["another action keeps the default", "Authentication is required to change the system time.", "Administrator access"],
+        ["no message", "", "Administrator access"]
     ];
     for (const [label, message, want] of TITLES) assert.equal(model.titleOf(message), want, label);
 
@@ -56,7 +56,7 @@ function verify(model) {
 
     assert.equal(model.viewOf(null), null, "no flow draws nothing");
     same(model.viewOf(flow({})), {
-        title: "Authentication required", message: "Authentication is required to change the system time.",
+        title: "Administrator access", message: "Authentication is required to change the system time.",
         action: "org.freedesktop.timedate1.set-time", identity: "Alice Liddell", identities: ["Alice Liddell"], identityIndex: 0, prompt: "Password", echo: false, inputEnabled: true, waiting: false, note: null
     }, "a flow waiting for the password");
     const VIEWS = [
@@ -68,7 +68,7 @@ function verify(model) {
         ["a visible response echoes", { responseVisible: true }, { echo: true }],
         ["PAM's error shows in danger", { supplementaryMessage: "Account locked", supplementaryIsError: true }, { note: { text: "Account locked", tone: "danger" } }],
         ["PAM's information shows as a hint", { supplementaryMessage: "Touch the key" }, { note: { text: "Touch the key", tone: "info" } }],
-        ["a failed attempt says so", { failed: true }, { note: { text: "Authentication failed. Try again.", tone: "danger" } }],
+        ["a failed attempt says so", { failed: true }, { note: { text: "The password was not accepted. Try again.", tone: "danger" } }],
         ["PAM's own message wins over the failed note", { failed: true, supplementaryMessage: "2 attempts left", supplementaryIsError: true }, { note: { text: "2 attempts left", tone: "danger" } }]
     ];
     for (const [label, fields, want] of VIEWS) {
@@ -99,7 +99,7 @@ function verify(model) {
 verify(load(file));
 
 const CONTROLS = [
-    ["the pkexec program names the title", 'return match ? "Authorize running " + match[1] : DEFAULT_TITLE;', "return DEFAULT_TITLE;"],
+    ["the pkexec program names the title", 'return match ? "Allow " + match[1] + " to run" : DEFAULT_TITLE;', "return DEFAULT_TITLE;"],
     ["the prompt drops its colon", ".replace(/[\\s:]+$/, \"\")", ".replace(/$^/, \"\")"],
     ["a group reads as a group", "if (identity.isGroup === true) return", "if (false) return"],
     ["a display name wins over the login name", 'return display !== "" ? display : name;', "return name;"],

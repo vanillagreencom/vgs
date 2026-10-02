@@ -5,9 +5,9 @@
 // QML owns the agent, the surfaces and the password text; the password never
 // passes through here.
 
-var DEFAULT_TITLE = "Authentication required";
+var DEFAULT_TITLE = "Administrator access";
 var DEFAULT_PROMPT = "Password";
-var FAILED_NOTE = "Authentication failed. Try again.";
+var FAILED_NOTE = "The password was not accepted. Try again.";
 
 // pkexec's message, `Authentication is needed to run `<program>' as the
 // super user`, names the program; the title names it too. Any other
@@ -16,7 +16,7 @@ var PKEXEC_MESSAGE = /^Authentication is (?:needed|required) to run [`']([^`']+)
 
 function titleOf(message) {
     var match = PKEXEC_MESSAGE.exec(String(message || ""));
-    return match ? "Authorize running " + match[1] : DEFAULT_TITLE;
+    return match ? "Allow " + match[1] + " to run" : DEFAULT_TITLE;
 }
 
 // The PAM prompt without its trailing colon, `Password: ` reading
@@ -90,8 +90,8 @@ function viewOf(flow) {
 // takes one agent per session, so another agent registered first, or no
 // polkitd, leaves it unregistered.
 function agentStatus(registered) {
-    if (registered === true) return { tone: "ok", text: "Registered with polkitd: authentication prompts show here" };
-    return { tone: "warning", text: "Not registered with polkitd: another polkit agent holds this session, or polkitd is not running" };
+    if (registered === true) return { tone: "ok", text: "Ready to show password prompts" };
+    return { tone: "warning", text: "Password prompts are unavailable. Another prompt service may be active." };
 }
 
 // Whether NEXT, an agentStatus value or null, differs from PREVIOUS, the

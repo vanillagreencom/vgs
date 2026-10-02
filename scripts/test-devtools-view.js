@@ -11,10 +11,12 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const { load } = require("../bin/lib/qml-library.js");
 
 const dir = path.join(__dirname, "..", "shell", "plugins", "vgs.devtools");
 const file = path.join(dir, "ViewLogic.js");
+const windowFile = path.join(dir, "Window.qml");
 const Catalog = load(path.join(dir, "CatalogLogic.js"));
 const manifest = JSON.parse(fs.readFileSync(path.join(dir, "manifest.json"), "utf8"));
 // The logic runs in its own context, whose arrays and objects are not this
@@ -30,6 +32,48 @@ const list = (sections, other, mise) => ({ machine: "x86_64", mise: mise || { pr
 const requirement = fields => Object.assign({ command: "gum", packages: { pacman: "gum" }, optional: false, purpose: "Draws the dialogs", state: "missing", package: { manager: "pacman", name: "gum" } }, fields);
 const self = fields => Object.assign({ version: "0.1.0", method: "checkout", package: null, current: "0.1.0.r3.gabc1234", latest: "0.1.1", behind: false, error: null }, fields);
 const ok = value => ({ value: value, error: null });
+
+// The configure capability delegates to Plugins.writeSetting and
+// Config.writeUser. These replies cover their refusal classes.
+const SETTING_REPLIES = [
+    ["ok", ""],
+    ["refused: user-config=pending path=/fixture/settings", "VGS is loading your settings. Try again shortly."],
+    ...["unparseable", "unreadable", "malformed"].map(state => [
+        `refused: user-config=${state} path=/fixture/settings`,
+        "VGS could not read your settings. Close Dev Tools and open it again to retry."
+    ]),
+    ["refused: user-config=unwritable path=/fixture/settings error=permission denied\nsecond line", "VGS could not save this change. Try again."],
+    ...["undeclared", "want=boolean", "entry=none"].map(reason => [
+        `refused: setting=writeLaunchers ${reason}`,
+        "VGS could not change this setting. Close Dev Tools and open it again to retry."
+    ]),
+    ["unknown: vgs.devtools", "VGS could not change this setting. Close Dev Tools and open it again to retry."],
+    ["unexpected diagnostic=failed", "VGS could not save this change. Try again."]
+];
+
+// Execute the actual footer handler with a capability double. The raw
+// reply must never become consumer text; the checked binding survives a
+// refused write, and diagnostics retain the original reply safely quoted.
+function verifySettingHandler(logic, source) {
+    const handlers = [...source.matchAll(/onToggled: \{\n([\s\S]*?)\n                \}/g)];
+    assert.equal(handlers.length, 1, "extractor: the launcher switch has one toggled handler");
+    for (const [reply, message] of SETTING_REPLIES) {
+        for (const wanted of [false, true]) {
+            const writes = [], logs = [];
+            const root = { writeLaunchers: !wanted, problem: "previous problem", shell: {
+                configure: { set: (key, value) => { writes.push([key, value]); return reply; } }
+            } };
+            const context = { checked: wanted, root, ViewLogic: logic, Qt: { binding: callback => callback },
+                console: { warn: line => logs.push(line) } };
+            vm.runInNewContext(handlers[0][1], context, { filename: windowFile });
+            same(writes, [["writeLaunchers", wanted]], "the handler writes the user's requested value once");
+            assert.equal(typeof context.checked, "function", "the switch restores its checked binding");
+            assert.equal(context.checked(), !wanted, "the restored binding reads the current setting");
+            assert.equal(root.problem, message, `the actual handler maps ${reply}`);
+            same(logs, message === "" ? [] : ["devtools window: configure " + JSON.stringify(reply)]);
+        }
+    }
+}
 
 // Failures read from a command: [label, code, stderr, error].
 const FAILURES = [
@@ -59,9 +103,21 @@ const ANSWERS = [
 ];
 
 function verify(logic) {
+    // Producer diagnostics never cross the display boundary.
+    for (const diagnostic of ["installed=already", "arch=unsupported", "reason=foreign", "mise=absent", "id=unknown", "runner=missing", "step=failed exit=1", "unexpected: key=value"]) {
+        const text = logic.actionErrorText(diagnostic);
+        assert.ok(text.length > 0, "a failed tool action must tell the user");
+        assert.doesNotMatch(text, /[a-z][a-z-]*=/);
+    }
+    for (const diagnostic of ["start=failed", "unparseable", "timeout=120", "mise=absent", "runtime=podman exit=1", "release=unreachable", "pkg=failed", "unexpected: key=value"]) {
+        const text = logic.errorText(diagnostic);
+        assert.ok(text.length > 0, "a failed operation must tell the user");
+        assert.doesNotMatch(text, /[a-z][a-z-]*=|start-failed|output-unreadable/, "diagnostic fields stay in logs");
+    }
+
     // Sections: the catalog's own and `other`, each once, with an icon.
     same(logic.TOOL_SECTIONS.map(s => s.key).filter(k => k !== "other").sort(), JSON.parse(JSON.stringify(Catalog.SECTION_NAMES)).sort(), "the window draws every catalog section");
-    same(logic.TOOL_SECTIONS.map(s => s.title), ["Agents", "Apps", "CLI tools", "Languages", "Editors", "Databases", "Terminals", "Other mise tools"]);
+    same(logic.TOOL_SECTIONS.map(s => s.title), ["Agents", "Apps", "Command-line tools", "Languages", "Editors", "Databases", "Terminals", "Other tools"]);
     // The TUI names the window runs are the manifest's.
     same(JSON.parse(JSON.stringify(logic.VERBS)).sort(), Object.keys(manifest.tui).sort(), "every TUI the window runs is declared");
 
@@ -104,8 +160,8 @@ function verify(logic) {
 
     // Status values.
     same(logic.statusValues({}), { catalog: { tools: null, requirements: null, vgs: null, updates: null } }, "nothing answered publishes the empty catalog alone");
-    same(logic.statusValues({ vgs: ok(self({})) }).checks, { tone: "ok", text: "Every check answered" });
-    same(logic.statusValues({ vgs: ok(self({ error: "latest=timeout" })) }).checks, { tone: "warning", text: "vgsh self status failed: latest=timeout; a count a failed check feeds keeps its last answer" },
+    same(logic.statusValues({ vgs: ok(self({})) }).checks, { tone: "ok", text: "All checks passed" });
+    same(logic.statusValues({ vgs: ok(self({ error: "latest=timeout" })) }).checks, { tone: "warning", text: "Checks failed" },
         "a self status that exited 0 with an error is a failed check");
     const listed = list({ agents: [row({ installed: true, origin: "mise", version: "2", actions: ["update", "remove"] }), row({ id: "codex" })], apps: [row({ id: "cmux", installed: null, error: "e" })] },
         [{ id: "github:o/x", installed: true, version: "1", actions: ["update", "remove"] }]);
@@ -114,10 +170,10 @@ function verify(logic) {
     same(values.catalog.requirements, ok([{ owner: "core", command: "gum", purpose: "Draws the dialogs", optional: false, package: { manager: "pacman", name: "gum" } }]), "the catalog holds the missing requirements alone");
     same(logic.statusValues({ catalog: ok(list({}, [], { present: false, version: null })) }).mise, { tone: "warning", text: "Not installed", action: true }, "a missing mise offers Install mise");
     const failed = logic.statusValues({ catalog: { value: null, error: "mise=absent" }, updates: { value: null, error: "timeout=120" }, requirements: { value: null, error: "exit=1" } });
-    same(failed.mise, { tone: "danger", text: "Unknown: the tool list failed: mise=absent" });
+    same(failed.mise, { tone: "danger", text: "A required tool is missing. Use Install to add it." });
     same(["installed", "outdated", "missingRequirements"].filter(k => k in failed), [], "a failed query publishes no count");
-    same(failed.checks, { tone: "warning", text: "The tool list failed: mise=absent; vgsh doctor failed: exit=1; The update check failed: timeout=120; a count a failed check feeds keeps its last answer" },
-        "a failure after a count was published names the count as older than the check");
+    same(failed.checks, { tone: "warning", text: "Checks failed" },
+        "a failed query keeps the warning while withholding its count");
 
     // TUI ends.
     same(logic.endedSince(null, { install: { running: false, code: 0, endedAt: 5 } }), [], "the first reading reports no end");
@@ -149,34 +205,34 @@ function verify(logic) {
     same(drawn(row({ section: "databases", installed: true, origin: "container", runtime: "podman", actions: ["remove"] })),
         ["Claude Code", "bot", "brand", "Installed", [{ text: "podman", tone: "neutral" }], [], ["Remove"], []]);
     same(drawn(row({ installed: null, error: "pkg=failed verb=owner exit=3", actions: [] })),
-        ["Claude Code", "bot", "brand", "State unknown", [{ text: "Unknown", tone: "danger" }], [], [], ["pkg=failed verb=owner exit=3"]]);
+        ["Claude Code", "bot", "brand", "State unknown", [{ text: "Unknown", tone: "danger" }], [], [], ["The tool check failed. Close Dev Tools and open it again to retry."]]);
     same(drawn(row({ section: "apps", channels: ["stable", "preview"] })),
         ["Claude Code", "bot", "brand", "Not installed", [], ["stable", "preview"], ["Install"], []]);
     same(drawn(row({ section: "apps", channels: ["stable", "preview"], installed: true, origin: "mise", version: "1", actions: ["update"] }))[5], [], "an installed row offers no channel");
     same(drawn(row({ section: "databases", actions: [] }))[3], "Not installed · Not offered on this system");
     same(drawn({ section: "other", id: "github:o/x", installed: true, version: "1", actions: ["update", "remove"] }),
         ["github:o/x", "package", "neutral", "1", [], [], ["Update", "Remove"], []]);
-    same(logic.toolRow("agents", row({ launcher: "foreign" }), true).lines, ["Its launcher in ~/.local/bin is managed outside VGS"]);
+    same(logic.toolRow("agents", row({ launcher: "foreign" }), true).lines, ["Another tool manages this launcher."]);
     same(logic.toolRow("agents", row({ launcher: "foreign" }), false).lines, [], "a foreign launcher is named only while VGS writes launchers");
     same(logic.toolRow("agents", row({}), false).actions, [{ kind: "verb", verb: "install", label: "Install", variant: "primary" }]);
 
     // The VGS row.
     const vgs = (answer, entry) => { const v = logic.vgsRow(answer, entry); return [v.secondary, v.chips, v.actions, v.lines]; };
     same(vgs(null, ""), ["Checking", [], [], []]);
-    same(vgs({ value: null, error: "exit=1" }, "x"), ["State unknown", [{ text: "Unknown", tone: "danger" }], [], ["vgsh self status failed: exit=1"]]);
+    same(vgs({ value: null, error: "exit=1" }, "x"), ["State unknown", [{ text: "Unknown", tone: "danger" }], [], ["The check failed. Open Dev Tools again after 10 minutes to retry."]]);
     same(vgs(ok(self({ behind: true })), "acme.updates/update"),
         ["0.1.0.r3.gabc1234 · Git checkout", [{ text: "Update to 0.1.1", tone: "warning" }], [{ kind: "entry", verb: "acme.updates/update", label: "Update", variant: "primary" }], []]);
-    same(vgs(ok(self({ behind: true })), "")[3], ["Enable a plugin with an Update entry, such as Updates, to update VGS from here"]);
+    same(vgs(ok(self({ behind: true })), "")[3], ["Enable Updates in Settings to update VGS here."]);
     same(vgs(ok(self({ method: "package", package: "vgs-git" })), ""), ["0.1.0.r3.gabc1234 · Package vgs-git", [{ text: "Up to date", tone: "success" }], [], []]);
     same(vgs(ok(self({ method: null, current: null, latest: null, behind: null, error: "method=unknown path=/t" })), ""),
-        ["0.1.0 · Unknown install", [{ text: "Unknown", tone: "neutral" }], [], ["method=unknown path=/t"]]);
+        ["0.1.0 · Unknown install", [{ text: "Unknown", tone: "neutral" }], [], ["The check failed. Open Dev Tools again after 10 minutes to retry."]]);
 
     // A requirement row.
     const req = r => { const v = logic.requirementRow(r, 0); return [v.name, v.secondary, v.chips, v.actions, v.lines]; };
     same(req({ owner: "core", command: "gum", purpose: "Draws", optional: true, package: { manager: "pacman", name: "gum" } }),
         ["gum", "VGS · Draws", [{ text: "Missing", tone: "neutral" }, { text: "Optional", tone: "neutral" }], [{ kind: "doctor", verb: "", label: "Install", variant: "primary" }], []]);
     same(req({ owner: "acme.y", command: "z", purpose: "Draws", optional: false, package: null }),
-        ["z", "acme.y · Draws", [{ text: "Missing", tone: "warning" }], [], ["No package on this system provides it; install z by hand"]]);
+        ["z", "acme.y · Draws", [{ text: "Missing", tone: "warning" }], [], ["VGS cannot install this tool on this system."]]);
 
     // Sections.
     same(logic.sections(null, "", false), []);
@@ -185,33 +241,41 @@ function verify(logic) {
         ["VGS", ["VGS", "gum"], []],
         ["Agents", ["Claude Code", "Claude Code"], []],
         ["Apps", ["Claude Code"], []],
-        ["Other mise tools", ["github:o/x"], []]
+        ["Other tools", ["github:o/x"], []]
     ], "VGS first, then each tool section that holds a row, in order");
-    same(logic.sections(Object.assign({}, catalog, { requirements: ok([]) }), "", false)[0].lines, ["Every requirement is met"]);
-    same(logic.sections(Object.assign({}, catalog, { requirements: { value: null, error: "exit=1" } }), "", false)[0].lines, ["vgsh doctor failed: exit=1"]);
+    same(logic.sections(Object.assign({}, catalog, { requirements: ok([]) }), "", false)[0].lines, ["All required tools are installed"]);
+    same(logic.sections(Object.assign({}, catalog, { requirements: { value: null, error: "exit=1" } }), "", false)[0].lines, ["The check failed. Close Dev Tools and open it again to retry."]);
     same(logic.sections({ tools: { value: null, error: "mise=absent" }, requirements: null, vgs: null, updates: null }, "", false).map(s => [s.title, s.lines]),
-        [["VGS", []]].concat(logic.TOOL_SECTIONS.map(s => [s.title, ["The tool list failed: mise=absent"]])), "a failed list names its error in every section");
+        [["VGS", []]].concat(logic.TOOL_SECTIONS.map(s => [s.title, ["A required tool is missing. Use Install to add it."]])), "a failed list names its error in every section");
     assert.equal(logic.summary(catalog), "mise 2026.9.9 · 2 installed · 3 updates");
     assert.equal(logic.summary(null), "Listing tools");
     assert.equal(logic.summary({ tools: { value: null, error: "x" }, updates: null }), "The tool list failed");
-    assert.equal(logic.summary(Object.assign({}, catalog, { updates: { value: null, error: "timeout=120" } })), "mise 2026.9.9 · 2 installed · the update check failed: timeout=120");
+    assert.equal(logic.summary(Object.assign({}, catalog, { updates: { value: null, error: "timeout=120" } })), "mise 2026.9.9 · 2 installed · Update check failed");
 
     // The window's lines.
     same(logic.runningLines({ remove: { running: true }, install: { running: true }, update: { running: false } }),
-        ["An install runs in its window; the list refreshes when it ends", "A removal runs in its window; the list refreshes when it ends"]);
+        ["An install is running. The list updates when it ends.", "A removal is running. The list updates when it ends."]);
     assert.equal(logic.replyLine("ok"), "");
     assert.equal(logic.replyLine("refused: tui=install reason=busy"), "", "a busy answer raised the live window");
-    assert.equal(logic.replyLine("refused: tui=install reason=launcher-missing"), "refused: tui=install reason=launcher-missing");
-    assert.equal(logic.replyLine("refused: owner=acme.x reason=disabled"), "refused: owner=acme.x reason=disabled");
+    assert.equal(logic.replyLine("refused: tui=install reason=launcher-missing"), "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it.");
+    assert.equal(logic.replyLine("refused: tui=install reason=launcher-failed"), "VGS could not open this action. Try again.");
+    assert.equal(logic.replyLine("refused: owner=acme.x reason=disabled"), "VGS could not open this action. Try again.");
+    for (const [reply, message] of SETTING_REPLIES)
+        assert.equal(logic.replyLine(reply, "setting"), message);
     assert.equal(logic.missingKey({ "acme.b": ["x"], core: [] }), logic.missingKey({ core: [], "acme.b": ["x"] }), "the owners' order is no change");
     assert.notEqual(logic.missingKey({ core: [] }), logic.missingKey({ core: ["gum"] }), "another missing command is a change");
 }
 
 verify(load(file));
+const windowSource = fs.readFileSync(windowFile, "utf8");
+verifySettingHandler(load(file), windowSource);
 
 // Each control removes one rule from a copy of the logic and keeps the
 // text around it. The suite must fail on every copy.
 const CONTROLS = [
+    ["a missing launcher needs installation repair", 'if (/reason=launcher-missing/.test(reply))', 'if (false)'],
+    ["a failed tool action has a message", 'function actionErrorText(reason) {', 'function actionErrorText(reason) { if (/step=failed/.test(String(reason))) return "";'],
+    ["diagnostics stay out of display text", 'function errorText(reason, query) {', 'function errorText(reason, query) { return String(reason);'],
     ["a missing mise offers no action", 'text: "Not installed", action: true }', 'text: "Not installed" }'],
     ["open skips a fresh remote", 'if (trigger !== "open" || !QUERIES[name].network) return true;', "return true;"],
     ["the list follows the launchers", 'return name === "launchers" ? "catalog" : "";', 'return "";'],
@@ -226,13 +290,17 @@ const CONTROLS = [
     ["foreign launcher only while writing", 'if (write && row.launcher === "foreign")', 'if (row.launcher === "foreign")'],
     ["channels only for an install", '&& row.actions.indexOf("install") !== -1) out.channels', ") out.channels"],
     ["update only with an entry", 'if (entry !== "") out.actions.push', "out.actions.push"],
-    ["install only with a package", 'if (requirement.package === null) out.lines.push("No package on this system provides it; install " + requirement.command + " by hand");\n    else out.actions', "out.actions"],
+    ["install only with a package", 'if (requirement.package === null) out.lines.push("VGS cannot install this tool on this system.");\n    else out.actions', "out.actions"],
     ["empty sections are left out", "if (drawn.rows.length > 0 || drawn.lines.length > 0) out.push(drawn);", "out.push(drawn);"],
     ["checks name a failure", "if (failed.length === 0) return", "if (true) return"],
     ["a self status's own error fails its check", '    if (name === "vgs" && answer.value.error !== null) return answer.value.error;\n', ""],
-    ["summary names a failed update check", '    else if (updates !== null) parts.push("the update check failed: " + updates.error);\n', ""],
+    ["summary names a failed update check", '    else if (updates !== null) parts.push("Update check failed");\n', ""],
     ["the missing key sorts its owners", "Object.keys(missing).sort().map(", "Object.keys(missing).map("],
-    ["busy says nothing", ' || /^refused: tui=\\S+ reason=busy$/.test(reply)', ""]
+    ["busy says nothing", 'if (/^refused: tui=\\S+ reason=busy$/.test(reply)) return "";', ""],
+    ["settings use their own failure context", 'if (context === "setting")', 'if (false)'],
+    ["loading settings names the loading state", '[/^refused: user-config=pending(?: |$)/,', '[/never-produced/,'],
+    ["unreadable settings name the read failure", '[/^refused: user-config=(?:unparseable|unreadable|malformed)(?: |$)/,', '[/never-produced/,'],
+    ["a rejected setting names the change failure", '[/^refused: setting=|^unknown:/,', '[/never-produced/,']
 ];
 
 const source = fs.readFileSync(file, "utf8");
@@ -252,7 +320,16 @@ try {
         }
         assert.ok(failed, `control "${label}": the suite passed on logic without that rule`);
     }
+    const callerNeedle = 'root.problem = ViewLogic.replyLine(reply, "setting");';
+    assert.equal(windowSource.split(callerNeedle).length, 2, "caller control: the display assignment occurs once");
+    let rawCallerFailed = false;
+    try {
+        verifySettingHandler(load(file), windowSource.replace(callerNeedle, 'root.problem = reply === "ok" ? "" : reply;'));
+    } catch (error) {
+        rawCallerFailed = true;
+    }
+    assert.ok(rawCallerFailed, "caller control: the handler must fail when it publishes a raw configure reply");
 } finally {
     fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log(`test-devtools-view: ok failures=${FAILURES.length} answers=${ANSWERS.length} controls=${CONTROLS.length}`);
+console.log(`test-devtools-view: ok failures=${FAILURES.length} answers=${ANSWERS.length} controls=${CONTROLS.length} setting-replies=${SETTING_REPLIES.length} caller-controls=1`);

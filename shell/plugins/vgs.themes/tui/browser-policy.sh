@@ -15,7 +15,10 @@ if [[ -z $lib ]]; then
   exit 2
 fi
 if [[ $# -gt 0 ]]; then
-  printf 'themes: refused: argument=%s\nusage: browser-policy.sh\n' "$1" >&2
+  dir="${XDG_STATE_HOME:-$HOME/.local/state}/vgs/themes"
+  mkdir -p -- "$dir"
+  printf 'themes: refused: argument=%s\n' "$1" >>"$dir/setup.log"
+  printf 'This setup request is invalid. Open Themes and try again.\n' >&2
   exit 2
 fi
 # shellcheck source=SCRIPTDIR/../../../../bin/lib/tui.sh
@@ -23,7 +26,7 @@ source "$lib"
 tree="${lib%/bin/lib/tui.sh}"
 
 vgs_tui_header "Browser theming" \
-  "Chromium, Google Chrome, Microsoft Edge and Brave take the theme's colour from a managed policy." \
-  "Installing its writer asks for your password once; every theme apply after that sets the colour."
-vgs_tui_step "vgsh theme browser-policy install"
+  "Apply theme colours to Chromium, Chrome, Edge and Brave." \
+  "Setup asks for your password."
+vgs_tui_step "Setting up browser theming"
 "$tree/bin/vgsh" theme browser-policy install

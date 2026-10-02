@@ -222,14 +222,30 @@ function firstSourceError(snapshot) {
     return null;
 }
 
+// vgsh and bin/check keep these diagnostics in the snapshot. The status
+// line and source rows use words; the log keeps the source's full result.
+var CHECK_ERRORS = [
+    [/spawn=failed|start=failed|start-failed/, "The update check could not start. Select Refresh to try again."],
+    [/unparseable|not-json|output-unreadable|cache=|^sources|^checkedAt$/, "The update result could not be read. Select Refresh to try again."],
+    [/timeout/, "The update check took too long. Select Refresh to try again."],
+    [/fetch|remote|unreachable|release=http/, "The update source could not be reached. Check your connection and select Refresh."],
+    [/missing|reason=absent/, "A tool needed for this check is missing. Install it in Settings."]
+];
+
+function errorText(reason) {
+    for (var i = 0; i < CHECK_ERRORS.length; i++)
+        if (CHECK_ERRORS[i][0].test(String(reason))) return CHECK_ERRORS[i][1];
+    return "The update check failed. Select Refresh to try again.";
+}
+
 function checkState(snapshot, checking, now, intervalMs, checkFailure) {
     if (checking) return { tone: "info", text: "Checking" };
-    if (checkFailure !== null && checkFailure !== undefined && checkFailure !== "") return { tone: "danger", text: String(checkFailure).slice(0, 200) };
+    if (checkFailure !== null && checkFailure !== undefined && checkFailure !== "") return { tone: "danger", text: errorText(checkFailure) };
     if (snapshot === null) return { tone: "info", text: "Not checked" };
-    if (snapshot.error !== null && snapshot.error !== "") return { tone: "danger", text: String(snapshot.error).slice(0, 200) };
+    if (snapshot.error !== null && snapshot.error !== "") return { tone: "danger", text: errorText(snapshot.error) };
     var source = firstSourceError(snapshot);
-    if (source !== null) return { tone: "warning", text: (source.label || source.source) + ": " + String(source.error).slice(0, 180) };
-    if (typeof now === "number" && intervalMs > 0 && now - snapshot.checkedAt >= 2 * intervalMs) return { tone: "warning", text: "Check stale" };
+    if (source !== null) return { tone: "warning", text: ((source.label || source.source) + ": " + errorText(source.error)).slice(0, 200) };
+    if (typeof now === "number" && intervalMs > 0 && now - snapshot.checkedAt >= 2 * intervalMs) return { tone: "warning", text: "The last check is old. Select Refresh to check again." };
     return { tone: "ok", text: pendingCount(snapshot) > 0 ? "Updates waiting" : "Up to date" };
 }
 
@@ -466,7 +482,7 @@ function panelRows(values) {
             source: row.source,
             label: row.label,
             icon: sourceIcon(row.source),
-            secondary: error !== "" ? error : failed ? "No count" : row.count === 0 ? "Up to date" : countText(row.count, "update"),
+            secondary: error !== "" ? errorText(error) : failed ? "Could not count updates" : row.count === 0 ? "Up to date" : countText(row.count, "update"),
             badge: failed ? "Failed" : badgeText(row.count),
             badgeTone: error !== "" ? "warning" : !failed && row.count > 0 ? "accent" : "neutral",
             updatable: !failed && row.count > 0,
@@ -494,5 +510,7 @@ function tuiRequest(action, source) {
 // The line a refused request leaves in the flyout, "" for `ok` and for the
 // answers `check` gives, `started` and `queued`.
 function replyLine(reply) {
-    return reply === "ok" || reply === "started" || reply === "queued" ? "" : String(reply);
+    if (reply === "ok" || reply === "started" || reply === "queued" || /^refused: tui=\S+ reason=busy$/.test(reply)) return "";
+    if (/reason=launcher-missing/.test(reply)) return "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it.";
+    return "VGS could not open the update action. Try again.";
 }

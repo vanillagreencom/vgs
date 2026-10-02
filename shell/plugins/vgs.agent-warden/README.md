@@ -1,6 +1,6 @@
 # Agent Warden
 
-`vgs.agent-warden` shows whether the agent warden keeps your AI agents within their memory and task limits. The warden ships with [vsys](https://github.com/vanillagreencom/vsys) and runs as a systemd user timer every 30 seconds, whether or not the shell runs. The plugin reads what the warden reports and never moves or stops an agent. It changes the warden only when you press a setup button in its panel. [D041](../../../docs/decisions/D041-agent-warden-observes-the-vsys-warden.md) records why.
+The shield shows whether your AI agents stay within their memory and process limits. Agent Warden alerts you when an agent needs attention. [vsys](https://github.com/vanillagreencom/vsys) provides Agent Warden. [D041](../../../docs/decisions/D041-agent-warden-observes-the-vsys-warden.md) defines the plugin's role.
 
 Enabling the plugin on its Settings page puts the shield in the bar's right section.
 
@@ -12,8 +12,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 The plugin's Settings page and its panel offer each setup step as a button, shown while the step is needed:
 
-1. **Install vsys** raises the shell's install notice for the vsys package, which installs it in a floating terminal. The panel names it Get vsys.
-2. **Set up** opens a floating terminal that writes the warden's systemd user units and starts its timer. It asks for no password.
+1. **Install vsys** opens the install screen for the agent dashboard.
+2. **Set up** opens a setup screen and starts Agent Warden checks.
 
 Beside each button, Show command reveals the command it runs, for a system with no vsys package ([D061](../../../docs/decisions/D061-no-manual-commands.md)).
 
@@ -41,7 +41,7 @@ A count of zero is not drawn. A click opens or closes the panel under the shield
 
 ## The panel
 
-The panel shows the heading Agents, one sentence for the state, at most three items, most serious first, and the agent group's memory against its slowdown point. It opens with keyboard focus on its primary button when one is shown. The meter is hidden when the warden did not report the memory or a limit. No text names a process id or a scope unit, because the published `detail` holds neither. A footer shows the time of the last check and Open vsys, which opens the `vsys` TUI: the vsys dashboard in a wide floating terminal. While vsys is missing, the link is Get vsys.
+The panel shows the heading Agents, one sentence for the state, at most three items, most serious first, and the agent group's memory against its slowdown point. It opens with keyboard focus on its primary button when one is shown. The meter is hidden when the warden did not report the memory or a limit. No text names a process id or a scope unit, because the published `detail` holds neither. A footer shows the time of the last check and Open vsys, which opens the `vsys` TUI: the vsys dashboard in a wide floating terminal. While vsys is missing, the link is Install vsys.
 
 When vsys is installed, each open runs `vsys --once --summary` once, and the panel shows vsys's verdict on the whole computer as one line: nothing wrong, the number of things worth a look, or the number of problems. It reads only the verdict's levels ([vsys verdict.md § Summary JSON](https://github.com/vanillagreencom/vsys/blob/main/docs/architecture/verdict.md#summary-json)) and never shows a verdict's subject. A run that fails, or a summary of another schema, is logged as `agent-warden: summary=...` and shows no line.
 
@@ -51,10 +51,10 @@ A state that needs a setup step shows one button in place of the items:
 |---|---|---|
 | `not-set-up` | Set up | Opens the `setup` TUI, which runs `vsys warden install`. |
 | `update-warden` | Update | The same: the installer rewrites an older warden's units. |
-| `not-checking`, stale | Start it | Runs `systemctl --user start agent-warden.timer` through the `run` capability. |
-| `not-set-up` or `update-warden` without vsys | Get vsys | Raises the shell's requirement notice for vsys through `shell.requirements.offer`. |
+| `not-checking`, stale | Start checks | Runs `systemctl --user start agent-warden.timer` through the `run` capability. |
+| `not-set-up` or `update-warden` without vsys | Install vsys | Raises the shell's requirement notice for vsys through `shell.requirements.offer`. |
 
-A press that hands off closes the panel. A refusal stays in the panel as one sentence, such as "No terminal was found to open it in.", and is logged as `agent-warden: action=<action> <reply>`.
+A press that hands off closes the panel. A refusal stays in the panel as one sentence, such as "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it.", and is logged as `agent-warden: action=<action> <reply>`.
 
 ## Notifications
 
@@ -62,10 +62,10 @@ The service sends one desktop notification when something starts to need a look,
 
 | Kind | Scope | Opens when | Title, for example | Urgency | Open vsys |
 |---|---|---|---|---|---|
-| `tasks` | the lane's unit | an agent's lane is near its task ceiling | An agent is starting a lot of processes | normal | yes |
-| `memory` | the lane's unit | an agent's lane is near its memory ceiling | An agent is using a lot of memory | normal | yes |
+| `tasks` | the lane's unit | an agent's lane is near its task ceiling | An agent is near its process limit | normal | yes |
+| `memory` | the lane's unit | an agent's lane is near its memory ceiling | An agent is near its memory limit | normal | yes |
 | `not-moving` | `agents.slice` | moves wait for memory headroom | Agents are close to their memory limit | critical | yes |
-| `move-failure` | the tree's unit | a move failed or left part behind in the last 5 minutes | Couldn't fully move an agent | normal | yes |
+| `move-failure` | the tree's unit | a move failed or left part behind in the last 5 minutes | Some agent processes still have no limits | normal | yes |
 | `reaped` | the leftover unit | leftover work was stopped in the last 5 minutes | Cleaned up after a finished agent | low | no |
 | `not-checking` | `agent-warden` | the status is stale | Agent Warden has stopped checking | normal | no |
 | `moved` | the tree's unit | an agent was moved back into its limits in the last 5 minutes | Moved an agent back into its limits | toast | no |

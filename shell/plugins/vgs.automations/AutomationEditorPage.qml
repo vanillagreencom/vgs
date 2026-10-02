@@ -80,7 +80,7 @@ FocusScope {
 
                     Field {
                         label: "Command"
-                        hint: page.draft.saved ? "Test run starts the saved automation and follows its newest run." : "Save before Test run."
+                        hint: page.draft.saved ? "Test the saved automation and view its output." : "Save the automation before a test run."
                         error: page.validation.errors.command || ""
                         width: parent.width
                         TextArea {
@@ -129,7 +129,7 @@ FocusScope {
 
                 Section {
                     title: "Run settings"
-                    description: "These options go to the engine with the recurrence."
+                    description: "Set how this automation runs."
                     headerInset: 0
                     width: parent.width
 

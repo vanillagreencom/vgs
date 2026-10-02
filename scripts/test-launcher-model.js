@@ -84,6 +84,15 @@ const PAYLOAD_REFUSED = [
 ];
 
 function verify(model) {
+    assert.equal(model.actionErrorText("refused: tui=core/pkg-install reason=launcher-missing"), "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it.");
+    assert.equal(model.actionErrorText("refused: tui=core/pkg-install reason=launcher-failed"), "VGS could not open this action. Try again.");
+    // Producer diagnostics never cross the display boundary.
+    for (const diagnostic of ["file-search: missing=fd,fzf", "file-search: refresh=busy", "file-search: vanished=/file", "file-search: mime=x error=gio-status-1", "file-search: index=f error=unreadable", "file-search: start=failed", "unexpected: key=value"]) {
+        const text = model.fileErrorText(diagnostic);
+        assert.ok(text.length > 0, "a failed operation must tell the user");
+        assert.doesNotMatch(text, /[a-z][a-z-]*=|start-failed|output-unreadable/, "diagnostic fields stay in logs");
+    }
+
     // The shipped menu is accepted and merges alone.
     const shipped = model.parseMenu(shippedMenu);
     assert.equal(shipped.ok, true, shipped.error);
@@ -181,7 +190,7 @@ function verify(model) {
     assert.equal(themes.items["style.theme.vgs"].kind, "theme");
     assert.equal(themes.items["style.theme.vgs"].icon, "check");
     assert.equal(themes.items["style.theme.broken"].kind, "unavailable");
-    assert.equal(themes.items["style.theme.broken"].description, "refused: name-mismatch");
+    assert.equal(themes.items["style.theme.broken"].description, "Unavailable");
 
     // Search and rank: an app named with the whole word wins over an exact
     // menu label; deeper matches sit after direct ones in the drilldown.
@@ -274,6 +283,8 @@ verify(load(file));
 // Each control removes one rule from a copy of the model and keeps the
 // text around it. The suite must fail on every copy.
 const CONTROLS = [
+    ["a missing launcher needs installation repair", 'if (/reason=launcher-missing/.test(String(reason)))', 'if (false)'],
+    ["diagnostics stay out of display text", 'function fileErrorText(reason) {', 'function fileErrorText(reason) { return String(reason);'],
     ["unknown item key", "if (ITEM_KEYS.indexOf(keys[i]) === -1) return at", "if (false) return at"],
     ["run list", 'if (hasOwn(raw, "run") && !(isStringList(raw.run) && raw.run.length > 0))', 'if (false)'],
     ["requires names", 'if (hasOwn(raw, "requires") && !isStringList(raw.requires, COMMAND_PATTERN))', "if (false)"],

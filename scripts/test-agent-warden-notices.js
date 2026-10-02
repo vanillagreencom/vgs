@@ -146,37 +146,37 @@ const CONDITIONS = [
 const NOW = T * 1000;
 const COPY = [
     ["tasks", [{ key: "tasks:s", kind: "tasks", tool: "claude", worktree: "vgs", used: 6200, limit: 8192 }], true,
-        "An agent is starting a lot of processes", "claude in vgs is at 6,200 of its 8,192 limit. If it's a big build, you can let it finish. If not, open vsys to stop it."],
+        "An agent is near its process limit", "claude in vgs is at 6,200 of its 8,192 limit. Let the work finish if you need it. Open vsys to stop work you do not need."],
     ["tasks without vsys", [{ key: "tasks:s", kind: "tasks", tool: "claude", worktree: "vgs", used: 6200, limit: 8192 }], false,
-        "An agent is starting a lot of processes", "claude in vgs is at 6,200 of its 8,192 limit. If it's a big build, you can let it finish."],
+        "An agent is near its process limit", "claude in vgs is at 6,200 of its 8,192 limit. Let the work finish if you need it."],
     ["tasks without a limit", [{ key: "tasks:s", kind: "tasks", tool: "claude", worktree: null, used: 6200, limit: null }], true,
-        "An agent is starting a lot of processes", "claude is running 6,200 processes. If it's a big build, you can let it finish. If not, open vsys to stop it."],
+        "An agent is near its process limit", "claude is running 6,200 processes. Let the work finish if you need it. Open vsys to stop work you do not need."],
     ["memory", [{ key: "memory:s", kind: "memory", tool: "claude", worktree: "vgs", used: 50 * 1073741824, limit: 64 * 1073741824 }], true,
-        "An agent is using a lot of memory", "claude in vgs is using 50 GB. It will be slowed down at 64 GB so the rest of your computer stays responsive. If you don't need it, open vsys to stop it."],
+        "An agent is near its memory limit", "claude in vgs is using 50 GB. Agent Warden slows it at 64 GB to keep your computer responsive. Open vsys to stop work you do not need."],
     ["memory without a limit or vsys", [{ key: "memory:s", kind: "memory", tool: "claude", worktree: "vgs", used: 5.5 * 1073741824, limit: null }], false,
-        "An agent is using a lot of memory", "claude in vgs is using 5.5 GB."],
+        "An agent is near its memory limit", "claude in vgs is using 5.5 GB."],
     ["held off", [{ key: "not-moving:agents.slice", kind: "not-moving", memory: 104 * 1073741824, max: 112 * 1073741824, tools: ["claude", "codex"] }], true,
-        "Agents are close to their memory limit", "Agents are using 104 of 112 GB. Agent Warden is holding off moving claude and codex into the agent group until memory frees up. Closing an agent you don't need will help."],
+        "Agents are close to their memory limit", "Agents are using 104 of 112 GB. Agent Warden needs free memory before it can limit claude and codex. Close agents you do not need."],
     ["held off with unknown memory", [{ key: "not-moving:agents.slice", kind: "not-moving", memory: null, max: 112 * 1073741824, tools: [] }], true,
-        "Agents are close to their memory limit", "Agent Warden is holding off moving an agent into the agent group until memory frees up. Closing an agent you don't need will help."],
+        "Agents are close to their memory limit", "Agent Warden needs free memory before it can limit an agent. Close agents you do not need."],
     ["a partial move", [{ key: "move-failure:s", kind: "move-failure", partial: true, tools: ["claude"], interval: 30 }], true,
-        "Couldn't fully move an agent", "Part of claude is still running without limits. Agent Warden will try again in 30 seconds."],
+        "Some agent processes still have no limits", "Part of claude is still running without limits. Agent Warden will try again in 30 seconds."],
     ["a failed move of an unknown tool", [{ key: "move-failure:s", kind: "move-failure", partial: false, tools: [], interval: 1 }], true,
-        "Couldn't move an agent into its limits", "An agent is still running without limits. Agent Warden will try again in 1 second."],
+        "Could not apply limits to an agent", "An agent is still running without limits. Agent Warden will try again in 1 second."],
     ["a cleanup", [{ key: "reaped:s", kind: "reaped", processes: 5140 }], true,
-        "Cleaned up after a finished agent", "An agent had exited but left 5,140 processes running. Agent Warden stopped them. Your other agents weren't affected."],
+        "Cleaned up after a finished agent", "A finished agent left 5,140 processes running. Agent Warden stopped them."],
     ["a cleanup of one process", [{ key: "reaped:s", kind: "reaped", processes: 1 }], true,
-        "Cleaned up after a finished agent", "An agent had exited but left 1 process running. Agent Warden stopped it. Your other agents weren't affected."],
+        "Cleaned up after a finished agent", "A finished agent left 1 process running. Agent Warden stopped it."],
     ["two cleanups", [{ key: "reaped:s", kind: "reaped", processes: 1 }, { key: "reaped:t", kind: "reaped", processes: null }], true,
-        "Cleaned up after 2 finished agents", "2 finished agents left work running. Agent Warden stopped it. Your other agents weren't affected."],
+        "Cleaned up after 2 finished agents", "2 finished agents left work running. Agent Warden stopped that work."],
     ["a move", [{ key: "moved:s", kind: "moved", tools: ["claude"] }], true,
-        "Moved an agent back into its limits", "claude was running without limits. It's limited now, so your desktop stays responsive."],
+        "Moved an agent back into its limits", "claude was running without limits. Agent Warden applied limits to keep your computer responsive."],
     ["two moves", [{ key: "moved:s", kind: "moved", tools: ["claude"] }, { key: "moved:t", kind: "moved", tools: ["cargo", "claude"] }], true,
-        "Moved 2 agents back into their limits", "claude and cargo were running without limits. They're limited now, so your desktop stays responsive."],
+        "Moved 2 agents back into their limits", "claude and cargo were running without limits. Agent Warden applied limits to keep your computer responsive."],
     ["two moves of unknown tools", [{ key: "moved:s", kind: "moved", tools: [] }, { key: "moved:t", kind: "moved", tools: [] }], true,
-        "Moved 2 agents back into their limits", "They were running without limits. They're limited now, so your desktop stays responsive."],
+        "Moved 2 agents back into their limits", "They were running without limits. Agent Warden applied limits to keep your computer responsive."],
     ["stopped checking", [{ key: "not-checking:agent-warden", kind: "not-checking", checkedAt: NOW - 180000 }], true,
-        "Agent Warden has stopped checking", "It last checked 3 min ago, so agents aren't being kept within their limits. Open the Agent Warden panel to start it again."]
+        "Agent Warden has stopped checking", "The last check was 3 min ago. Agent Warden is not applying limits. Open its panel to restart checks."]
 ];
 
 // One episode of each kind, for the settings: every kind but a move goes
@@ -262,11 +262,11 @@ function verify(n) {
     assert.equal(n.offers(tasks, 0), true);
     assert.equal(n.offers(tasks, n.MAX_WAITING), false);
     const [cleanup] = n.notices([{ key: "reaped:s", kind: "reaped", processes: 2 }], "problems", true, NOW);
-    same(n.argv(cleanup, 0), ["notify-send", "-a", "Agent Warden", "-u", "low", "--", "Cleaned up after a finished agent", "An agent had exited but left 2 processes running. Agent Warden stopped them. Your other agents weren't affected."]);
+    same(n.argv(cleanup, 0), ["notify-send", "-a", "Agent Warden", "-u", "low", "--", "Cleaned up after a finished agent", "A finished agent left 2 processes running. Agent Warden stopped them."]);
     const dashed = Object.assign({}, tasks, { title: "-rf", body: "--hint=x" });
     same(n.argv(dashed, 0).slice(-3), ["--", "-rf", "--hint=x"], "text after -- stays text");
     const [moved] = n.notices([{ key: "moved:s", kind: "moved", tools: ["claude"] }], "everything", true, NOW);
-    same(n.toast(moved), { title: "Moved an agent back into its limits", message: "claude was running without limits. It's limited now, so your desktop stays responsive.", tone: "accent", icon: "shield-check" });
+    same(n.toast(moved), { title: "Moved an agent back into its limits", message: "claude was running without limits. Agent Warden applied limits to keep your computer responsive.", tone: "accent", icon: "shield-check" });
     assert.throws(() => n.argv(moved, 0), /channel="toast" is not notify-send's/);
     assert.throws(() => n.toast(tasks), /channel="notify" is not a toast/);
     for (const [stdout, want] of PRESSES) assert.equal(n.pressed(stdout), want, "pressed " + JSON.stringify(stdout));
@@ -322,7 +322,7 @@ const CONTROLS = [
     ["any output is a press", "return stdout.trim() === ACTION;", "return stdout.trim() !== \"\";"],
     ["owns without notify-send", " && missing.indexOf(\"notify-send\") === -1", ""],
     ["owns a status it cannot read", "return status.kind === \"read\" &&", "return status.kind !== \"pending\" &&"],
-    ["the vsys sentence without vsys", "(vsys ? \" If not, open vsys to stop it.\" : \"\")", "\" If not, open vsys to stop it.\""]
+    ["the vsys sentence without vsys", "\" Let the work finish if you need it.\" + (vsys ? \" Open vsys to stop work you do not need.\" : \"\")", "\" Let the work finish if you need it. Open vsys to stop work you do not need.\""]
 ];
 
 const sources = {};

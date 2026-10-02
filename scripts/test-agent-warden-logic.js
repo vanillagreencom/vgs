@@ -138,13 +138,13 @@ const FILES = [
 
 // The warden's Settings row per state: [label, detail fields, row].
 const ROWS = [
-    ["a fresh status checks", { state: "look", items: [{ kind: "near" }] }, { tone: "ok", text: "Checking" }],
-    ["a failed scan", { state: "problem", items: [{ kind: "scan-failed" }] }, { tone: "danger", text: "Last scan failed" }],
+    ["a warning is not a healthy check", { state: "look", items: [{ kind: "near" }] }, { tone: "warning", text: "Warnings need attention" }],
+    ["a failed scan", { state: "problem", items: [{ kind: "scan-failed" }] }, { tone: "danger", text: "Last check failed" }],
     ["a stale status", { state: "not-checking", reason: "stale", items: [] }, { tone: "warning", text: "Stopped checking" }],
-    ["an unreadable status", { state: "not-checking", reason: "unreadable", items: [] }, { tone: "danger", text: "Status unreadable" }],
-    ["a major not read", { state: "not-checking", reason: "schema", items: [] }, { tone: "warning", text: "Status format not supported" }],
+    ["an unreadable status", { state: "not-checking", reason: "unreadable", items: [] }, { tone: "danger", text: "Could not read status" }],
+    ["a major not read", { state: "not-checking", reason: "schema", items: [] }, { tone: "warning", text: "Update VGS to read this status" }],
     ["no warden", { state: "not-set-up", reason: null, items: [] }, { tone: "info", text: "Not set up" }],
-    ["an older warden", { state: "update-warden", reason: null, items: [] }, { tone: "warning", text: "Update the warden" }]
+    ["an older warden", { state: "update-warden", reason: null, items: [] }, { tone: "warning", text: "Update Agent Warden" }]
 ];
 
 // GB figures: [bytes, shown].
@@ -195,14 +195,14 @@ function verify(logic) {
 
     // Published values: every declared key the detail tells.
     const calm = logic.derive(read(logic, fixture("calm")), MS);
-    same(logic.published(calm, []), { warden: { tone: "ok", text: "Checking" }, vsys: "present", detail: JSON.parse(JSON.stringify(calm)), agents: 1, lastCheck: MS });
+    same(logic.published(calm, []), { warden: { tone: "ok", text: "Agents are within their limits" }, vsys: "present", detail: JSON.parse(JSON.stringify(calm)), agents: 1, lastCheck: MS });
     same(logic.published(calm, ["vsys"]).vsys, "absent");
     // The warden row offers Set up exactly where the flyout's step is the
     // setup TUI: a warden not set up or too old, with vsys present.
     const stateOf = (state, reason) => Object.assign(logic.derive({ kind: "absent" }, MS), { state: state, reason: reason === undefined ? null : reason });
     for (const [label, detail, missing, want] of [
         ["not set up with vsys", stateOf("not-set-up"), [], { tone: "info", text: "Not set up", action: true }],
-        ["too old with vsys", stateOf("update-warden"), [], { tone: "warning", text: "Update the warden", action: true }],
+        ["too old with vsys", stateOf("update-warden"), [], { tone: "warning", text: "Update Agent Warden", action: true }],
         ["not set up without vsys", stateOf("not-set-up"), ["vsys"], { tone: "info", text: "Not set up" }],
         ["stopped checking", stateOf("not-checking", "stale"), [], { tone: "warning", text: "Stopped checking" }],
     ]) same(logic.published(detail, missing).warden, want, "warden row, " + label);
@@ -243,7 +243,7 @@ const CONTROLS = [
     ["state.json reads as no warden", "case \"present\": return { kind: \"legacy\" };", "case \"present\": return { kind: \"absent\" };"],
     ["headroom ignored", "if ((slice !== null && slice.headroomOk === false) || waiting.length > 0)", "if (false)"],
     ["slowdown ignored", "slice.memory >= slice.high", "false"],
-    ["a failed scan reads as checking", "return detail.items.some(function (i) { return i.kind === \"scan-failed\"; }) ?", "return false ?"],
+    ["a failed scan warns", 'detail.items.some(function (i) { return i.kind === "scan-failed"; })', "false"],
     ["an unknown count is published", "if (detail.agents !== null) out.agents", "out.agents"],
     ["GB always one decimal", "return value < 10 ?", "return true ?"],
     ["the warden row never offers Set up", "if (setupStep(detail, vsysMissing) === \"setup\") warden.action = true;", ""],

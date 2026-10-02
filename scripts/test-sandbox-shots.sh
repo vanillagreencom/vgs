@@ -415,6 +415,45 @@ open(dst, "w").write(text.replace(needle, replacement))' "$repo/scripts/sandbox-
   fi
 done
 
+# The Gallery title comes from the tree in the sandbox. Read the same
+# helper block without starting the harness, against old and current
+# snapshot fixtures. A fixed title must fail one of these readings.
+gallery_reader="$tmp/gallery-reader.sh"
+python3 - "$repo/scripts/sandbox-shots.sh" "$gallery_reader" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+start = text.index('summoned_kind() {')
+end = text.index('settings_kind=panel', start)
+open(sys.argv[2], 'w').write(text[start:end])
+PY
+gallery_title_case() { # READER
+  local reader="$1" root="$tmp/gallery-title" title surface
+  mkdir -p "$root/shell/plugins/vgs.gallery"
+  for title in Gallery 'VGS Components'; do
+    python3 - "$root/shell/plugins/vgs.gallery/manifest.json" "$title" <<'PY'
+import json, sys
+with open(sys.argv[1], 'w') as out:
+    json.dump({'name': sys.argv[2], 'kinds': ['window']}, out)
+PY
+    surface="$(env -i PATH="$PATH" bash -c 'set -euo pipefail; tree="$1"; fail() { exit 1; }; source "$2"; printf "%s" "$gallery_surface"' _ "$root" "$reader")" || return 1
+    [[ $surface == "window:$title" ]] || return 1
+  done
+}
+if gallery_title_case "$gallery_reader"; then ok "Gallery reads the title of each snapshot"; else fail "Gallery reads the title of each snapshot"; fi
+gallery_mutant="$tmp/gallery-fixed-title.sh"
+if python3 - "$gallery_reader" "$gallery_mutant" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+needle = 'gallery_surface="$(summoned_surface "$gallery_kind" "$gallery_name")"'
+assert text.count(needle) == 1, 'the title control must match once'
+open(sys.argv[2], 'w').write(text.replace(needle, 'gallery_surface="$(summoned_surface "$gallery_kind" "VGS Components")"'))
+PY
+then
+  if gallery_title_case "$gallery_mutant"; then fail "control: a fixed Gallery title stayed green"; else ok "control: a fixed Gallery title fails an older snapshot"; fi
+else
+  fail "control: a fixed Gallery title could not be planted"
+fi
+
 # The export of another revision, scripts/smoke/tree.sh, with no sandbox. A
 # scratch repository holds a revision whose bin/judge loads
 # scripts/qml-library.js and a later one that moved the helper to bin/lib,

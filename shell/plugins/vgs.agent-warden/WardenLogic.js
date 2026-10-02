@@ -360,16 +360,19 @@ function wardenRow(detail) {
     case "working":
     case "look":
     case "problem":
-        return detail.items.some(function (i) { return i.kind === "scan-failed"; }) ? { tone: "danger", text: "Last scan failed" } : { tone: "ok", text: "Checking" };
+        if (detail.items.some(function (i) { return i.kind === "scan-failed"; })) return { tone: "danger", text: "Last check failed" };
+        if (detail.state === "look") return { tone: "warning", text: "Warnings need attention" };
+        if (detail.state === "problem") return { tone: "danger", text: "Problems need attention" };
+        return { tone: "ok", text: detail.agents === 0 ? "No agents are running" : "Agents are within their limits" };
     case "not-checking":
         switch (detail.reason) {
         case "stale": return { tone: "warning", text: "Stopped checking" };
-        case "unreadable": return { tone: "danger", text: "Status unreadable" };
-        case "schema": return { tone: "warning", text: "Status format not supported" };
+        case "unreadable": return { tone: "danger", text: "Could not read status" };
+        case "schema": return { tone: "warning", text: "Update VGS to read this status" };
         }
         throw new Error("agent-warden: reason=" + JSON.stringify(detail.reason) + " unknown");
     case "not-set-up": return { tone: "info", text: "Not set up" };
-    case "update-warden": return { tone: "warning", text: "Update the warden" };
+    case "update-warden": return { tone: "warning", text: "Update Agent Warden" };
     }
     throw new Error("agent-warden: state=" + JSON.stringify(detail.state) + " unknown");
 }

@@ -72,7 +72,7 @@ failing='{"name": "Nightly", "command": "echo nope >&2; exit 3", "schedule": {"f
 expect "the automations start disabled in the sandbox" False plugin_enabled vgs.automations
 expect "enabling the automations is allowed" ok ipc shell setPluginEnabled vgs.automations true
 expect_poll "the service holds its status record and IPC target" '[["active", "lastRuns", "linger", "nextRun", "problem", "scheduler"], true]' auto_lent
-expect_poll "the scheduler reads the stand-in's systemd user manager" '{"tone": "ok", "text": "systemd user timers"}' auto_status scheduler
+expect_poll "the scheduler reads the stand-in's systemd user manager" '{"tone": "ok", "text": "Ready"}' auto_status scheduler
 expect_poll "lingering reads off, offering its action" '{"tone": "warning", "text": "Automations run only while you are logged in", "action": true}' auto_status linger
 expect "a start with no automation runs no systemctl verb" '[]' auto_verbs
 expect "no unit is written with no automation" '[]' auto_units
@@ -94,7 +94,7 @@ expect_poll "no run has failed yet" '{"tone": "ok", "text": "No failures"}' auto
 expected_errors+=('automations: sync exit=1 automations: refused: systemctl=failed args=daemon-reload exit=1')
 unlink -- "$home/.config/systemd/user/vgs-automation-nightly.timer"
 expect "the service syncs on request" ok ipc vgs.automations invoke sync ""
-expect_poll "a failed sync is the Engine status after the list succeeds" "danger sync exit=1" auto_problem
+expect_poll "a failed sync is the Engine status after the list succeeds" "danger The scheduler" auto_problem
 expect_poll "the list after the failed sync still counts it" 1 auto_status active
 unlink -- "$auto_stub/fail-reload"
 expect "the service syncs again" ok ipc vgs.automations invoke sync ""

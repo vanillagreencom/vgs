@@ -435,7 +435,7 @@ browser_focused
 type_keys "akane" || fail "typing akane failed"
 expect_poll "the filter selects akane" '"akane"' view_value selectedName
 type_keys -k Return || fail "sending Return for akane failed"
-expect_poll "the apply after the install fails with the runner's reason" '"Applying Akane failed: busy"' view_value problem
+expect_poll "the apply after the install fails with the runner's reason" '"Could not apply Akane. Another theme action is running. Wait for it to finish."' view_value problem
 expect "the install before the failed apply landed" True bash -c '[[ -f $1/akane/.vgs-catalog.json ]] && echo True' _ "$installed"
 expect_poll "the cards read akane installed after the failed apply" True selected_installed
 type_keys -k Return || fail "sending Return to retry akane failed"
@@ -601,24 +601,24 @@ expect_poll "the rail band control browser closes" 0 layer_count vgs:overlay
 plugin_restore ThemeView.qml "rail band"
 
 # vgs, applied, ships no wallpaper, so the wallpaper view's theme source is
-# empty; Show every source switches to all and hands the keys back to the
+# empty; Show all wallpapers switches to all and hands the keys back to the
 # view, so Alt+S flips it back.
 show_every() { # LABEL
   type_keys -M logo -k w -m logo || { fail "$1: typing SUPER+W failed"; return 1; }
   expect_poll "$1: SUPER+W opens the browser" 1 layer_count vgs:overlay
   expect_poll "$1: the wallpaper view read its lists" true ipc smoke readDescendant overlay vgs.themes WallpaperView loaded
   expect "$1: vgs's theme source lists no image" '[]' ipc smoke readDescendant overlay vgs.themes WallpaperView cards
-  click_in vgs:overlay overlay vgs.themes Button "Show every source" || { fail "$1: the click on Show every source failed"; return 1; }
+  click_in vgs:overlay overlay vgs.themes Button "Show all wallpapers" || { fail "$1: the click on Show all wallpapers failed"; return 1; }
 }
-show_every "Show every source"
-expect_poll "Show every source shows every source" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
-type_keys -M alt -k s -m alt || fail "sending Alt+S after Show every source failed"
-expect_poll "Show every source hands the keys back to the view" '"theme"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
-type_keys -k Escape || fail "sending Escape after Show every source failed"
-expect_poll "Escape after Show every source closes the browser" 0 layer_count vgs:overlay
+show_every "Show all wallpapers"
+expect_poll "Show all wallpapers shows every source" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+type_keys -M alt -k s -m alt || fail "sending Alt+S after Show all wallpapers failed"
+expect_poll "Show all wallpapers hands the keys back to the view" '"theme"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+type_keys -k Escape || fail "sending Escape after Show all wallpapers failed"
+expect_poll "Escape after Show all wallpapers closes the browser" 0 layer_count vgs:overlay
 plugin_control WallpaperView.qml "show every source" $'onActivated: {\n                    root.flipSource();' 'onActivated: {'
 show_every "control: the show every source copy"
-expect "control: a Show every source that flips nothing keeps the theme source" '"theme"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+expect "control: a Show all wallpapers that flips nothing keeps the theme source" '"theme"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
 expect "the show every source control browser hides" ok ipc shell hide overlay vgs.themes
 expect_poll "the show every source control browser closes" 0 layer_count vgs:overlay
 plugin_restore WallpaperView.qml "show every source"
@@ -626,7 +626,7 @@ plugin_control WallpaperView.qml "show every source keys" 'Qt.callLater(root.tak
 show_every "control: the show every source keys copy"
 expect_poll "the show every source keys control shows every source" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
 type_keys -M alt -k s -m alt || fail "sending Alt+S to the show every source keys control failed"
-expect "control: a Show every source that keeps the keys leaves Alt+S unread" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
+expect "control: a Show all wallpapers that keeps the keys leaves Alt+S unread" '"all"' ipc smoke readDescendant overlay vgs.themes WallpaperView source
 expect "the show every source keys control browser hides" ok ipc shell hide overlay vgs.themes
 expect_poll "the show every source keys control browser closes" 0 layer_count vgs:overlay
 plugin_restore WallpaperView.qml "show every source keys"

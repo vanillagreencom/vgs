@@ -28,7 +28,7 @@ fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 tools="$TMP_ROOT/tools"
 tree="$TMP_ROOT/tree"
 mkdir -p "$tools" "$tree/bin/lib"
-for tool in bash cat; do ln -s -- "$(command -v "$tool")" "$tools/$tool"; done
+for tool in bash cat mkdir; do ln -s -- "$(command -v "$tool")" "$tools/$tool"; done
 # The library draws its header with gum; the stand-in prints its words.
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*"\n' >"$tools/gum"
 cp -- "$repo/bin/lib/tui.sh" "$tree/bin/lib/tui.sh"
@@ -49,7 +49,7 @@ run() {
   shift 3
   printf '%s\n' "$code" >"$TMP_ROOT/status"
   : >"$TMP_ROOT/calls"
-  local environment=(PATH="$tools")
+  local environment=(PATH="$tools" HOME="$TMP_ROOT")
   [[ -n $lib ]] && environment+=(VGS_TUI_LIB="$lib")
   status=0
   env -i "${environment[@]}" bash "$file" "$@" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" </dev/null || status=$?
@@ -63,7 +63,7 @@ ROWS=(
   "the install runs once|0|tree||0||theme browser-policy install"
   "a failed install ends with its status|3|tree||3||theme browser-policy install"
   "no presenter refuses|0|none||2|themes: refused: tui=missing|"
-  "an argument refuses|0|tree|now|2|themes: refused: argument=now|"
+  "an argument refuses|0|tree|now|2|This setup request is invalid. Open Themes and try again.|"
 )
 
 verify() { # SCRIPT

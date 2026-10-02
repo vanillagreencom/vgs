@@ -4,7 +4,7 @@
   "name": "Dev Tools",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "A window over a catalog of coding agents, developer apps, CLI tools, languages, editors, databases and terminals, with each tool's state and Install, Update and Remove in a floating TUI, and a VGS section with how VGS is installed and every missing requirement. Open it with vgsh ipc call vgs.devtools invoke open.",
+  "description": "Install, update and remove developer tools. Check the VGS version and install missing tools.",
   "license": "MIT",
   "icon": "code-xml",
   "kinds": [
@@ -30,8 +30,8 @@
   "schema": {
     "writeLaunchers": {
       "type": "boolean",
-      "label": "Write launchers",
-      "description": "Write a launcher in ~/.local/bin for every agent, app and tool, which installs it through mise on first run; VGS never replaces or deletes a file it did not write"
+      "label": "Create tool launchers",
+      "description": "Install each tool the first time you open its launcher"
     }
   },
   "requirements": [
@@ -39,21 +39,21 @@
       "command": "mise",
       "packages": { "pacman": "mise", "nix": "mise" },
       "optional": false,
-      "purpose": "Installs, updates and removes the tools the Dev Tools catalog lists"
+      "purpose": "Installs, updates and removes developer tools"
     }
   ],
   "status": {
     "mise": {
       "type": "state",
-      "label": "mise",
-      "hint": "Installs, updates and removes every tool the Dev Tools window lists",
+      "label": "Tool manager",
+      "hint": "mise manages the developer tools",
       "action": { "label": "Install mise", "install": ["mise"] },
       "command": "vgsh pkg run install mise"
     },
     "checks": {
       "type": "state",
       "label": "Checks",
-      "hint": "Whether every query the service runs answered; a count a failed query feeds keeps its last answer"
+      "hint": "Open Dev Tools again after 10 minutes to retry all checks."
     },
     "installed": {
       "type": "count",
@@ -61,13 +61,12 @@
     },
     "outdated": {
       "type": "count",
-      "label": "Updates available",
-      "hint": "Tools mise can update, as mise outdated counts them"
+      "label": "Tool updates"
     },
     "missingRequirements": {
       "type": "count",
-      "label": "VGS requirements missing",
-      "hint": "Commands VGS or an enabled plugin runs that are not on PATH; the VGS section of the Dev Tools window installs each"
+      "label": "Missing tools",
+      "hint": "Install these tools from the VGS section in Dev Tools"
     },
     "catalog": {
       "type": "data",

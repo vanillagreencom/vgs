@@ -15,7 +15,7 @@ ListItem {
     width: parent ? parent.width : implicitWidth
     text: row.name
     iconName: ""
-    secondary: View.formatWhen(row.startedAt) + " · " + View.formatDuration(row.durationMs) + " · exit " + (row.exitCode === null ? "none" : row.exitCode)
+    secondary: View.formatWhen(row.startedAt) + " · " + View.formatDuration(row.durationMs)
     cursor: cursorItem
     onClicked: root.openRequested(row.transcript)
     onHighlightedChanged: if (highlighted && scrollArea !== null) {
@@ -24,6 +24,6 @@ ListItem {
         else if (top + root.height > scrollArea.contentY + scrollArea.height) scrollArea.contentY = top + root.height - scrollArea.height;
     }
     trailing: [
-        Badge { text: root.row.outcome; tone: root.row.tone; iconName: root.row.icon; size: "sm"; anchors.verticalCenter: parent.verticalCenter }
+        Badge { text: View.outcomeLabel(root.row.outcome); tone: root.row.tone; iconName: root.row.icon; size: "sm"; anchors.verticalCenter: parent.verticalCenter }
     ]
 }

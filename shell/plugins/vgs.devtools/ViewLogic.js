@@ -15,15 +15,15 @@
 var TOOL_SECTIONS = [
     { key: "agents", title: "Agents", description: "Coding agents on the command line", icon: "bot" },
     { key: "apps", title: "Apps", description: "Developer applications", icon: "app-window" },
-    { key: "tools", title: "CLI tools", description: "Command-line developer tools", icon: "terminal" },
+    { key: "tools", title: "Command-line tools", description: "Tools for work in a terminal", icon: "terminal" },
     { key: "envs", title: "Languages", description: "Language and framework environments", icon: "code" },
     { key: "editors", title: "Editors", description: "Code editors", icon: "file-code" },
-    { key: "databases", title: "Databases", description: "Database containers bound to 127.0.0.1", icon: "database" },
+    { key: "databases", title: "Databases", description: "Databases available only on this computer", icon: "database" },
     { key: "terminals", title: "Terminals", description: "Terminal emulators", icon: "square-terminal" },
-    { key: "other", title: "Other mise tools", description: "Tools your global mise config holds that no row declares", icon: "package" }
+    { key: "other", title: "Other tools", description: "Other tools managed by mise", icon: "package" }
 ];
 
-var VGS_SECTION = { key: "vgs", title: "VGS", description: "How VGS is installed, and every command VGS or an enabled plugin needs that is missing" };
+var VGS_SECTION = { key: "vgs", title: "VGS", description: "VGS version and missing tools" };
 
 // The commands the service runs, each read-only: `catalog` the engine's
 // list, `requirements` the core's doctor report, `vgs` the core's
@@ -74,8 +74,8 @@ var UPDATE_GROUP = "Update";
 // (docs/architecture/status.md).
 var STATUS_TEXT_MAX = 200;
 
-// What the `checks` status names each query that failed by.
-var QUERY_LABELS = { catalog: "The tool list", requirements: "vgsh doctor", vgs: "vgsh self status", updates: "The update check" };
+// The queries whose answers the `checks` status reports.
+var CHECK_QUERIES = ["catalog", "requirements", "vgs", "updates"];
 
 var METHOD_LABELS = { checkout: "Git checkout", package: "Package", curl: "Install script", nix: "Nix" };
 var ORIGIN_CHIPS = { mise: "mise", installer: "Installer", foreign: "Foreign" };
@@ -92,6 +92,50 @@ function sectionOf(key) {
 function clip(text) {
     var chars = Array.from(String(text));
     return chars.length <= STATUS_TEXT_MAX ? chars.join("") : chars.slice(0, STATUS_TEXT_MAX - 1).join("") + "…";
+}
+
+// bin/devtools and vgsh produce these diagnostic fields. Keep their raw
+// answers for logs; only the text at a display boundary uses this table.
+var ERROR_TEXT = [
+    [/start=failed|runner=failed/, "The check could not start.", "retry"],
+    [/unparseable|not-json/, "The check returned an unreadable result.", "retry"],
+    [/timeout=/, "The check took too long.", "retry"],
+    [/manager=\S+ reason=absent|mise=absent/, "A required tool is missing. Use Install to add it.", "install"],
+    [/runtime=/, "The database check failed.", "retry"],
+    [/fetch|remote|curl|release/, "VGS could not check for updates. Check your connection.", "retry"],
+    [/mise=|pkg=/, "The tool check failed.", "retry"]
+];
+
+function errorText(reason, query) {
+    var message = "The check failed.";
+    for (var i = 0; i < ERROR_TEXT.length; i++) {
+        if (!ERROR_TEXT[i][0].test(String(reason))) continue;
+        message = ERROR_TEXT[i][1];
+        if (ERROR_TEXT[i][2] === "install") return message;
+        break;
+    }
+    return message + " " + (query === "vgs"
+        ? "Open Dev Tools again after 10 minutes to retry."
+        : "Close Dev Tools and open it again to retry.");
+}
+
+// Refusals from an install, update or removal in bin/devtools.
+var ACTION_ERRORS = [
+    [/state=installed/, "This tool is already installed."],
+    [/reason=unsupported|arch=/, "This tool is not available for this computer."],
+    [/state=foreign|state=managedBy/, "Another installer manages this tool. VGS cannot change it."],
+    [/state=absent/, "This tool is not installed."],
+    [/mise=absent/, "The tool installer is missing. Open Dev Tools to check its requirements."],
+    [/channel=/, "This version is not available. Choose another version in Dev Tools."],
+    [/reason=unknown|id=missing|mise-tool=/, "This tool is unavailable. Choose another tool in Dev Tools."],
+    [/runner=failed|no-terminal|caller=shell/, "The tool action could not start. Open the action from Dev Tools."],
+    [/step=failed|mise=failed|pkg=failed/, "The tool action failed. Read the output above and try again from Dev Tools."]
+];
+
+function actionErrorText(reason) {
+    for (var i = 0; i < ACTION_ERRORS.length; i++)
+        if (ACTION_ERRORS[i][0].test(String(reason))) return ACTION_ERRORS[i][1];
+    return "The tool action failed. Close this window and try again from Dev Tools.";
 }
 
 // The queries TRIGGER runs now: every query the trigger names, less, for
@@ -230,14 +274,12 @@ function answerError(name, answer) {
 }
 
 // The `checks` status: whether every query that answered did so without a
-// failure, and else which failed and why. A published count keeps the
-// value of its query's last answer that succeeded, since a status key is
-// never unset, so this says so.
+// failure. A published count keeps the value of its query's last answer
+// that succeeded, since a status key is never unset.
 function checksValue(answers) {
-    var failed = Object.keys(QUERY_LABELS).filter(function (name) { return hasOwn(answers, name) && answerError(name, answers[name]) !== null; });
-    if (failed.length === 0) return { tone: "ok", text: "Every check answered" };
-    return { tone: "warning", text: clip(failed.map(function (name) { return QUERY_LABELS[name] + " failed: " + answerError(name, answers[name]); }).join("; ")
-        + "; a count a failed check feeds keeps its last answer") };
+    var failed = CHECK_QUERIES.filter(function (name) { return hasOwn(answers, name) && answerError(name, answers[name]) !== null; });
+    if (failed.length === 0) return { tone: "ok", text: "All checks passed" };
+    return { tone: "warning", text: "Checks failed" };
 }
 
 // The status values ANSWERS support now, by key, for Service.qml to
@@ -248,11 +290,11 @@ function checksValue(answers) {
 // guess.
 function statusValues(answers) {
     var out = { catalog: catalogValue(answers) };
-    if (Object.keys(QUERY_LABELS).some(function (name) { return hasOwn(answers, name); })) out.checks = checksValue(answers);
+    if (CHECK_QUERIES.some(function (name) { return hasOwn(answers, name); })) out.checks = checksValue(answers);
     var tools = answers.catalog;
     if (tools !== undefined) {
         if (tools.value === null) {
-            out.mise = { tone: "danger", text: clip("Unknown: the tool list failed: " + tools.error) };
+            out.mise = { tone: "danger", text: errorText(tools.error) };
         } else {
             out.mise = tools.value.mise.present ? { tone: "ok", text: clip(tools.value.mise.version) } : { tone: "warning", text: "Not installed", action: true };
             out.installed = listedRows(tools.value).filter(function (row) { return row.installed === true; }).length;
@@ -331,7 +373,7 @@ function toolRow(section, row, write) {
     if (row.installed === null) {
         out.secondary = "State unknown";
         out.chips.push({ text: "Unknown", tone: "danger" });
-        out.lines.push(clip(row.error));
+        out.lines.push(errorText(row.error));
     } else if (row.installed) {
         out.secondary = row.version === null ? "Installed" : row.version;
         if (row.origin === "foreign") out.secondary += " · Managed outside VGS";
@@ -341,7 +383,7 @@ function toolRow(section, row, write) {
     } else {
         out.secondary = row.actions.length === 0 ? "Not installed · Not offered on this system" : "Not installed";
     }
-    if (write && row.launcher === "foreign") out.lines.push("Its launcher in ~/.local/bin is managed outside VGS");
+    if (write && row.launcher === "foreign") out.lines.push("Another tool manages this launcher.");
     if (section !== "other" && Array.isArray(row.channels) && row.channels.length > 1 && row.actions.indexOf("install") !== -1) out.channels = row.channels;
     VERBS.forEach(function (verb) {
         if (row.actions.indexOf(verb) !== -1) out.actions.push({ kind: "verb", verb: verb, label: ACTION_LABELS[verb], variant: ACTION_VARIANTS[verb] });
@@ -361,7 +403,7 @@ function vgsRow(answer, entry) {
     if (answer.value === null) {
         out.secondary = "State unknown";
         out.chips.push({ text: "Unknown", tone: "danger" });
-        out.lines.push("vgsh self status failed: " + answer.error);
+        out.lines.push(errorText(answer.error, "vgs"));
         return out;
     }
     var s = answer.value;
@@ -371,13 +413,13 @@ function vgsRow(answer, entry) {
     if (s.behind === true) {
         out.chips.push({ text: s.latest === null ? "Update available" : "Update to " + s.latest, tone: "warning" });
         if (entry !== "") out.actions.push({ kind: "entry", verb: entry, label: "Update", variant: "primary" });
-        else out.lines.push("Enable a plugin with an Update entry, such as Updates, to update VGS from here");
+        else out.lines.push("Enable Updates in Settings to update VGS here.");
     } else if (s.behind === false) {
         out.chips.push({ text: "Up to date", tone: "success" });
     } else {
         out.chips.push({ text: "Unknown", tone: "neutral" });
     }
-    if (s.error !== null) out.lines.push(clip(s.error));
+    if (s.error !== null) out.lines.push(errorText(s.error, "vgs"));
     return out;
 }
 
@@ -401,7 +443,7 @@ function requirementRow(requirement, index) {
         requirement: requirement
     };
     if (requirement.optional) out.chips.push({ text: "Optional", tone: "neutral" });
-    if (requirement.package === null) out.lines.push("No package on this system provides it; install " + requirement.command + " by hand");
+    if (requirement.package === null) out.lines.push("VGS cannot install this tool on this system.");
     else out.actions.push({ kind: "doctor", verb: "", label: "Install", variant: "primary" });
     return out;
 }
@@ -415,15 +457,15 @@ function sections(catalog, entry, write) {
     if (catalog === null || catalog === undefined) return [];
     var vgs = { key: VGS_SECTION.key, title: VGS_SECTION.title, description: VGS_SECTION.description, rows: [vgsRow(catalog.vgs, entry)], lines: [] };
     var req = catalog.requirements;
-    if (req !== null && req.value === null) vgs.lines.push("vgsh doctor failed: " + req.error);
-    else if (req !== null && req.value.length === 0) vgs.lines.push("Every requirement is met");
+    if (req !== null && req.value === null) vgs.lines.push(errorText(req.error));
+    else if (req !== null && req.value.length === 0) vgs.lines.push("All required tools are installed");
     else if (req !== null) vgs.rows = vgs.rows.concat(req.value.map(requirementRow));
     var out = [vgs];
     var tools = catalog.tools;
     TOOL_SECTIONS.forEach(function (section) {
         var drawn = { key: section.key, title: section.title, description: section.description, rows: [], lines: [] };
         if (tools === null) drawn.lines.push("Listing");
-        else if (tools.value === null) drawn.lines.push("The tool list failed: " + tools.error);
+        else if (tools.value === null) drawn.lines.push(errorText(tools.error));
         else drawn.rows = (section.key === "other" ? tools.value.other : tools.value.sections[section.key]).map(function (row) { return toolRow(section.key, row, write); });
         if (drawn.rows.length > 0 || drawn.lines.length > 0) out.push(drawn);
     });
@@ -441,7 +483,7 @@ function summary(catalog) {
     parts.push(listedRows(tools).filter(function (row) { return row.installed === true; }).length + " installed");
     var updates = catalog.updates;
     if (updates !== null && updates.value !== null) parts.push(updates.value.count + (updates.value.count === 1 ? " update" : " updates"));
-    else if (updates !== null) parts.push("the update check failed: " + updates.error);
+    else if (updates !== null) parts.push("Update check failed");
     return parts.join(" · ");
 }
 
@@ -453,16 +495,31 @@ function runningLines(state) {
     return Object.keys(RUN_LABELS).filter(function (name) {
         return hasOwn(state, name) && state[name].running === true;
     }).map(function (name) {
-        return RUN_LABELS[name] + " runs in its window; the list refreshes when it ends";
+        return RUN_LABELS[name] + " is running. The list updates when it ends.";
     });
 }
 
-// The line the window shows for the REPLY an action was answered with: none
-// for `ok`, and none for a TUI's `busy`, whose answer is the live run's
-// window raised.
-function replyLine(reply) {
-    if (reply === "ok" || /^refused: tui=\S+ reason=busy$/.test(reply)) return "";
-    return clip(reply);
+// Plugins.writeSetting and Config.writeUser produce configuration refusals.
+var SETTING_ERRORS = [
+    [/^refused: user-config=pending(?: |$)/, "VGS is loading your settings. Try again shortly."],
+    [/^refused: user-config=(?:unparseable|unreadable|malformed)(?: |$)/, "VGS could not read your settings. Close Dev Tools and open it again to retry."],
+    [/^refused: setting=|^unknown:/, "VGS could not change this setting. Close Dev Tools and open it again to retry."]
+];
+
+// The line the window shows for REPLY in its action or setting context:
+// none for `ok`, and none for a TUI's `busy`, whose live window is raised.
+function replyLine(reply, context) {
+    if (reply === "ok") return "";
+    if (context === "setting") {
+        for (var i = 0; i < SETTING_ERRORS.length; i++)
+            if (SETTING_ERRORS[i][0].test(String(reply))) return SETTING_ERRORS[i][1];
+        return "VGS could not save this change. Try again.";
+    }
+    if (/^refused: tui=\S+ reason=busy$/.test(reply)) return "";
+    if (/reason=launcher-missing/.test(reply)) return "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it.";
+    if (/reason=resting/.test(reply)) return "The install request is paused. Try again later.";
+    if (/notices=full/.test(reply)) return "Too many install requests are waiting. Try again later.";
+    return "VGS could not open this action. Try again.";
 }
 
 // The owners and commands of MISSING, the `doctor` capability's `missing`,
