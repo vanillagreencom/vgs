@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/Bubble.qml, shell/plugins/vgs.jarvis/Service.qml, shell/plugins/vgs.jarvis/Session.js, shell/plugins/vgs.jarvis/JarvisProtocol.js, shell/plugins/vgs.jarvis/backend/jarvisd.js, scripts/smoke/rows/jarvis-bubble.sh, scripts/smoke/rows/jarvis-keys.sh, scripts/fixtures/jarvis/scripted.js
 
-The service registers one [passive layer](layers.md), independently of any bar or widget. [D060](../decisions/D060-passive-voice-orb.md) keeps the orb decorative. [D064](../decisions/D064-jarvis-child-lease.md) binds capture to the service and its presented indicator.
+The service registers one [passive layer](layers.md), independently of any bar or widget. Unplacing the bar widget leaves the service and its indicator registered. [D060](../decisions/D060-passive-voice-orb.md) keeps the orb decorative. [D064](../decisions/D064-jarvis-child-lease.md) binds capture to the service and its presented indicator.
 
 ## Demand and presentation
 

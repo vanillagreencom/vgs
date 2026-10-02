@@ -110,6 +110,7 @@ jarvis_bubble_begin() {
 }
 
 expect_poll "ready idle maps no bubble" 0 layer_count vgs:layer
+expect "the Jarvis widget unplaces without disabling its service" ok ipc shell setPluginPlaced vgs.jarvis false
 expect "the build contains no Jarvis bar widget" 0 jarvis_bubble_widgets
 if ! open_other "$sandbox/toplevel-jarvis-bubble.log"; then fail "the client below Jarvis maps"; exit 1; fi
 expect_poll "the client below Jarvis has keyboard focus" '["smoke.other", "Other window"]' active_window
