@@ -27,7 +27,7 @@
       "description": "Where a coding task's terminal opens. Auto uses tmux when it is installed, which runs several tasks at once; the floating terminal shows one task at a time." },
     "cloudVision": { "type": "enum", "label": "Screen to cloud", "group": "Safety",
       "options": ["ask", "allow", "never"],
-      "description": "Whether a screenshot or its text goes to a brain or voice outside this computer. Allow sends it, Never withholds it, Ask withholds it unless granted for the conversation. A brain on this computer always receives it. Changing it ends the conversation." },
+      "description": "Whether a screenshot or its text goes to a brain or voice outside this computer. Allow sends it, Never withholds it, Ask withholds it unless granted for the conversation. When the brain and the voice both run on this computer, they always receive it. Changing it ends the conversation." },
     "privateWindows": { "type": "string", "label": "Private windows", "group": "Safety",
       "presets": [ { "value": "1password, bitwarden, keepass, proton pass, enpass, pinentry, seahorse, private browsing, incognito", "label": "Password managers and private browsing" }, { "value": "", "label": "None" } ],
       "allowCustom": true,

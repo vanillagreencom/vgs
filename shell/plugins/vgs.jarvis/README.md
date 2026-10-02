@@ -59,7 +59,7 @@ No coding agent is connected yet, so Jarvis starts no coding task. It still watc
 
 Task terminal chooses where a coding task opens. Auto uses tmux when it is installed, so several tasks can run at once, and the floating terminal otherwise. Floating opens one task at a time.
 
-Screen to cloud decides whether a screenshot or its text goes to a brain or voice outside your computer: Ask, the default, withholds it unless granted, Allow sends it and Never withholds it. A brain on your computer always receives it. Private windows lists the words that mark a window to paint out, matched in its class or title.
+Screen to cloud decides whether a screenshot or its text goes to a brain or voice outside your computer: Ask, the default, withholds it unless granted, Allow sends it and Never withholds it. When the brain and the voice both run on your computer, they always receive it. Private windows lists the words that mark a window to paint out, matched in its class or title.
 
 Talk mode defaults to Hold. Toggle keeps conversation demand open until the next press. No mode captures audio until a speech engine is available and the listening bubble has drawn.
 

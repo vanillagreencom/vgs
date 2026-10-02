@@ -1,6 +1,6 @@
 # Jarvis vision
 
-Covers: shell/plugins/vgs.jarvis/backend/Vision.js, shell/plugins/vgs.jarvis/backend/Screen.js, shell/plugins/vgs.jarvis/backend/skills/computer/vision.md, scripts/test-jarvis-vision.js, scripts/fixtures/jarvis/vision.js, scripts/fixtures/jarvis/vision-tool.py
+Covers: shell/plugins/vgs.jarvis/backend/Vision.js, shell/plugins/vgs.jarvis/backend/Screen.js, shell/plugins/vgs.jarvis/backend/skills/computer/vision.md
 
 The [plan § 6.1](../plans/v2-jarvis-plan.md#61-vision) defines the screen tools. [D093](../decisions/D093-jarvis-screenshots.md) records the choices. [The router](jarvis-approval.md) still owns policy, approval, audit and the result label. This file defines the executor behind the `vision.*` rows of `Tools.TABLE`, its geometry, its races and its release route.
 
@@ -33,31 +33,34 @@ The [plan § 6.1](../plans/v2-jarvis-plan.md#61-vision) defines the screen tools
 - grim composes every captured output into one image of the requested layout box, at one scale, with each output's transform and flip already applied (`render.c::render`, grim 1.5.0). The image is in layout orientation. Its size is `(int)(width * scale)` by `(int)(height * scale)`.
 - A mask is therefore `(layout - box origin) * scale` in image pixels. The output transform enters through each output's layout size, which sets the box and which windows it meets. A mask rotated by the transform would land on the wrong pixels of grim's upright image. The plan's sentence "then the output's transform" describes the output buffer, which grim never hands over.
 - The executor pins `-s` to the highest scale among the outputs the box meets, the scale grim itself would guess, so the image size is known before the capture.
-- Each mask is the private window's rectangle clipped to the box and rounded outward: floor at the start, ceil at the end.
+- Each mask is the private window's rectangle clipped to the box and rounded outward: floor at the start, ceil at the end. `Screen.masks` computes it.
 - The PNG header must state the expected size, else the capture refuses as `image-size`. A layout that grim reads differently from Hyprland cannot shift a mask silently.
 
 ## Races and lock
 
 One call reads Hyprland, asks the router's authority, runs grim, reads Hyprland again and asks the authority again.
 
+- hyprctl reports a window's `at` and `size` as its animation goal, not the rectangle being drawn: `getWindowData` in Hyprland 0.56.2's `src/debug/HyprCtl.cpp` prints `position(GEOMETRIC_GOAL)` and `size(GEOMETRIC_GOAL)`. A workspace slide changes no `at` at all. Two readings therefore prove the masks against the goals, not against every drawn pixel.
 - The router's synchronous authority rejudges Policy, which refuses while the session is locked, and the live action. Locked before the capture: refused, and grim never runs. Locked after it, or past the action's life: the image is deleted and the call refuses with the authority's reason.
-- Both readings must give the same key: the box, the scale, the set of mapped windows and every private window's rectangle. A different key deletes the image and retries once. A second difference refuses as `screen-changed`. A plan the second reading refuses, such as a closed target, counts as a difference. A failed second reading refuses, because the masks are then unproven.
+- Both readings must give the same key: the box, the scale, each monitor's active and special workspace, the set of mapped windows and every private window's rectangle. A different key deletes the image and retries once. A second difference refuses as `screen-changed`. A plan the second reading refuses, such as a closed target, counts as a difference. A failed second reading refuses, because the masks are then unproven.
+- Before the retry the call waits 800 ms for the animation the change started. That is Hyprland 0.56.2's default `global` speed, 8 (`src/config/shared/animation/AnimationTree.cpp`), at hyprutils' 100 ms per unit (`CBaseAnimatedVariable::getPercent`). It is the default, not the configured speed: no hyprctl read the executor already makes reports it, and a spring curve has no fixed length.
+- Each private window is painted as the bounding box of every rectangle any reading of the call reported for it, so a window moving between two goals is covered along a straight path.
 - A public window that moves keeps the key, so it costs no retry.
 - The lock fact is the service's hello observation ([jarvis.md](jarvis.md#session-observation)). A lock that starts and ends between the two readings is not seen. The lock screen then covers the screen grim reads.
 
 ## Masking
 
 - `privateWindows` is a comma-separated list. Each entry matches, without case, as a substring of a window's class, initial class, title or initial title. The shipped list names password managers, `pinentry`, `seahorse` and the private-browsing titles.
-- Every mapped private window the box meets is painted, on any workspace: a workspace switch during the capture moves no rectangle.
-- `magick png:IN +antialias -fill black -draw "rectangle X0,Y0 X1,Y1" ... PNG32:OUT` paints each mask, its end pixels inclusive. The named coders keep either file from being read or written as another format. A nonzero exit or a changed size refuses as `mask-failed`; nothing unpainted is answered.
-- This is limited protection, not a confidentiality guarantee. A title cannot reliably identify private browsing. Text a private application shows inside another window, borders, shadows and decorations outside a client's rectangle, and layer surfaces are not painted.
+- Every mapped private window the box meets is painted, on any workspace, so a window on a workspace that slides in is painted at its rest rectangle.
+- `magick png:IN +antialias -fill black -draw "rectangle X0,Y0 X1,Y1" ... PNG32:OUT` paints each mask, its end pixels inclusive. The named coders keep either file from being read or written as another format. A magick that does not exit 0 fails the call with its cause, as the other commands do; a painted file of another size refuses as `mask-failed`. Nothing unpainted is answered.
+- This is limited protection, not a confidentiality guarantee. A title cannot reliably identify private browsing. Text a private application shows inside another window, borders, shadows and decorations outside a client's rectangle, and layer surfaces are not painted. Nor is a window still animating when grim reads the screen: a move or re-tile slower than the wait or along a curve, a workspace or special-workspace slide that started before the first reading, or a close fade of a window no reading saw.
 
 ## Release and route
 
-- The router delivers the answer's text as an item labelled `screen` and the image as a second item with the same labels, `{type: "image/png", item}`. [Release](jarvis-release.md) judges both against the conversation's recipients. `cloudVision` decides `screen`: `allow` sends, `never` withholds, `ask` asks for a grant. Loopback recipients always receive it. No consent producer issues a grant yet, so `ask` sends the marker.
+- The router delivers the answer's text as an item labelled `screen` and the image as a second item with the same labels, `{type: "image/png", item}`. [Release](jarvis-release.md) judges both against the conversation's recipients. `cloudVision` decides `screen`: `allow` sends, `never` withholds, `ask` asks for a grant. A recipient set with only local or loopback recipients always receives it ([release](jarvis-release.md)). No consent producer issues a grant yet, so `ask` sends the marker.
 - `cloudVision` is a session setting: changing it ends the conversation, so a frozen recipient set never carries an old answer.
 - `route()` answers `image` when the conversation's brain row takes images (`Providers` `images`). The [wire brains](jarvis-brain.md) then send the image: Messages as an image block inside the call's `tool_result`, Chat Completions in one user message after the tool messages, since the pinned excerpt's tool message carries text parts only. The [tool bridge](jarvis-bridge.md#calls-and-results) sends an MCP image block, or the marker as a second text block.
-- `text` runs `tesseract PAINTED stdout --oem 1 --psm 3 --dpi 300 -l eng -c preserve_interword_spaces=1` and answers its text. OCR reads the painted file, never the capture. Without `tesseract` the call refuses as `ocr-unavailable`. A custom base URL and GPT-Live take no image. GPT-Live delegation is J37's; until it exists no GPT-Live brain calls a tool.
+- `text` runs `tesseract PAINTED stdout --oem 1 --psm 3 --dpi 300 -l eng -c preserve_interword_spaces=1` and answers its text. OCR reads the painted file, never the capture. Text past the 64 KiB output bound is answered cut, as a clipboard read is; the router marks its own cut. Without `tesseract` the call refuses as `ocr-unavailable` before it draws, captures or counts against the turn. A custom base URL and GPT-Live take no image. GPT-Live delegation is J37's; until it exists no GPT-Live brain calls a tool.
 - The answer names the box and scale, so the brain can turn an image pixel into the layout point `input.click` takes.
 - The audit record of the call's outcome holds `capture`: the box, scale, image size, byte count, SHA-256 and mask count. `Audit` refuses any other key, so no image byte enters the store; a refused record also withholds the image from the brain.
 
@@ -66,15 +69,16 @@ One call reads Hyprland, asks the router's authority, runs grim, reads Hyprland 
 | Bound | Value | Past it |
 |---|---|---|
 | Captures a turn | 4, the [plan's bound](../plans/v2-jarvis-plan.md#311-bounds) | `screenshot-limit` |
-| One image | 3 MiB | `image-bytes`; four such images, base64-encoded, stay under the wire brain's 20 MiB request |
+| One image on the image route | 3 MiB | `image-bytes`. A [wire brain](jarvis-brain.md) sends only the current turn's images, so the turn's four, base64-encoded, stay under its 20 MiB request. The text route sends no image and has no image bound |
 | `grim`, `magick` | 5 s each | the child's group is killed |
 | `slurp` | 15 s, the user drawing | killed |
 | `tesseract` | 15 s | killed |
 
-These are recovery bounds, not measured latencies. `timeoutMs` is slurp, two captures with two readings each, magick, tesseract and 1 s of slack: 54 s with the 2 s read bound. That stays under Session's 60 s thinking deadline.
+These are recovery bounds, not measured latencies. `timeoutMs` is slurp, two captures with two readings each, the 800 ms wait, magick, tesseract and 1 s of slack: 54.8 s with the 2 s read bound. That stays under Session's 60 s thinking deadline.
 
 - A call counts against the live turn the user started: Session's thinking turn that owns the running action. A call with no such turn refuses as `outside-turn`.
-- Files live in `$XDG_RUNTIME_DIR/vgs/jarvis/vision`, created mode 0700 by `Private.directory`. A call removes its own files when it ends, before its turn ends. Install removes files a killed daemon left. Teardown removes the directory. Session's stop cancels a running call, which kills its child.
+- Files live in `$XDG_RUNTIME_DIR/vgs/jarvis/vision`, created mode 0700 by `Private.directory`. A call removes its own files when it ends, before its turn ends. Install removes files a killed daemon left. Teardown removes the directory. Session's stop cancels a running call, which kills its child or ends its wait.
+- An internal error answers `executor-failed` without its text, and the daemon's stderr gets one line, `jarvis: vision=internal cause=CODE`.
 
 ## Requirements
 
@@ -89,13 +93,7 @@ Debian trixie and Ubuntu noble ship ImageMagick 6, which installs no `magick` (p
 
 ## Evidence
 
-- `scripts/test-jarvis-vision.js` runs the real seam, desktop session reader, router, Session, Policy and Audit in the [J09 world](validation-jarvis.md). `grim`, `slurp` and `tesseract` are `scripts/fixtures/jarvis/vision-tool.py`, whose grim draws the stand-in hyprctl's own windows as grim 1.5.0 composes an image. `magick` is the host's ImageMagick, run by that stand-in on fixture files; the suite exits 77 without it.
-- A geometry table runs `Screen.plan` alone for all eight transforms at scale 1, 2 and 1.5, a size Hyprland rounds up, and an output at a fractional scale away from the origin. Its boxes, image sizes and masks are written by hand.
-- A mask table decodes each answered PNG and reads pixels inside, at the edge and outside every mask: scale 1, scale 2, scale 1.25, transforms 1, 2 and 5, two outputs at different scales, a window, a region and a private window on a hidden workspace. Each output's layout box in the fixture is written by hand.
-- Other cases cover each plan refusal, the argv, environment, group and parent-death signal of every command, the private directory, the text route reading the painted file, registration by command and Hyprland probe, the release answers for every `cloudVision`, a locked call, a lock across the capture, the races, the turn bound and live turn, the area cases, failures, cancellation, the deadline and the directory's lifetime. No case reaches a compositor, a screen or the network; a removed stand-in leaves vision unregistered.
-- Controls edit disposable copies: a mask removed, the transform ignored, only transforms 1 and 3 turned with the size floored as Omarchy does, the scale ignored, masks rounded inward, a hidden workspace skipped, the shown-window, private-target and region checks, the window set ignored, the retry dropped, the move unchecked, the lock check dropped, the image kept across a lock, image bytes in the audit, the OCR route skipped, OCR on the capture, a capture outside a user turn, the turn bound, files kept, the size and paint checks, the image bound, the temporary path, magick made optional, registration before the probe, the cancel classification, cancellation, the deadline, the install sweep, the `screen` label dropped and the router dropping the image.
-- The [router](jarvis-approval.md), [audit](jarvis-audit.md), [wire brain](jarvis-brain.md), [Messages](jarvis-anthropic.md), [bridge](jarvis-bridge.md), [engine](jarvis-engine.md), [protocol](jarvis-controls.md) and [Session](jarvis-session.md) suites pin their own share of the image item, the capture record, the image encodings, `images()`, the two settings and the conversation end.
-- No smoke row: an executor adds no surface, service or plugin.
+[Vision validation](jarvis-vision-validation.md) holds the suites, their cases and controls.
 
 ## Omarchy comparison
 

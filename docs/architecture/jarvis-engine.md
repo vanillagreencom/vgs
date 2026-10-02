@@ -81,9 +81,9 @@ A call answered `running` reports its real outcome later. When the router's resu
 
 ## Lifetime and recipients
 
-- A conversation opens at its generation's first capture or brain effect. Its recipient set is the brain row's entry plus the speech row's entries, under the current policy profile.
+- A conversation opens at its generation's first capture or brain effect. Its recipient set is the brain row's entry plus the speech row's entries, under the current policy profile and `cloudVision`.
 - `observe(state)` runs on each publication. It ends the conversation when the generation changes: stop, mute, lock, toggle, lease loss or a session-setting change. `end()` cancels and closes the brain, abandons utterances, ends speech, closes the adapter and closes the `net` owner. A late cancel acknowledges after that closure.
-- A changed brain, provider, account or policy setting ends the conversation in Session. The next conversation uses the new selection and a new recipient set, so no grant or context crosses to it.
+- A changed brain, provider, account, policy or `cloudVision` setting ends the conversation in Session. The next conversation uses the new selection and a new recipient set, so no grant or context crosses to it.
 - A brain that Session closes at its cancellation deadline leaves the conversation open. The next turn opens a new brain with fresh history.
 - An effect of an older generation, or a conversation that `observe` did not end, is an invariant error.
 

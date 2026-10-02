@@ -16,7 +16,7 @@ The clipboard, media and notify executors run the J46 rows of `Tools.TABLE`. [Th
 
 On the first hello, the daemon passes its router, `commandFile` from `bin/lib/judge-files.js`, its own environment and the desktop installation options to the seam. `commandFile` is the shared PATH lookup: the first executable regular file in an absolute PATH directory. For command executors the seam looks up each command the executor's Tools rows declare and runs none of them. It registers the executor with the commands found and their absolute files. An executor none of whose rows can run registers nothing. The router's `offer()` already drops a row whose command is absent. A command installed later appears at the daemon's next start. The shared desktop owner retains its own Hyprland probe and lifetime.
 
-`Service.qml` gives the daemon `WAYLAND_DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` beside its other variables. The daemon passes them only to the commands below. `scripts/qml-tests/tst_jarvis_service.qml` pins the daemon's whole environment.
+`Service.qml` gives the daemon `WAYLAND_DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` beside its other variables. The daemon passes them only to the commands below, the [vision commands](jarvis-vision.md#owners) and the [input executors' transport](jarvis-input.md). `scripts/qml-tests/tst_jarvis_service.qml` pins the daemon's whole environment.
 
 ## Commands
 
@@ -40,6 +40,8 @@ Each command runs as `setpriv --pdeathsig KILL -- <file> <argv>`, `<file>` the a
 | `wl-paste`, `wl-copy` | `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR` |
 | `playerctl`, `notify-send` | `DBUS_SESSION_BUS_ADDRESS`, `XDG_RUNTIME_DIR` |
 | `wpctl` | `XDG_RUNTIME_DIR` |
+| `grim`, `slurp` | `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR` |
+| `magick`, `tesseract` | none; the [vision executor](jarvis-vision.md#owners) gives `magick` `MAGICK_TEMPORARY_PATH` |
 
 No other daemon variable reaches a child: no key, no `VGSH_RUNNER_PID`.
 
