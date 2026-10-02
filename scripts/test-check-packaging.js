@@ -315,8 +315,8 @@ const ROWS = [
         hits[0].packages.dnf = "nodejs22";
         fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
     }, 1, () => refused("requirement=node package=nodejs22 want=Requires " + dnf())],
-    ["dnf: a plugin's optional requirement must be recommended", t => addRequirement(t, firstPlugin(t), "slurp", { pacman: "slurp", dnf: "slurp" }, true),
-        1, tree => refused("requirement=slurp package=slurp want=Recommends " + dnf("vgs", firstPlugin(tree)))],
+    ["dnf: a plugin's optional requirement must be recommended", t => addRequirement(t, firstPlugin(t), "hyprpicker", { dnf: "hyprpicker" }, true),
+        1, tree => refused("requirement=hyprpicker package=hyprpicker want=Recommends " + dnf("vgs", firstPlugin(tree)))],
     ["dnf: a plugin's required requirement must be required", t => addRequirement(t, firstPlugin(t), "grim", { dnf: "grim" }, false),
         1, tree => refused("requirement=grim package=grim want=Requires " + dnf("vgs", firstPlugin(tree)))],
     ["dnf: a requirement with no dnf package has no Fedora line", t => addRequirement(t, firstPlugin(t), "checkupdates", { pacman: "pacman-contrib" }, true),
