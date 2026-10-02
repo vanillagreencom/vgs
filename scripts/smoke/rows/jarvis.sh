@@ -352,6 +352,80 @@ jarvis_disable
 cp -- "$sandbox/jarvis-shell-original" "$jarvis_shell_owner"
 jarvis_rescan
 
+# Installation completion requests the ordinary core scan. It does not
+# change plugin source or restart its service. The fixture never installs.
+jarvis_shell_state="$sandbox/jarvis-shell-state.json"
+jarvis_shell_evidence="$sandbox/jarvis-shell-evidence.json"
+jarvis_shell_put() {
+  printf '%s\n' "$1" >"$jarvis_shell_state.next"
+  mv -- "$jarvis_shell_state.next" "$jarvis_shell_state"
+}
+jarvis_shell_offers() {
+  python3 - "$jarvis_shell_evidence" "$1" <<'PYREAD'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1])
+if not p.exists(): print("pending"); sys.exit(0)
+d=json.loads(p.read_text())
+want=sys.argv[2]
+offers=[v for v in d["offers"] if v.startswith("shell.")]
+valid=d["scan"] >= 0 and d["availability"]["kind"] == want
+valid=valid and offers == (["shell.argv","shell.line"] if want == "available" else [])
+print("matched" if valid else "pending")
+PYREAD
+}
+jarvis_shell_dependency_scan() {
+  local pid before
+  if ! before="$(jarvis_revision)"; then fail "Jarvis revision is unreadable before dependency scan"; return 1; fi
+  if ! pid="$(ipc smoke jarvisProcess | jarvis_launcher_pid)"; then return 1; fi
+  jarvis_shell_put '{"kind":"available"}'
+  expect "dependency installation completion uses the core rescan" ok ipc shell rescanPlugins
+  expect_poll "completed dependency scan refreshes shell readiness" matched jarvis_shell_status ready
+  expect_poll "completed dependency scan exposes both actual router offers" matched jarvis_shell_offers available
+  expect "dependency scan retains plugin source revision" "$before" jarvis_revision
+  local after
+  if ! after="$(ipc smoke jarvisProcess | jarvis_launcher_pid)"; then return 1; fi
+  expect "dependency scan retains the daemon lease" "$pid" printf '%s' "$after"
+}
+jarvis_shell_rescan_assertion() {
+  (failures=0 behaviour_failures=0
+   jarvis_shell_dependency_scan >"$sandbox/jarvis-shell-rescan-control.log"
+   echo "$failures")
+}
+jarvis_shell_put '{"kind":"unavailable","reason":"bwrap-missing"}'
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --shell-state "$jarvis_shell_owner" "$jarvis_backend" "$jarvis_shell_state" "$jarvis_shell_evidence"
+jarvis_rescan
+jarvis_enable
+expect_poll "the retained service starts with unavailable confinement" matched jarvis_shell_status missing
+expect_poll "the first requirement observation reaches the readiness owner" matched jarvis_shell_offers unavailable
+jarvis_shell_dependency_scan
+jarvis_shell_put '{"kind":"unavailable","reason":"bwrap-missing"}'
+expect "dependency loss uses the same core rescan" ok ipc shell rescanPlugins
+expect_poll "dependency loss removes readiness" matched jarvis_shell_status missing
+expect_poll "dependency loss removes both shell offers" matched jarvis_shell_offers unavailable
+jarvis_disable
+cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+python3 - "$jarvis_service" <<'PYCONTROL'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); source=p.read_text()
+needle='onRequirementsRevisionChanged: refreshShell()'
+assert source.count(needle)==1
+changed=source.replace(needle, 'onRequirementsRevisionChanged: { if (false) refreshShell(); }')
+assert changed != source
+p.write_text(changed)
+PYCONTROL
+jarvis_shell_put '{"kind":"unavailable","reason":"bwrap-missing"}'
+jarvis_rescan
+jarvis_enable
+expect_poll "the control reaches initial missing readiness" matched jarvis_shell_offers unavailable
+expect "removing requirement rescan delivery breaks recovery" 2 jarvis_shell_rescan_assertion
+jarvis_disable
+cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+cp -- "$sandbox/jarvis-backend-original" "$jarvis_backend"
+cp -- "$sandbox/jarvis-shell-original" "$jarvis_shell_owner"
+jarvis_rescan
+
 # The control keeps the receive branch but removes its publication. The
 # ordinary state read, not a text pin, must fail on this disposable copy.
 python3 - "$jarvis_service" <<'PY'

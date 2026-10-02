@@ -1,7 +1,7 @@
 .pragma library
 .import "Session.js" as Session
 
-// Shell produces hello, intent, indicator, shown, tui-state and reply. Voice confirmation
+// Shell produces hello, intent, indicator, shown, requirements-scan, tui-state and reply. Voice confirmation
 // is daemon-internal. Daemon produces status/state/devices/level/audio-fault,
 // request, tasks, task-answer and transcript. A line excludes its LF.
 // A transcript is one speaker's caption segment: partial text grows under
@@ -256,6 +256,11 @@ function accept(line, direction) {
         for (var name of Object.keys(message.directories))
             if (!directory(message.directories[name])) fail("directory-" + name);
         if (typeof message.locked !== "boolean") fail("lock");
+        break;
+    case "requirements-scan":
+        if (direction !== "shell") fail("direction-requirements-scan");
+        keys(message, ["v", "type", "gen", "revision", "scan"], "requirements-scan");
+        if (!Number.isSafeInteger(message.scan) || message.scan < 0) fail("requirements-scan");
         break;
     case "intent":
         if (direction !== "shell") fail("direction-intent");

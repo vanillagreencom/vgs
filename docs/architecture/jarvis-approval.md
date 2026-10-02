@@ -19,7 +19,7 @@ Covers: shell/plugins/vgs.jarvis/backend/ToolRouter.js, shell/plugins/vgs.jarvis
 
 | API | Producer and consumer |
 |---|---|
-| `register(id, executor)` | An executor owner registers its Tools executor id once after its confinement and command probes pass. The record supplies `commands`, `timeoutMs`, `cancellable`, `start(call, done, authorize)`, optional `cancel(call)` and optional `observe(call)`. Cancellable executors require cancel. |
+| `register(id, executor)` | An executor owner registers its Tools executor id once after its confinement and command probes pass. The record supplies `commands`, `timeoutMs`, `cancellable`, `start(call, done, authorize)`, optional `cancel(call)`, optional `observe(call)` and optional `available()`. Cancellable executors require cancel. An availability function must return literal true; all other results withdraw readiness. Executors without that function keep their registered readiness. |
 | `commands` | Commands the registrant has proved present. A table row with a missing command has no offer and refuses execution. Node-native rows need no command. Registration alone does not establish confinement. |
 | `topics` | The guidance owner's installed topic list. `ComputerHelp` extends that same list with `browser` only after the Browser readiness probe succeeds. The router reads the list when offering help; the guidance executor registers once. |
 | `observe(call)` | Input executors provide fresh target and layout-resolved key facts. A missing observer leaves input facts absent; Policy refuses them. Denied facts come from the trusted context producer, not this observer. |
@@ -47,7 +47,7 @@ The brain and executors receive no confirm method. A model tool called confirm o
 
 ## Fresh decisions and grants
 
-Immediately before start, the router calls Policy again with current lock, paths, input target, taint and grants. An accepted confirmation authorizes only its original effect, physical requirement and scope. A changed target or stronger effect requires another proposal. A fresh refusal ends the action without an executor start.
+Immediately before start, the router checks executor readiness again and calls Policy again with current lock, paths, input target, taint and grants. An accepted confirmation authorizes only its original effect, physical requirement and scope. A changed target or stronger effect requires another proposal. A fresh refusal ends the action without an executor start.
 
 Audit.before wraps every executor start. Failure returns audit-write and starts nothing. A scoped confirmation adds its grant only inside that admitted start, after the fresh scope check. Rejecting a confirmation, changing its target or failing audit cannot issue a grant. Grants survive turns in the same conversation, never a new generation or router. The router caps application and site grants at 64 scopes; another new scope refuses grant-limit without evicting an existing grant. They are action scopes, not the recipient-labelled release grants in [jarvis-release.md](jarvis-release.md).
 

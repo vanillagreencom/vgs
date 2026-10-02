@@ -27,6 +27,8 @@ Item {
     readonly property bool bubbleWanted: !lockObservation() && lifetime.kind === "ready" && cause === ""
         && sessionState !== null && Session.indicatorWanted(sessionState)
     readonly property bool indicatorPresented: bubbles.some(item => item !== null && item.presented)
+    property double sentRequirementsRevision: -1
+    readonly property var requirementsRevision: shell === null ? -1 : shell.requirements.revision
     readonly property bool locked: lockObservation()
     readonly property var effectiveKeys: shell === null ? null : shell.shortcut.keys
     // The daemon judges one floating task at a time from this run state.
@@ -80,6 +82,7 @@ Item {
             child.write(wire + "\n");
         } catch (error) { broken(error.message); }
     }
+    onRequirementsRevisionChanged: refreshShell()
 
     function lockObservation() {
         return shell === null || shell.session === undefined || shell.session.locked !== false;
@@ -93,6 +96,7 @@ Item {
     function start() {
         childSerial += 1;
         lifetime = { kind: "starting", pendingMute: lifetime.pendingMute === "none" ? "none" : "waiting" };
+        sentRequirementsRevision = -1;
         outputTail = "";
         errorTail = "";
         cause = "";
@@ -120,6 +124,13 @@ Item {
         child.stdinEnabled = true;
         publish("info", "Starting");
         child.running = true;
+    }
+
+    function refreshShell() {
+        if (shell === null || lifetime.kind !== "ready" || !child.running
+                || requirementsRevision <= sentRequirementsRevision) return;
+        sentRequirementsRevision = requirementsRevision;
+        send({ type: "requirements-scan", scan: requirementsRevision });
     }
 
     function hello() {
@@ -410,6 +421,7 @@ Item {
                 publish("info", message.daemon === "locked" ? "Locked; no capture" : "Ready; no capture");
                 sendTuiState();
                 Qt.callLater(() => sendIndicator(indicatorPresented));
+                refreshShell();
             }
         } catch (error) { broken(error.message); }
     }

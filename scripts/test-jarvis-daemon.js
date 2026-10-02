@@ -7,7 +7,7 @@ const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { once } = require("node:events");
-const { freshSuite } = require("./fixtures/jarvis/prepare.js");
+const { freshSuite, shellState } = require("./fixtures/jarvis/prepare.js");
 const { instrument } = require("./fixtures/jarvis/scripted.js");
 const { standins } = require("./fixtures/jarvis/audio.js");
 const desktopFixture = require("./fixtures/jarvis/desktop.js");
@@ -295,7 +295,7 @@ async function inside() {
             if (beforeState !== null) await beforeState({ messages });
             await wait(m => m.state.gate.kind !== "down" || m.state.gate.reason === "unconfigured");
             await check({ send: name => send(intent(name)), raw: send, reply: send,
-                indicator: shown => send(indicator(shown)), wait, last, messages });
+                indicator: shown => send(indicator(shown)), wait, last, messages, pid: child.pid });
             child.stdin.end();
             const [code, signal] = await closed;
             assert.equal(signal, null, "EOF releases the real child");
@@ -307,6 +307,64 @@ async function inside() {
             if (child.exitCode === null) { child.kill("SIGKILL"); await closed; }
         }
     }
+    async function shellRescan(file) {
+        const state = path.join(path.dirname(file), "shell-state.json");
+        const evidence = path.join(path.dirname(file), "shell-evidence.json");
+        const missing = { kind: "unavailable", reason: "bwrap-missing" };
+        const put = value => { fs.writeFileSync(state + ".next", JSON.stringify(value)); fs.renameSync(state + ".next", state); };
+        put(missing);
+        shellState(path.join(path.dirname(file), "Sandbox.js"), file, state, evidence);
+        await conversation(file, async w => {
+            // Pipe delivery crosses the child loop; poll only our synthetic
+            // evidence file, with a bound that fails on a missing publication.
+            async function read(want) {
+                for (let attempts = 0; attempts < 300; attempts++) {
+                    if (fs.existsSync(evidence)) {
+                        const value = JSON.parse(fs.readFileSync(evidence, "utf8"));
+                        if (value.availability.kind === want) return value;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                }
+                assert.fail("shell rescan publication missing: " + want);
+            }
+            assert.deepEqual((await read("unavailable")).availability, missing);
+            put({ kind: "available" });
+            w.raw({ v: 1, type: "requirements-scan", gen: w.last().gen, revision: hello.revision, scan: 1 });
+            const ready = await read("available");
+            assert.equal(ready.pid, w.pid, "rescan retains daemon lease");
+            assert.deepEqual(ready.offers.filter(id => id.startsWith("shell.")), ["shell.argv", "shell.line"]);
+            put(missing);
+            const seq = w.last().seq;
+            w.raw({ v: 1, type: "requirements-scan", gen: w.last().gen, revision: hello.revision, scan: 1 });
+            w.raw({ v: 1, type: "requirements-scan", gen: w.last().gen, revision: hello.revision, scan: 0 });
+            w.raw(hello);
+            await w.wait(m => m.seq > seq);
+            assert.equal(JSON.parse(fs.readFileSync(evidence, "utf8")).availability.kind, "available",
+                "duplicate and old scan counters cannot replace readiness");
+            w.raw({ v: 1, type: "requirements-scan", gen: w.last().gen, revision: hello.revision, scan: 2 });
+            const lost = await read("unavailable");
+            assert.equal(lost.pid, w.pid);
+            assert.deepEqual(lost.offers.filter(id => id.startsWith("shell.")), []);
+        });
+    }
+    await shellRescan(daemonCopy("shell-rescan"));
+    const shellControl = daemonCopy("shell-rescan-control");
+    const shellControlSource = fs.readFileSync(shellControl, "utf8");
+    const refresh = "void shell.refresh();";
+    assert.equal(shellControlSource.split(refresh).length - 1, 1);
+    fs.writeFileSync(shellControl, shellControlSource.replace(refresh, "void shell;"));
+    await assert.rejects(() => shellRescan(shellControl), assert.AssertionError);
+    controls++;
+    console.log("test-jarvis-daemon: control=shell-rescan-delivery detected");
+    const scanControl = daemonCopy("shell-rescan-monotonic-control");
+    const scanSource = fs.readFileSync(scanControl, "utf8");
+    const newer = "message.scan > requirementsScan";
+    assert.equal(scanSource.split(newer).length - 1, 1);
+    fs.writeFileSync(scanControl, scanSource.replace(newer, "true"));
+    await assert.rejects(() => shellRescan(scanControl), assert.AssertionError);
+    controls++;
+    console.log("test-jarvis-daemon: control=shell-rescan-monotonic detected");
+
     async function taskWire(file) {
         const gates = path.join(path.dirname(file), "task-wire-gates");
         fs.mkdirSync(gates);

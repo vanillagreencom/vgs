@@ -20,7 +20,7 @@ world(() => {
     const cleanups = [];
     let controls = 0;
     function make(implementation = Router, session = Session, options = {}) {
-        let at = 0, locked = false, transcript;
+        let at = 0, locked = false, transcript, readiness = true;
         const starts = [], answers = [], results = [], records = [];
         const timers = new Map();
         const directory = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "router-"));
@@ -50,6 +50,7 @@ world(() => {
             if (executor === "browser" && options.browser) continue;
             router.register(executor, { commands: ["hyprctl", "wtype", "wlrctl", "bwrap", "agent-browser", "grim"],
                 timeoutMs: 1000, cancellable: true,
+                ...(executor === "sandbox" ? { available: () => readiness } : {}),
                 observe: () => ({ target, text: { effective: [] } }),
                 start: (call, done) => {
                     records.push(rows().at(-1));
@@ -78,7 +79,7 @@ world(() => {
         // invalid hold; only the fixture's real audit writer needs release.
         cleanups.push(() => audit.close());
         return { runner, router, audit, directory, rows, starts, answers, results, records,
-            call, show, confirm, dispatch, refusal, newTurn,
+            call, show, confirm, dispatch, refusal, newTurn, ready: value => { readiness = value; },
             tick: value => {
                 at = value;
                 const due = [...timers].find(([, timer]) => timer.deadline <= at);
@@ -137,6 +138,35 @@ world(() => {
             w.newTurn();
             w.call("files.read", { path: path.join(fixtures.project, "existing") });
             assert.ok(w.builds() > 0, "a path call builds one");
+        }],
+        ["readiness-type", implementation => {
+            const w = make(implementation);
+            assert.throws(() => w.router.register("guidance", {
+                commands: [], timeoutMs: 10, cancellable: false, start() {}, available: true
+            }), /router=executor/);
+        }],
+        ["readiness-literal", implementation => {
+            const w = make(implementation);
+            for (const value of [false, 0, 1, "true", null, undefined]) {
+                w.ready(value);
+                assert.equal(w.router.offer().some(row => row.id.startsWith("shell.")), false);
+            }
+            w.ready(true);
+            assert.equal(w.router.offer().filter(row => row.id.startsWith("shell.")).length, 2);
+        }],
+        ["readiness-offer", implementation => {
+            const w = make(implementation); w.ready(false);
+            assert.equal(w.router.offer().some(row => row.id.startsWith("shell.")), false);
+        }],
+        ["readiness-route", implementation => {
+            const w = make(implementation); w.ready(false);
+            assert.equal(w.call("shell.argv", shell).reason, "executor-unavailable");
+            assert.equal(w.starts.length, 0);
+        }],
+        ["readiness-start", implementation => {
+            const w = make(implementation); held(w); w.ready(false); w.confirm();
+            assert.equal(w.starts.length, 0, "dependency loss cannot start held executor");
+            assert.equal(w.refusal().reason, "executor-unavailable");
         }],
         ["allow", implementation => {
             const w = make(implementation);
@@ -599,6 +629,11 @@ world(() => {
         for (const [name, check] of cases) { check(Router); console.log("case=" + name + " passed"); }
         const byName = name => cases.find(row => row[0] === name)[1];
         const controlsTable = [
+            ["readiness-type", '(executor.available !== undefined && typeof executor.available !== "function")', 'false', "readiness-type"],
+            ["readiness-literal", 'executor.available() === true', 'executor.available()', "readiness-literal"],
+            ["readiness-offer", 'available(row) !== null', 'registry.has(row.executor)', "readiness-offer"],
+            ["readiness-route", 'value.executor = available(refined);', 'value.executor = registry.get(refined.executor);', "readiness-route"],
+            ["readiness-start", 'if (available(value.refined) !== value.executor)', 'if (false)', "readiness-start"],
             ["rejudge", "const fresh = judge(value);", "const fresh = value.decision;", "rejudge"],
             ["lazy-denied", "get denied() { return facts.denied; }, taint", "denied: facts.denied, taint", "lazy-denied"],
             ["audit-before", "const admitted = audit.before(", "const admitted = ({ before: (event, start) => ({ kind: 'started', value: start() }) }).before(", "audit-before"],

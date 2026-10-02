@@ -64,6 +64,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let browser = null;
     let files = null;
     let shell = null;
+    let requirementsScan = -1;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
@@ -267,6 +268,14 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         if (!ending) write({ v: 1, type: "task-answer", gen: runner.state.gen,
                             revision: context.revision, task, answer });
                     });
+                    continue;
+                }
+                if (message.type === "requirements-scan") {
+                    intentIdentity(message);
+                    if (message.scan > requirementsScan) {
+                        requirementsScan = message.scan;
+                        void shell.refresh();
+                    }
                     continue;
                 }
                 if (message.type === "tui-state") {

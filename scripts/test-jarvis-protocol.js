@@ -49,6 +49,7 @@ const listReply = { ...reply, kind: "desktop.list", data: { entries: [entry], co
 const entryReply = { ...reply, kind: "desktop.launch", data: { ...entry, terminal: false } };
 assert.equal(manifest.capabilities.includes("compositor") && manifest.capabilities.includes("run"), true);
 const taskStop = { ...intent, intent: "task-stop", task: "0f7c6a2e-5d1b-4c3a-9e8f-1a2b3c4d5e6f" };
+const requirementsScan = { v: 1, type: "requirements-scan", gen: 0, revision: hello.revision, scan: 1 };
 const tuiState = { v: 1, type: "tui-state", gen: 0, revision: hello.revision, name: "task", running: true };
 const taskReply = { ...reply, kind: "tui.run", answer: "refused: tui=task reason=busy" };
 const taskRequest = { v: 1, type: "request", gen: 0, revision: hello.revision, id: 1, kind: "tui.run",
@@ -81,6 +82,11 @@ const cases = [
             keys: [{ ...keysReply.data.keys[0], codepoint }] } }), "shell", "input-reply"]),
     ["input-ready-direction", JSON.stringify(inputReady), "shell", "direction-input-ready"],
     ["input-ready-command", changed(inputReady, { commands: ["sudo"] }), "daemon", "input-commands"],
+    ["requirements-direction", JSON.stringify(requirementsScan), "daemon", "direction-requirements-scan"],
+    ["requirements-shape", changed(requirementsScan, { extra: true }), "shell", "shape-requirements-scan"],
+    ["requirements-scan", changed(requirementsScan, { scan: -1 }), "shell", "requirements-scan"],
+    ["requirements-fraction", changed(requirementsScan, { scan: 0.5 }), "shell", "requirements-scan"],
+    ["requirements-overflow", changed(requirementsScan, { scan: Number.MAX_SAFE_INTEGER + 1 }), "shell", "requirements-scan"],
     ["shell-status-direction", JSON.stringify(shellStatus), "shell", "direction-shell-status"],
     ["shell-status-shape", changed(shellStatus, { extra: true }), "daemon", "shape-shell-status"],
     ["shell-availability", changed(shellStatus, { availability: { kind: "ready" } }), "daemon", "shell-availability"],
@@ -230,7 +236,7 @@ for (const message of [devices, level, audioFault, taskRequest, tasks, taskAnswe
     shellStatus, { ...shellStatus, availability: { kind: "checking" } },
     { ...shellStatus, availability: { kind: "unavailable", reason: "bwrap-missing" } }])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
-for (const message of [taskStop, tuiState, { ...tuiState, running: false }, taskReply, { ...taskReply, answer: "ok" },
+for (const message of [requirementsScan, { ...requirementsScan, scan: 0 }, { ...requirementsScan, scan: Number.MAX_SAFE_INTEGER }, taskStop, tuiState, { ...tuiState, running: false }, taskReply, { ...taskReply, answer: "ok" },
     { ...taskReply, answer: "x".repeat(300) }])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "shell")), JSON.stringify(message));
 for (const cloudVision of ["ask", "allow", "never"])
@@ -325,6 +331,10 @@ try {
         ["input-symbol-floor", ' || key.codepoint < 0', '', "input-codepoint--1"],
         ["input-symbol-ceiling", ' || key.codepoint > 0x10ffff', '', "input-codepoint-1114112"],
         ["input-symbol-scalar", ' || key.codepoint >= 0xd800 && key.codepoint <= 0xdfff', '', "input-codepoint-55296"],
+        ["requirements-direction", 'if (direction !== "shell") fail("direction-requirements-scan");', 'if (false) fail("direction-requirements-scan");', "requirements-direction"],
+        ["requirements-shape", 'keys(message, ["v", "type", "gen", "revision", "scan"], "requirements-scan");', 'if (false) keys(message, [], "requirements-scan");', "requirements-shape"],
+        ["requirements-negative", 'message.scan < 0', 'false', "requirements-scan"],
+        ["requirements-integer", '!Number.isSafeInteger(message.scan)', 'false', "requirements-fraction"],
         ["shell-status-direction", 'if (direction !== "daemon") fail("direction-shell-status");',
             'if (false) fail("direction-shell-status");', "shell-status-direction"],
         ["shell-availability", 'fail("shell-availability");', ';', "shell-availability"],

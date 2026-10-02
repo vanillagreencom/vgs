@@ -124,6 +124,7 @@ function create({ session, state, dispatch, context, audit, result }) {
      * Input executors supply observe(call) for fresh trusted target/key facts.
      * They call synchronous authorize(input) after preparation replies and
      * immediately before delivery. Other executors need no preparation callback.
+     * Optional available() must return literal true at offer, route and start.
      */
     function register(id, executor) {
         if (closed || registry.has(id) || !Object.values(Tools.TABLE).some(row => row.executor === id)
@@ -133,14 +134,15 @@ function create({ session, state, dispatch, context, audit, result }) {
                 || (executor.cancellable && typeof executor.cancel !== "function")
                 || (executor.observe !== undefined && typeof executor.observe !== "function")
                 || (executor.topics !== undefined && (id !== "guidance" || !Array.isArray(executor.topics)
-                    || !executor.topics.every(topic => Tools.TABLE.help.schema.properties.topic.enum.includes(topic)))))
+                    || !executor.topics.every(topic => Tools.TABLE.help.schema.properties.topic.enum.includes(topic))))
+                || (executor.available !== undefined && typeof executor.available !== "function"))
             throw new Error("jarvis: router=executor");
         registry.set(id, Object.freeze({ ...executor, commands: Object.freeze(executor.commands.slice()) }));
     }
 
     function available(refined) {
         const executor = registry.get(refined.executor);
-        return executor !== undefined && (refined.command === null || executor.commands.includes(refined.command)
+        return executor !== undefined && (executor.available === undefined || executor.available() === true) && (refined.command === null || executor.commands.includes(refined.command)
             || (refined.alternatives || []).some(command => executor.commands.includes(command))) ? executor : null;
     }
 
@@ -230,6 +232,11 @@ function create({ session, state, dispatch, context, audit, result }) {
     function start(e, done) {
         const value = pending;
         if (value === null || value.id !== e.id) throw new Error("jarvis: router=start-identity");
+        if (available(value.refined) !== value.executor) {
+            value.refusal = "executor-unavailable";
+            done("failed");
+            return;
+        }
         const fresh = judge(value);
         if (fresh instanceof Promise) {
             fresh.then(answer => {

@@ -37,14 +37,18 @@ function answer(result) {
  * install({router, roots, status, failed, clock?}) registers commands only
  * after the real sandbox probe and protected-root construction succeed.
  * status receives {kind:"checking"|"available"|"unavailable", reason?}.
- * roots is a fresh trusted producer, never model arguments. close aborts
+ * refresh repeats readiness on a core requirement scan and withdraws offers
+ * while checking. roots is a fresh trusted producer, never model arguments. close aborts
  * both readiness and the serial command and suppresses late publication.
  */
 function install({ router, roots: currentRoots, status, failed, clock }) {
     let closed = false;
     let active = null;
-    const probe = new AbortController();
+    let probe = null;
+    let readiness = { kind: "checking" };
+    let registered = false;
     const executor = {
+        available: () => !closed && readiness.kind === "available",
         commands: ["bwrap"], timeoutMs: Sandbox.BOUNDS.timeoutMs, cancellable: true,
         start(call, done) {
             if (closed) { done(answer({ kind: "refused", reason: "shell-closed" })); return; }
@@ -75,24 +79,36 @@ function install({ router, roots: currentRoots, status, failed, clock }) {
             try { done({ outcome: "completed", content: Guidance.help(call.args.topic) }); }
             catch (error) { done({ outcome: "failed", content: error.message }); }
         } });
-    status({ kind: "checking" });
-    const ready = (async () => {
-        try { Denied.create(currentRoots()); }
-        catch { return { kind: "unavailable", reason: "protected-roots" }; }
-        return Sandbox.available({ signal: probe.signal, clock });
-    })().then(result => {
-        if (closed) return;
-        switch (result.kind) {
-        case "available": router.register("sandbox", executor); break;
-        case "unavailable": break;
-        default: throw new Error("jarvis: shell=probe-kind");
-        }
-        status(result.kind === "available" ? result : { kind: "unavailable", reason: result.reason });
-    }).catch(failed);
-    return Object.freeze({ ready, close() {
+    function refresh() {
+        if (closed) return Promise.resolve();
+        if (probe !== null) probe.abort();
+        const acquired = new AbortController();
+        probe = acquired;
+        readiness = { kind: "checking" };
+        status(readiness);
+        return (async () => {
+            try { Denied.create(currentRoots()); }
+            catch { return { kind: "unavailable", reason: "protected-roots" }; }
+            return Sandbox.available({ signal: acquired.signal, clock });
+        })().then(result => {
+            if (closed || probe !== acquired) return;
+            switch (result.kind) {
+            case "available":
+                if (!registered) { router.register("sandbox", executor); registered = true; }
+                break;
+            case "unavailable": break;
+            default: throw new Error("jarvis: shell=probe-kind");
+            }
+            readiness = result.kind === "available" ? result : { kind: "unavailable", reason: result.reason };
+            status(readiness);
+            probe = null;
+        }).catch(error => { if (!closed && probe === acquired) failed(error); });
+    }
+    const ready = refresh();
+    return Object.freeze({ ready, refresh, close() {
         if (closed) return;
         closed = true;
-        probe.abort();
+        if (probe !== null) probe.abort();
         executor.cancel();
     } });
 }

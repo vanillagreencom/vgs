@@ -111,6 +111,23 @@ function shellAvailability(file, kind) {
     fs.writeFileSync(file, source.replace(needle, needle + "\n    return " + JSON.stringify(value) + ";"));
 }
 
+// Only a disposable runtime copy reads these synthetic availability facts.
+// Its real status callback records the actual router's current offers.
+function shellState(sandbox, daemon, state, evidence) {
+    let source = fs.readFileSync(sandbox, "utf8");
+    const probe = "async function available(options = {}) {";
+    assert.equal(source.split(probe).length - 1, 1);
+    const synthetic = '\n    return JSON.parse(require("node:fs").readFileSync(' + JSON.stringify(state) + ', "utf8"));';
+    fs.writeFileSync(sandbox, source.replace(probe, probe + synthetic));
+    source = fs.readFileSync(daemon, "utf8");
+    const publish = "status: availability => {";
+    assert.equal(source.split(publish).length - 1, 1);
+    const record = '\n                            fs.writeFileSync(' + JSON.stringify(evidence)
+        + ' + \".next\", JSON.stringify({ pid: process.pid, scan: requirementsScan, availability, offers: router.offer().map(row => row.id) }));'
+        + ' fs.renameSync(' + JSON.stringify(evidence) + ' + \".next\", ' + JSON.stringify(evidence) + ');';
+    fs.writeFileSync(daemon, source.replace(publish, publish + record));
+}
+
 function dropInitialReplies(file, marker) {
     const source = fs.readFileSync(file, "utf8");
     const start = '"use strict";';
@@ -270,7 +287,7 @@ function service(sourceTree, tree, root) {
     fs.writeFileSync(accounts, accountsSource.replace(accountsNeedle, accountsCommand));
 }
 
-module.exports = { freshSuite, seedTaskEvents };
+module.exports = { freshSuite, seedTaskEvents, shellState };
 if (require.main === module) {
     if (process.argv[2] === "--gate-daemon") {
         assert.equal(process.argv.length, 6);
@@ -281,6 +298,9 @@ if (require.main === module) {
     } else if (process.argv[2] === "--floor-daemon") {
         assert.equal(process.argv.length, 4);
         floorDaemon(process.argv[3]);
+    } else if (process.argv[2] === "--shell-state") {
+        assert.equal(process.argv.length, 7);
+        shellState(...process.argv.slice(3));
     } else if (process.argv[2] === "--shell-availability") {
         assert.equal(process.argv.length, 5);
         shellAvailability(...process.argv.slice(3));

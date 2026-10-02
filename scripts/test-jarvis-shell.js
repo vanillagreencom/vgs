@@ -109,6 +109,8 @@ world(async () => {
         await h.shell.ready;
         assert.deepEqual(h.statuses, [{ kind: "checking" }, { kind: "available" }]);
         assert.deepEqual(h.router.offer().filter(row => row.id.startsWith("shell.")).map(row => row.id), ["shell.argv", "shell.line"]);
+        h.shell.close();
+        assert.equal(h.router.offer().some(row => row.id.startsWith("shell.")), false, "closed lease withdraws offers");
         h.close();
     }
     await offered(Shell);
@@ -215,6 +217,7 @@ world(async () => {
         const done = f.next();
         assert.equal(f.call("shell.argv", { ...a, argv: ["/usr/bin/python3", "-I", w.project + "/child.py", lock, marker] }).kind, "proposed");
         await until(() => fs.existsSync(marker), "scratch descendant owns its lock");
+        await f.shell.refresh();
         if (mode === "cancel") {
             f.runner.dispatch({ type: "stop" });
         } else f.shell.close();
@@ -245,7 +248,8 @@ world(async () => {
             assert.rejects(() => check(require(path.join(root, "backend/Shell.js"))), assert.AssertionError, name + " turns red"));
         console.log("control=" + name + " detected");
     }
-    await control("readiness", "Shell.js", [["case \"available\": router.register(\"sandbox\", executor); break;", "case \"available\": break;"]], offered);
+    await control("readiness", "Shell.js", [["router.register(\"sandbox\", executor); registered = true;", "void executor; registered = true;"]], offered);
+    await control("closed-offers", "Shell.js", [["available: () => !closed && readiness.kind", "available: () => readiness.kind"]], offered);
     await control("line", "Shell.js", [["[\"/bin/sh\", \"-c\", call.args.line]", "[\"/bin/sh\", \"-c\", \"true\"]"]], async s => {
         const f = make(s); await f.shell.ready;
         assert.equal((await f.run("shell.line", { cwd: w.project, network: false, line: "printf exact" })).answer.stdout, "exact");
@@ -278,7 +282,7 @@ world(async () => {
         f.close();
     }
     await absent(Shell);
-    await control("absent-offers", "Shell.js", [["case \"unavailable\": break;", "case \"unavailable\": router.register(\"sandbox\", executor); break;"]], absent);
+    await control("absent-offers", "Shell.js", [["case \"unavailable\": break;", "case \"unavailable\": result.kind = \"available\"; router.register(\"sandbox\", executor); break;"]], absent);
     // Missing bootstrap and aborted readiness reach Sandbox's real public
     // interface. No fixture invokes an authentication program or host device.
     await pluginCopy(path.join(backend, "Sandbox.js"), [["function executable() {", "function executable() { return null;\n"]], async root => {
@@ -319,7 +323,69 @@ world(async () => {
         });
     }
     await readinessLifetime([], false);
-    await readinessLifetime([["probe.abort();", "void probe;"]], true);
+    await readinessLifetime([["if (probe !== null) probe.abort();\n        executor.cancel();", "void probe;\n        executor.cancel();"]], true);
+    // Deferred probes reach the real owner and real router without starting
+    // an installer. Superseded completions arrive deliberately out of order.
+    async function rescans(edits, mustFail = false) {
+        await pluginCopy(path.join(backend, "Shell.js"), edits, async root => {
+            const probes = [];
+            require(path.join(root, "backend/Sandbox.js")).available = options =>
+                new Promise(resolve => probes.push({ options, resolve }));
+            const check = async () => {
+                const discovered = [];
+                const added = w.home + "/.claude-rescan";
+                fs.rmSync(added, { recursive: true, force: true });
+                const f = make(require(path.join(root, "backend/Shell.js")), {
+                    roots: () => { const value = trusted(); discovered.push(value); return value; }
+                });
+                // The frozen real router owns registration; its duplicate
+                // guard makes the next successful refresh a behavioral check.
+                probes[0].resolve({ kind: "unavailable", reason: "bwrap-missing" });
+                await f.shell.ready;
+                assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
+                assert.equal(discovered.length, 1);
+                assert.equal(discovered[0].accountRoots.includes(added), false);
+                fs.mkdirSync(added, { recursive: true });
+                const recovered = f.shell.refresh();
+                assert.equal(discovered.length, 2, "rescan rebuilds protected roots");
+                assert.ok(discovered[1].accountRoots.includes(added), "new account metadata reaches current protected roots");
+                probes[1].resolve({ kind: "available" }); await recovered;
+                assert.deepEqual(f.router.offer().filter(row => row.id.startsWith("shell.")).map(row => row.id),
+                    ["shell.argv", "shell.line"]);
+                const repeated = f.shell.refresh();
+                assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false, "checking withdraws offers");
+                const missing = f.shell.refresh();
+                assert.equal(probes[2].options.signal.aborted, true, "new scan aborts superseded probe");
+                probes[3].resolve({ kind: "unavailable", reason: "bwrap-missing" }); await missing;
+                probes[2].resolve({ kind: "available" }); await repeated;
+                assert.deepEqual(f.statuses.at(-1), { kind: "unavailable", reason: "bwrap-missing" }, "stale probe cannot recover readiness");
+                assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
+                assert.equal(f.call("shell.argv", a).reason, "executor-unavailable");
+                const again = f.shell.refresh(); probes[4].resolve({ kind: "available" }); await assert.doesNotReject(again);
+                assert.equal(f.router.offer().filter(row => row.id.startsWith("shell.")).length, 2, "registration survives repeat success once");
+                const closing = f.shell.refresh(); f.shell.close();
+                assert.equal(probes[5].options.signal.aborted, true);
+                const last = f.statuses.length;
+                probes[5].resolve({ kind: "available" }); await closing;
+                assert.equal(f.statuses.length, last, "closed lease suppresses late rescan");
+                assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
+                f.close();
+            };
+            if (mustFail) await assert.rejects(check, assert.AssertionError);
+            else await check();
+        });
+    }
+    await rescans([]);
+    for (const [name, needle, replacement] of [
+        ["register-once", "if (!registered) { router.register", "if (true) { router.register"],
+        ["fresh-roots", "Denied.create(currentRoots());", "void currentRoots;"],
+        ["withdraw-offers", 'available: () => !closed && readiness.kind === "available"', 'available: () => !closed'],
+        ["superseded-probe", "if (probe !== null) probe.abort();\n        const acquired", "void probe;\n        const acquired"],
+        ["stale-probe", "if (closed || probe !== acquired) return;", "if (closed) return;"]
+    ]) {
+        await rescans([[needle, replacement]], true);
+        console.log("control=rescan-" + name + " detected");
+    }
     async function probeOptions(sandbox) {
         const controller = new AbortController(); controller.abort();
         const result = await sandbox.available({ signal: controller.signal });
