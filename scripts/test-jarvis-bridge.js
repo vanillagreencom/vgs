@@ -204,9 +204,9 @@ world(async () => {
             c.send({ jsonrpc: "2.0", id: 3, method: "tools/list" });
             const list = result(await c.next(), "ListToolsResult");
             // Registered: windows (hyprctl), files and sandbox (bwrap). Nothing else is offered.
-            const expected = ["windows.list", "files.list", "files.read", "files.search", "files.write", "files.move",
+            const expected = ["windows.list", "workspaces.list", "files.list", "files.read", "files.search", "files.write", "files.move",
                 "files.delete", "shell.argv", "shell.line"];
-            assert.deepEqual(list.tools.map(entry => entry.name), ["windows_list", "files_list", "files_read", "files_search",
+            assert.deepEqual(list.tools.map(entry => entry.name), ["windows_list", "workspaces_list", "files_list", "files_read", "files_search",
                 "files_write", "files_move", "files_delete", "shell_argv", "shell_line"]);
             for (const [index, entry] of list.tools.entries()) {
                 assert.deepEqual(entry.inputSchema, JSON.parse(JSON.stringify(Tools.TABLE[expected[index]].schema)));
