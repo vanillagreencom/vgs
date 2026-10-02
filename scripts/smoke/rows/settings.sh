@@ -280,7 +280,7 @@ expect "disabling the status fixture from its page is allowed" ok ipc smoke invo
 expect_poll "a disabled plugin's dynamic Select is read-only and has no offered choices" '[0, "First offered (none available)", "", false]' device_state
 expect_poll "a disabled plugin's rows all read not reported" '[["Check", "Not reported"], ["Last check", "Not reported"], ["Note", "Not reported"], ["Token", "Not reported", "Needed for the fixture'"'"'s sync", "Show command"], ["Pending", "Not reported"]]' drawn_status
 expect "the window opens the notifications' page" ok ipc smoke invokeInstance window vgs.settings openPlugin vgs.notifications
-slack_tokens_hint="One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
+slack_tokens_hint="Connect each workspace to show sender photos."
 # The Slack tokens row belongs to the owner-only Slack photos extra,
 # off on a fresh profile: the page lists no row of it
 # (docs/decisions/D075-consumer-features-need-no-developer-setup.md).

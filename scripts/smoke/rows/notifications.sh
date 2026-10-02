@@ -1336,7 +1336,7 @@ expect_poll "no toast is left before the inbox opens again" 0 on_screen
 all_rows() { ipc smoke modelRows vgs.notifications rows key | py_reply 'import json,sys; print(len(json.load(sys.stdin)))'; }
 expect_poll "every exit has played before the inbox opens again" 0 all_rows
 expect "the inbox opens again" ok notes inbox
-expect_poll "an inbox after Mark read is caught up" '"All caught up"' panel_subtitle
+expect_poll "an inbox after Mark read is caught up" '"No unread notifications"' panel_subtitle
 expect "the history panel opens" ok notes history
 kept="$(note_status history)"
 expect_poll "the history lists what is kept" "$(( kept < 40 ? kept : 40 ))" panel_count
@@ -1653,6 +1653,9 @@ expected_errors+=('notifications: state refused: file=.*state\.json reason=not-j
 expect "re-enabling over a corrupt file is allowed" ok ipc shell setPluginEnabled vgs.notifications true
 expect_poll "the service reports the corrupt file" '"corrupt"' note_status store.state
 expect_log "the refusal is logged with its reason" 1 'notifications: state refused: file=.*state\.json reason=not-json'
+expect "the history opens over the damaged saved file" ok notes history
+expect_poll "the panel shows plain words for damaged saved history" '"Saved history is damaged"' panel_subtitle
+expect "the damaged history panel closes" ok notes close
 notify smoke-app 0 "Over corruption" "" '[]' '{}' 0 >/dev/null
 expect_poll "a toast still shows over a corrupt file" True has_row live "Over corruption"
 sleep 0.5
@@ -1713,7 +1716,7 @@ expect_poll "the last toast's exit has played" 0 layer_count vgs:layer
 # that stores it. The probe runs when the service starts, so each set of
 # states is read after a disable and an enable. No state here makes the
 # photo helper call Slack.
-token_hint="One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
+token_hint="Connect each workspace to show sender photos."
 token_row() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; r=[p for p in json.load(sys.stdin) if p["id"] == "vgs.notifications"][0]["status"]; print(json.dumps([[s["label"], s["report"], s["tone"], s["command"], s["value"]] for s in r]))'; }
 drawn_token_row() { ipc smoke itemTexts window vgs.settings StatusRow | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)))'; }
 # want_rows rows|drawn ITEMS: the manager row, or the texts the page draws,
@@ -1741,8 +1744,8 @@ rows, drawn = [], ["Slack tokens", hint]
 for item in items.split(";"):
     account, state, *served = item.split(",")
     if served:
-        rows.append({"label": labels[account], "value": state, "hint": "Served by the single-workspace token", "command": "", "tone": tones[state], "secret": "", "access": ""})
-        drawn += [labels[account], words[state], "Served by the single-workspace token"]
+        rows.append({"label": labels[account], "value": state, "hint": "Uses the single-workspace token", "command": "", "tone": tones[state], "secret": "", "access": ""})
+        drawn += [labels[account], words[state], "Uses the single-workspace token"]
     else:
         rows.append({"label": labels[account], "value": state, "hint": "", "command": command(account), "tone": tones[state], "secret": account, "access": accesses[state]})
         drawn += [labels[account], words[state], steps[state], "Show command"]

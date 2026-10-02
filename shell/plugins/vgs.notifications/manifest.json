@@ -4,7 +4,7 @@
   "name": "Notifications",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "The desktop notification daemon: Spotlight glass toasts on every screen, an Inbox and History panel, and Silence. Toggle the panel with the vgs.notifications:inbox shortcut or IPC.",
+  "description": "Shows application notifications. Open the panel to read them later.",
   "license": "MIT",
   "icon": "bell",
   "kinds": [
@@ -36,8 +36,8 @@
   "schema": {
     "duration": {
       "type": "number",
-      "label": "Toast duration",
-      "description": "Seconds a normal toast stays on screen; a low-urgency one stays for at most 5",
+      "label": "Notification duration",
+      "description": "Set the minimum time for normal notifications.",
       "min": 2,
       "max": 30,
       "step": 1,
@@ -46,7 +46,7 @@
     "customEmoji": {
       "type": "boolean",
       "label": "Slack custom emoji",
-      "description": "Draw each workspace's custom emoji in Slack notifications, read from Slack's own cache; needs ImageMagick",
+      "description": "Show custom emoji in Slack notifications.",
       "group": "Slack"
     }
   },
@@ -60,7 +60,7 @@
       "type": "presenceList",
       "label": "Slack tokens",
       "group": "Slack",
-      "hint": "One Slack app user token (xoxp-) per workspace with users:read and team:read, emoji:read optional for custom emoji. Create it at api.slack.com/apps, OAuth & Permissions, User Token Scopes."
+      "hint": "Connect each workspace to show sender photos."
     }
   },
   "secrets": {
@@ -74,38 +74,38 @@
     }
   },
   "tui": {
-    "open": { "script": "tui/open.sh", "title": "Open a notification's file", "presentation": "plain" }
+    "open": { "script": "tui/open.sh", "title": "Open notification file", "presentation": "plain" }
   },
   "requirements": [
     {
       "command": "xdg-open",
       "packages": { "pacman": "xdg-utils", "apt": "xdg-utils", "dnf": "xdg-utils" },
       "optional": true,
-      "purpose": "Opens the file a notification's x-vgs-open hint names when EDITOR is unset"
+      "purpose": "Opens files from notifications."
     },
     {
       "command": "node",
       "packages": { "pacman": "nodejs", "apt": "nodejs", "dnf": "nodejs", "xbps": "nodejs", "emerge": "net-libs/nodejs", "nix": "nodejs" },
       "optional": true,
-      "purpose": "Runs the Slack workspace icon, photo and custom emoji helpers"
+      "purpose": "Shows Slack workspace icons, photos and custom emoji."
     },
     {
       "command": "curl",
       "packages": { "pacman": "curl", "apt": "curl", "dnf": "curl", "xbps": "curl", "emerge": "net-misc/curl", "nix": "curl" },
       "optional": true,
-      "purpose": "Calls the Slack Web API for the Slack photos extra and downloads its photos and listed custom emoji"
+      "purpose": "Downloads Slack photos and custom emoji."
     },
     {
       "command": "secret-tool",
       "packages": { "pacman": "libsecret", "apt": "libsecret-tools", "dnf": "libsecret", "xbps": "libsecret", "emerge": "app-crypt/libsecret", "nix": "libsecret" },
       "optional": true,
-      "purpose": "Reads each workspace's Slack token from the keyring for the Slack photos extra"
+      "purpose": "Reads saved Slack credentials for sender photos."
     },
     {
       "command": "convert",
       "packages": { "pacman": "imagemagick", "apt": "imagemagick", "dnf": "ImageMagick", "xbps": "ImageMagick", "emerge": "media-gfx/imagemagick", "nix": "imagemagick" },
       "optional": true,
-      "purpose": "Draws Slack custom emoji and crops Slack photos; the helpers run magick instead when it is installed"
+      "purpose": "Prepares Slack emoji and photos for display."
     }
   ],
   "appearance": "Appearance.js",

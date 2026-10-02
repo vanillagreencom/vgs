@@ -290,7 +290,7 @@ FocusScope {
                     Layout.preferredWidth: root.look.card.width
                     role: "hint"
                     visible: root.rows.length === 0
-                    text: root.mode === "history" ? "No notification history yet" : "No unread notifications"
+                    text: root.mode === "history" ? "No saved notifications" : "No unread notifications"
                     horizontalAlignment: Text.AlignHCenter
                 }
 

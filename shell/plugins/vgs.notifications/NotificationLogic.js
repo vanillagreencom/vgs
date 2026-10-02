@@ -472,7 +472,7 @@ function slackTokenRows(workspaces, states, teams) {
         var served = teams.some(function (t) { return t.id === workspaces[i].id && t.account === SLACK_LEGACY_ACCOUNT; });
         if (states[account] === "absent" && served) {
             item.value = legacy;
-            item.hint = "Served by the single-workspace token";
+            item.hint = "Uses the single-workspace token";
         } else {
             item.secret = account;
             item.command = slackStoreCommand(workspaces[i].id);
@@ -986,11 +986,17 @@ function openOutcome(reply) {
     var reason = match === null ? "" : match[1];
     switch (reason) {
     case "busy":
-        return { leave: false, notice: { title: "Another file is open", message: "Close the editor a notification opened, then click this one again.", tone: "warning", icon: "file-lock" } };
+        return { leave: false, notice: { title: "Another file is open", message: "Close the open file window and try this notification again.", tone: "warning", icon: "file-lock" } };
     case "launcher-missing":
-        return { leave: false, notice: { title: "No terminal to open the file in", message: "Install xdg-terminal-exec and a terminal, then click the notification again.", tone: "danger", icon: "square-terminal" } };
+        return { leave: false, notice: { title: "The file did not open", message: "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it.", tone: "danger", icon: "square-terminal" } };
+    case "disabled":
+        return { leave: false, notice: { title: "The file did not open", message: "Enable Notifications in Settings and try again.", tone: "danger", icon: "file-x" } };
+    case "undeclared":
+        return { leave: false, notice: { title: "The file did not open", message: "VGS cannot open notification files. Reinstall VGS to restore this feature.", tone: "danger", icon: "file-x" } };
+    case "args":
+        return { leave: false, notice: { title: "The file did not open", message: "VGS could not use the file path in this notification.", tone: "danger", icon: "file-x" } };
     default:
-        return { leave: false, notice: { title: "The file did not open", message: text.slice(0, 200), tone: "danger", icon: "file-x" } };
+        return { leave: false, notice: { title: "The file did not open", message: "Try this notification again.", tone: "danger", icon: "file-x" } };
     }
 }
 
@@ -1274,8 +1280,15 @@ function panelRows(history, mode, readBefore) {
 
 // The panel's subtitle under its title.
 function panelSubtitle(mode, count, storeState) {
-    if (storeState !== "loaded" && storeState !== "absent") return "History unavailable: " + storeState;
-    if (count === 0) return mode === "history" ? "Nothing kept yet" : "All caught up";
+    switch (storeState) {
+    case "pending": return "Loading saved history";
+    case "corrupt": return "Saved history is damaged";
+    case "unreadable": return "Saved history cannot be read";
+    case "loaded":
+    case "absent": break;
+    default: return "Saved history is unavailable";
+    }
+    if (count === 0) return mode === "history" ? "No saved notifications" : "No unread notifications";
     return count + (count === 1 ? " notification" : " notifications");
 }
 

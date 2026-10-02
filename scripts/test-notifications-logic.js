@@ -185,15 +185,23 @@ function verify(logic) {
     // An open click's reply: ok lets the card leave; a refusal keeps it and
     // says why in a core toast whose options the core's judge accepts.
     same(logic.openOutcome("ok"), { leave: true, notice: null });
-    for (const [reply, title, tone] of [
-        ["refused: tui=open reason=busy", "Another file is open", "warning"],
-        ["refused: tui=open reason=launcher-missing", "No terminal to open the file in", "danger"],
-        ["refused: tui=open reason=disabled", "The file did not open", "danger"],
-        ["something else", "The file did not open", "danger"]
-    ]) {
+    const openManifest = pluginLogic.validateManifest(JSON.parse(fs.readFileSync(path.join(__dirname, "..", "shell", "plugins", "vgs.notifications", "manifest.json"), "utf8")), "/x").manifest;
+    const runner = { launcher: "present", busy: [], run: "fixture" };
+    const replies = [
+        [pluginLogic.tuiRun(openManifest, true, "/x", { ...runner, busy: ["vgs.notifications/open"] }, "open", ["/file"]).answer, "Another file is open", "warning", "Close the open file window and try this notification again."],
+        [pluginLogic.tuiRun(openManifest, true, "/x", { ...runner, launcher: "missing" }, "open", ["/file"]).answer, "The file did not open", "danger", "The setup window could not open. VGS is missing its terminal launcher, xdg-terminal-exec. Reinstall VGS to restore it."],
+        [pluginLogic.tuiRun(openManifest, false, "/x", runner, "open", ["/file"]).answer, "The file did not open", "danger", "Enable Notifications in Settings and try again."],
+        [pluginLogic.tuiRun(openManifest, true, "/x", runner, "missing", []).answer, "The file did not open", "danger", "VGS cannot open notification files. Reinstall VGS to restore this feature."],
+        [pluginLogic.tuiRun(openManifest, true, "/x", runner, "open", [null]).answer, "The file did not open", "danger", "VGS could not use the file path in this notification."],
+        ["refused: tui=open reason=future-private-reason", "The file did not open", "danger", "Try this notification again."],
+        ["error: private-path=/owner/file", "The file did not open", "danger", "Try this notification again."]
+    ];
+    for (const [reply, title, tone, message] of replies) {
+        assert.equal(typeof reply, "string", "the actual core producer supplied a refusal");
         const outcome = logic.openOutcome(reply);
-        same([outcome.leave, outcome.notice.title, outcome.notice.tone], [false, title, tone], "open reply: " + reply);
-        same(pluginLogic.toastOptions(outcome.notice).ok, true, "the core accepts the notice for " + reply);
+        same([outcome.leave, outcome.notice.title, outcome.notice.tone, outcome.notice.message], [false, title, tone, message], "open reply: " + reply);
+        same(pluginLogic.toastOptions(outcome.notice).ok, true, "the core accepts the published notice for " + reply);
+        assert.doesNotMatch(JSON.stringify(outcome.notice), /reason=|tui=|private-path|future-private-reason/, "the published notice contains no diagnostic reply");
     }
     const hinted = logic.entryOf(Object.assign({}, fields, { hints: HINT_ROWS[2][1] }), 1000, null);
     assert.equal(logic.entryChanged(hinted, logic.updatedEntry(hinted, Object.assign({}, fields, { hints: HINT_ROWS[3][1] }))), true, "a replacement with other hints is a change");
@@ -267,7 +275,7 @@ function verify(logic) {
     same(logic.panelRows(kept, "history", 590).length, 40);
     same(logic.panelRows(kept, "inbox", 0).length, 40);
     same(logic.panelRows([], "inbox", 0), []);
-    for (const [mode, count, state, want] of [["inbox", 0, "loaded", "All caught up"], ["history", 0, "absent", "Nothing kept yet"], ["inbox", 1, "loaded", "1 notification"], ["history", 3, "loaded", "3 notifications"], ["inbox", 2, "corrupt", "History unavailable: corrupt"]])
+    for (const [mode, count, state, want] of [["inbox", 0, "loaded", "No unread notifications"], ["history", 0, "absent", "No saved notifications"], ["inbox", 1, "loaded", "1 notification"], ["history", 3, "loaded", "3 notifications"], ["inbox", 2, "corrupt", "Saved history is damaged"], ["history", 2, "unreadable", "Saved history cannot be read"], ["inbox", 2, "pending", "Loading saved history"], ["history", 2, "future-private-reason", "Saved history is unavailable"]])
         assert.equal(logic.panelSubtitle(mode, count, state), want, `subtitle ${mode} ${count} ${state}`);
 
     // Eviction: the oldest that is not critical, or the oldest of all.
@@ -494,7 +502,7 @@ function verify(logic) {
         { label: "globex", value: "locked", secret: "slack:T2", command: store("T2") }
     ] }, "each workspace carries its own account's state and command; an absent single-workspace token shows no row");
     same(logic.slackTokenRows(listedTwo, { "slack:T1": "absent", "slack:T2": "absent", slack: "present" }, [{ id: "T1", account: "slack" }, { id: "T2", account: "slack:T2" }]), { ok: true, items: [
-        { label: "Acme Corp (acme)", value: "present", hint: "Served by the single-workspace token" },
+        { label: "Acme Corp (acme)", value: "present", hint: "Uses the single-workspace token" },
         { label: "globex", value: "absent", secret: "slack:T2", command: store("T2") },
         { label: "Single-workspace token", value: "present", secret: "slack", command: store("") }
     ] }, "a workspace the single-workspace token serves says so, with no account to connect, and a stored single-workspace token shows its row");
@@ -827,6 +835,9 @@ const CONTROLS = [
     ["a refused open keeps the card", "if (text === \"ok\") return { leave: true, notice: null };", "if (true) return { leave: true, notice: null };"],
     ["a busy open names the open file", "    case \"busy\":\n", "    case \"busy-never\":\n"],
     ["a missing launcher names the terminal", "    case \"launcher-missing\":\n", "    case \"launcher-never\":\n"],
+    ["unknown open replies do not leak", 'message: "Try this notification again.",', 'message: text.slice(0, 200),'],
+    ["unknown history states do not leak", 'default: return "Saved history is unavailable";', 'default: return "History unavailable: " + storeState;'],
+    ["damaged history differs from unreadable history", 'case "corrupt": return "Saved history is damaged";', 'case "corrupt": return "Saved history cannot be read";'],
     ["the state judge reads the hint values", "if (!hintValueFits(HINT_ROLES[h], hint)) return where + \".\" + HINT_ROLES[h] + \" refused\";", "if (false) return \"\";"],
     ["the state judge refuses a hint role that is no string", "if (typeof hint !== \"string\") return where + \".\" + HINT_ROLES[h] + \" want=string\";", "if (false) return \"\";"],
     ["the state judge refuses an open click with no file", "if (value.hintClick === \"open\" && !value.hintOpen) return where + \".hintClick open without hintOpen\";", "if (false) return \"\";"],

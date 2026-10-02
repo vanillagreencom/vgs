@@ -28,18 +28,18 @@ refuse() { # STATUS FIRST_LINE [ENGLISH...]
   exit "$status"
 }
 
-[[ -n ${VGS_TUI_LIB:-} ]] || refuse 2 "tui=missing" "run this through the vgs.notifications floating TUI, which sets VGS_TUI_LIB"
+[[ -n ${VGS_TUI_LIB:-} ]] || refuse 2 "tui=missing" "Open this file from its notification."
 # shellcheck source=SCRIPTDIR/../../../../bin/lib/tui.sh
 source "$VGS_TUI_LIB"
 trap 'status=$?; [[ $status == 0 ]] || vgs_tui_close_prompt "$status"' EXIT
-[[ $# -eq 1 ]] || refuse 2 "argument=$#" "usage: open.sh <absolute path>"
+[[ $# -eq 1 ]] || refuse 2 "argument=$#" "The notification must name one file."
 file="$1"
-[[ $file == /* ]] || refuse 2 "path=$file reason=relative"
-[[ -f $file && -r $file ]] || refuse 1 "file=unreadable path=$file" "The file is gone or cannot be read; an automation's transcript is pruned with its history."
+[[ $file == /* ]] || refuse 2 "path=$file reason=relative" "The notification must name a full file path."
+[[ -f $file && -r $file ]] || refuse 1 "file=unreadable path=$file" "The file is missing or cannot be read."
 if [[ -n ${EDITOR:-} ]]; then
   read -r -a editor <<<"$EDITOR"
   "${editor[@]}" "$file"
   exit
 fi
-command -v xdg-open >/dev/null || refuse 1 "opener=missing" "Set EDITOR, or install xdg-open, to open $file."
+command -v xdg-open >/dev/null || refuse 1 "opener=missing" "Open Notifications in Settings. Select Install under Requirements to add the file opener."
 xdg-open "$file"

@@ -1,23 +1,70 @@
 # Notifications
 
-`vgs.notifications`: the desktop notification daemon. Every notification an application sends shows as a Spotlight glass capsule at the top of every screen, and leaves into the history when it expires, is dismissed, is acted on, is closed by its sender or is let go by a full stack. An Inbox lists what arrived since the last Mark read and a History everything kept; Silence keeps notifications off the screen and records them. It is a port of the customised Spotlight notifications of the owner's Omarchy dotfiles, drawn and behaving as that one does, on this shell's plugin contract.
-
-The core's notification server takes the `org.freedesktop.Notifications` name while the plugin is enabled, so another notification daemon must not run beside it.
+Application notifications appear at the top of each screen. Open the panel to read them later. Silence keeps new notifications in History without showing them on screen.
 
 ![Three notifications on screen](../../../docs/images/plugins/vgs.notifications-toasts.webp)
 
 ![The inbox with three notifications](../../../docs/images/plugins/vgs.notifications-inbox.webp)
 
-Screenshots made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2.
+## Open the panel
 
-## Opening the panel
+Press Super+N to open or close the panel. Change this shortcut under Keys on the Notifications Settings page.
 
-| Path | How |
-|---|---|
-| Shortcut | The service registers `vgs.notifications:inbox`, and the manifest binds it to `SUPER+N` in the Hyprland layer the shell writes while the plugin is enabled ([hyprland.md](../../../docs/architecture/hyprland.md)). To change the key, edit it under Keys on the plugin's Settings page, or give the plugin's row in `~/.config/vgs/shell.json` a `keys` entry, `{ "id": "vgs.notifications", "keys": { "inbox": "SUPER+SHIFT+N" } }`; `null` in place of the key unbinds it. |
-| IPC | `vgsh ipc call vgs.notifications invoke <name> <arg>`, names below. |
+- Unread shows notifications received since the last Mark read.
+- History shows saved notifications.
+- Mark read marks current notifications as read and closes the panel.
+- Clear history removes saved notifications and keeps the panel open.
+- Escape closes the panel. The panel also closes when another window takes keyboard focus.
 
-The panel opens on the list. While it has the keyboard, the toasts stay and do not expire. The toast layer hides while the panel is open, and the panel closes when the keyboard moves to another window. Escape closes it through the summoned-panel host. Tab reaches the header controls. The list is one tab stop: arrows, Home, End, PageUp and PageDown move the selected card; Enter opens it; Delete dismisses it; Left and Right move through the selected card's action pills, and Enter or Space presses the selected pill. Mark read marks everything so far read and closes the panel; Clear history removes the kept notifications and leaves the panel open.
+Notifications do not expire while the panel is open. Use Tab to reach the header controls. Use the arrow keys, Home, End, PageUp or PageDown to select a notification. Press Enter to open it. Press Delete to dismiss it. Left and Right select its action buttons. Enter or Space activates the selected button.
+
+## Notifications on screen
+
+Set Notification duration on the Notifications Settings page. It sets the minimum time for a normal notification. Low priority notifications use the shorter of this time and five seconds. An application can ask for more time, up to thirty seconds. Critical notifications stay until closed. Point at a notification to pause its timer.
+
+Point at a notification to see its actions. Select an action to send it to the application. Select Show, or click the notification, to bring the application's window into view. Dismiss and a right click remove it from the screen. Dismiss does not open the application.
+
+When a notification leaves the screen, History keeps it. New notifications can replace older ones on a full screen.
+
+If saved history is damaged or cannot be read, the panel says so. Select History, then Clear history to start a new saved history. This removes the old history.
+
+## Open a notification
+
+A notification can open its application or a file. File notifications open in your selected editor, or the default file application. If another notification file is open, close its window and try again.
+
+Slack notifications from a browser open that browser. Slack does not provide a link to the message in its notifications. An old Slack notification can therefore bring Slack into view without opening the message.
+
+## Slack
+
+Slack notifications show sender initials and workspace icons without setup. Custom emoji appear in the message when Slack has saved their images. See [Slack notifications](slack.md).
+
+The Notifications Settings page lists optional tools under Requirements. Select Install to add a missing tool. Notifications, the panel and Silence work without these tools.
+
+## Extras (not supported)
+
+These features need developer setup. They are off by default and do not appear in Settings. They are kept for the owner and are not supported. See [D075](../../../docs/decisions/D075-consumer-features-need-no-developer-setup.md).
+
+- **Slack photos**, `slackPhotos`: sender photos and cached workspace icons from a Slack app user token per workspace, and custom emoji from Slack's emoji list. Turn it on with `{ "id": "vgs.notifications", "slackPhotos": true }` in `plugins` in `~/.config/vgs/shell.json`. The Settings page then lists a Slack tokens row with Connect for each workspace, and `curl` and `secret-tool` under Requirements. With it off, the plugin reads no token, calls no Slack API, removes the photos it cached and shows no token row. An install that had Slack photos before they became an extra keeps them: a one-time migration turns the extra on when a Slack token is stored ([migrations.md](../../../docs/architecture/migrations.md)). The setup is below.
+
+With no token, or with no `secret-tool` binary installed, the Slack rule keeps the initials faces and the disk-cache workspace icons above, and it prints no token-missing log line.
+
+Each workspace takes its own token, in libsecret under `service vgs-notifications` and `account slack:<team id>`, the team id Slack's workspace list gives it. The plugin's Settings page lists each workspace the list names, with its token's state. **Connect** opens a masked field: paste the workspace's token and press Save. VGS stores it in your keyring through `secret-tool`, handing it over on stdin, never on a command line, and the photos load at once. **Disconnect** removes a stored token. Show command, beside each, reveals the `secret-tool` command that does the same by hand ([D061](../../../docs/decisions/D061-no-manual-commands.md)).
+
+A token is a Slack app's user token (`xoxp-`): create an app at api.slack.com/apps, add the user token scopes `users:read` and `team:read` under OAuth & Permissions, and `emoji:read` if you want custom emoji, then install it to the workspace.
+
+The single-workspace token of earlier versions, `account slack`, still works. It serves the one team its `team.info` names, unless that team has its own token, and Settings says which workspace it serves. Its line connects and disconnects the same way.
+
+Settings shows a Slack tokens row: a line for each listed workspace, and a line for the single-workspace token when no workspace is listed or it is stored. Each reads Present, Absent, Locked or Unavailable (no `secret-tool`, or the keyring cannot be asked). Connect shows while a token is absent and Disconnect while one is stored; an Unavailable line offers neither, and the Requirements section offers to install `secret-tool`. The check runs at start, when the workspace list changes, after each Connect or Disconnect and after each photo refresh; it never reads a token or unlocks the keyring.
+
+The helper calls `team.info` and `users.list`. It stores only the team id, team names, the team icon, each user id, each user's display name, real name, Slack name and `image_48` photo, under `$XDG_CACHE_HOME/vgs/notifications/slack-photos/`. It does not read or store messages, channels, presence, email, profile text or tokens. Without a token, faces stay initials: no local Slack store maps a sender's name to a photo. [notification-senders.md](../../../docs/architecture/notification-senders.md) holds the cache, its refresh and its limits.
+
+## Developer details
+
+The core's notification server takes the `org.freedesktop.Notifications` name while the plugin is enabled. Another notification daemon must not run beside it.
+
+Screenshots come from `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2. VGS uses a summoned panel to give the list keyboard focus. Omarchy uses its own notification surfaces. VGS does not port the `omarchy-glyph`, `omarchy-exec-argv` or `omarchy-action` contracts because VGS has no sender for them.
+
+The service registers `vgs.notifications:inbox`. The manifest binds it to `SUPER+N` in the generated Hyprland layer. The IPC entry is `vgsh ipc call vgs.notifications invoke <name> <arg>`.
 
 | IPC name | Argument | Reply |
 |---|---|---|
@@ -31,39 +78,7 @@ The panel opens on the list. While it has the keyboard, the toasts stay and do n
 | `dismiss-latest`, `invoke-latest` | none | dismisses, or clicks, the newest toast; `ok` or `none` |
 | `status` | none | one JSON line: `silence`, `panel`, `store` (`state`, `problem`), `onScreen`, `history`, `held` (below), `readBefore`, `duplicates` (`keptDesktop`, `keptBrowser`, below) |
 
-## Toasts
-
-- A toast shows for at least `duration` seconds at normal urgency, 8 by default, and for the shorter of 5 seconds and `duration` at low urgency, longer when the sender's timeout asks, up to 30 seconds. Set `duration` from 2 to 30 on the plugin's Settings page, or as `{ "id": "vgs.notifications", "duration": 12 }` in `plugins` in `~/.config/vgs/shell.json`. A critical toast stays until it is closed. The pointer on a toast, or an open panel, pauses its clock.
-- A sender replacing its notification updates the toast in place and starts its clock over; a sender closing it ends the toast.
-- Hovering a card reveals its actions: the sender's own while its notification is still open (below), Show when it has none and one of its windows is open, and Dismiss. A click opens the notification, and a right click dismisses it.
-- The body renders the markup the server advertises, less every image tag and a browser's leading site address ([notification-senders.md § Browser notifications](../../../docs/architecture/notification-senders.md#browser-notifications)). The summary is plain text.
-- At most 20 toasts show at once; a newer one lets the oldest non-critical toast go into the history.
-- Silence keeps every notification off the screen and records it in the history, bar a critical one from the bare command line (`notify-send -u critical`). A notification from the bare command line that is not critical, or one marked transient, is not recorded under Silence.
-
-Omarchy's own hints, `omarchy-glyph` and `omarchy-exec-argv`, and its `omarchy-action` sender are not ported: nothing in this shell sends them.
-
-## Opening a notification
-
-A click on a toast or an inbox row, Show and `invoke-latest` open a notification, and a pill runs the sender's action it names, the same way for every application:
-
-1. While the notification is still open, the action reaches the sender, which then shows what the action is about.
-2. The sender's window comes into view, open or not: its workspace, a hidden special workspace, a background group tab or another monitor. With several windows, the one the sender asks for, else the one used last. The server gives the sender no activation token, so on Wayland the sender cannot raise its own window; when it does, nothing else moves.
-
-Dismiss sends nothing and raises nothing. A toast that expires stays open for its inbox row until the row leaves the history, the user dismisses it or clears the history, or the sender closes it; `held` in `status` counts these. A Slack message from a browser raises that browser. Slack's notifications carry no link to their channel or message, so a Slack row no longer open raises Slack alone. Unlike Omarchy's, an inbox row opens too: [notification-actions.md](../../../docs/architecture/notification-actions.md).
-
-Any sender can add the VGS hints, a Lucide icon, a status tone and a file a click opens in your `$EDITOR`: [notification-hints.md](../../../docs/architecture/notification-hints.md).
-
-## Slack
-
-A per-application rule reads Slack's notifications: their senders as faces, their workspace as its icon, one card per message and each workspace's custom emoji in the body, all with no setup. [slack.md](slack.md) holds what each shows and how to turn the custom emoji off. Sender photos need a Slack app of your own, so they are an extra, below.
-
-The Slack features run commands the plugin declares as optional requirements. The plugin's Settings page lists each one under Requirements, whether it is installed and what it is for, with an Install button while one is missing. Toasts, the panel and Silence need none of them.
-
-## Extras (not supported)
-
-An extra needs developer setup, such as an app you create yourself, so it is off by default and the Settings page shows nothing of it ([D075](../../../docs/decisions/D075-consumer-features-need-no-developer-setup.md)). It is kept for the owner and is not supported.
-
-- **Slack photos**, `slackPhotos`: sender photos and cached workspace icons from a Slack app user token per workspace, and custom emoji from Slack's emoji list. Turn it on with `{ "id": "vgs.notifications", "slackPhotos": true }` in `plugins` in `~/.config/vgs/shell.json`. The Settings page then lists a Slack tokens row with Connect for each workspace, and `curl` and `secret-tool` under Requirements. With it off, the plugin reads no token, calls no Slack API, removes the photos it cached and shows no token row. An install that had Slack photos before they became an extra keeps them: a one-time migration turns the extra on when a Slack token is stored ([migrations.md](../../../docs/architecture/migrations.md)). [slack.md § Slack photos](slack.md#slack-photos) holds the rest.
+Senders can add VGS hints for an icon, tone or file to open: [notification-hints.md](../../../docs/architecture/notification-hints.md). Notification action ownership and window selection: [notification-actions.md](../../../docs/architecture/notification-actions.md).
 
 ## State
 
