@@ -38,11 +38,12 @@ world(() => {
                 timers.set(timer, { fn, deadline: at + ms });
                 return timer;
             }, clear: timer => timers.delete(timer) }, () => {});
-        const denied = () => Denied.create(fixtures.roots);
+        let builds = 0;
+        const denied = () => { builds++; return Denied.create(fixtures.roots); };
         let target = { kind: "application", id: "editor" };
         const router = implementation.create({ session, state: () => runner.state,
             dispatch: e => runner.dispatch(e), context: () => ({
-                profile: options.profile ?? "standard", locked, denied: denied() }),
+                profile: options.profile ?? "standard", locked, get denied() { return denied(); } }),
             audit, result: value => results.push(value) });
         Object.assign(ports, router.ports);
         for (const executor of ["windows", "compositor", "files", "input", "sandbox", "browser", "harness"]) {
@@ -85,7 +86,8 @@ world(() => {
                 timers.delete(due[0]);
                 due[1].fn();
             },
-            time: value => { at = value; }, lock: value => { locked = value; }, target: value => { target = value; } };
+            time: value => { at = value; }, lock: value => { locked = value; }, target: value => { target = value; },
+            builds: () => builds };
     }
     function browserHelp(implementation) {
         browserFixture.mode({});
@@ -127,6 +129,15 @@ world(() => {
     const text = { text: "fixture text" };
     const held = w => { assert.equal(w.call("shell.argv", shell).kind, "held"); w.show(); w.time(700); };
     const cases = [
+        ["lazy-denied", implementation => {
+            const w = make(implementation);
+            assert.equal(w.call("windows.list").kind, "proposed");
+            w.answers[0]({ outcome: "completed", content: "fixture windows" });
+            assert.equal(w.builds(), 0, "a call without a path builds no snapshot");
+            w.newTurn();
+            w.call("files.read", { path: path.join(fixtures.project, "existing") });
+            assert.ok(w.builds() > 0, "a path call builds one");
+        }],
         ["allow", implementation => {
             const w = make(implementation);
             assert.equal(w.call("windows.list").kind, "proposed");
@@ -558,6 +569,7 @@ world(() => {
         const byName = name => cases.find(row => row[0] === name)[1];
         const controlsTable = [
             ["rejudge", "const fresh = judge(value);", "const fresh = value.decision;", "rejudge"],
+            ["lazy-denied", "get denied() { return facts.denied; }, taint", "denied: facts.denied, taint", "lazy-denied"],
             ["audit-before", "const admitted = audit.before(", "const admitted = ({ before: (event, start) => ({ kind: 'started', value: start() }) }).before(", "audit-before"],
             ["audit-refusal", 'throw new Error("jarvis: audit=write cause=" + written.cause);',
                 'void written.cause;', "audit-refusal"],

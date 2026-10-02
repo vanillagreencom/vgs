@@ -110,6 +110,17 @@ world(() => {
     refuse(Policy, effects.read, { ...context, profile: "unknown" }, "policy-profile");
     refuse(Policy, effects.read, { ...context, taint: null }, "turn-taint");
     refuse(Policy, effects.read, { ...context, denied: null }, "path-context");
+    // The snapshot is read only for a call that carries a path.
+    const unread = Logic => {
+        let reads = 0;
+        const counted = { ...context };
+        Object.defineProperty(counted, "denied", { get() { reads++; return context.denied; } });
+        assert.deepEqual(Logic.decide(effects.reversible, counted), { kind: "allow", effect: "reversible" });
+        assert.equal(reads, 0, "a call without a path never builds the snapshot");
+        assert.equal(Logic.decide(effects.read, counted).kind, "allow");
+        assert.equal(reads, 1, "a path call reads it once");
+    };
+    unread(Policy);
     refuse(Policy, call("unknown", {}), context, "unknown-tool");
     refuse(Policy, effects.input, { ...context, input: null }, "input-target");
     refuse(Policy, effects.input, { ...context, input: { target: { kind: "unknown", id: "x" } } }, "input-target");
@@ -225,9 +236,9 @@ world(() => {
     control("path-context", 'return { kind: "refuse", reason: "path-context" };',
         'return { kind: "allow", effect: "read" };',
         logic => refuse(logic, effects.read, { ...context, denied: null }, "path-context"));
-    control("denied-answer", 'if (target.kind === "refuse") return target;',
-        'if (target.kind === "refuse") return { kind: "allow", effect: "read" };',
+    control("denied-answer", 'if (judged.kind === "refuse") {', 'if (false) {',
         logic => refuse(logic, call("files.read", { path: path.join(home, ".ssh", "absent") }), context, "protected-path"));
+    control("lazy-snapshot", "if (refined.paths.length > 0) {", "if (void context.denied, refined.paths.length > 0) {", unread);
     control("execution-write", 'target.execution || role === "remove"', 'false || role === "remove"',
         logic => assert.deepEqual(logic.decide(executionWrite, context), expected("destructive", "physical")));
     control("overwrite", '(role === "write" && target.exists)', '(false && role === "write" && target.exists)',

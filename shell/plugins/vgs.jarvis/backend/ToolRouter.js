@@ -103,7 +103,8 @@ function create({ session, state, dispatch, context, audit, result }) {
     function decide(value, input) {
         const facts = context();
         return Policy.decide(value.call, { profile: facts.profile, locked: facts.locked,
-            denied: facts.denied, taint, grants: [...grants], input });
+            // A getter, so the snapshot is built only when Policy reads it.
+            get denied() { return facts.denied; }, taint, grants: [...grants], input });
     }
 
     function judge(value) {

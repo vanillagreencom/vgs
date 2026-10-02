@@ -17,17 +17,19 @@ function below(file, base) {
 
 // Collect rule-named account entries from depth to ACCOUNT_DEPTH below a
 // base, reading entry names only. A link or a matched entry is never entered.
-function present(directory, depth, found) {
+// A judgment must see every name, so a folder it cannot list throws; the
+// mask inventory skips one, since the name rule still judges each path.
+function present(directory, depth, found, skipUnlisted = false) {
     let entries;
     try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
     catch (error) {
-        if (error.code === "ENOENT") return found;
+        if (error.code === "ENOENT" || skipUnlisted) return found;
         throw error;
     }
     for (const entry of entries) {
         const file = path.join(directory, entry.name);
         if (accountDirectory(entry.name, depth) !== null) found.push(file);
-        else if (depth < ACCOUNT_DEPTH && entry.isDirectory()) present(file, depth + 1, found);
+        else if (depth < ACCOUNT_DEPTH && entry.isDirectory()) present(file, depth + 1, found, skipUnlisted);
     }
     return found;
 }
@@ -95,10 +97,19 @@ function create({ home, config, data, state, runtime, install, accountRoots }) {
         if (parts === null || parts.length >= ACCOUNT_DEPTH || !fs.lstatSync(target).isDirectory()) return false;
         return present(target, parts.length + 1, []).length > 0;
     });
+    // A folder moved to fewer than ACCOUNT_DEPTH levels below a base carries
+    // its entries up: one that lands within the rule's depth is rule-named.
+    const landsNamed = (source, destination) => fs.lstatSync(source).isDirectory() && bases.some(base => {
+        const parts = below(destination, base);
+        return parts !== null && parts.length < ACCOUNT_DEPTH && present(source, parts.length + 1, []).length > 0;
+    });
     const credential = [
         [home, ".ssh"], [home, ".gnupg"], [home, ".claude"], [home, ".codex"],
         [home, ".gemini"], [home, ".copilot"], [home, ".agent-browser"],
         [home, ".mozilla"], [home, ".pki"], [home, ".netrc"], [home, ".git-credentials"],
+        [home, ".aws"], [home, ".azure"], [home, ".kube"], [home, ".docker/config.json"],
+        [home, ".npmrc"], [home, ".pypirc"], [home, ".cargo/credentials.toml"], [home, ".cargo/credentials"],
+        [config, "gcloud"], [config, "rclone"],
         [config, "gh"], [config, "git/credentials"], [config, "claude"], [config, "codex"], [config, "gemini"],
         [config, "copilot"], [config, "opencode"], [data, "opencode"],
         [data, "keyrings"], [data, "kwalletd"], [config, "kwalletd"],
@@ -109,9 +120,7 @@ function create({ home, config, data, state, runtime, install, accountRoots }) {
         resolve(base);
         return path.join(base, suffix);
     }).concat(accountRoots);
-    // The masks need concrete paths: the rule-named entries present now.
-    const accounts = bases.flatMap(base => present(base, 1, []));
-    const protectedPaths = credential.concat(accounts, [
+    const protectedPaths = credential.concat([
         path.join(config, "vgs"), path.join(data, "vgs"), path.join(state, "vgs"),
         path.join(runtime, "vgs"), install
     ]);
@@ -124,11 +133,50 @@ function create({ home, config, data, state, runtime, install, accountRoots }) {
     const roots = files => files.flatMap(file => [file, resolve(file).path]);
     const protectedRoots = roots(protectedPaths);
     const executionRoots = roots(execution);
+    let masks = null;
+    /**
+     * Judge a typed path role. Refuse protected descendants and destructive
+     * ancestors. Recursive readers must not scan across a protected root.
+     * A one-level listing may list names but must judge each opened child.
+     * A move source or removal is the named entry: a final link is judged
+     * and answered as the link, never its target. A rule-named account entry
+     * is judged by its name alone, so one made after this snapshot counts.
+     */
+    function inspect(file, role) {
+        if (!["read", "tree-read", "write", "move", "remove", "workspace"].includes(role))
+            return { kind: "refuse", reason: "path-role" };
+        let target;
+        try { target = resolve(file, role !== "move" && role !== "remove"); }
+        catch (error) { return { kind: "refuse", reason: "path-resolution", error: error.code || error.message }; }
+        const changes = ["write", "move", "remove", "workspace"].includes(role);
+        const ancestor = changes || role === "tree-read";
+        if (target.trail.concat(target.path).some(named) || protectedRoots.some(root => within(target.path, root)
+                || (ancestor && within(root, target.path))))
+            return { kind: "refuse", reason: "protected-path" };
+        try {
+            if (ancestor && target.exists && holdsNamed(target.path)) return { kind: "refuse", reason: "protected-path" };
+        } catch (error) { return { kind: "refuse", reason: "path-resolution", error: error.code || error.message }; }
+        if (!within(target.path, realHome.path)) return { kind: "refuse", reason: "outside-home" };
+        const executionPath = changes && executionRoots.some(root => within(target.path, root) || within(root, target.path));
+        return { kind: "path", path: target.path, exists: target.exists, execution: executionPath };
+    }
     return Object.freeze({
-        // J23 consumes this snapshot for its filesystem masks. It must not
-        // rebuild a second credential inventory or treat absent roots as safe.
-        // Rule-named entries are those present when the snapshot was built.
-        masks: Object.freeze([...new Set(protectedRoots)]),
+        /**
+         * J23 consumes this list for its filesystem masks. It must not
+         * rebuild a second credential inventory or treat absent roots as
+         * safe. The masks need concrete paths, so the first read adds the
+         * rule-named entries present then, found by names alone. A dangling
+         * or looping one is masked by its own path. Judgments never read it.
+         */
+        get masks() {
+            if (masks === null) {
+                const accounts = bases.flatMap(base => present(base, 1, [], true)).flatMap(file => {
+                    try { return [file, resolve(file).path]; } catch { return [file]; }
+                });
+                masks = Object.freeze([...new Set(protectedRoots.concat(accounts))]);
+            }
+            return masks;
+        },
         /**
          * Judge a typed path role. Refuse protected descendants and destructive
          * ancestors. Recursive readers must not scan across a protected root.
@@ -136,23 +184,33 @@ function create({ home, config, data, state, runtime, install, accountRoots }) {
          * A move source or removal is the named entry: a final link is judged
          * and answered as the link, never its target.
          */
-        inspect(file, role) {
-            if (!["read", "tree-read", "write", "move", "remove", "workspace"].includes(role))
-                return { kind: "refuse", reason: "path-role" };
-            let target;
-            try { target = resolve(file, role !== "move" && role !== "remove"); }
-            catch (error) { return { kind: "refuse", reason: "path-resolution", error: error.code || error.message }; }
-            const changes = ["write", "move", "remove", "workspace"].includes(role);
-            const ancestor = changes || role === "tree-read";
-            if (target.trail.concat(target.path).some(named) || protectedRoots.some(root => within(target.path, root)
-                    || (ancestor && within(root, target.path))))
-                return { kind: "refuse", reason: "protected-path" };
-            try {
-                if (ancestor && target.exists && holdsNamed(target.path)) return { kind: "refuse", reason: "protected-path" };
-            } catch (error) { return { kind: "refuse", reason: "path-resolution", error: error.code || error.message }; }
-            if (!within(target.path, realHome.path)) return { kind: "refuse", reason: "outside-home" };
-            const executionPath = changes && executionRoots.some(root => within(target.path, root) || within(root, target.path));
-            return { kind: "path", path: target.path, exists: target.exists, execution: executionPath };
+        inspect,
+        /**
+         * Judge every [path, role] of one call: the one entry Policy and an
+         * executor's rejudge use. Answers {kind: "paths", paths} in order, or
+         * the first refusal with the refused input as file. A move source is
+         * also judged where it lands, against each write destination of the
+         * same call.
+         */
+        inspectPaths(pairs) {
+            const paths = [];
+            for (const [file, role] of pairs) {
+                const verdict = inspect(file, role);
+                if (verdict.kind === "refuse") return { ...verdict, file };
+                paths.push(verdict);
+            }
+            const roles = pairs.map(([, role]) => role);
+            for (const [index, source] of paths.entries()) {
+                if (roles[index] !== "move" || !source.exists) continue;
+                for (const [other, destination] of paths.entries()) {
+                    if (roles[other] !== "write") continue;
+                    const file = pairs[index][0];
+                    try {
+                        if (landsNamed(source.path, destination.path)) return { kind: "refuse", reason: "protected-path", file };
+                    } catch (error) { return { kind: "refuse", reason: "path-resolution", error: error.code || error.message, file }; }
+                }
+            }
+            return { kind: "paths", paths };
         }
     });
 }

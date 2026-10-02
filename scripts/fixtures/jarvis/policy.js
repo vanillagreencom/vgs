@@ -87,6 +87,13 @@ function fsFault(method, replacement, check) {
     try { check(); } finally { fs[method] = original; }
 }
 
+// The asynchronous twin: the stand-in stays until the check's promise ends.
+async function fsFaultAsync(method, replacement, check) {
+    const original = fs[method];
+    fs[method] = (...args) => replacement(original, ...args);
+    try { return await check(); } finally { fs[method] = original; }
+}
+
 function qmlCopy(file, edits, check) {
     let source = fs.readFileSync(file, "utf8");
     for (const [needle, replacement, matches = 1] of edits) {
@@ -172,4 +179,4 @@ async function datagram(project, abstract, check) {
     }
 }
 
-module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, qmlCopy, asyncControl, moduleCopy, datagram };
+module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, fsFaultAsync, qmlCopy, asyncControl, moduleCopy, datagram };

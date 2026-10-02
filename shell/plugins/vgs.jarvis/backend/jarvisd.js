@@ -326,7 +326,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     const profile = () => runner.state.settings.policy ?? "standard";
                     const router = ToolRouter.create({ session: Session, state: () => runner.state,
                         dispatch: event => runner.dispatch(event), audit,
-                        context: () => ({ profile: profile(), locked: context.locked, denied: deniedOrNull() }),
+                        context: () => ({ profile: profile(), locked: context.locked, get denied() { return deniedOrNull(); } }),
                         result: value => gate.deliver(value) || bridge.deliver(value) || runner.ports.brain.outcome(value) });
                     // A harness brain opens the bridge's session for its conversation;
                     // until one is selected no socket exists.

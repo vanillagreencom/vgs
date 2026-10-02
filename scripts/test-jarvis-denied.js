@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real filesystem metadata in a synthetic HOME, including absent targets.
 "use strict";
-const { assert, fs, path, tree, world, seed, mutant } = require("./fixtures/jarvis/policy.js");
+const { assert, fs, path, tree, world, seed, mutant, fsFault } = require("./fixtures/jarvis/policy.js");
 const file = path.join(tree, "shell/plugins/vgs.jarvis/backend/Denied.js");
 const Denied = require(file);
 
@@ -15,8 +15,10 @@ world(() => {
     const allowed = (judge, file, role, canonical = file, exists = true, execution = false) =>
         assert.deepEqual(judge.inspect(file, role), { kind: "path", path: canonical, exists, execution });
     const protectedPaths = [
-        ...[".ssh", ".gnupg", ".claude", ".codex", ".gemini", ".copilot", ".agent-browser", ".mozilla", ".pki", ".netrc", ".git-credentials"].map(name => path.join(home, name)),
-        ...["gh", "git/credentials", "claude", "codex", "gemini", "copilot", "opencode", "kwalletd", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge", "vivaldi", "mozilla", "vgs"].map(name => path.join(roots.config, name)),
+        ...[".ssh", ".gnupg", ".claude", ".codex", ".gemini", ".copilot", ".agent-browser", ".mozilla", ".pki", ".netrc", ".git-credentials",
+            ".aws", ".azure", ".kube", ".docker/config.json", ".npmrc", ".pypirc", ".cargo/credentials.toml", ".cargo/credentials"].map(name => path.join(home, name)),
+        ...["gh", "git/credentials", "claude", "codex", "gemini", "copilot", "opencode", "kwalletd", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge", "vivaldi", "mozilla", "vgs",
+            "gcloud", "rclone"].map(name => path.join(roots.config, name)),
         ...["opencode", "keyrings", "kwalletd", "vgs"].map(name => path.join(roots.data, name)),
         path.join(roots.state, "vgs"), path.join(roots.runtime, "vgs"), roots.install, account
     ];
@@ -134,6 +136,8 @@ world(() => {
             base === "home" ? null : "outside-home"]
     ]);
     const ruleJudge = Denied.create(options);
+    // Masks are taken when first read; judgments never read them.
+    void ruleJudge.masks;
     for (const [, target, reason] of ruleCases) {
         if (reason === null) allowed(ruleJudge, target, "read", target, false);
         else refused(ruleJudge, target, "read", reason);
@@ -189,6 +193,68 @@ world(() => {
     const plain = path.join(home, "plain");
     fs.mkdirSync(path.join(plain, "inner"), { recursive: true });
     allowed(linkJudge, plain, "remove");
+    // A judgment reads at most the one folder its target is; the mask
+    // inventory's two-level scan runs only when masks are read.
+    const readdirs = check => {
+        let count = 0;
+        fsFault("readdirSync", (original, ...args) => { count++; return original(...args); }, check);
+        return count;
+    };
+    const lazyMasks = logic => {
+        let judge;
+        assert.equal(readdirs(() => {
+            judge = logic.create(options);
+            allowed(judge, path.join(project, "existing"), "read");
+        }), 0, "a build and a plain judgment list no folder");
+        assert.equal(readdirs(() => allowed(judge, plain, "remove")), 1, "a one-level target lists itself alone");
+        assert.ok(readdirs(() => void judge.masks) > 1, "the masks scan the bases");
+    };
+    lazyMasks(Denied);
+    // An ordinary home builds a snapshot: a folder one level down that
+    // cannot be listed is left to the name rule, and a dangling or looping
+    // rule-named link is masked by its own path.
+    const unlisted = path.join(home, "unlisted");
+    fs.mkdirSync(unlisted);
+    const unlistable = logic => fsFault("readdirSync", (original, target, ...args) => {
+        if (target === unlisted) throw Object.assign(new Error("denied"), { code: "EACCES" });
+        return original(target, ...args);
+    }, () => {
+        const judge = logic.create(options);
+        assert.doesNotThrow(() => judge.masks, "an unlistable folder leaves the masks buildable");
+        assert.equal(judge.masks.includes(namedAccount), true);
+        refused(judge, path.join(unlisted, ".claude-hidden", "x"), "read", "protected-path");
+        refused(judge, unlisted, "remove", "path-resolution");
+    });
+    unlistable(Denied);
+    const goneLink = path.join(home, ".claude-gone");
+    fs.symlinkSync(path.join(home, "never-there"), goneLink);
+    const loopLink = path.join(home, "holder", ".codex-loop");
+    fs.symlinkSync(loopLink, loopLink);
+    const brokenLinks = logic => {
+        const judge = logic.create(options);
+        let masks;
+        assert.doesNotThrow(() => { masks = judge.masks; }, "a broken rule-named link leaves the masks buildable");
+        for (const link of [goneLink, loopLink]) {
+            assert.equal(masks.includes(link), true, link + " masked by its own path");
+            refused(judge, path.join(link, "x"), "read", "path-resolution");
+            refused(judge, link, "remove", "protected-path");
+        }
+    };
+    brokenLinks(Denied);
+    // A middle link is resolved for a removal; only a final one is not.
+    refused(linkJudge, path.join(alias, "x"), "remove", "protected-path");
+    // A move is judged where it lands, against each write destination.
+    const carrier = path.join(project, "carrier");
+    fs.mkdirSync(path.join(carrier, ".claude-carried"), { recursive: true });
+    const lands = logic => {
+        const judge = logic.create(options);
+        assert.equal(judge.inspectPaths([[carrier, "move"], [path.join(home, "carried"), "write"]]).reason, "protected-path",
+            "its account entry would land two levels below HOME");
+        assert.deepEqual(judge.inspectPaths([[carrier, "move"], [path.join(home, "carried"), "write"]]).file, carrier);
+        assert.equal(judge.inspectPaths([[carrier, "move"], [path.join(project, "carried"), "write"]]).kind, "paths",
+            "three levels down the entry stays outside the rule");
+    };
+    lands(Denied);
     // A removal or a move source is the named entry: a link to a protected
     // root is removed as the link, and a dangling link exists as one.
     const credentialLink = path.join(project, "ssh-link");
@@ -217,9 +283,9 @@ world(() => {
         logic => allowed(logic.create(options), boundary, "read"));
     control("link-resolution", 'stat.isSymbolicLink() && (follow || !last) ? fs.realpathSync.native(next) : next', 'next',
         logic => refused(logic.create(options), path.join(alias, "sentinel"), "read", "protected-path"));
-    control("root-alias", '[file, resolve(file).path]', '[file]',
+    control("root-alias", 'files.flatMap(file => [file, resolve(file).path])', 'files.flatMap(file => [file])',
         logic => refused(logic.create({ ...roots, accountRoots: [accountAlias] }), path.join(realAccount, "absent"), "read", "protected-path"));
-    control("sandbox-masks", 'masks: Object.freeze([...new Set(protectedRoots)])', 'masks: Object.freeze([])',
+    control("sandbox-masks", "masks = Object.freeze([...new Set(protectedRoots.concat(accounts))]);", "masks = Object.freeze(accounts);",
         logic => assert.equal(logic.create(options).masks.includes(account), true));
     control("account-roots", '}).concat(accountRoots);', '}).concat([]);',
         logic => refused(logic.create(options), account, "read", "protected-path"));
@@ -278,11 +344,18 @@ world(() => {
             try { refused(judge, fresh, "remove", "protected-path"); }
             finally { fs.rmSync(fresh, { recursive: true }); }
         });
-    control("account-masks", "credential.concat(accounts, [", "credential.concat([], [",
+    control("account-masks", "masks = Object.freeze([...new Set(protectedRoots.concat(accounts))]);",
+        "masks = Object.freeze([...new Set(protectedRoots)]);",
         logic => assert.equal(logic.create(options).masks.includes(namedAccount), true));
     control("account-mask-links", "else if (depth < ACCOUNT_DEPTH && entry.isDirectory())",
         "else if (depth < ACCOUNT_DEPTH && (entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(file).isDirectory())))",
         logic => assert.equal(logic.create(options).masks.some(root => root.startsWith(scanLink + "/")), false));
+    control("lazy-masks", "let masks = null;", "let masks = null; void bases.flatMap(base => present(base, 1, [], true));", lazyMasks);
+    control("unlisted-skip", 'if (error.code === "ENOENT" || skipUnlisted) return found;', 'if (error.code === "ENOENT") return found;', unlistable);
+    control("broken-link-mask", "try { return [file, resolve(file).path]; } catch { return [file]; }", "return [file, resolve(file).path];", brokenLinks);
+    control("middle-link-removal", "stat.isSymbolicLink() && (follow || !last)", "stat.isSymbolicLink() && follow",
+        logic => refused(logic.create(options), path.join(alias, "x"), "remove", "protected-path"));
+    control("move-landing", "if (landsNamed(source.path, destination.path))", "if (false && landsNamed(source.path, destination.path))", lands);
     control("entry", 'resolve(file, role !== "move" && role !== "remove")', "resolve(file)",
         logic => allowed(logic.create(options), credentialLink, "remove"));
     // Every inventory entry has its own planted missing protection. This also
@@ -291,7 +364,9 @@ world(() => {
         [home, ".ssh"], [home, ".gnupg"], [home, ".claude"], [home, ".codex"],
         [home, ".gemini"], [home, ".copilot"], [home, ".agent-browser"], [home, ".mozilla"],
         [home, ".pki"], [home, ".netrc"], [home, ".git-credentials"],
-        ...["gh", "git/credentials", "claude", "codex", "gemini", "copilot", "opencode", "kwalletd", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge", "vivaldi", "mozilla"].map(name => [roots.config, name]),
+        ...[".aws", ".azure", ".kube", ".docker/config.json", ".npmrc", ".pypirc", ".cargo/credentials.toml", ".cargo/credentials"].map(name => [home, name]),
+        ...["gh", "git/credentials", "claude", "codex", "gemini", "copilot", "opencode", "kwalletd", "chromium", "google-chrome", "BraveSoftware", "microsoft-edge", "vivaldi", "mozilla",
+            "gcloud", "rclone"].map(name => [roots.config, name]),
         ...["opencode", "keyrings", "kwalletd"].map(name => [roots.data, name])
     ];
     // Place XDG roots under HOME so a lost mask cannot fail at outside-home.

@@ -139,7 +139,8 @@ function textChord(bound, symbols) {
  * Decide one model call using executor-owned facts.
  *
  * context: {profile, locked, taint, denied, input?, grants?}. Missing or
- * unknown lock refuses. denied is Denied.create's current snapshot.
+ * unknown lock refuses. denied is Denied.create's current snapshot; it is
+ * read only when the call carries a path, so a producer may build it lazily.
  * J47/J51 supply input {target:{kind,id,password?}, key?} at send time.
  * For a key, key is {request, chord, effective, emitted, emittedEffective}.
  * Each identity is a layout-resolved {modifiers, keycode} record. J47 uses the core key
@@ -161,16 +162,24 @@ function decide(call, context) {
     const refined = Tools.refine(call);
     if (refined.kind === "refuse") return refined;
     let effect = refined.effect;
-    for (const [field, role] of refined.paths) {
-        if (!context.denied || typeof context.denied.inspect !== "function")
+    // The snapshot is read only for a call that carries a path; the daemon
+    // builds it on that read.
+    if (refined.paths.length > 0) {
+        const denied = context.denied;
+        if (!denied || typeof denied.inspectPaths !== "function")
             return { kind: "refuse", reason: "path-context" };
         // A field holds one path, or a list a harness program proposes at once.
-        for (const file of [refined.call.args[field]].flat()) {
-            const target = context.denied.inspect(file, role);
-            if (target.kind === "refuse") return target;
-            if (target.execution || role === "remove" || (role === "write" && target.exists))
-                effect = "destructive";
+        const pairs = refined.paths.flatMap(([field, role]) => [refined.call.args[field]].flat().map(file => [file, role]));
+        const judged = denied.inspectPaths(pairs);
+        if (judged.kind === "refuse") {
+            const { file: _file, ...refusal } = judged;
+            return refusal;
         }
+        const destructive = pairs.some(([, role], index) => {
+            const target = judged.paths[index];
+            return target.execution || role === "remove" || (role === "write" && target.exists);
+        });
+        if (destructive) effect = "destructive";
     }
     // A program's own command escapes Sandbox.js, as text typed at a terminal does.
     if (refined.unconfined) {

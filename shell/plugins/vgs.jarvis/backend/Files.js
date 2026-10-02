@@ -19,6 +19,9 @@ const BOUNDS = Object.freeze({
     listEntries: 512, readBytes: 1024 * 1024, writeBytes: 1024 * 1024,
     searchDepth: 8, searchEntries: 20000, searchBytes: 16 * 1024 * 1024,
     searchMatches: 100, lineChars: 200, searchMs: 10000,
+    // A slice stays well under the playback lead Audio.js keeps
+    // (PLAYBACK_LEAD_MS plus NODE_LATENCY_MS).
+    searchSliceEntries: 64, searchSliceMs: 8,
     deleteEntries: 4096, deleteDepth: 32,
     // Scheduling slack between the executor's own bounds and Session's limit.
     slackMs: 1000
@@ -186,9 +189,12 @@ function create({ denied, bounds = BOUNDS, clock }) {
     }
 
     /**
-     * One level per event-loop turn: the daemon's audio pacing shares the
-     * loop. Folders wait on a stack holding their parent's descriptor; a
-     * parent closes once its last waiting child has opened.
+     * The daemon's audio pacing shares the event loop, so a search works in
+     * slices of at most searchSliceEntries entries or searchSliceMs and
+     * yields between them. A folder streams through one Dir, so the entry
+     * ceiling applies before its names load. Folders wait on a stack holding
+     * their parent's descriptor; a parent closes once its last waiting child
+     * has opened.
      */
     function search(target, file, query, snapshot) {
         if (!target.exists) throw failed(file + " does not exist.");
@@ -201,6 +207,7 @@ function create({ denied, bounds = BOUNDS, clock }) {
         const skipped = { links: 0, protected: 0, binary: 0, large: 0, deep: 0, unreadable: 0 };
         const matches = [];
         const stack = [];
+        let current = null;
         let visited = 0, bytes = 0, cut = null;
 
         const release = handle => { if (--handle.refs === 0) fs.closeSync(handle.fd); };
@@ -234,37 +241,61 @@ function create({ denied, bounds = BOUNDS, clock }) {
             } finally { fs.closeSync(fd); }
         }
 
-        function scan(handle, folder, depth) {
-            let entries;
-            try { entries = fs.readdirSync(Anchored.child(handle.fd, "."), { withFileTypes: true }); }
+        // Take over one reference to handle and stream its folder.
+        function enter(handle, folder, depth) {
+            let dir;
+            try { dir = fs.opendirSync(Anchored.child(handle.fd, ".")); }
+            catch (error) {
+                cause(error);
+                skipped.unreadable++;
+                release(handle);
+                return;
+            }
+            current = { handle, dir, folder, depth, folders: [] };
+        }
+
+        function leave(keep) {
+            current.dir.closeSync();
+            if (keep) for (const next of current.folders.reverse()) {
+                current.handle.refs++;
+                stack.push({ parent: current.handle, ...next });
+            }
+            release(current.handle);
+            current = null;
+        }
+
+        function visit(item) {
+            const { handle, folder, depth } = current;
+            const child = path.join(folder, item.name);
+            let stat;
+            try { stat = fs.lstatSync(Anchored.child(handle.fd, item.name)); }
             catch (error) { cause(error); skipped.unreadable++; return; }
-            entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-            const folders = [];
-            for (const item of entries) {
-                if (cut !== null) break;
-                if (++visited > bounds.searchEntries) { cut = "entries"; break; }
-                if (clock.now() - started >= bounds.searchMs) { cut = "time"; break; }
-                const child = path.join(folder, item.name);
-                let stat;
-                try { stat = fs.lstatSync(Anchored.child(handle.fd, item.name)); }
-                catch (error) { cause(error); skipped.unreadable++; continue; }
-                if (stat.isSymbolicLink()) { skipped.links++; continue; }
-                // Every child is judged before its name is used or it opens.
-                if (snapshot.inspect(child, "read").kind !== "path") { skipped.protected++; continue; }
-                if (item.name.toLowerCase().includes(needle)) match(child);
-                if (stat.isDirectory()) {
-                    if (depth === bounds.searchDepth) skipped.deep++;
-                    else folders.push({ name: item.name, path: child, depth: depth + 1 });
-                } else if (stat.isFile()) {
-                    if (stat.size > bounds.readBytes) { skipped.large++; continue; }
-                    if (bytes + stat.size > bounds.searchBytes) { cut = "bytes"; break; }
-                    lines(handle.fd, item.name, child);
-                }
+            if (stat.isSymbolicLink()) { skipped.links++; return; }
+            // Every child is judged before its name is used or it opens.
+            if (snapshot.inspect(child, "read").kind !== "path") { skipped.protected++; return; }
+            if (item.name.toLowerCase().includes(needle)) match(child);
+            if (stat.isDirectory()) {
+                if (depth === bounds.searchDepth) skipped.deep++;
+                else current.folders.push({ name: item.name, path: child, depth: depth + 1 });
+            } else if (stat.isFile()) {
+                if (stat.size > bounds.readBytes) { skipped.large++; return; }
+                if (bytes + stat.size > bounds.searchBytes) { cut = "bytes"; return; }
+                lines(handle.fd, item.name, child);
             }
-            for (const next of folders.reverse()) {
-                handle.refs++;
-                stack.push({ parent: handle, ...next });
-            }
+        }
+
+        // Open the next waiting folder through its held parent.
+        function next() {
+            const item = stack.pop();
+            if (item === undefined) return false;
+            let fd;
+            try { fd = fs.openSync(Anchored.child(item.parent.fd, item.name), O_RDONLY | O_DIRECTORY | O_NOFOLLOW); }
+            catch (error) {
+                cause(error);
+                if (error.code === "ELOOP") skipped.links++; else skipped.unreadable++;
+            } finally { release(item.parent); }
+            if (fd !== undefined) enter({ fd, refs: 1 }, item.path, item.depth);
+            return true;
         }
 
         function answer() {
@@ -273,39 +304,39 @@ function create({ denied, bounds = BOUNDS, clock }) {
             const skips = "Skipped: " + skipped.links + " links, " + skipped.protected + " protected, "
                 + skipped.binary + " binary or not UTF-8, " + skipped.large + " over " + bounds.readBytes + " bytes, "
                 + skipped.deep + " folders deeper than " + bounds.searchDepth + " levels, " + skipped.unreadable + " unreadable or changed.";
-            return { outcome: "completed", content: [head, skips].concat(matches).join("\n") };
+            return { outcome: "completed", content: [head, skips].concat(matches.sort()).join("\n") };
         }
 
         return new Promise((resolve, reject) => {
             const end = value => {
+                if (current !== null) leave(false);
                 for (const waiting of stack.splice(0)) release(waiting.parent);
                 if (value instanceof Error) reject(value); else resolve(value);
-            };
-            const visit = (handle, folder, depth) => {
-                try { scan(handle, folder, depth); }
-                finally { release(handle); }
             };
             function step() {
                 try {
                     if (closed) { end({ outcome: "failed", content: "The search stopped: Jarvis is closing." }); return; }
-                    if (cut === null && clock.now() - started >= bounds.searchMs) cut = "time";
-                    const next = cut === null ? stack.pop() : undefined;
-                    if (next === undefined) { end(answer()); return; }
-                    let fd;
-                    try { fd = fs.openSync(Anchored.child(next.parent.fd, next.name), O_RDONLY | O_DIRECTORY | O_NOFOLLOW); }
-                    catch (error) {
-                        cause(error);
-                        if (error.code === "ELOOP") skipped.links++; else skipped.unreadable++;
-                    } finally { release(next.parent); }
-                    if (fd !== undefined) visit({ fd, refs: 1 }, next.path, next.depth);
-                    // Yield between folders; one folder is the longest turn.
+                    const slice = clock.now();
+                    for (let count = 0; ; count++) {
+                        if (cut === null && clock.now() - started >= bounds.searchMs) cut = "time";
+                        if (cut !== null) { end(answer()); return; }
+                        // Yield once this slice is spent; nothing else holds the loop longer.
+                        if (count === bounds.searchSliceEntries || clock.now() - slice >= bounds.searchSliceMs) break;
+                        if (current === null) {
+                            if (!next()) { end(answer()); return; }
+                            continue;
+                        }
+                        const item = current.dir.readSync();
+                        if (item === null) { leave(true); continue; }
+                        if (++visited > bounds.searchEntries) { cut = "entries"; continue; }
+                        visit(item);
+                    }
                     setImmediate(step);
                 } catch (error) { end(error); }
             }
-            try {
-                visit({ fd: opened.fd, refs: 1 }, target.path, 0);
-                setImmediate(step);
-            } catch (error) { end(error); }
+            try { enter({ fd: opened.fd, refs: 1 }, target.path, 0); }
+            catch (error) { end(error); return; }
+            setImmediate(step);
         });
     }
 
@@ -522,12 +553,10 @@ function create({ denied, bounds = BOUNDS, clock }) {
                     throw failed("The protected path list could not be built: "
                         + (error.code || String(error.message).replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 120)) + ".");
                 }
-                const targets = {};
-                for (const [field, role] of refined.paths) {
-                    const verdict = snapshot.inspect(call.args[field], role);
-                    if (verdict.kind !== "path") throw refused(verdict.reason, call.args[field]);
-                    targets[field] = verdict;
-                }
+                // The same entry Policy judged with, so a move is judged where it lands.
+                const judged = snapshot.inspectPaths(refined.paths.map(([field, role]) => [call.args[field], role]));
+                if (judged.kind !== "paths") throw refused(judged.reason, judged.file);
+                const targets = Object.fromEntries(refined.paths.map(([field], index) => [field, judged.paths[index]]));
                 result = act(refined.call, targets, snapshot);
             } catch (error) { result = answer(error); }
             if (result instanceof Promise) result.then(done, error => done(answer(error)));
@@ -542,13 +571,11 @@ function create({ denied, bounds = BOUNDS, clock }) {
 
 /**
  * install({router, denied, bounds, clock}) registers the files executor at
- * once, since Node's fs needs no probe, but only when one Denied snapshot
- * builds. Without it the file tools stay unoffered, as a missing command's do.
+ * once: Node's fs needs no probe. A call made while no Denied snapshot
+ * builds is refused, and the next call after a build succeeds works.
  */
 function install({ router, ...options }) {
     const files = create(options);
-    try { options.denied(); }
-    catch { return { close: files.close }; }
     router.register("files", files.records.files);
     return { close: files.close };
 }

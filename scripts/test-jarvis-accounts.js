@@ -458,6 +458,15 @@ world(async () => {
         'if (stat.isSymbolicLink()) return { kind: "absent" };', linkedRoot);
     controls++;
 
+    // The service passes exactly the CLI providers' root variables.
+    const variables = folder => assert.deepEqual(require(path.join(folder, "AccountProviders.js")).accountVariables(name => "value-" + name),
+        { CLAUDE_CONFIG_DIR: "value-CLAUDE_CONFIG_DIR", CODEX_HOME: "value-CODEX_HOME" });
+    variables(plugin);
+    cases++;
+    await mutant("AccountProviders.js", "account-variables",
+        'if (PROVIDERS[i].kind === "cli") result[PROVIDERS[i].variable] = read(PROVIDERS[i].variable);', "void read;", variables);
+    controls++;
+
     // The roots entry: explicit roots, then hand-added ones, and never a
     // scanned candidate.
     const explicitClaude = path.join(env.HOME, "explicit-claude");
