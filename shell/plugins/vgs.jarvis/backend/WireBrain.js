@@ -16,6 +16,9 @@ const TOOLS = 64;
 // turns can be summarised; nothing is dropped silently.
 const TURNS = 40;
 const IMAGE_TYPES = ["image/png", "image/jpeg"];
+// What an image of an earlier turn renders as. Only the current turn's
+// images are sent, so a conversation's images never add up past REQUEST_BYTES.
+const EARLIER_IMAGE = Object.freeze({ kind: "withhold", content: "[image from an earlier turn]" });
 function fail(code) { throw new Error("jarvis: brain=" + code); }
 function plain(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function textItem(item) {
@@ -105,12 +108,14 @@ function create({ provider, model, net, recipients, key }, protocol) {
             }
             return decision;
         }
+        // The current turn starts at the last user entry.
+        const current = entries.findLastIndex(entry => entry.role === "user");
         const messages = [];
-        for (const entry of entries) {
+        for (const [index, entry] of entries.entries()) {
+            const picture = image => ({ type: image.type, decision: index < current ? EARLIER_IMAGE : released(image.item) });
             switch (entry.role) {
             case "user":
-                messages.push(protocol.user(entry.items.map(item => released(item).content),
-                    entry.images.map(image => ({ type: image.type, decision: released(image.item) }))));
+                messages.push(protocol.user(entry.items.map(item => released(item).content), entry.images.map(picture)));
                 break;
             case "assistant":
                 if (released(entry.item).kind !== "send") fail("history-release");
@@ -119,7 +124,7 @@ function create({ provider, model, net, recipients, key }, protocol) {
             case "tool-results":
                 messages.push(...protocol.results(entry.results.map(result => ({ id: result.id,
                     content: released(result.item).content,
-                    image: result.image === null ? null : { type: result.image.type, decision: released(result.image.item) } }))));
+                    image: result.image === null ? null : picture(result.image) }))));
                 if (entry.instructions !== null) messages.push(protocol.instruction(entry.instructions));
                 break;
             default: throw new Error("jarvis: brain=history-role");

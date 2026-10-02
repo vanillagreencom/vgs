@@ -187,6 +187,10 @@ world(async () => {
             assert.deepEqual(last().body.messages.at(-1), { role: "user", content: [
                 { type: "tool_result", tool_use_id: "toolu_focus", content: "focused" },
                 { type: "tool_result", tool_use_id: "toolu_read", content: [{ type: "text", text: shown }, block] }] }, cloudVision);
+            // The next turn renders the earlier turn's image as a marker.
+            await drain(brain.send(user(kit, [speech(kit, "And now?")])));
+            assert.deepEqual(last().body.messages[2].content[1].content,
+                [{ type: "text", text: shown }, { type: "text", text: "[image from an earlier turn]" }], cloudVision + " next turn");
         }
     }
     async function images(kit) {
@@ -203,9 +207,11 @@ world(async () => {
             { type: "text", text: "[withheld: screen content]" }]);
         assert.deepEqual(seen.at(-1), ["speech"]);
         const grants = [{ recipients, labels: ["file", "screen"] }];
-        await drain(brain.send(user(kit), grants));
-        assert.deepEqual(last().body.messages[0].content.at(-1),
+        await drain(brain.send(turn(), grants));
+        assert.deepEqual(last().body.messages.at(-1).content.at(-1),
             { type: "image", source: { type: "base64", media_type: "image/png", data: PNG.toString("base64") } });
+        assert.deepEqual(last().body.messages[0].content.at(-1), { type: "text", text: "[image from an earlier turn]" },
+            "only the current turn's image is sent");
         assert.deepEqual(seen.at(-1), ["speech", "file", "screen"], "image and history labels reach net");
         assert.throws(() => brain.send(user(kit)), { message: "jarvis: brain=history-release" });
         const never = open(kit, undefined, { remoteVoice: true, cloudVision: "never" });
@@ -502,7 +508,9 @@ world(async () => {
             ["tool-delta-type", 'value.delta.type !== "input_json_delta" || ', "", refusal("delta-type")],
             ["tool-delta-shape", ' || typeof value.delta.partial_json !== "string"', "", refusal("tool-delta")],
             ["driver", 'if (provider.driver !== protocol.driver) fail("driver");', "", drivers, path.join(backend, "WireBrain.js")],
-            ["instruction-encoder", " || protocol.instruction === undefined", "", toolTurns, path.join(backend, "WireBrain.js")]
+            ["instruction-encoder", " || protocol.instruction === undefined", "", toolTurns, path.join(backend, "WireBrain.js")],
+            ["earlier-images", "decision: index < current ? EARLIER_IMAGE : released(image.item)", "decision: released(image.item)",
+                toolImages, path.join(backend, "WireBrain.js")]
         ];
         for (const [name, needle, replacement, check, target] of mutations) await control(name, needle, replacement, check, target);
         for (const reason of ["max_tokens", "refusal", "pause_turn", "model_context_window_exceeded", "unknown"])
