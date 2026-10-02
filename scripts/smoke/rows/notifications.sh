@@ -1354,10 +1354,14 @@ expect_poll "the shortcut closed the inbox" '""' read_notes panelMode
 # The inbox's content against the panel's own box, the size the panel asks
 # for: the header, the card list and its scroll bar inside it, every card
 # and the key hints inside the list and the panel across, and the list and
-# its first card below the header.
+# its first card below the header. The list clips what it scrolls, so the
+# first card of a list just opened also starts inside the list's own top:
+# a card between the header's bottom and the list's top shows its top edge
+# cut.
 # panel_fit_value reads the panel's [x, y, w, h] on its first line and its
 # descendantGeometry on its second, every box in the layer's coordinates:
-# `fits`, or each violation as `clipped=<part>` or `under-header=<part>`.
+# `fits`, or each violation as `clipped=<part>`, `under-header=<part>` or
+# `cut-top=card`.
 panel_fit_value() {
   py_reply 'import json,sys
 lines = sys.stdin.read().splitlines()
@@ -1391,6 +1395,7 @@ header_bottom = header["box"][1] + header["box"][3]
 if view["box"][1] < header_bottom - 0.5: bad.append("under-header=list")
 top = min(cards, key=lambda c: c["box"][1])
 if top["box"][1] < header_bottom - 0.5: bad.append("under-header=card")
+if top["box"][1] < view["box"][1] - 0.5: bad.append("cut-top=card")
 print(" ".join(sorted(set(bad))) if bad else "fits")'
 }
 panel_fit() {
@@ -1401,8 +1406,9 @@ panel_fit() {
 }
 # Controls: the readings the predicate must refuse. The clipped one is the
 # panel as it drew before its width followed its column, a 420 px panel
-# under a 500 px column, read in the sandbox at scale 1; the other puts the
-# first card's top 18 px into the header.
+# under a 500 px column, read in the sandbox at scale 1; the second puts the
+# first card's top 18 px into the header, the third 2 px below the header
+# and 2 px above the list's top.
 panel_fit_reading() { # PANEL_W HEADER_X CARD_Y
   printf '[0, 0, %s, 303]\n' "$1"
   printf '[{"type":"InboxHeader","name":"","box":[%s,0,420,48],"visible":true},' "$2"
@@ -1414,7 +1420,8 @@ panel_fit_reading() { # PANEL_W HEADER_X CARD_Y
 }
 expect "the fit predicate passes the panel drawn whole" fits panel_fit_value < <(panel_fit_reading 500 40 58)
 expect "control: the fit predicate refuses the clipped panel" "clipped=card0 clipped=card1 clipped=header clipped=hints clipped=list" panel_fit_value < <(panel_fit_reading 420 40 58)
-expect "control: the fit predicate refuses a first card under the header" "under-header=card" panel_fit_value < <(panel_fit_reading 500 40 30)
+expect "control: the fit predicate refuses a first card under the header" "cut-top=card under-header=card" panel_fit_value < <(panel_fit_reading 500 40 30)
+expect "control: the fit predicate refuses a first card the list cuts under the header" "cut-top=card" panel_fit_value < <(panel_fit_reading 500 40 50)
 for n in 1 2 3 4 5 6 7 8; do
   notify smoke-app 0 "Fit $n" "A body long enough to wrap onto a second line of the card, so the card is tall" '[]' '{"urgency": <byte 0>}' 0 >/dev/null
 done

@@ -211,6 +211,8 @@ smoke_row gallery
 smoke_row launcher
 smoke_row list-motion
 smoke_row notifications
+# After notifications, whose readers and helpers it uses.
+smoke_row notifications-keys
 smoke_row automations
 smoke_row polkit
 # The device fakes the System rows build on; they stay up after it.
