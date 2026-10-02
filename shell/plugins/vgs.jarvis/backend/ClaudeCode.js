@@ -165,6 +165,10 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
     let sent = 0;
     let closed = false;
     let requests = 0;
+    // Interrupts written and not yet answered. A turn can end before the
+    // program reads its interrupt, so the answer may arrive between turns or
+    // in a later turn; each is accepted once, wherever it arrives.
+    const interrupts = new Set();
 
     function usable() {
         if (closed) fail("closed");
@@ -195,6 +199,10 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
             : servers.length !== 1 || servers[0].name !== SERVER || servers[0].status !== "connected")
             fail("harness-mcp");
         record.initialized = true;
+    }
+
+    function acknowledge(message) {
+        if (!interrupts.delete(message.id)) fail("harness-control");
     }
 
     function signal(record, name) {
@@ -261,8 +269,12 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
             // Between turns only notices may arrive. A reply with no turn is
             // a harness fault, and the conversation ends with its process.
             const message = messageOf(line);
-            if (message.kind === "init") admit(record, message);
-            else if (message.kind !== "other") fail("harness-order");
+            switch (message.kind) {
+            case "other": return;
+            case "init": admit(record, message); return;
+            case "control": acknowledge(message); return; // A late interrupt answer.
+            default: fail("harness-order");
+            }
         } catch (error) { fault(record, error); }
     }
 
@@ -352,17 +364,13 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
                 switch (message.kind) {
                 case "other": return;
                 case "init": admit(record, message); return;
-                case "control":
-                    if (state.kind !== "cancelling" || message.id !== state.request) fail("harness-control");
-                    return;
+                case "control": return acknowledge(message);
                 case "control-request": return fail("harness-control-request");
                 case "assistant":
                     if (!record.initialized) fail("harness-order");
                     for (const block of message.blocks) {
                         if (block.kind === "tool" && !allowed(block.name)) fail("harness-tool name=" + named(block.name));
-                        // Text read after the interrupt never reaches the caller.
-                        if (block.kind === "text" && block.text !== "" && state.kind === "streaming")
-                            queue.push({ kind: "text", text: block.text });
+                        if (block.kind === "text" && block.text !== "") queue.push({ kind: "text", text: block.text });
                     }
                     notify();
                     return;
@@ -389,15 +397,17 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
                     state = { kind: "cancelled" };
                     settle();
                     break;
-                case "streaming":
+                case "streaming": {
                     if (!written) { state = { kind: "cancelled" }; break; } // begin() settles.
-                    state = { kind: "cancelling", request: "jarvis-interrupt-" + ++requests };
-                    queue.length = 0;
-                    record.child.stdin.write(JSON.stringify({ type: "control_request", request_id: state.request,
+                    const id = "jarvis-interrupt-" + ++requests;
+                    state = { kind: "cancelling" };
+                    interrupts.add(id);
+                    record.child.stdin.write(JSON.stringify({ type: "control_request", request_id: id,
                         request: { subtype: "interrupt" } }) + "\n");
                     // An unanswered interrupt ends the conversation's process.
                     timer = clock.set(() => { timer = null; fault(record, new Error("jarvis: brain=harness-cancel-timeout")); }, CANCEL_MS);
                     break;
+                }
                 case "complete": case "failed":
                     state = { kind: "cancelled" };
                     notify();
@@ -439,6 +449,8 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
                         release();
                         throw new Error("jarvis: brain=cancelled");
                     case "ended": return { value: undefined, done: true };
+                    // Text queued before or read after the interrupt never
+                    // reaches the caller: a cancelled turn only throws.
                     case "cancelling": break;
                     case "streaming": case "complete": case "failed":
                         if (queue.length !== 0) {

@@ -89,12 +89,13 @@ world(async () => {
             clock: { set: () => ({}), clear() {} } });
         const a = account(script);
         let opened = null;
-        // The adapter's timers run for real; the cancel rows read and may fire them.
+        // The adapter's timers run for real, or on the manual clock only when
+        // a row fires them or advances past every armed one.
         const clock = { set: (fn, ms) => {
             const timer = { fn, ms, handle: setTimeout(() => { timer.fired = true; fn(); }, options.manual ? 1e9 : ms) };
             timers.push(timer);
             return timer;
-        }, clear: timer => clearTimeout(timer.handle) };
+        }, clear: timer => { timer.cleared = true; clearTimeout(timer.handle); } };
         const harness = ClaudeCode.create({ directory: a.directory, model: options.model ?? "", recipients,
             bridge: { open: async () => { opened = await bridge.open({ gen: runner.state.gen, recipients }); return opened; } },
             parent: runtime, environment: process.env, clock });
@@ -102,6 +103,7 @@ world(async () => {
         harness.start({ instructions: "Fixture guidance.", tools: options.tools ?? router.offer() });
         const w = { runner, router, bridge, rows, starts, answers, brain, timers, harness, Policy, recipients, runtime, account: a,
             opened: () => opened, lock: value => { locked = value; }, time: value => { at = value; },
+            advance: () => { for (const timer of timers) if (!timer.cleared && !timer.fired) { timer.fired = true; timer.fn(); } },
             show: () => runner.dispatch({ type: "shown", gen: runner.state.gen, op: runner.state.approval.op, id: runner.state.approval.id }),
             confirm: () => runner.dispatch({ type: "confirm", gen: runner.state.gen, id: runner.state.approval.id,
                 digest: runner.state.approval.digest, source: "key" }) };
@@ -220,18 +222,35 @@ world(async () => {
             await bare.fails(bare.say("hello"), "harness-tool name=EndConversation");
         }],
         ["cancel", async folder => {
-            const w = await make(folder, { turns: [[...say("partial"), { hang: true }], [{ echo: true }]] });
+            // Two texts in one read: the second is queued when the interrupt goes out.
+            const w = await make(folder, { turns: [[{ texts: ["partial", "queued"] }, { hang: true }], [{ echo: true }]] },
+                { manual: true });
             const reply = w.say("long answer");
             assert.deepEqual(await w.read(reply, texts => texts.length === 1), { texts: ["partial"], reason: null });
-            await bounded(w.harness.cancel(), "cancel acknowledgement");
-            await assert.rejects(() => reply.events.next(), /brain=cancelled/);
+            // The caller reads on while the turn is cancelling.
+            const cancelled = w.harness.cancel();
+            await assert.rejects(() => bounded(reply.events.next(), "cancelled read"), /brain=cancelled/, "queued text never reaches the caller");
+            await bounded(cancelled, "cancel acknowledgement");
             const interrupt = w.account.events().find(event => event.kind === "interrupt");
             assert.ok(interrupt, "the interrupt control request reached the program");
             const request = w.account.events().filter(event => event.kind === "input").at(-1).value;
             assert.deepEqual(request, { type: "control_request", request_id: interrupt.id, request: { subtype: "interrupt" } });
+            assert.deepEqual(w.timers.map(timer => [timer.ms, timer.cleared === true]), [[2000, true]], "the answer disarms the bound");
+            w.advance();
             assert.deepEqual(await w.read(w.say("next")), { texts: ["heard: next"], reason: "stop" });
             assert.equal(w.account.calls().length, 1, "the conversation keeps its program after an answered interrupt");
-            assert.deepEqual(w.timers.map(timer => timer.ms), [2000]);
+            // The turn ends before the program reads the interrupt: the answer
+            // follows the result, between turns, and the conversation lives on.
+            const race = await make(folder, { answerAfterResult: true, turns: [[...say("partial"), { hang: true }], [{ echo: true }]] },
+                { manual: true });
+            const raced = race.say("short answer");
+            await race.read(raced, texts => texts.length === 1);
+            await bounded(race.harness.cancel(), "raced cancel");
+            await assert.rejects(() => raced.events.next(), /brain=cancelled/);
+            let next;
+            assert.doesNotThrow(() => { next = race.say("next"); }, "a late answer keeps the conversation");
+            assert.deepEqual(await race.read(next), { texts: ["heard: next"], reason: "stop" });
+            assert.equal(race.account.calls().length, 1, "the late answer keeps the program");
         }],
         ["cancel-timeout", async folder => {
             const w = await make(folder, { ignoreInterrupt: true, turns: [[{ hang: true }]] }, { manual: true });
@@ -253,7 +272,8 @@ world(async () => {
                 [[{ exit: 5 }], "harness-exit code=5"],
                 [[{ raw: "not json" }], "harness-json"],
                 [[{ raw: JSON.stringify({ type: "control_request", request_id: "x", request: { subtype: "can_use_tool" } }) }], "harness-control-request"],
-                [[{ raw: JSON.stringify({ type: "assistant", parent_tool_use_id: "toolu_x", message: { role: "assistant", content: [] } }) }], "harness-subagent"],
+                [[{ text: "nested", parent: "toolu_x" }], "harness-subagent"],
+                [[{ control: "foreign" }], "harness-control"],
                 [[{ raw: JSON.stringify({ type: "assistant", parent_tool_use_id: null, message: { role: "assistant",
                     content: [{ type: "server_tool_use", name: "web_search" }] } }) }], "harness-block type=server_tool_use"],
                 [[{ raw: JSON.stringify({ type: "result", subtype: "unknown" }) }], "harness-result"]
@@ -267,6 +287,10 @@ world(async () => {
             // A reply before the init message names the tools is a harness fault.
             const early = await make(folder, { skipInit: true, turns: [[...say("x")]] });
             await early.fails(early.say("go"), "harness-order");
+            // A reply while no turn is live ends the conversation.
+            const late = await make(folder, { turns: [[{ result: "success", late: "stray" }]] });
+            assert.deepEqual(await late.read(late.say("go")), { texts: [], reason: "stop" });
+            assert.throws(() => late.say("again"), /brain=harness-ended/);
         }],
         ["release", async folder => {
             const w = await make(folder, { turns: [[{ echo: true }], [{ echo: true }]] });
@@ -296,6 +320,9 @@ world(async () => {
                 if (accepted) assert.equal((await w.read(reply)).texts[0].length > 1000000, true);
                 else await w.fails(reply, "harness-line-limit");
             }
+            // A line that never ends fails once it passes the line bound.
+            const open = await make(folder, { turns: [[{ unterminated: 1024 * 1024 + 1 }]] });
+            await open.fails(open.say("endless"), "harness-line-limit");
             // A turn's replies at 8 MiB: eight lines of 1 MiB and the result pass the line bound, not the turn bound.
             const turn = await make(folder, { turns: [[...Array.from({ length: 9 }, () => ({ raw: line(1024 * 1024 - 64) }))]] });
             await turn.fails(turn.say("many"), "harness-turn-limit");
@@ -432,6 +459,15 @@ world(async () => {
             ["release", "const decision = Policy.release(item, recipients, grants);", "const decision = { kind: \"send\", ...item };", "release"],
             ["release-empty", 'if (request.release.labels.length === 0) fail("release-empty");', "", "release"],
             ["interrupt", "record.child.stdin.write(JSON.stringify({ type: \"control_request\"", "void (JSON.stringify({ type: \"control_request\"", "cancel"],
+            ["interrupt-disarm", "if (timer !== null) { clock.clear(timer); timer = null; }", "if (false) { clock.clear(timer); timer = null; }", "cancel"],
+            ["cancelled-text", 'case "cancelling": break;\n                    case "streaming":', 'case "cancelling":\n                    case "streaming":', "cancel"],
+            ["late-answer", 'case "control": acknowledge(message); return;', 'case "control": fail("harness-order");', "cancel"],
+            ["foreign-answer", 'if (!interrupts.delete(message.id)) fail("harness-control");', "interrupts.delete(message.id);", "results"],
+            ["between-turns", 'default: fail("harness-order");', "default: return;", "results"],
+            ["api-error", 'return value.is_error ? { kind: "result", outcome: "api-error",', 'return false ? { kind: "result", outcome: "api-error",', "results"],
+            ["block-type", 'default: return fail("harness-block type=" + named(block.type));', 'default: return { kind: "thinking" };', "results"],
+            ["control-request", 'case "control-request": return fail("harness-control-request");', 'case "control-request": return;', "results"],
+            ["init-order", 'if (!record.initialized) fail("harness-order");', "", "results"],
             ["cancel-bound", "const CANCEL_MS = 2000;", "const CANCEL_MS = 2001;", "cancel"],
             ["cancel-timer", 'timer = clock.set(() => { timer = null; fault(record, new Error("jarvis: brain=harness-cancel-timeout")); }, CANCEL_MS);', "", "cancel-timeout"],
             ["subagent", 'if (value.parent_tool_use_id !== null) fail("harness-subagent");', "", "results"],
@@ -439,6 +475,7 @@ world(async () => {
                 'if (RESULT_ERRORS.includes(value.subtype)) return { kind: "result", outcome: "success" };', "results"],
             ["line-raised", "const LINE_BYTES = 1024 * 1024;", "const LINE_BYTES = 1024 * 1024 + 1;", "bounds"],
             ["line-lowered", "const LINE_BYTES = 1024 * 1024;", "const LINE_BYTES = 1024 * 1024 - 1;", "bounds"],
+            ["line-tail", 'if (Buffer.byteLength(tail) > LINE_BYTES) fault(record, new Error("jarvis: brain=harness-line-limit"));', "", "bounds"],
             ["turn-bound", "const TURN_BYTES = 8 * 1024 * 1024;", "const TURN_BYTES = 16 * 1024 * 1024;", "bounds"],
             ["context-bound", "const TURNS = 40;", "const TURNS = 41;", "bounds"],
             ["request-bound", "const REQUEST_BYTES = 20 * 1024 * 1024;", "const REQUEST_BYTES = 20 * 1024 * 1024 - 1;", "bounds"],

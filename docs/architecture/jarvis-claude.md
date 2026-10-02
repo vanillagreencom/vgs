@@ -54,9 +54,11 @@ The wire is [Anthropic's stream-json](https://code.claude.com/docs/en/headless),
 | `system`, `init` | Every tool must be in the offer, and the one server `vgs-jarvis` connected; without an offer, no tool and no server. Otherwise `brain=harness-tool name=N` or `brain=harness-mcp` |
 | `assistant` | Text blocks are yielded; thinking passes. A `tool_use` outside the offer, any other block, a reply before init or a subagent message fails the turn |
 | `result` | `success` without `is_error` ends the turn. An API error fails as `harness-api-error status=S`; an error subtype as `harness-<subtype>` |
-| `control_response` | Accepted only for the live interrupt |
+| `control_response` | Accepted once per interrupt written, in its turn, between turns or in a later turn; any other fails `harness-control` |
 | `control_request` | Fails: only a permission host answers one, and none exists |
 | other | Tool result echoes, retries and notices pass unread |
+
+Between turns only notices, an init message and a late interrupt answer may arrive; any other message fails `harness-order` and ends the conversation.
 
 `EndConversation` is the one built-in Claude Code keeps while any MCP tool remains. No flag removes it, and it reads and changes nothing ([tools reference](https://code.claude.com/docs/en/tools-reference)). The adapter accepts it only beside a non-empty offer. A call to it ends the harness conversation; the turn fails once the program exits or misses its result.
 
@@ -66,7 +68,7 @@ Each user item passes `Policy.release` against the conversation's recipient set 
 
 ## Cancel and close
 
-`cancel()` writes the Agent SDK's interrupt control request, `{type: "control_request", request_id, request: {subtype: "interrupt"}}`, which `sdk.d.ts` types as `SDKControlRequest`. The turn holds in cancelling until its result arrives; text read after the interrupt never reaches the caller, and the next read throws `brain=cancelled`. The conversation keeps its program. With no result within the plan's 2 s, the process group is killed and the conversation ends. The CLI reference documents SIGINT to end a turn, but a signal reaches the whole process with no acknowledgement and no turn identity.
+`cancel()` writes the Agent SDK's interrupt control request, `{type: "control_request", request_id, request: {subtype: "interrupt"}}`, which `sdk.d.ts` types as `SDKControlRequest`. The turn holds in cancelling until its result arrives; text queued before the interrupt or read after it never reaches the caller, and the next read throws `brain=cancelled`. The conversation keeps its program, and the result disarms the bound. A turn can end before the program reads the interrupt; its answer then follows the result and is accepted where it arrives. With no result within the plan's 2 s, the process group is killed and the conversation ends. The CLI reference documents SIGINT to end a turn, but a signal reaches the whole process with no acknowledgement and no turn identity.
 
 ## Bounds
 
@@ -90,8 +92,8 @@ Managed settings an organisation installs can still configure hooks or servers t
 ## Evidence
 
 - `scripts/test-jarvis-claude.js` runs in the [Jarvis test world](validation-jarvis.md). Its stand-in `claude` reads its script from the account directory, honours `--tools` and `--strict-mcp-config`, starts the configured MCP server and checks every line it reads or writes against the excerpt.
-- Its cases cover the pinned argv and environment, one program per conversation, a scripted call through the real `mcp-shim`, bridge and router with its pre-start audit record, a held approval confirmed in Session, a locked refusal, built-in tools in init or in a call, a failed server, `EndConversation` without an offer, an answered and an unanswered interrupt, each result kind, malformed and out-of-turn messages, release markers and grants, each bound in the table at and past its ceiling but the interrupt's, which the two interrupt cases cover, close, and Verify through the real Accounts judge.
-- Disposable mutants remove each rule: the tools, strict-config, hook and session flags, the token file, the environment, one process, the init and call checks, the server check, the `EndConversation` scope, release, the empty release, the interrupt and its timer and bound, the subagent and result checks, the line, turn, request, context and tool bounds, close's session, late session and directory, and Verify's route, audit, text proof and reason.
+- Its cases cover the pinned argv and environment, one program per conversation, a scripted call through the real `mcp-shim`, bridge and router with its pre-start audit record, a held approval confirmed in Session, a locked refusal, built-in tools in init or in a call, a failed server, `EndConversation` without an offer, an answered and an unanswered interrupt on the manual clock, text queued at the interrupt, an answer that follows its turn's result, a foreign answer, each result kind, malformed messages, a reply before init or between turns, a line that never ends, release markers and grants, each bound in the table at and past its ceiling but the interrupt's, which the two interrupt cases cover, close, and Verify through the real Accounts judge.
+- Disposable mutants remove each rule: the tools, strict-config, hook and session flags, the token file, the environment, one process, the init and call checks, the server check, the `EndConversation` scope, release, the empty release, the interrupt, its timer, disarm and bound, the cancelled read, the late and foreign answers, the subagent, result, API error, block, control request, init order and between-turns checks, the line and unterminated line, turn, request, context and tool bounds, close's session, late session and directory, and Verify's route, audit, text proof and reason.
 
 ## Omarchy comparison
 

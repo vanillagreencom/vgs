@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Stand-in for Anthropic's `claude` program, authored 2026-10-02. Its wire is
 // the stream-json excerpt beside it (stream-json.schema.json, transcribed from
-// @anthropic-ai/claude-agent-sdk 0.3.287 sdk.d.ts); every line it reads or
-// writes is checked against that excerpt. Its flags follow the CLI reference
+// @anthropic-ai/claude-agent-sdk 0.3.287 sdk.d.ts); every line it reads, and
+// every line it builds, is checked against that excerpt. A `raw` or
+// `unterminated` step writes a line outside the excerpt for a refusal row. Its flags follow the CLI reference
 // at code.claude.com/docs/en/cli-reference, fetched the same day. It starts
 // the MCP servers its --mcp-config names, as the real program does, so a
 // scripted tool call travels through the real mcp-shim to the tool bridge.
@@ -67,11 +68,22 @@ const session = "fixture-session";
 let uuid = 0;
 const id = () => "fixture-uuid-" + ++uuid;
 
-function write(schema, value) {
+// Every line the stand-in builds passes the excerpt; only a `raw` or
+// `unterminated` step writes text outside it, for the refusal rows.
+function line(schema, value) {
     const errors = Check.errors(excerpt, schema, value);
     if (errors.length !== 0) refuse("output=" + schema + " " + errors.join("; "));
-    process.stdout.write(JSON.stringify(value) + "\n");
+    return JSON.stringify(value) + "\n";
 }
+// The bytes this turn wrote, its newlines included, as the adapter counts them.
+let turnBytes = 0;
+// Several lines in one write reach the adapter in one read.
+function emit(...lines) {
+    const text = lines.join("");
+    turnBytes += Buffer.byteLength(text);
+    process.stdout.write(text);
+}
+function write(schema, value) { emit(line(schema, value)); }
 
 // One MCP client per configured stdio server, as Claude Code connects them.
 const mcp = new Map();
@@ -137,22 +149,34 @@ async function init() {
         slash_commands: [], output_style: "default", skills: [], plugins: [],
         capabilities: ["interrupt_receipt_v1"], uuid: id(), session_id: session });
 }
-const message = content => ({ type: "assistant", message: { id: id(), type: "message", role: "assistant",
-    model: "claude-fixture", content, stop_reason: null, stop_sequence: null, usage: { output_tokens: 1 } },
-    parent_tool_use_id: null, uuid: id(), session_id: session });
+const message = (content, parent = null) => ({ type: "assistant", message: { id: id(), type: "message",
+    role: "assistant", model: "claude-fixture", content, stop_reason: null, stop_sequence: null,
+    usage: { output_tokens: 1 } }, parent_tool_use_id: parent, uuid: id(), session_id: session });
+const said = (text, parent) => line("Assistant", message([{ type: "text", text }], parent));
+// One assistant text line of exactly `bytes` bytes, its newline excluded.
+function sized(bytes) {
+    const value = message([{ type: "text", text: "" }]);
+    value.message.content[0].text = "x".repeat(bytes - Buffer.byteLength(JSON.stringify(value)));
+    return line("Assistant", value);
+}
 function result(subtype, text) {
     const common = { duration_ms: 1, duration_api_ms: 1, num_turns: 1, stop_reason: null, total_cost_usd: 0,
         usage: {}, modelUsage: {}, permission_denials: [], uuid: id(), session_id: session };
     if (subtype === "success" || subtype === "api-error")
-        write("ResultSuccess", { type: "result", subtype: "success", is_error: subtype === "api-error",
+        return line("ResultSuccess", { type: "result", subtype: "success", is_error: subtype === "api-error",
             ...(subtype === "api-error" ? { api_error_status: 429 } : {}), result: text, ...common });
-    else write("ResultError", { type: "result", subtype, is_error: true, errors: ["fixture"], ...common });
+    return line("ResultError", { type: "result", subtype, is_error: true, errors: ["fixture"], ...common });
 }
+const answered = requestId => line("ControlResponse", { type: "control_response", response: { subtype: "success",
+    request_id: requestId, response: { still_queued: [] } } });
+// The largest line the adapter accepts, its newline included.
+const LINE = 1024 * 1024 + 1;
 
 async function run(prompt) {
     const steps = script.turns[Math.min(turnIndex++, script.turns.length - 1)];
     const current = { interrupted: false };
     turn = current;
+    turnBytes = 0;
     if ((!initialized || script.initEachTurn) && !script.skipInit) { await init(); initialized = true; }
     let text = "";
     for (const step of steps) {
@@ -160,7 +184,27 @@ async function run(prompt) {
         if (step.text !== undefined || step.echo) {
             const value = step.echo ? "heard: " + prompt : step.text;
             text += value;
-            write("Assistant", message([{ type: "text", text: value }]));
+            emit(said(value, step.parent));
+        } else if (step.texts !== undefined) {
+            emit(...step.texts.map(value => said(value)));
+        } else if (step.sized !== undefined) {
+            emit(sized(step.sized));
+        } else if (step.fill !== undefined) {
+            // Text lines and the closing result that bring the turn to exactly
+            // step.fill bytes; no line passes the line bound.
+            const closing = result("success", "");
+            let remaining = step.fill - turnBytes - Buffer.byteLength(closing);
+            while (remaining > 0) {
+                let size = Math.min(remaining, LINE);
+                if (remaining - size > 0 && remaining - size < 1024) size -= 1024;
+                emit(sized(size - 1));
+                remaining -= size;
+            }
+            emit(closing);
+            turn = null;
+            return;
+        } else if (step.control !== undefined) {
+            emit(answered(step.control));
         } else if (step.tool !== undefined) {
             const callId = "toolu_" + id();
             const name = step.server ?? "vgs-jarvis";
@@ -181,33 +225,38 @@ async function run(prompt) {
                 error_status: 529, error: "overloaded", uuid: id(), session_id: session });
         } else if (step.raw !== undefined) {
             process.stdout.write(step.raw + "\n");
+        } else if (step.unterminated !== undefined) {
+            // A line that never ends; the stand-in holds it open.
+            process.stdout.write("x".repeat(step.unterminated));
+            await new Promise(() => {});
         } else if (step.hang) {
             // Only an answered interrupt ends the wait.
             await new Promise(resolve => { current.wake = resolve; });
         } else if (step.exit !== undefined) {
             process.exit(step.exit);
         } else if (step.result !== undefined) {
-            result(step.result, text);
+            // A late line follows the result in the same write: no turn is live.
+            emit(result(step.result, text), ...(step.late === undefined ? [] : [said(step.late)]));
             turn = null;
             return;
         } else refuse("script-step");
     }
     if (current.interrupted) return;
-    result("success", text);
+    emit(result("success", text));
     turn = null;
 }
 
 function interrupt(value) {
     record("events.jsonl", { kind: "interrupt", id: value.request_id });
     if (script.ignoreInterrupt) return;
-    write("ControlResponse", { type: "control_response", response: { subtype: "success", request_id: value.request_id,
-        response: { still_queued: [] } } });
-    if (turn !== null) {
-        turn.interrupted = true;
-        turn.wake?.();
-        turn = null;
-        result("error_during_execution", "");
-    }
+    if (turn === null) { emit(answered(value.request_id)); return; }
+    turn.interrupted = true;
+    turn.wake?.();
+    turn = null;
+    // The turn ended before the program read the interrupt: its result is
+    // already on the wire when the answer follows.
+    if (script.answerAfterResult) emit(result("success", ""), answered(value.request_id));
+    else emit(answered(value.request_id), result("error_during_execution", ""));
 }
 
 let tail = "";
