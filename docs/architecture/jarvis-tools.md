@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/Executors.js, shell/plugins/vgs.jarvis/backend/Desktop.js, shell/plugins/vgs.jarvis/backend/Child.js, scripts/test-jarvis-desktop-tools.js, scripts/test-jarvis-child.js, scripts/fixtures/jarvis/desktop-tool.py, scripts/qml-tests/tst_jarvis_service.qml
 
-The clipboard, media and notify executors run the J46 rows of `Tools.TABLE`. [The router](jarvis-approval.md) still owns policy, approval, audit and the result label. No brain is connected until J33, so the router's `offer()` is the only observable.
+The clipboard, media and notify executors run the J46 rows of `Tools.TABLE`. [The router](jarvis-approval.md) still owns policy, approval, audit and the result label. The [chained engine](jarvis-engine.md) uses the router's offers and returns routed results to the brain.
 
 ## Owners
 
@@ -75,7 +75,7 @@ An empty clipboard and a read past the ceiling complete instead, as [Clipboard](
 - Passing cases use the production deadline. Only a control whose broken copy never ends its child gets a 2 s bound.
 - `scripts/test-jarvis-child.js` covers `Child.run` alone: exact environment, stdin, the shared ceiling with replacement characters, deadline, group end, ignored output with a surviving server, cancellation and spawn failure. A control removes each rule.
 - [Validation](validation.md) selects both suites on the seam, executors, child owner, router, Policy, Session, the shared PATH lookup and their fixtures. The sandbox row also selects on the child owner, and the audio daemon row on every file the daemon loads for the seam. `scripts/test-validate.sh` pins those plans and controls each audio daemon edge.
-- No smoke row: J46 adds no surface, service or plugin, and the nested smoke has no brain to call a tool.
+- No smoke row: J46 adds no surface, service or plugin. The desktop tool suite uses stand-ins for the commands that act outside Jarvis.
 
 ## Omarchy comparison
 

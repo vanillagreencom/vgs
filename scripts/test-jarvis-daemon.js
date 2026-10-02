@@ -431,7 +431,7 @@ async function inside() {
     const driverCall = '                    require("./desktop-driver-fixture.js").drive('
         + JSON.stringify(driverRoot) + ', runner, router);\n';
     assert.equal(driverSource.split(driverCall).length - 1, 1);
-    const driverStart = "                    desktop = Desktop.install(";
+    const driverStart = "                    executors = Executors.register(";
     assert.equal(driverSource.split(driverStart).length - 1, 1);
     const earlyDriver = driverSource.replace(driverCall, "").replace(driverStart, driverCall + driverStart);
     assert.notEqual(earlyDriver, driverSource);
@@ -574,11 +574,11 @@ async function inside() {
     const desktop = path.join(process.env.JARVIS_TEST_ROOT, "desktop");
     fs.mkdirSync(desktop, { recursive: true });
     const answers = path.join(root, "desktop-answers.jsonl");
-    const brainPort = "Object.assign(runner.ports, router.ports);";
-    const routingBrain = "Object.assign(runner.ports, router.ports, { brain: { ...runner.ports.brain,\n"
+    const brainPort = "Object.assign(runner.ports, { capture: scripted.capture, brain: scripted.brain, playback: scripted.playback });";
+    const routingBrain = brainPort + "\nObject.assign(runner.ports.brain, {\n"
         + "    send: e => fs.appendFileSync(" + JSON.stringify(answers) + ", JSON.stringify({ routed: router.route("
         + '{ kind: "tool-call", id: "fixture-media", tool: "media.play", arguments: {} }, { gen: e.gen, op: e.op }) }) + "\\n"),\n'
-        + "    outcome: value => fs.appendFileSync(" + JSON.stringify(answers) + ', JSON.stringify(value) + "\\n") } });';
+        + "    outcome: value => fs.appendFileSync(" + JSON.stringify(answers) + ', JSON.stringify(value) + "\\n") });';
     function desktopDaemon(name, edits = [], routerEdits = []) {
         const file = daemonCopy(name);
         instrument(file, gates);
@@ -772,26 +772,26 @@ exit "$failures"
     assert.AssertionError, "a daemon whose router drops the cancel must keep its command running");
     controls++;
     console.log("test-jarvis-daemon: control=desktop-cancel killed");
-    const driverRoot = path.join(root, "desktop-driver");
-    const driverDaemon = daemonCopy("desktop-driver");
+    const seamDriverRoot = path.join(root, "desktop-seam-driver");
+    const driverDaemon = daemonCopy("desktop-seam-driver");
     instrument(driverDaemon, gates);
-    instrumentDesktop(driverDaemon, driverRoot);
+    instrumentDesktop(driverDaemon, seamDriverRoot);
     const Protocol = require(path.join(tree, "bin/lib/qml-library.js")).load(path.join(tree, "shell/plugins/vgs.jarvis/JarvisProtocol.js"));
     for (const [tool, arguments_, kind, content] of [
         ["windows.focus", { window: "0xa1" }, "compositor.focusWindow", /Read back: window 0xa1 has the focus/],
         ["notify.toast", { title: "Fixture", body: "Notice" }, "toast", /^The notice was posted\.$/]
     ]) {
         desk.reset();
-        fs.rmSync(path.join(driverRoot, "results.jsonl"), { force: true });
+        fs.rmSync(path.join(seamDriverRoot, "results.jsonl"), { force: true });
         await conversation(driverDaemon, async w => {
-            fs.writeFileSync(path.join(driverRoot, "call.json"), JSON.stringify({ id: "driver-" + tool, tool, arguments: arguments_ }));
+            fs.writeFileSync(path.join(seamDriverRoot, "call.json"), JSON.stringify({ id: "driver-" + tool, tool, arguments: arguments_ }));
             await desktopUntil(() => w.messages.some(message => message.type === "request"), "the driver sent no desktop request");
             const request = w.messages.find(message => message.type === "request");
             assert.equal(request.kind, kind);
             w.reply(desk.serve(Protocol, request));
-            await desktopUntil(() => lines(path.join(driverRoot, "results.jsonl")).some(result => result.outcome !== undefined),
+            await desktopUntil(() => lines(path.join(seamDriverRoot, "results.jsonl")).some(result => result.outcome !== undefined),
                 "the driver received no desktop result");
-            const result = lines(path.join(driverRoot, "results.jsonl")).find(value => value.outcome !== undefined);
+            const result = lines(path.join(seamDriverRoot, "results.jsonl")).find(value => value.outcome !== undefined);
             assert.equal(result.outcome, "completed");
             assert.match(result.content, content);
         });
