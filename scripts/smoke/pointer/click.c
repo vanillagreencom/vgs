@@ -3,7 +3,7 @@
  * nested compositor's and never the live session's: the helper connects to
  * the socket it is given and to nothing else.
  *
- *   click X Y WIDTH HEIGHT [move | right | drag X2 Y2]
+ *   click X Y WIDTH HEIGHT [move | right | drag X2 Y2 | wheel STEPS]
  *
  * Moves the pointer to (X, Y) on a layout WIDTH by HEIGHT, presses and
  * releases the left button, and prints `clicked X Y`. With `move` it only
@@ -12,6 +12,9 @@
  * prints `clicked X Y`.
  * With `drag X2 Y2` it presses at (X, Y), moves to (X2, Y2) in ten steps
  * with the button held, releases there and prints `dragged X Y X2 Y2`.
+ * With `wheel STEPS` it turns a vertical wheel STEPS notches at (X, Y),
+ * positive down, as one discrete axis event of WHEEL_NOTCH per notch, and
+ * prints `wheeled X Y STEPS`.
  * Exit 2 on a bad invocation, 1 when the display cannot be opened or lacks
  * the protocol, printed as `click: refused: <key>=<value>`.
  */
@@ -24,6 +27,8 @@
 
 #define BTN_LEFT 0x110
 #define BTN_RIGHT 0x111
+/* The axis length of one wheel notch, libinput's 15 degrees. */
+#define WHEEL_NOTCH 15
 
 static struct wl_seat *seat = NULL;
 static struct zwlr_virtual_pointer_manager_v1 *manager = NULL;
@@ -59,15 +64,25 @@ static int number(const char *text, uint32_t *out) {
     return 1;
 }
 
+static int steps_of(const char *text, int *out) {
+    char *end = NULL;
+    long value = strtol(text, &end, 10);
+    if (*text == '\0' || *end != '\0' || value == 0 || value < -100 || value > 100) return 0;
+    *out = (int)value;
+    return 1;
+}
+
 int main(int argc, char **argv) {
     uint32_t x, y, width, height, x2 = 0, y2 = 0;
+    int steps = 0;
     int move_only = argc == 6 && strcmp(argv[5], "move") == 0;
     int right = argc == 6 && strcmp(argv[5], "right") == 0;
     int drag = argc == 8 && strcmp(argv[5], "drag") == 0;
+    int wheel = argc == 7 && strcmp(argv[5], "wheel") == 0;
     uint32_t button = right ? BTN_RIGHT : BTN_LEFT;
-    if ((argc != 5 && !move_only && !right && !drag) || !number(argv[1], &x) || !number(argv[2], &y) || !number(argv[3], &width) || !number(argv[4], &height) || width == 0 || height == 0
-        || (drag && (!number(argv[6], &x2) || !number(argv[7], &y2)))) {
-        fprintf(stderr, "click: refused: usage=X Y WIDTH HEIGHT [move | right | drag X2 Y2]\n");
+    if ((argc != 5 && !move_only && !right && !drag && !wheel) || !number(argv[1], &x) || !number(argv[2], &y) || !number(argv[3], &width) || !number(argv[4], &height) || width == 0 || height == 0
+        || (drag && (!number(argv[6], &x2) || !number(argv[7], &y2))) || (wheel && !steps_of(argv[6], &steps))) {
+        fprintf(stderr, "click: refused: usage=X Y WIDTH HEIGHT [move | right | drag X2 Y2 | wheel STEPS]\n");
         return 2;
     }
     struct wl_display *display = wl_display_connect(NULL);
@@ -87,7 +102,12 @@ int main(int argc, char **argv) {
     zwlr_virtual_pointer_v1_motion_absolute(pointer, now_ms(), x, y, width, height);
     zwlr_virtual_pointer_v1_frame(pointer);
     wl_display_roundtrip(display);
-    if (!move_only) {
+    if (wheel) {
+        zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
+        zwlr_virtual_pointer_v1_axis_discrete(pointer, now_ms(), WL_POINTER_AXIS_VERTICAL_SCROLL, wl_fixed_from_int(WHEEL_NOTCH * steps), steps);
+        zwlr_virtual_pointer_v1_frame(pointer);
+        wl_display_roundtrip(display);
+    } else if (!move_only) {
         zwlr_virtual_pointer_v1_button(pointer, now_ms(), button, WL_POINTER_BUTTON_STATE_PRESSED);
         zwlr_virtual_pointer_v1_frame(pointer);
         wl_display_roundtrip(display);
@@ -106,6 +126,7 @@ int main(int argc, char **argv) {
     wl_display_roundtrip(display);
     wl_display_disconnect(display);
     if (drag) printf("dragged %u %u %u %u\n", x, y, x2, y2);
+    else if (wheel) printf("wheeled %u %u %d\n", x, y, steps);
     else printf("%s %u %u\n", move_only ? "moved" : "clicked", x, y);
     return 0;
 }

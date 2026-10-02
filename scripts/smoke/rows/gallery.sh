@@ -103,6 +103,21 @@ expect "control: an unselected row's Tab stop fails the action focus reading" Fa
 expect "the device Tab control is released" ok ipc smoke popupDrop device-all-tab-stops
 rm -r -- "${repo:?}/shell/Core/GalleryDeviceControl" || fail "removing the Gallery device controls failed"
 
+# Pointer scrolling (components.md) on a plain Flickable a plugin declares,
+# the gallery's slim list, brought into the window first: a mouse drag
+# leaves it where it was and a wheel notch scrolls it. The control gives the
+# list Qt's left-button drag back through the probe, and the same drag then
+# scrolls it. The Tab tour below reads the window's keyboard reveal after.
+slim_revealed() { [[ $(ipc smoke revealText window vgs.gallery ListItem "Slim 1") =~ ^[0-9.]+$ ]] && echo revealed; }
+slim_kind() { ipc smoke viewHolding window vgs.gallery "Slim 1" | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps([v["type"], v["contentY"], v["acceptedButtons"]]))'; }
+expect "the slim list is brought into the gallery's view" revealed slim_revealed
+expect "the slim list is a Flickable at its top that takes no mouse button" '["Flickable", 0, 0]' slim_kind
+expect "a mouse drag on the slim list leaves it where it was" still view_pointer window:Gallery window vgs.gallery "Slim 1" drag
+expect "a wheel notch on the slim list scrolls it" moved view_pointer window:Gallery window vgs.gallery "Slim 1" wheel
+expect "control: the probe gives the slim list Qt's left-button drag" 0 ipc smoke setViewButtons window vgs.gallery "Slim 1" 1
+expect "control: the same drag then scrolls the slim list" moved view_pointer window:Gallery window vgs.gallery "Slim 1" drag
+expect "the slim list takes no mouse button again" 1 ipc smoke setViewButtons window vgs.gallery "Slim 1" 0
+
 expect_poll "the gallery draws every focus example" '[]' ipc smoke galleryFocusMissing window vgs.gallery
 gallery_tab_tour() {
   local required focus label seen_json

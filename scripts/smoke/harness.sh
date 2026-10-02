@@ -840,12 +840,15 @@ cpu_some_pct() {
 # click X Y: one left click at that layout position on the nested seat.
 # click_centre HOST_KEY ID: the same on the centre of a built instance.
 # hover X Y: the pointer moved there with no press. drag X Y X2 Y2: a
-# press at (X, Y), moved to (X2, Y2) and released. type_keys ARGS...:
+# press at (X, Y), moved to (X2, Y2) and released. wheel X Y STEPS: the
+# pointer moved to (X, Y) and a vertical wheel turned STEPS notches there,
+# positive down. type_keys ARGS...:
 # keys typed on the nested seat through wtype, so a row can reach a
 # focused input; wtype's own arguments, such as -k Escape, pass through.
 # Each prints nothing on success; a row reads its status.
 # pointer_at: `X Y`, the layout position where the last click, hover,
-# right_click or drag that succeeded left the pointer, empty before any.
+# right_click, drag or wheel that succeeded left the pointer, empty before
+# any.
 # A reset mode shrinks the layout under a pointer it no longer covers, and
 # the mode taken again does not move the pointer back; a caller puts it
 # back from here (settle_hold in scripts/sandbox-shots.sh).
@@ -854,6 +857,7 @@ click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" >/dev/n
 hover() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" move >/dev/null && pointer_at="$1 $2"; }
 right_click() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" right >/dev/null && pointer_at="$1 $2"; }
 drag() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" drag "$3" "$4" >/dev/null && pointer_at="$3 $4"; }
+wheel() { "${shell_env[@]}" "$sandbox/click" "$1" "$2" "$mon_w" "$mon_h" wheel "$3" >/dev/null && pointer_at="$1 $2"; }
 type_keys() { "${shell_env[@]}" wtype "$@"; }
 # compositor_logs_on: the nested compositor logs from here to the end of
 # the run. The configuration turns its logs on once the flag file exists,
@@ -1719,6 +1723,44 @@ click_in() {
   [[ $rect == \[* ]] || { echo "click_in: no $4 $5: $rect" >&2; return 1; }
   read -r x y < <(at_centre "$1" "$rect") || return 1
   click "$x" "$y"
+}
+# view_pointer SURFACE HOST_KEY ID TEXT drag|wheel: on the view the
+# probe's viewHolding finds for TEXT in that instance, drawn in SURFACE, a
+# surface_box name, either a mouse drag from two thirds down the view to
+# one third, 4 px in from its left edge where a row's padding lies, or one
+# wheel notch down there, the pointer hovered at the start first. Answers
+# `moved` once the view's contentY changes, polled every 0.1 s, or `still`
+# when it holds for 1 s: a drag steals the press within its moves, and a
+# wheel notch starts the view's flick in the frame that takes it. A view
+# that cannot scroll down, or that does not lie whole inside its window,
+# answers `no-room` or `outside` with the reading, and a missing view the
+# probe's answer, before any input.
+view_pointer() { # SURFACE HOST_KEY ID TEXT drag|wheel
+  local view surface plan x y y2 now
+  view="$(ipc smoke viewHolding "$2" "$3" "$4")" || return 1
+  [[ $view == \{* ]] || { echo "$view"; return 0; }
+  surface="$(surface_box "$1")" || return 1
+  plan="$(python3 -c '
+import json, sys
+v = json.loads(sys.argv[1]); s = json.loads(sys.argv[2])
+x, y, w, h = v["box"]
+if v["contentHeight"] - v["height"] - v["contentY"] < 1: print("no-room " + sys.argv[1]); sys.exit()
+if x < 0 or y < 0 or x + w > s[2] or y + h > s[3]: print("outside " + sys.argv[1]); sys.exit()
+print(int(s[0] + x + 4), int(s[1] + y + 2 * h / 3), int(s[1] + y + h / 3))' "$view" "$surface")" || return 1
+  [[ $plan =~ ^[0-9]+\ [0-9]+\ [0-9]+$ ]] || { echo "$plan"; return 0; }
+  read -r x y y2 <<<"$plan"
+  hover "$x" "$((y + 1))" || return 1
+  if [[ $5 == drag ]]; then drag "$x" "$y" "$x" "$y2" || return 1
+  else wheel "$x" "$y" 1 || return 1
+  fi
+  for _ in $(seq 1 10); do
+    sleep 0.1
+    now="$(ipc smoke viewHolding "$2" "$3" "$4")" || return 1
+    if python3 -c 'import json,sys; sys.exit(0 if abs(json.loads(sys.argv[1])["contentY"] - json.loads(sys.argv[2])["contentY"]) > 0.5 else 1)' "$view" "$now"; then
+      echo moved; return 0
+    fi
+  done
+  echo still
 }
 # settings_page_open ID: the Settings plugin enabled and its window
 # summoned on plugin ID's page. settings_page_close: the window hidden and

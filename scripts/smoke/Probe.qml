@@ -354,6 +354,19 @@ Scope {
         return String(flick.contentY);
     }
 
+    // viewHolding's view: the nearest Flickable ancestor of the first
+    // shown item under the instance that reads `text`, or `absent` for no
+    // such item, `no-view` for one no Flickable holds.
+    function viewOf(hostKey, id, text) {
+        const item = root.instance(hostKey, id);
+        if (item === null) return "absent";
+        const target = root.descendants(item).find(child => root.reads(child, text) && root.visibleInTree(child));
+        if (target === undefined) return "absent";
+        for (let at = target.parent; at !== null && at !== item.parent; at = at.parent)
+            if (at.contentY !== undefined && at.flickableDirection !== undefined) return at;
+        return "no-view";
+    }
+
     function windowBox(item) {
         const at = item.mapToItem(null, 0, 0);
         return [at.x, at.y, item.width, item.height];
@@ -1378,6 +1391,29 @@ Scope {
                 bar: root.windowBox(area.bar),
                 thumb: root.windowBox(area.bar.thumb)
             })));
+        }
+        // The innermost Flickable, a ScrollArea or a list view included,
+        // holding the first shown item under an instance that reads `text`
+        // (reads): its type, scroll position, content height, height, the
+        // mouse buttons that drag it and its box in the window's
+        // coordinates, or `absent` / `no-view`.
+        function viewHolding(hostKey: string, id: string, text: string): string {
+            const view = root.viewOf(hostKey, id, text);
+            if (typeof view === "string") return view;
+            return root.json({
+                type: root.typeName(view), contentY: view.contentY, contentHeight: view.contentHeight,
+                height: view.height, acceptedButtons: view.acceptedButtons, box: root.windowBox(view)
+            });
+        }
+        // Sets the mouse buttons that drag the view viewHolding finds, so a
+        // row's control gives one view Qt's left-button drag back; answers
+        // the buttons it held before.
+        function setViewButtons(hostKey: string, id: string, text: string, buttons: int): string {
+            const view = root.viewOf(hostKey, id, text);
+            if (typeof view === "string") return view;
+            const before = view.acceptedButtons;
+            view.acceptedButtons = buttons;
+            return String(before);
         }
         // Whether an item under the instance holds keyboard focus in an
         // active window, so a row types only once the compositor gave the

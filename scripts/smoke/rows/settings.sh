@@ -5,7 +5,8 @@
 # An unrelated change keeps an edit in progress: the same drawn field, its
 # focus, its text and its cursor. The plugin is disabled again at the end,
 # so the later rows' lending records hold no Settings shortcut or IPC
-# target. Dispatches asked for back to back run in order behind one
+# target. A mouse drag leaves a page where it was, while a wheel notch and
+# Tab scroll it. Dispatches asked for back to back run in order behind one
 # process, the queue has a bound, and a process that cannot start does not
 # stop the queue.
 set -euo pipefail
@@ -293,6 +294,37 @@ expect_poll "the page draws the Slack tokens row with its hint and no line per a
 expect "no Slack tokens row takes an edit" '[[]]' ipc smoke statusRowInputs window vgs.settings
 set_slack_photos absent
 expect_poll "the extra off again takes the Slack tokens row away" '[]' status_of vgs.notifications
+
+# Pointer scrolling (components.md): a mouse drag on the page leaves it
+# where it was, a wheel notch scrolls it, and Tab still scrolls each focused
+# row into view. The control gives the same page Qt's left-button drag back
+# through the probe, and the same drag then scrolls it.
+settings_view() { ipc smoke viewHolding window vgs.settings Layout; }
+settings_view_y() { settings_view | py_reply 'import json,sys; print(json.load(sys.stdin)["contentY"])'; }
+settings_view_kind() { settings_view | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps([v["type"], v["acceptedButtons"]]))'; }
+expect "the window opens the fixture's page for the scroll rows" ok ipc smoke invokeInstance window vgs.settings openPlugin acme.probe
+expect_poll "the page draws the fixture's fields for the scroll rows" '[9, 0]' page_fields
+expect "the page scrolls in a ScrollArea that takes no mouse button" '["ScrollArea", 0]' settings_view_kind
+expect "a mouse drag on the page leaves it where it was" still view_pointer window:Settings window vgs.settings Layout drag
+expect "a wheel notch on the page scrolls it" moved view_pointer window:Settings window vgs.settings Layout wheel
+expect "control: the probe gives the page Qt's left-button drag" 0 ipc smoke setViewButtons window vgs.settings Layout 1
+expect "control: the same drag then scrolls the page" moved view_pointer window:Settings window vgs.settings Layout drag
+expect "the page takes no mouse button again" 1 ipc smoke setViewButtons window vgs.settings Layout 0
+# Tab until the page scrolls, each focused item read in view.
+settings_tab_reveal() {
+  local before focus now
+  before="$(settings_view_y)" || return 1
+  for _ in $(seq 1 40); do
+    type_keys -k Tab || return 1
+    focus="$(ipc smoke focused window vgs.settings)" || return 1
+    python3 -c 'import json,sys; r=json.loads(sys.argv[1]); sys.exit(0 if isinstance(r, list) and len(r) == 5 and r[4] else 1)' "$focus" 2>/dev/null || { printf 'out-of-view=%s\n' "$focus"; return 0; }
+    now="$(settings_view_y)" || return 1
+    if [[ $now != "$before" ]]; then printf 'ok\n'; return 0; fi
+  done
+  printf 'not-scrolled contentY=%s\n' "$before"
+}
+expect "Tab scrolls the page to bring each focused row into view" ok settings_tab_reveal
+rest_pointer || fail "moving the pointer off the Settings window failed"
 
 expect "the gear closes the Settings window after the edit rows" ok ipc smoke invokeInstance "$(bar_key)" vgs.settings toggle ''
 expect_poll "the Settings window is gone after the edit rows" 0 window_count Settings
