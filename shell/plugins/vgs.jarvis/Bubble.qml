@@ -74,15 +74,23 @@ Item {
                         text: root.stateText
                         elide: Text.ElideRight
                     }
-                    Label {
+                    // Qt elides wrapped text on the right alone, so the whole
+                    // text hangs from the bottom of a clipped window and its
+                    // newest lines are the ones drawn.
+                    Item {
                         Layout.fillWidth: true
-                        visible: text !== ""
-                        role: "body"
-                        text: root.words
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                        maximumLineCount: Theme.voiceBubble.textLines
-                        elide: Text.ElideRight
+                        visible: tail.text !== ""
+                        implicitHeight: Math.min(tail.implicitHeight, Theme.voiceBubble.textLines * tail.lineBox)
+                        clip: true
+                        Label {
+                            id: tail
+                            width: parent.width
+                            y: parent.height - height
+                            role: "body"
+                            text: root.words
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
                     }
                 }
                 IconButton {

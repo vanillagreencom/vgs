@@ -64,13 +64,29 @@ print(sum(pixels[i:i+3]==c for i in range(0,len(pixels),3)))
   [[ $count -gt 0 ]] && echo drawn || echo blank
 }
 # The fixture's assistant caption as the bubble draws it: one visible label
-# holding the whole text, cut at the token's three lines.
+# holding the whole text, longer than the token's three lines, inside one
+# clipping window of exactly that height. The label's bottom on the window's
+# bottom draws the text's end; its top on the window's top draws its start.
 jarvis_bubble_words() {
-  ipc smoke layerItems vgs.jarvis Label text,visible,lineCount,truncated | py_reply '
+  local labels windows lines
+  labels="$(ipc smoke layerItems vgs.jarvis Label text,visible,lineCount,lineBox)" &&
+    windows="$(ipc smoke layerItems vgs.jarvis QQuickItem clip,visible)" &&
+    lines="$(ipc smoke themeValue voiceBubble.textLines)" || return 1
+  [[ $labels == \[* && $windows == \[* ]] || { printf 'jarvis-bubble: words-reader=unreadable labels=%s windows=%s\n' "$labels" "$windows" >&2; return 1; }
+  python3 -c '
 import json,sys
-shown=[v for s,r,v in json.load(sys.stdin) if v["visible"] and v["text"]==sys.argv[1]]
-print("absent" if not shown else "three-lines" if len(shown)==1 and shown[0]["lineCount"]==3 and shown[0]["truncated"] else "unbounded")
-' "$jarvis_bubble_reply"
+labels,windows=map(json.loads,sys.argv[1:3]); lines=int(sys.argv[3]); text=sys.argv[4]
+shown=[(s,r,v) for s,r,v in labels if v["visible"] and v["text"]==text]
+if not shown: print("absent"); sys.exit()
+if len(shown)!=1: print("unbounded"); sys.exit()
+screen,(x,y,w,h),label=shown[0]
+held=[r for s,r,v in windows if s==screen and v["visible"] and v["clip"] and r[0]==x and r[2]==w]
+bounded=(len(held)==1 and label["lineCount"]>lines and abs(held[0][3]-lines*label["lineBox"])<=1
+         and abs(h-label["lineCount"]*label["lineBox"])<=1)
+if not bounded: print("unbounded"); sys.exit()
+top,height=held[0][1],held[0][3]
+print("latest-lines" if abs(y+h-top-height)<=1 else "first-lines" if abs(y-top)<=1 else "unbounded")
+' "$labels" "$windows" "$lines" "$jarvis_bubble_reply"
 }
 jarvis_bubble_caption() {
   ipc smoke jarvisProcess | py_reply '
@@ -176,10 +192,10 @@ expect "unmute still leaves no capture" closed jarvis_key_state capture
 jarvis_bubble_reply="$(python3 -c 'print(" ".join(["scripted reply"] * 24))')"
 jarvis_bubble_begin
 jarvis_bubble_think caption
-expect_poll "the bubble draws Jarvis's words within three lines" three-lines jarvis_bubble_words
+expect_poll "the bubble draws the latest three lines of Jarvis's words" latest-lines jarvis_bubble_words
 expect "the worded bubble keeps its presented indicator" presented jarvis_bubble_state
 geometry expect_poll "the worded bubble stays at bottom centre" bottom-centre jarvis_bubble_geometry
-read -r words_x words_y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(round(x+w/2),round(y+h/2))' "$(control_box vgs:layer vgs.jarvis Label text "$jarvis_bubble_reply")")
+read -r words_x words_y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(round(x+w/2),round(y+h/2))' "$(control_box vgs:layer vgs.jarvis QQuickItem clip true)")
 jarvis_bubble_pass "$words_x" "$words_y"
 jarvis_key_stop
 jarvis_key_stop_assertion
@@ -243,7 +259,7 @@ jarvis_disable
 # words controls keep the caption on the wire and break one bubble rule each.
 jarvis_bubble_file="$repo/shell/plugins/vgs.jarvis/Bubble.qml"
 cp -- "$jarvis_bubble_file" "$sandbox/jarvis-bubble-before"
-for jarvis_bubble_mutant in geometry focus words lines generation; do
+for jarvis_bubble_mutant in geometry focus words lines head generation; do
   python3 - "$jarvis_bubble_file" "$jarvis_bubble_mutant" <<'PY'
 from pathlib import Path
 import sys
@@ -252,7 +268,8 @@ needle,replacement={
     "geometry": ("anchors.bottomMargin: Theme.voiceBubble.margin", "anchors.bottomMargin: Theme.voiceBubble.margin + Theme.voiceBubble.gap"),
     "focus": ("screen.name === service.focusedOutput", "true"),
     "words": ('caption.role === "assistant"', "false"),
-    "lines": ("maximumLineCount: Theme.voiceBubble.textLines", "maximumLineCount: Theme.voiceBubble.textLines + 1"),
+    "lines": ("Theme.voiceBubble.textLines * tail.lineBox", "(Theme.voiceBubble.textLines + 1) * tail.lineBox"),
+    "head": ("y: parent.height - height", "y: 0"),
     "generation": ("caption.gen === state.gen", "true")
 }[sys.argv[2]]
 s=p.read_text(); assert s.count(needle)==1
@@ -277,13 +294,16 @@ PY
     lines)
       jarvis_bubble_think caption
       expect_poll "control: a fourth line fails the same words reader" unbounded jarvis_bubble_words ;;
+    head)
+      jarvis_bubble_think caption
+      expect_poll "control: the first three lines fail the same words reader" first-lines jarvis_bubble_words ;;
     generation)
       jarvis_bubble_think caption
       jarvis_key_stop
       jarvis_key_stop_assertion
       jarvis_bubble_begin
       jarvis_bubble_think
-      expect_poll "control: ignoring the conversation fails the same words reader" three-lines jarvis_bubble_words ;;
+      expect_poll "control: ignoring the conversation fails the same words reader" latest-lines jarvis_bubble_words ;;
   esac
   jarvis_key_stop
   jarvis_disable
