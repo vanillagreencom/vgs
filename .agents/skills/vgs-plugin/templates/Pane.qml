@@ -1,11 +1,14 @@
 import QtQuick
 import qs.Commons
-import qs.Ui as Ui
+import qs.Ui
 
 // __NAME__ pane: one section mounted inside the enabled holder of the
 // exclusive `panes` capability. The core assigns this plugin's scoped
-// shell object after creation. The pane fills the holder's container and
-// keeps every setup, setting and secret inside this plugin's own API.
+// shell object after creation. The holder draws the section's title and
+// icon, owns the inset around it and scrolls it, so the pane is a body
+// alone: no Pane, no title, its content from x 0, and its height its
+// implicitHeight, which the holder sizes its container from. It keeps
+// every setup, setting and secret inside this plugin's own API.
 FocusScope {
     id: root
 
@@ -19,21 +22,20 @@ FocusScope {
 
     function close() {}
 
-    implicitWidth: Theme.size.panel.lg
+    implicitWidth: Theme.size.window.width
     implicitHeight: content.implicitHeight
     focus: true
 
-    Ui.Pane {
+    Column {
         id: content
-        anchors.fill: parent
-        header: Ui.Label {
-            role: "h2"
-            text: "__NAME__"
-        }
+        width: root.width
+        spacing: Theme.stack.group
 
-        Ui.Label {
+        Label {
+            width: parent.width
             role: "body"
             text: "Pane content"
+            wrapMode: Text.Wrap
         }
     }
 }

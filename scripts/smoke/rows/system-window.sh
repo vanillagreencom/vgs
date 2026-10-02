@@ -4,12 +4,14 @@
 # the row reads the sidebar listing exactly the enabled sections under
 # their groups in the capability's order; `{}` opening the first section,
 # then the one shown last; a deep link mounting its section with the rest
-# of the payload; an unknown id opening with a notice; an own-pane summon;
-# each switch destroying the section before it in the window host's build
-# records; Show in bar placing and removing the fixture widget, offered
-# only to a section with one; a section taller than the room scrolling in
-# the page; a disabled section leaving the sidebar while the window is
-# open; the window read as every application window is (app_window_rows,
+# of the payload; an unknown id opening with a notice; the plugin's own
+# open and toggle IPC; an own-pane summon; each switch destroying the
+# section before it in the window host's build records; a click on Show in
+# bar placing and removing the fixture widget, offered only to a section
+# with one; a section taller than the room scrolling in the page and a
+# shorter one filling it; the selection staying on its section as another
+# joins and leaves; a disabled section leaving the sidebar while the
+# window is open; the window read as every application window is (app_window_rows,
 # scripts/smoke/app-window.sh); its edges within one pixel; and a keyboard
 # path from SUPER+COMMA to every step and back out. Shell & Plugins hands
 # the Settings summon command (docs/architecture/settings-window.md) to a
@@ -60,7 +62,8 @@ print(json.dumps([[t for _, t in heads], [t for _, t in items]], separators=(","
 sys_read() { ipc smoke readInstance window vgs.system "$1"; }
 sys_current() { ipc smoke readDescendant window vgs.system Sidebar current; }
 sys_search() { ipc smoke readDescendant window vgs.system TextField text; }
-# The label of the item that holds the window's keyboard focus.
+# The label of the item that holds the window's keyboard focus: a text
+# field's text, or its placeholder while it is empty.
 sys_focus() { ipc smoke focused window vgs.system | py_reply 'import json,sys; r=json.load(sys.stdin); print(r[1] if isinstance(r, list) else r)'; }
 # Whether each Show in bar switch draws: its text shows only while it does.
 sys_switch() { ipc smoke itemTexts window vgs.system Switch | py_reply 'import json,sys; print(json.dumps([t != [] for t in json.load(sys.stdin)]))'; }
@@ -104,9 +107,10 @@ sys_was="$(plugin_enabled vgs.system)" || fail "vgs.system's enabled state is un
 expect "no fixture panes holder is installed" absent plugin_enabled acme.panehost
 
 install_plugin_copy acme.pane acme.pane "Pane" 10
-install_plugin_copy acme.pane acme.pane-alt "Pane Alt" 20
+# Pane Alt sorts before Pane by order and after it by name.
+install_plugin_copy acme.pane acme.pane-alt "Pane Alt" 5
 install_plugin_copy acme.pane acme.pane-net "Pane Net" 10 Connectivity
-install_plugin_copy acme.pane acme.pane-off "Pane Off" 30
+install_plugin_copy acme.pane acme.pane-off "Pane Off" 1
 # Pane Net has no bar widget and is taller than any room.
 python3 - "$home/.config/vgs/plugins/acme.pane-net" <<'PY'
 import json, os, sys
@@ -134,12 +138,12 @@ expect_poll "the System service registered its shortcut and IPC target" True sys
 expect_poll "the Hyprland layer binds SUPER+COMMA to the System shortcut" '[[64, "COMMA"]]' sys_binds
 
 # `{}` with nothing remembered opens the first section, with the keyboard
-# on the sidebar's rows.
+# in the sidebar's search field.
 expect "the IPC opens the System window" ok ipc shell summon window vgs.system '{}'
-expect_poll "the sidebar lists exactly the enabled sections under their groups in order" '[["Connectivity","Fixtures"],["Pane Net","Pane","Pane Alt","Shell & Plugins"]]' sys_sidebar
+expect_poll "the sidebar lists exactly the enabled sections under their groups in order" '[["Connectivity","Fixtures"],["Pane Net","Pane Alt","Pane","Shell & Plugins"]]' sys_sidebar
 expect_poll "{} with nothing remembered mounts the first section" '["acme.pane-net"]' window_panes
 expect "the first section receives an empty payload" '"{}"' sys_payload acme.pane-net
-expect_poll "{} leaves the keyboard on the sidebar's rows" "System sections" sys_focus
+expect_poll "{} opens with the keyboard in the search field" "Search sections" sys_focus
 expect "a section with no bar widget offers no Show in bar" '[false]' sys_switch
 geometry expect_poll "a section taller than the room grows the page, which scrolls it" fits sys_pane_fits acme.pane-net
 app_window_rows System vgs.system
@@ -151,26 +155,49 @@ expect "a deep link opens the System window" ok ipc shell summon window vgs.syst
 expect_poll "the deep link mounts its section alone" '["acme.pane-alt"]' window_panes
 expect "the deep-linked section receives the payload without pane" '"{\"from\":\"link\"}"' sys_payload acme.pane-alt
 expect_poll "the deep link puts the keyboard in the section" "Pane edit" sys_focus
-expect "the sidebar selects the deep-linked section" 2 sys_current
+expect "the sidebar selects the deep-linked section" 1 sys_current
 expect "an unknown id answers ok" ok ipc shell summon window vgs.system '{"pane":"acme.nope"}'
 expect_poll "an unknown id names itself in a notice" '"No System section named acme.nope."' sys_read notice
 expect "an unknown id keeps the section shown last" '["acme.pane-alt"]' window_panes
+
+# The plugin's own IPC: open shows a section and keeps an open window
+# open; toggle closes it, then opens it on the section shown last.
+expect "the plugin's IPC opens a section" ok ipc vgs.system invoke open '{"pane":"acme.pane-net"}'
+expect_poll "the plugin's IPC open mounts its section" '["acme.pane-net"]' window_panes
+expect "the plugin's IPC open again answers ok" ok ipc vgs.system invoke open '{"pane":"acme.pane-net"}'
+expect "a second open keeps the System window open" 1 window_count System
+expect "the plugin's IPC toggle answers ok" ok ipc vgs.system invoke toggle ''
+expect_poll "toggle closes the open System window" 0 window_count System
+expect "the plugin's IPC toggle again answers ok" ok ipc vgs.system invoke toggle ''
+expect_poll "toggle opens the System window again" 1 window_count System
+expect_poll "toggle opens on the section shown last" '["acme.pane-net"]' window_panes
 
 # Switching destroys the section before it.
 expect "showing Pane through the window is allowed" ok ipc smoke invokeInstance window vgs.system enterPane acme.pane
 expect_poll "switching to Pane destroys Pane Alt's build record" '["acme.pane"]' window_panes
 expect_poll "the shown section clears the notice" '""' sys_read notice
+geometry expect_poll "a section shorter than the room fills the room" fits sys_pane_fits acme.pane
 
-# Show in bar: offered to a section with a widget, it places and removes
-# that widget through panes.setPlaced.
+# The selection follows its section: a section that sorts before the
+# selected one joins the list while the window is open, and the selection
+# stays on Pane.
+expect "Pane is selected before another section joins" 2 sys_current
+expect "enabling Pane Off while the window is open is allowed" ok ipc shell setPluginEnabled acme.pane-off true
+expect_poll "Pane Off joins the sidebar before Pane Alt" '[["Connectivity","Fixtures"],["Pane Net","Pane Off","Pane Alt","Pane","Shell & Plugins"]]' sys_sidebar
+expect_poll "the selection stays on Pane as Pane Off joins" 3 sys_current
+expect "disabling Pane Off again is allowed" ok ipc shell setPluginEnabled acme.pane-off false
+expect_poll "the selection stays on Pane as Pane Off leaves" 2 sys_current
+
+# Show in bar: offered to a section with a widget, a click on the drawn
+# switch places and removes that widget through panes.setPlaced.
 expect_poll "a section with a bar widget offers Show in bar" '[true]' sys_switch
 expect_poll "the fixture widget starts in the bar" True widget_placed acme.pane
 expect "Show in bar reads the widget placed" true sys_switch_checked
-expect "Show in bar removes the widget" ok ipc smoke invokeInstance window vgs.system togglePlaced acme.pane
+click_in window:System window vgs.system Switch "Show in bar" || fail "the click on Show in bar failed"
 expect_poll "the fixture widget leaves the bar" False widget_placed acme.pane
 expect_poll "Show in bar follows the removal" false sys_switch_checked
 expect "the fixture stays enabled once unplaced" True plugin_enabled acme.pane
-expect "Show in bar places the widget again" ok ipc smoke invokeInstance window vgs.system togglePlaced acme.pane
+click_in window:System window vgs.system Switch "Show in bar" || fail "the second click on Show in bar failed"
 expect_poll "the fixture widget returns to the bar" True widget_placed acme.pane
 expect_poll "Show in bar follows the placement" true sys_switch_checked
 
@@ -248,11 +275,12 @@ expect_poll "the sidebar lists exactly the sections still enabled" '[["Connectiv
 expect_poll "disabling the shown section drops its mount" '[]' window_panes
 expect_poll "the window names the section that left" '"acme.pane-alt is no longer enabled."' sys_read notice
 expect "enabling Pane Alt again is allowed" ok ipc shell setPluginEnabled acme.pane-alt true
-expect_poll "Pane Alt returns to the sidebar" '[["Connectivity","Fixtures"],["Pane Net","Pane","Pane Alt","Shell & Plugins"]]' sys_sidebar
+expect_poll "Pane Alt returns to the sidebar" '[["Connectivity","Fixtures"],["Pane Net","Pane Alt","Pane","Shell & Plugins"]]' sys_sidebar
 
 # A payload open() refuses closes the window.
 expect "a payload that is no object is refused" "refused: open-failed=vgs.system" ipc shell summon window vgs.system '[1]'
 expect "a payload key without pane is refused" "refused: open-failed=vgs.system" ipc shell summon window vgs.system '{"from":"x"}'
+expect "a pane that is no string is refused" "refused: open-failed=vgs.system" ipc shell summon window vgs.system '{"pane":5}'
 expect_poll "a refused payload leaves no System window" 0 window_count System
 
 # Own-pane summon: a section's own Settings link opens the window on it.
@@ -264,11 +292,12 @@ expect "hiding the System window after the own-pane summon is allowed" ok ipc sh
 expect_poll "hiding the System window drops the mounted section" '[]' window_panes
 
 # Keyboard alone: SUPER+COMMA opens the section shown last with the keys
-# on the rows; Down moves the selection and mounts nothing; Return enters
-# and mounts; Escape leaves the section, then closes the window; a letter
-# jumps by name; Right enters; Ctrl+F reaches the search field, where
-# typing filters, Escape clears, and Return enters the first match; End
-# and Return on Shell & Plugins open Settings, which Right never does.
+# in the search field; Up and Down move the selection and mount nothing;
+# Return enters and mounts; Escape leaves the section for the search
+# field; typed text filters, and Down from its reset selects a middle
+# match; Right at the end of the query enters; Ctrl+End and Return on
+# Shell & Plugins open Settings, which Right never does; Escape clears a
+# query, then closes the window.
 # wtype types with keycodes of its own, which a bind resolves only by
 # keysym (docs/architecture/runtime-hyprland.md), so the row turns that on
 # after the layer's line and puts hyprland.lua back after the path.
@@ -279,41 +308,47 @@ rest_pointer || fail "moving the pointer off the System window failed"
 press_system || fail "typing SUPER+COMMA failed"
 expect_poll "SUPER+COMMA opens the System window" 1 window_count System
 expect_poll "SUPER+COMMA opens the section shown last" '["acme.pane"]' window_panes
-expect_poll "the keyboard starts on the sidebar's rows" "System sections" sys_focus
-expect "the selection starts on the shown section" 1 sys_current
-type_keys -k Down || fail "typing Down on the System sidebar failed"
-expect_poll "Down moves the selection to Pane Alt" 2 sys_current
-expect "Down mounts nothing" '["acme.pane"]' window_panes
-type_keys -k Return || fail "typing Return on the System sidebar failed"
+expect_poll "the keyboard starts in the search field" "Search sections" sys_focus
+expect "the selection starts on the shown section" 2 sys_current
+type_keys -k Up || fail "typing Up in the System search failed"
+expect_poll "Up moves the selection to Pane Alt" 1 sys_current
+expect "Up mounts nothing" '["acme.pane"]' window_panes
+type_keys -k Return || fail "typing Return in the System search failed"
 expect_poll "Return mounts the selected section in place of the shown one" '["acme.pane-alt"]' window_panes
 expect_poll "Return puts the keyboard in the section" "Pane edit" sys_focus
 type_keys -k Escape || fail "typing Escape in the section failed"
-expect_poll "Escape in the section returns the keyboard to the rows" "System sections" sys_focus
+expect_poll "Escape in the section returns the keyboard to the search field" "Search sections" sys_focus
 expect "Escape in the section keeps it mounted" '["acme.pane-alt"]' window_panes
-type_keys s || fail "typing a letter on the System sidebar failed"
-expect_poll "a letter selects the row its name starts with" 3 sys_current
-type_keys -k Right || fail "typing Right on Shell & Plugins failed"
-type_keys -k Home || fail "typing Home on the System sidebar failed"
-expect_poll "Home selects the first section" 0 sys_current
-type_keys -k Right || fail "typing Right on the System sidebar failed"
-expect_poll "Right enters the selected section" '["acme.pane-net"]' window_panes
-expect_poll "Right puts the keyboard in the section" "Pane edit" sys_focus
-type_keys -M ctrl -k f -m ctrl || fail "typing Ctrl+F in the section failed"
-expect_poll "Ctrl+F from the section focuses the search field" "Search sections" sys_focus
+type_keys net || fail "typing a query into the System search failed"
+expect_poll "typing filters the sections" '[["Connectivity"],["Pane Net","Shell & Plugins"]]' sys_sidebar
+type_keys -k BackSpace -k BackSpace -k BackSpace pane || fail "typing a wider query failed"
+expect_poll "a query every section matches lists them all" '[["Connectivity","Fixtures"],["Pane Net","Pane Alt","Pane","Shell & Plugins"]]' sys_sidebar
+expect_poll "a new query selects its first match" 0 sys_current
+type_keys -k Down -k Down || fail "typing Down in the System search failed"
+expect_poll "Down from the first match selects a middle row" 2 sys_current
+type_keys -k Return || fail "typing Return on the searched row failed"
+expect_poll "Return in the search field enters the selected match" '["acme.pane"]' window_panes
+expect_poll "Return in the search field puts the keyboard in the section" "Pane edit" sys_focus
+type_keys -k Escape || fail "typing Escape in the searched section failed"
+expect_poll "Escape returns the keyboard to the search field, which holds the query" "pane" sys_focus
+expect "the query stays after the section is left" '"pane"' sys_search
+type_keys -k Up || fail "typing Up after the search failed"
+expect_poll "Up selects Pane Alt again" 1 sys_current
+type_keys -k Right || fail "typing Right at the end of the query failed"
+expect_poll "Right at the end of the query enters the selected section" '["acme.pane-alt"]' window_panes
+type_keys -k Escape || fail "typing Escape in the right-entered section failed"
+expect_poll "Escape returns the keyboard to the search field again" "pane" sys_focus
+type_keys -M ctrl -k End -m ctrl || fail "typing Ctrl+End in the System search failed"
+expect_poll "Ctrl+End selects Shell & Plugins" 3 sys_current
+type_keys -k Right -k Return || fail "typing Right and Return on Shell & Plugins failed"
+expect_poll "Return on Shell & Plugins alone hands vgsh the Settings summon, Right before it none" '[["ipc", "call", "shell", "summon", "window", "vgs.settings", "{}"]]' sys_calls_all
 type_keys zz || fail "typing into the System search failed"
 expect_poll "typing filters every section out" '[[],["Shell & Plugins"]]' sys_sidebar
 type_keys -k Escape || fail "typing Escape in the System search failed"
-expect_poll "Escape clears the query" '""' sys_search
-expect "Escape with a query keeps the search field focused" "Search sections" sys_focus
-type_keys alt -k Return || fail "typing a query and Return failed"
-expect_poll "Return in the search field enters its first match" '["acme.pane-alt"]' window_panes
-expect_poll "Return in the search field puts the keyboard in the section" "Pane edit" sys_focus
-type_keys -k Escape || fail "typing Escape in the searched section failed"
-expect_poll "Escape returns to the rows after a search" "System sections" sys_focus
-type_keys -k End -k Return || fail "typing End and Return on the System sidebar failed"
-expect_poll "Return on Shell & Plugins alone hands vgsh the Settings summon, Right before it none" '[["ipc", "call", "shell", "summon", "window", "vgs.settings", "{}"]]' sys_calls_all
-type_keys -k Escape || fail "typing Escape on the System sidebar failed"
-expect_poll "Escape on the rows closes the System window" 0 window_count System
+expect_poll "Escape with a query clears it" '""' sys_search
+expect "Escape with a query keeps the window open" 1 window_count System
+type_keys -k Escape || fail "typing Escape in the empty System search failed"
+expect_poll "Escape with no query closes the System window" 0 window_count System
 expect_poll "closing the window drops its section" '[]' window_panes
 expect "vgsh still holds that one call once the window closed" '[["ipc", "call", "shell", "summon", "window", "vgs.settings", "{}"]]' sys_calls_all
 press_system || fail "typing SUPER+COMMA again failed"
@@ -351,9 +386,9 @@ expect "rescan after adding the stale-list copy answers ok" ok ipc shell rescanP
 expect_poll "the stale-list copy is discovered" False plugin_enabled acme.system-stale
 expect "enabling the stale-list copy is allowed" ok ipc shell setPluginEnabled acme.system-stale true
 expect "the stale-list copy opens" ok ipc shell summon window acme.system-stale '{}'
-expect_poll "the stale-list copy lists the enabled sections when it opens" '[["Connectivity","Fixtures"],["Pane Net","Pane","Pane Alt","Shell & Plugins"]]' sys_sidebar acme.system-stale
+expect_poll "the stale-list copy lists the enabled sections when it opens" '[["Connectivity","Fixtures"],["Pane Net","Pane Alt","Pane","Shell & Plugins"]]' sys_sidebar acme.system-stale
 expect "disabling Pane Alt under the stale-list copy is allowed" ok ipc shell setPluginEnabled acme.pane-alt false
-expect_poll "control: a sidebar that keeps its first list still lists the disabled section" '[["Connectivity","Fixtures"],["Pane Net","Pane","Pane Alt","Shell & Plugins"]]' sys_sidebar acme.system-stale
+expect_poll "control: a sidebar that keeps its first list still lists the disabled section" '[["Connectivity","Fixtures"],["Pane Net","Pane Alt","Pane","Shell & Plugins"]]' sys_sidebar acme.system-stale
 expect "hiding the stale-list copy is allowed" ok ipc shell hide window acme.system-stale
 expect "disabling the stale-list copy is allowed" ok ipc shell setPluginEnabled acme.system-stale false
 rm -rf -- "${stale_dir:?}"

@@ -5,23 +5,30 @@ import qs.Ui
 
 // The System window's sidebar: a search field, then every enabled section
 // under the heading of its group, in the order the panes capability lists
-// them, then the Shell & Plugins row at the foot. The rows are one list
-// with one ListCursor: Up, Down, Home, End and the pages move it, a letter
-// jumps to the next row whose name starts with the letters typed so far,
-// and a hover moves it once the pointer moves. Enter or Right on a section
-// enters it and on Shell & Plugins opens the Settings window, as a click
-// does. Ctrl+F reaches the search field from anywhere in the window (the
-// window owns that key); there Up, Down and Enter still move and enter,
-// and Escape clears the query, then returns to the rows.
+// them, then the Shell & Plugins row at the foot. The search field holds
+// the keys, as the Settings list's does (keyboard.md K6): typed text
+// filters the rows, and printable text typed elsewhere in the sidebar goes
+// to it. One ListCursor marks the selected row: Up, Down, the pages and
+// Ctrl+Home or Ctrl+End move it, and a hover moves it once the pointer
+// moves. Enter, or Right with the caret at the end of the query, enters
+// the selected section, and Enter on Shell & Plugins opens the Settings
+// window, as a click does. Escape with a query clears it; with none it is
+// left to the window, which closes. The selection follows its entry by
+// id, so a section joining or leaving the list moves no other row's
+// selection.
 FocusScope {
     id: page
 
     // The System window: its sections, the shown section and the steps.
     required property Item panel
     property string query: ""
-    // The index of the selected entry: a section of `shown`, or
-    // `shown.length` for Shell & Plugins.
+    // The selected entry: a section id, or `footerKey` for Shell & Plugins.
+    property string currentKey: ""
+    // Its index: a section of `shown`, or `footerIndex` for Shell &
+    // Plugins.
     property int current: 0
+    // No plugin id has a `#`, so this key names no section.
+    readonly property string footerKey: "#shell-and-plugins"
 
     // The sections whose name or id holds the query, in the list's order.
     readonly property var shown: {
@@ -40,31 +47,51 @@ FocusScope {
     readonly property int footerIndex: shown.length
     readonly property alias scrollArea: layout.scrollArea
     readonly property alias searchField: search
-    // The item that holds the keys while the rows have them.
-    readonly property alias rows: list
+
+    Keys.onPressed: event => { event.accepted = handleKey(event); }
 
     // The rows change under a resting pointer: it takes no row until it
-    // moves, and the cursor lands on the row the keyboard keeps.
+    // moves, and the cursor lands on the row the keyboard keeps. The
+    // selected entry keeps the selection wherever it now sits; one that
+    // left the list hands it to the entry at its place.
     onShownChanged: {
         plate.disarm();
         plate.snap();
-        current = Math.max(0, Math.min(current, footerIndex));
+        const at = indexOf(currentKey);
+        selectIndex(at !== -1 ? at : Math.max(0, Math.min(current, shown.length)));
     }
 
     // A new query selects its first match.
-    onQueryChanged: current = 0
+    onQueryChanged: selectIndex(0)
 
-    function focusRows(reason) { list.forceActiveFocus(reason === undefined ? Qt.TabFocusReason : reason); }
     function focusSearch(reason) { search.forceActiveFocus(reason === undefined ? Qt.TabFocusReason : reason); }
+
+    // These read `shown` itself, not `footerIndex`: onShownChanged can run
+    // while that binding still holds the old list's length
+    // (runtime-qml.md).
+    function keyAt(index) { return index === shown.length ? footerKey : index >= 0 && index < shown.length ? shown[index].id : ""; }
+    function indexOf(key) { return key === footerKey ? shown.length : shown.findIndex(p => p.id === key); }
+
+    function selectIndex(index) {
+        current = index;
+        currentKey = keyAt(index);
+    }
 
     // Select the section `id` when the list shows it.
     function select(id) {
-        const index = shown.findIndex(p => p.id === id);
-        if (index !== -1) current = index;
+        const index = indexOf(id);
+        if (index !== -1) selectIndex(index);
     }
 
-    function labelAt(index) {
-        return index === footerIndex ? footer.text : index >= 0 && index < shown.length ? shown[index].name : "";
+    // The key the sidebar holds: the cursor's movement, else printable
+    // text, which goes to the search field.
+    function handleKey(event) {
+        if (nav.handle(event)) return true;
+        const typed = KeyNavLogic.printable(event.text, event.modifiers);
+        if (typed === "" || search.activeFocus) return false;
+        focusSearch(Qt.ShortcutFocusReason);
+        search.insert(search.cursorPosition, typed);
+        return true;
     }
 
     // The row item of entry `index`, for the cursor's reveal.
@@ -83,7 +110,7 @@ FocusScope {
 
     // Enter the selected entry: its section, or the Settings window.
     function activate(index, reason) {
-        current = index;
+        selectIndex(index);
         if (index === footerIndex) panel.openSettings();
         else if (index >= 0 && index < shown.length) panel.enterPane(shown[index].id, reason);
     }
@@ -97,13 +124,13 @@ FocusScope {
         id: nav
         count: page.footerIndex + 1
         currentIndex: page.current
+        textEntry: true
         viewHeight: layout.scrollArea.height
         rowHeight: Theme.listItem.height
-        labelAt: index => page.labelAt(index)
         cursor: plate
         flickable: layout.scrollArea
         itemAt: index => page.itemAt(index)
-        onMoved: index => page.current = index
+        onMoved: index => page.selectIndex(index)
         onActivated: index => page.activate(index, Qt.TabFocusReason)
     }
 
@@ -119,41 +146,30 @@ FocusScope {
                 width: layout.contentWidth
                 placeholderText: "Search sections"
                 leadingIcon: "search"
+                focus: true
                 onTextChanged: page.query = text
                 Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Escape) {
-                        if (search.text !== "") search.clear();
-                        else page.focusRows(Qt.ShortcutFocusReason);
+                    if (event.key === Qt.Key_Escape && search.text !== "") {
+                        search.clear();
                         event.accepted = true;
                         return;
                     }
-                    // Letters are the query's, not type-ahead's.
-                    if (KeyNavLogic.printable(event.text, event.modifiers) !== "") return;
-                    nav.textEntry = true;
+                    // Right past the end of the query enters the selected
+                    // section; it never opens Settings, since an arrow
+                    // runs no action.
+                    if (event.key === Qt.Key_Right && event.modifiers === Qt.NoModifier && search.cursorPosition === search.length) {
+                        if (page.current < page.footerIndex) page.activate(page.current, Qt.TabFocusReason);
+                        event.accepted = true;
+                        return;
+                    }
                     event.accepted = nav.handle(event);
                 }
             }
         ]
 
-        // focus-indicator: the ListCursor plate marks the selected row.
         Item {
-            id: list
             width: layout.contentWidth
             implicitHeight: body.implicitHeight
-            activeFocusOnTab: true
-            focus: true
-            Accessible.name: "System sections"
-            Keys.onPressed: event => {
-                // Right enters a section; it never opens Settings, since
-                // an arrow runs no action.
-                if (event.key === Qt.Key_Right && event.modifiers === Qt.NoModifier) {
-                    if (page.current < page.footerIndex) page.activate(page.current, Qt.TabFocusReason);
-                    event.accepted = true;
-                    return;
-                }
-                nav.textEntry = false;
-                event.accepted = nav.handle(event);
-            }
 
             Column {
                 id: body
@@ -203,7 +219,7 @@ FocusScope {
                                 iconName: modelData.icon
                                 highlighted: entryIndex === page.current
                                 cursor: plate
-                                onPointed: page.current = entryIndex
+                                onPointed: page.selectIndex(entryIndex)
                                 onClicked: page.activate(entryIndex, Qt.MouseFocusReason)
                             }
                         }
@@ -224,7 +240,7 @@ FocusScope {
                     iconName: "blocks"
                     highlighted: page.current === page.footerIndex
                     cursor: plate
-                    onPointed: page.current = page.footerIndex
+                    onPointed: page.selectIndex(page.footerIndex)
                     onClicked: page.activate(page.footerIndex, Qt.MouseFocusReason)
                     trailing: [
                         Icon {

@@ -25,10 +25,10 @@ The payload is `{}` for the section shown last, or `{"pane":"<id>"}` for that se
 
 ## Keys
 
-- Up, Down, Home, End, Page Up and Page Down move the selection in the sidebar. A letter selects the next section whose name starts with it.
-- Enter or Right opens the selected section and moves the keyboard into it. Enter on Shell & Plugins opens Settings.
-- Escape in a section returns to the sidebar. Escape in the sidebar closes the window.
-- Ctrl+F moves to the search field. There, typing filters the sections, Up, Down and Enter still move and open, and Escape clears the search, then returns to the sidebar.
+- The window opens with the keyboard in the search field. Typing filters the sections, and a letter typed anywhere in the sidebar goes to the search field.
+- Up, Down, Page Up, Page Down, Ctrl+Home and Ctrl+End move the selection in the sidebar.
+- Enter, or Right at the end of the search text, opens the selected section and moves the keyboard into it. Enter on Shell & Plugins opens Settings.
+- Escape in a section returns to the search field. There, Escape clears the search, and with no search closes the window.
 
 ## Validation
 

@@ -17,12 +17,14 @@ import "Memory.js" as Memory
 //
 // The detail draws the section's icon and name, and a "Show in bar" switch
 // for a section with a bar widget, which places or removes the widget
-// through `shell.panes.setPlaced`; under them the section fills the room
-// left, or scrolls in the page's ScrollArea when it is taller (D050).
-// Moving the sidebar's selection mounts nothing; entering a row does, and
-// moves the keyboard into the section. Escape in a section returns the
-// keyboard to the sidebar; Escape there is left to the window host, which
-// closes the window. Ctrl+F focuses the search field from anywhere.
+// through `shell.panes.setPlaced`. The window owns the section's title,
+// its inset and its scrolling; the section is a body drawn from x 0, which
+// fills the room under the header, or grows to its implicit height and
+// scrolls in the page's ScrollArea when it is taller (D050). Moving the
+// sidebar's selection mounts nothing; entering a row does, and moves the
+// keyboard into the section. Escape in a section returns the keyboard to
+// the sidebar's search field; Escape there with no query is left to the
+// window host, which closes the window.
 //
 // The payload is a JSON object: `{}` opens the section shown last, held in
 // memory while the shell runs (Memory.js), or the first section;
@@ -45,9 +47,9 @@ FocusScope {
     property string notice: ""
     readonly property var row: rowOf(paneId)
     // The keyboard opens in the section a deep link names, else on the
-    // sidebar's rows (keyboard.md F3).
+    // sidebar's search field, its primary input (keyboard.md F3).
     property bool entered: false
-    readonly property Item initialFocus: entered ? detail : sidebar.rows
+    readonly property Item initialFocus: entered ? detail : sidebar.searchField
 
     implicitWidth: Math.floor(Math.min(Theme.size.panel.sm + Theme.size.window.width, OverlayState.room(screen).width))
     implicitHeight: screen === null ? Theme.size.panel.maxHeight : Math.floor(Theme.size.window.heightShare * screen.height)
@@ -125,11 +127,11 @@ FocusScope {
         return "ok";
     }
 
-    // Leave the section: the keyboard returns to the sidebar's rows, on
-    // the shown section's row.
+    // Leave the section: the keyboard returns to the sidebar's search
+    // field, with the shown section's row selected.
     function leavePane() {
         sidebar.select(paneId);
-        sidebar.focusRows(Qt.ShortcutFocusReason);
+        sidebar.focusSearch(Qt.ShortcutFocusReason);
     }
 
     // Show section `id`'s widget in the bar, or remove it, the opposite of
@@ -153,13 +155,6 @@ FocusScope {
         const reply = shell.run.detached(["vgsh", "ipc", "call", "shell", "summon", "window", "vgs.settings", "{}"]);
         if (reply !== "ok") notice = "Could not open Settings: " + reply;
         return reply;
-    }
-
-    Keys.onPressed: event => {
-        if (event.modifiers === Qt.ControlModifier && event.key === Qt.Key_F) {
-            sidebar.focusSearch(Qt.ShortcutFocusReason);
-            event.accepted = true;
-        }
     }
 
     Sidebar {
