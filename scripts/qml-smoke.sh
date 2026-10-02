@@ -39,9 +39,13 @@
 # own and the default, or `default`, every first-party plugin enabled as
 # in a live session (scripts/smoke/harness.sh); it needs --first-bar-runs.
 #
-# VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process at
-# the end of the run. It catches a startup allocation blow-up and nothing
-# else: a run this short cannot see the slow growth docs/architecture/memory.md
+# VGSH_SMOKE_RSS_CEILING_KIB: resident-size ceiling for the shell process
+# rows/diagnostics.sh reads, which is the one the last shell start before
+# that row made: rows/monitor-preview.sh stops and starts the shell, so the
+# reading is a shell that ran the five rows between the two, not every row
+# of the run (docs/architecture/validation-latency.md holds the readings of
+# both). It catches a startup allocation blow-up and nothing else: a run
+# this short cannot see the slow growth docs/architecture/memory.md
 # describes, and the reading carries the machine's graphics stack. The
 # default is twice the rss_kib this script printed on the owner's machine
 # (host cachy, AMD Ryzen 9 9950X) on 2026-09-25 with the one bundled plugin,
