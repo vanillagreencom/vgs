@@ -657,6 +657,16 @@ var TOKENS = {
         selectedForeground: color("{color.accent}")
     },
 
+    // A device's row: its battery badge turns `warning` at or below
+    // `battery.warning` of a full charge and `danger` at or below
+    // `battery.danger`.
+    deviceRow: {
+        battery: {
+            warning: share(0.2),
+            danger: share(0.1)
+        }
+    },
+
     sectionHeader: {
         paddingBottom: length("{stack.row}"),
         gap: length("{row.lineGap}")
@@ -736,6 +746,21 @@ var TOKENS = {
         radius: length("{radius.md}"),
         duration: number(5000, 0, 60000),
         corner: { type: "choice", value: "top-right", options: ["top-left", "top-right", "bottom-left", "bottom-right"] },
+        background: color("{color.surfaceRaised}"),
+        border: color("{color.borderStrong}")
+    },
+
+    // An on-screen display of one level, such as the volume: an icon
+    // `icon` across, a bar `barWidth` long and a label, `gap` apart and
+    // `padding` inside a card. The label column holds "100%" or the text,
+    // whichever is wider, up to `labelMaxWidth`, where the text elides.
+    osd: {
+        padding: length("{space.lg}"),
+        gap: length("{space.lg}"),
+        icon: length("{icon.size.xl}"),
+        barWidth: length(144),
+        labelMaxWidth: length(192),
+        radius: length("{radius.md}"),
         background: color("{color.surfaceRaised}"),
         border: color("{color.borderStrong}")
     },

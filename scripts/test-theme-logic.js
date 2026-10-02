@@ -174,6 +174,17 @@ const DEFAULTS = [
     ["button.size.lg.gap", 12],
     ["menu.maxWidth", 360],
     ["toast.gap", 8],
+    // An on-screen level: mul(4, 3) = 12 padding and gaps, the 24 px
+    // icon, a 144 px bar and labels up to 192 px, on the 4 px grid.
+    ["osd.padding", 12],
+    ["osd.gap", 12],
+    ["osd.icon", 24],
+    ["osd.barWidth", 144],
+    ["osd.labelMaxWidth", 192],
+    // A device's battery warns at a fifth of a charge and is in danger at
+    // a tenth, Omarchy's low-battery warning.
+    ["deviceRow.battery.warning", 0.2],
+    ["deviceRow.battery.danger", 0.1],
     ["iconButton.restOpacity", 0.6],
     ["voiceOrb.size", 96],
     ["voiceOrb.radius", 0.28],
