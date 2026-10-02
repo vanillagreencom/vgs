@@ -549,12 +549,15 @@ function selection(Engine) {
 }
 
 world(async () => {
+    const root = process.env.JARVIS_TEST_ROOT;
+    // Without local setup's marker the stock table's local row is the cause.
     const stock = require(path.join(tree, "shell/plugins/vgs.jarvis/backend/ChainedEngine.js"));
-    assert.deepEqual(stock.create({ accounts: () => assert.fail("no account is read without a speech row") })
-        .configure({ brain: "a" }), { kind: "unconfigured", cause: "speech=no-adapter" }, "the stock daemon stays unconfigured");
+    const bare = fs.mkdtempSync(path.join(root, "stock-"));
+    assert.deepEqual(stock.create({ accounts: () => assert.fail("no account is read without a speech row"),
+        directories: { state: bare, data: bare, runtime: bare } }).configure({ brain: "a" }),
+    { kind: "unconfigured", cause: "speech=local-not-set-up" }, "the stock daemon stays unconfigured");
     const server = Fixture.brain(PORT);
     await server.ready;
-    const root = process.env.JARVIS_TEST_ROOT;
     let controls = 0;
     try {
         selection(Fixture.copy(root).Engine);

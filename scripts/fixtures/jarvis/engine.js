@@ -121,7 +121,7 @@ function copy(root, edits = [], from = plugin) {
     const file = path.join(folder, "backend/ChainedEngine.js");
     const source = fs.readFileSync(file, "utf8");
     let changed = source;
-    for (const [needle, replacement] of [["const SPEECH = Object.freeze({});",
+    for (const [needle, replacement] of [["const SPEECH = Object.freeze({ local: LocalSpeech.row });",
         "const SPEECH = Object.freeze({ scripted: require(" + JSON.stringify(__filename) + ").row });"], ...edits]) {
         assert.equal(changed.split(needle).length - 1, 1, "engine instrumentation match: " + needle.slice(0, 60));
         changed = changed.replace(needle, replacement);

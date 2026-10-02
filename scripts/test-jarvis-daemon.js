@@ -1056,7 +1056,7 @@ exit "$failures"
         const file = daemonCopy(name);
         const directory = path.dirname(path.dirname(file));
         for (const [relative, needle, replacement] of [
-            ["backend/ChainedEngine.js", "const SPEECH = Object.freeze({});",
+            ["backend/ChainedEngine.js", "const SPEECH = Object.freeze({ local: LocalSpeech.row });",
                 "const SPEECH = Object.freeze({ scripted: (fixture => (fixture.reset({ utterances: [fixture.utterance(\"What time is it?\")] }), fixture.row))(require(" + JSON.stringify(require.resolve("./fixtures/jarvis/engine.js")) + ")) });"],
             ["AccountProviders.js", 'probe: { driver: "ollama", path: "/api/generate", model: "" }',
                 'probe: { driver: "ollama", path: "/api/generate", model: "fixture-model" }'],

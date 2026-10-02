@@ -13,11 +13,13 @@ const Speakable = require("./Speakable.js");
 const OpenAIChat = require("./OpenAIChat.js");
 const AnthropicMessages = require("./AnthropicMessages.js");
 const CodexHarness = require("./CodexHarness.js");
+const LocalSpeech = require("./LocalSpeech.js");
 
 // Speech adapter rows in selection order. A row is {select({settings,
-// accounts})} answering {kind:"ready", recipients, open({net, recipients})}
-// or {kind:"unconfigured", cause}. The local and ElevenLabs rows add theirs.
-const SPEECH = Object.freeze({});
+// accounts, directories})} answering {kind:"ready", recipients, open({net,
+// recipients})} or {kind:"unconfigured", cause, detail?}. The ElevenLabs row
+// adds its own.
+const SPEECH = Object.freeze({ local: LocalSpeech.row });
 const DRIVERS = Object.freeze({ "openai-chat": OpenAIChat, "anthropic-messages": AnthropicMessages,
     "codex-app-server": CodexHarness });
 // The hello carries no language setting; empty selects English.
@@ -55,10 +57,10 @@ function signal() {
  * row wins; the brain comes from the saved account through Accounts, its
  * declaration's Verify probe model, the provider table and the key reference.
  */
-function select(settings, accounts) {
+function select(settings, accounts, directories) {
     let speech = unconfigured("speech=no-adapter");
     for (const [id, row] of Object.entries(SPEECH)) {
-        const answer = row.select({ settings, accounts });
+        const answer = row.select({ settings, accounts, directories });
         if (answer.kind === "ready") { speech = { ...answer, id }; break; }
         if (answer.kind !== "unconfigured") fail("speech-row");
         if (speech.cause === "speech=no-adapter") speech = answer;
@@ -87,16 +89,17 @@ function select(settings, accounts) {
 }
 
 /**
- * create({session, state, audit, router, accounts, policy, fault, harness})
- * owns the daemon's chained conversations. session is the Session judge and state
- * returns its current record; audit is the daemon's writer; router supplies
+ * create({session, state, audit, router, accounts, policy, fault, harness,
+ * directories}) owns the daemon's chained conversations. session is the Session
+ * judge and state returns its current record; audit is the daemon's writer;
+ * directories are the hello's state, data and runtime roots; router supplies
  * offer, route, observe and interrupted; accounts returns an Accounts judge;
  * policy returns {profile, cloudVision}; fault reports a speech failure that
  * no capture or turn remains to carry. harness is {bridge, gate, env, runtime}
  * for a harness brain: the tool bridge, the HarnessGate, the environment its
  * program is started from and a function answering the runtime directory.
  */
-function create({ session, state, audit, router, accounts, policy, fault, harness = null }) {
+function create({ session, state, audit, router, accounts, policy, fault, harness = null, directories }) {
     let plan = unconfigured("engine=starting");
     let conversation = null;
     let retired = null;
@@ -504,7 +507,7 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
     return Object.freeze({
         /** Select from snapshot settings; the daemon raises its gate only on ready. */
         configure(settings) {
-            plan = select(settings, accounts);
+            plan = select(settings, accounts, directories);
             return plan.kind === "ready" ? { kind: "ready" } : plan;
         },
         observe(s) { if (conversation !== null && s.gen !== conversation.gen) end(); },

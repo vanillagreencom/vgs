@@ -10,7 +10,7 @@ Wire, both directions: frames of a u32be header length, a u32be payload length,
 a UTF-8 JSON object header and the payload bytes. Audio is float32 little-endian
 mono. Ids are positive integers; each new request takes a larger id.
   in:  {type:"audio", id} + 16 kHz samples; {type:"end", id}; {type:"abort", id};
-       {type:"speak", id, text}
+       {type:"speak", id} + one sentence's UTF-8 text
   out: {type:"ready"} once; {type:"final", id, text}; {type:"audio", id} + samples;
        {type:"spoken", id, rate}; {type:"failed", id?, cause}
 A failed frame without an id ends the sidecar. A message for an utterance the
@@ -31,6 +31,8 @@ import struct
 import sys
 
 HERE = Path(__file__).resolve().parent
+# The plugin directory is never written, not even bytecode for setup-local.
+sys.dont_write_bytecode = True
 RATE = 16000
 # Every header and audio payload, both directions.
 HEADER_BYTES = 4096
@@ -221,7 +223,7 @@ def send(writer, header, payload=b""):
 
 # The keys each inbound type carries, and whether it carries a payload.
 SHAPES = {"audio": ({"type", "id"}, True), "end": ({"type", "id"}, False),
-          "abort": ({"type", "id"}, False), "speak": ({"type", "id", "text"}, False)}
+          "abort": ({"type", "id"}, False), "speak": ({"type", "id"}, True)}
 
 
 def serve(reader, writer, speech):
@@ -238,10 +240,14 @@ def serve(reader, writer, speech):
         fresh = ident > highest
         highest = max(highest, ident)
         if kind == "speak":
-            if not fresh or type(header["text"]) is not str or not header["text"].strip():
+            try:
+                text = payload.decode("utf-8")
+            except UnicodeDecodeError:
+                raise Protocol("speak=invalid") from None
+            if not fresh or not text.strip():
                 raise Protocol("speak=invalid")
             try:
-                rate, samples = speech.speak(header["text"])
+                rate, samples = speech.speak(text)
             except Failed as failure:
                 send(writer, {"type": "failed", "id": ident, "cause": str(failure)})
                 continue

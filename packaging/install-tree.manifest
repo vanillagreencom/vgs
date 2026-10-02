@@ -266,6 +266,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/GptLive.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/HarnessGate.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Input.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/LocalSpeech.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Mcp.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/OpenAIChat.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Policy.js

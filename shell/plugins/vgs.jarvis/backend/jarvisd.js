@@ -9,8 +9,8 @@
 // then TaskRunner observes them; tasks outlive this process and EOF stops
 // only that observation. A task-stop intent answers with task-answer.
 // Device discovery is read-only. The chained engine raises the gate only for a
-// ready speech adapter and brain; no adapter row ships, so capture stays
-// unconfigured. EOF closes the audio owner and waits for all child exits.
+// ready speech adapter and brain; the local row is ready only after local setup
+// published its runtime. EOF closes the audio owner and waits for all child exits.
 "use strict";
 const path = require("node:path");
 const fs = require("node:fs");
@@ -367,7 +367,8 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     engine = ChainedEngine.create({ session: Session, state: () => runner.state, audit, router,
                         accounts: () => new Accounts(state, process.env),
                         policy: () => ({ profile: profile(), cloudVision: "ask" }), fault,
-                        harness: { bridge, gate, env: process.env, runtime: () => context.directories.runtime } });
+                        harness: { bridge, gate, env: process.env, runtime: () => context.directories.runtime },
+                        directories: context.directories });
                     runner.ports.brain = engine.brain;
                     runner.ports.capture = { ...runner.ports.capture, collect: engine.collect };
                     runner.ports.playback = engine.playback(audio.playbackPort);
