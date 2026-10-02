@@ -2,7 +2,7 @@
 
 Covers: shell/Core/SecretWriter.qml
 
-The one-click setup steps a plugin's status entries offer on its Settings page, and the libsecret items the core stores and clears for it. The entries, their values and their rows are [status.md](status.md)'s.
+The [D061](../decisions/D061-no-manual-commands.md) rule every setup step a user takes follows, on a Settings row, a notice or a dialog; the one-click setup steps a plugin's status entries offer on its Settings page; and the libsecret items the core stores and clears for it. The entries, their values and their rows are [status.md](status.md)'s.
 
 ## Setup steps
 

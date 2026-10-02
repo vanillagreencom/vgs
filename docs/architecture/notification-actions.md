@@ -1,8 +1,8 @@
 # Notification actions
 
-Covers: shell/plugins/vgs.notifications/Service.qml, shell/plugins/vgs.notifications/CardSlot.qml, shell/plugins/vgs.notifications/Panel.qml
+Covers: shell/plugins/vgs.notifications/Service.qml, shell/plugins/vgs.notifications/Store.qml, shell/plugins/vgs.notifications/CardSlot.qml, shell/plugins/vgs.notifications/Panel.qml
 
-What a choice on a notification in `vgs.notifications` does, which windows it brings into view, which notifications the service keeps holding after their toast leaves, and what the senders it was built for carry. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees. The Quickshell 0.3.1 facts this rests on are in [§ Quickshell 0.3.1](#quickshell-031), and the Hyprland ones in [runtime-hyprland.md](runtime-hyprland.md). The interactive Inbox and History are the plugin's summoned `panel`; the toast stack stays on the passive layer and takes no keyboard. While that panel is open, the toast stack is hidden and the panel lists the same live notifications, so no toast can draw over a panel control.
+What a choice on a notification in `vgs.notifications` does, which windows it brings into view, which notifications the service keeps holding after their toast leaves, and what the senders it was built for carry. The plugin's [README](../../shell/plugins/vgs.notifications/README.md) says what the user sees, and its [§ State](../../shell/plugins/vgs.notifications/README.md#state) what the service keeps on disk. The Quickshell 0.3.1 facts this rests on are in [§ Quickshell 0.3.1](#quickshell-031), and the Hyprland ones in [runtime-hyprland.md](runtime-hyprland.md). The interactive Inbox and History are the plugin's summoned `panel`; the toast stack stays on the passive layer and takes no keyboard. While that panel is open, the toast stack is hidden and the panel lists the same live notifications, so no toast can draw over a panel control.
 
 ## The open rule
 

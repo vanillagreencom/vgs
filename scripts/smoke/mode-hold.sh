@@ -14,9 +14,9 @@ monitor_rule() { printf 'hl.monitor({ output = "%s", mode = "%s", position = "0x
 # monitor_rule's rule now through `hyprctl eval`; the reply is hyprctl's.
 # A configuration reload drops the rule but leaves the output at its mode
 # and scale, unless a rule the configuration loads gives the output
-# another (docs/architecture/runtime-hyprland-nested.md). Under a hold it stands
-# for a reset, and a reload applies the held rule again from
-# mode_hold_file. A row restores the mode it read first.
+# another (docs/architecture/runtime-hyprland-monitors.md § Rules). Under
+# a hold it stands for a reset, and a reload applies the held rule again
+# from mode_hold_file. A row restores the mode it read first.
 output_mode() { hypr eval "$(monitor_rule "$@")"; }
 # mode_scale_of NAME: output NAME's mode and scale as `WxH scale=S`, such
 # as `3510x1866 scale=2`, the mode in device pixels; returns 1 when no

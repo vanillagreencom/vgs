@@ -13,7 +13,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [hyprland-monitors.md](hyprland-monitors.md): read before touching `monitors.json`, its judge, the layer's monitor rules or the `monitors` capability.
 - [hyprland-monitors-preview.md](hyprland-monitors-preview.md): read before touching a monitor preview, its record, its guard or `bin/vgsh-monitor-guard`.
 - [status.md](status.md): read before touching plugin status or the Settings page's Status rows.
-- [status-actions.md](status-actions.md): read before touching a status action, a manifest's `secrets` or the core's libsecret writer.
+- [status-actions.md](status-actions.md): read before touching a setup step a user takes and its one-click rule, a status action, a manifest's `secrets` or the core's libsecret writer.
 - [jarvis.md](jarvis.md): read before implementing a Jarvis plan consumer of a landed core contract.
 - [jarvis-local.md](jarvis-local.md): read before changing local speech artifacts, model input bounds, fixture outcomes or the measurement instrument.
 - [jarvis-policy.md](jarvis-policy.md): read before touching the Jarvis action judge, tool schemas, protected paths or turn taint.
@@ -69,7 +69,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [validation.md](validation.md), [validation-qml-unit.md](validation-qml-unit.md), [validation-smoke.md](validation-smoke.md), [validation-smoke-harness.md](validation-smoke-harness.md) and [validation-smoke-input.md](validation-smoke-input.md): read before touching `scripts/validate`, the nested sandbox, the HiDPI smoke row, its harness or a smoke row's verdict.
 - [validation-jarvis.md](validation-jarvis.md): read before touching the shared Jarvis test world, `scripts/lib/jarvis-env.sh` or a Jarvis suite's private services.
 - [validation-shaders.md](validation-shaders.md): read before touching `scripts/measure-shader.sh`, the passive-layer presentation row or its fixture plugin.
-- [validation-smoke-host.md](validation-smoke-host.md): read before touching a sentinel, the stand-in terminal or a row that presses a button which opens a TUI.
+- [validation-smoke-host.md](validation-smoke-host.md): read before touching a sentinel, the stand-in terminal, a host command's stand-in in the shell's stand-in directory or a row that presses a button which opens a TUI.
 - [validation-smoke-devices.md](validation-smoke-devices.md): read before touching a device fake, a device command's stand-in, the device guard or a System row.
 - [runtime-devices.md](runtime-devices.md): read before a plugin reads Quickshell's `Bluetooth`, `Networking` or `Pipewire`.
 - [displays.md](displays.md): read before touching `vgs.displays` or its brightness helper, a display's identity or output mapping, or a brightness access state.
