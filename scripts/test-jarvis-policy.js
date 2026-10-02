@@ -10,7 +10,7 @@ world(() => {
     const { home, project, roots } = seed();
     const newFile = path.join(project, "new");
     const existing = path.join(project, "existing");
-    const input = { target: { kind: "application", id: "org.example.Editor" } };
+    const input = { target: { kind: "application", id: "org.example.Editor" }, text: { effective: [] } };
     const site = { target: { kind: "site", id: "https://example.test", password: false } };
     const context = { profile: "standard", locked: false, taint: { kind: "clean" },
         denied: Denied.create(roots), input, grants: [] };
@@ -126,7 +126,7 @@ world(() => {
         { kind: "confirm", effect: "input", physical: false, scope: "site:https://example.test" });
     assert.deepEqual(Policy.decide(browserInput, { ...context, input: site, grants: ["site:https://example.test"] }),
         { kind: "allow", effect: "input" });
-    const terminal = { target: { kind: "terminal", id: "org.example.Terminal" } };
+    const terminal = { target: { kind: "terminal", id: "org.example.Terminal" }, text: { effective: [] } };
     for (const profile of ["cautious", "standard"])
         for (const kind of ["clean", "tainted"])
             refuse(Policy, effects.input, { ...context, profile, input: terminal, taint: { kind } }, "terminal-text");
@@ -141,7 +141,8 @@ world(() => {
     const pressed = call("input.key", { chord: "ALT+SUPER+Y" });
     const keyContext = { ...context, input: { ...input, key: {
         request: pressed.args.chord, chord: { modifiers: ["ALT", "SUPER"], keycode: 29 },
-        effective: [{ modifiers: ["SUPER", "ALT"], keycode: 29 }]
+        effective: [{ modifiers: ["SUPER", "ALT"], keycode: 29 }],
+        emitted: { modifiers: ["SUPER", "ALT"], keycode: 9 }, emittedEffective: []
     } } };
     for (const [profile] of profiles)
         refuse(Policy, pressed, { ...keyContext, profile }, "jarvis-chord");
@@ -261,6 +262,16 @@ world(() => {
     control("chord-modifier-kind", 'value.modifiers.every(mod => typeof mod === "string" && mod !== "")', 'true',
         logic => refuse(logic, pressed, { ...unbound, input: { ...unbound.input,
             key: { ...unbound.input.key, chord: { modifiers: [null], keycode: 29 } } } }, "key-context"));
+    control("emitted-context", '!chord(key.emitted)', 'false',
+        logic => refuse(logic, pressed, { ...unbound, input: { ...unbound.input,
+            key: { ...unbound.input.key, emitted: undefined } } }, "key-context"));
+    control("emitted-own-chord", 'if (key.emittedEffective.some(bound => sameChord(key.emitted, bound)))',
+        'if (false && key.emittedEffective.some(bound => sameChord(key.emitted, bound)))',
+        logic => refuse(logic, pressed, { ...unbound, input: { ...unbound.input,
+            key: { ...unbound.input.key, emittedEffective: [{ modifiers: ["SUPER", "ALT"], keycode: 9 }] } } }, "jarvis-chord"));
+    control("text-context", 'return { kind: "refuse", reason: "text-context" };',
+        'return { kind: "allow", effect: "input" };',
+        logic => refuse(logic, effects.input, { ...context, input: { ...input, text: undefined } }, "text-context"));
     control("own-chord", 'if (key.effective.some(bound => sameChord(key.chord, bound)))',
         'if (false && key.effective.some(bound => sameChord(key.chord, bound)))',
         logic => refuse(logic, pressed, keyContext, "jarvis-chord"));
@@ -292,7 +303,7 @@ world(() => {
     control("grant-identity", 'scope = input.target.kind + ":" + input.target.id;',
         'scope = input.target.kind + ":" + "org.example.Editor";',
         logic => assert.equal(logic.decide(effects.input, { ...context,
-            input: { target: { kind: "application", id: "org.example.Other" } },
+            input: { target: { kind: "application", id: "org.example.Other" }, text: { effective: [] } },
             grants: ["application:org.example.Editor"] }).kind, "confirm"));
     control("taint-upgrade", 'if (context.taint.kind === "tainted" &&',
         'if (false && context.taint.kind === "tainted" &&',

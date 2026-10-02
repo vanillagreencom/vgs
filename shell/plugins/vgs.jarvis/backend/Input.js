@@ -3,11 +3,10 @@
 "use strict";
 const cp = require("node:child_process");
 const Tools = require("./Tools.js");
-const sameMods = (a, b) => a.slice().sort().join(",") === b.slice().sort().join(",");
 
 /** create({request,environment,commands}) owns command children and observations.
  * wtype's single-key map emits raw XKB code 9 (atx/wtype main.c upload_keymap).
- * Compare that native identity too: Hyprland resolves symbols against its
+ * Core also resolves that code in the global translation map: Hyprland resolves symbols against its
  * native map when resolve_binds_by_sym is false. Text has zero modifiers;
  * any unmodified own bind makes text unavailable rather than guessing its map.
  * ydotool debug connects its existing daemon socket and emits no input event
@@ -23,7 +22,11 @@ function create({ request, environment, commands, timeoutMs = 2000 }) {
             const child = cp.execFile(name, args, { env: environment, encoding: "utf8", timeout: timeoutMs,
                 maxBuffer: 16384, killSignal: "SIGKILL" }, (error, stdout) => {
                 children.delete(child);
-                if (error) reject(new Error("input-command:" + name)); else resolve(stdout);
+                if (error) {
+                    const failure = new Error("input-command:" + name);
+                    failure.deliveryPossible = child.pid !== undefined;
+                    reject(failure);
+                } else resolve(stdout);
             });
             children.add(child);
         });
@@ -67,13 +70,12 @@ function create({ request, environment, commands, timeoutMs = 2000 }) {
                 const resolved = await ask("input.keys", call.id === "input.key" ? [a.chord, "code:9"] : ["code:9"]);
                 const offset = call.id === "input.key" ? 2 : 1;
                 const effective = resolved.keys.slice(offset);
-                if (call.id === "input.text") {
-                    if (effective.some(key => key.modifiers.length === 0)) return { refusal: "own-shortcut" };
-                } else {
-                    const chord = resolved.keys[0], raw = resolved.keys[1];
-                    if (effective.some(key => sameMods(chord.modifiers, key.modifiers) && key.keycode === raw.keycode))
-                        return { refusal: "own-shortcut" };
-                    input.key = { request: a.chord, chord, effective };
+                if (call.id === "input.text") input.text = { effective };
+                else {
+                    const chord = resolved.keys[0], raw = resolved.translation[1];
+                    input.key = { request: a.chord, chord, effective,
+                        emitted: { ...raw, modifiers: chord.modifiers },
+                        emittedEffective: resolved.translation.slice(offset) };
                     input.keysym = chord.keysym;
                 }
             }
@@ -114,7 +116,11 @@ function create({ request, environment, commands, timeoutMs = 2000 }) {
             if (input.cursor.x !== call.args.x || input.cursor.y !== call.args.y) throw new Error("input-cursor-unverified");
         }
         const [name, args] = argv(call, input);
-        await command(name, args);
+        try { await command(name, args); }
+        catch (error) {
+            if (!error.deliveryPossible) throw error;
+            return { outcome: "unknown", content: "Input transport did not finish. Delivery may be partial: " + error.message };
+        }
         // Delivery already happened. A failed readback cannot turn it into
         // a failed action that a caller could safely retry.
         let detail;

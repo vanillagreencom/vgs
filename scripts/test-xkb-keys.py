@@ -145,6 +145,39 @@ class Mapping(unittest.TestCase):
     def test_empty_keys(self):
         self.assertEqual(self.run_helper(request([])), {"ok": True, "keys": []})
 
+    def test_dual_active_and_translation_layouts(self):
+        value = request(["code:29", "Z"], layout="us,de", activeLayoutIndex=1)
+        value["translation"] = request(["code:29", "Z"], layout="us,de", activeLayoutIndex=0)
+        self.assertEqual(self.run_helper(value), {
+            "ok": True, "keys": [
+                {"modifiers": [], "keycode": 29, "keysym": "z"},
+                {"modifiers": [], "keycode": 29, "keysym": "z"},
+            ], "translation": [
+                {"modifiers": [], "keycode": 29, "keysym": "y"},
+                {"modifiers": [], "keycode": 52, "keysym": "z"},
+            ]})
+        self.assertEqual(self.run_helper({**request([]), "translation": request([])}),
+                         {"ok": True, "keys": [], "translation": []})
+
+    def test_dual_outer_shape(self):
+        value = {**request(["A"]), "translation": request(["A"]), "extra": True}
+        self.refused(value, "input-shape")
+
+    def test_dual_refuses_bad_second_request_without_partial_success(self):
+        rows = ((None, "input-shape"), ([], "input-shape"), ({}, "input-shape"),
+                ({**request(["A"]), "extra": True}, "input-shape"),
+                ({**request(["A"]), "translation": request(["A"])}, "input-shape"),
+                ({"keyboard": {}, "keys": []}, "keyboard-shape"),
+                (request(["A"], activeLayoutIndex=1), "active-layout"),
+                (request(None), "keys-shape"),
+                (request(["NOT_A_KEYSYM"]), "keysym-unresolved"),
+                (request(["A"], layout="not_a_layout"), "xkb-keymap"))
+        for second, error in rows:
+            with self.subTest(second=second):
+                self.refused({**request(["A"]), "translation": second}, error)
+        self.refused({**request(["NOT_A_KEYSYM"]), "translation": request(["A"])},
+                     "keysym-unresolved")
+
     def test_json(self):
         for text in ("", "{", '{"keyboard":{},"keyboard":{},"keys":[]}'):
             with self.subTest(text=text):
@@ -295,6 +328,14 @@ class Controls(unittest.TestCase):
         ("compiled layout bound", "layout >= lib.xkb_keymap_num_layouts(keymap)",
          "False", "test_compiled_layout_index"),
         ("JSON duplicates", "if len(value) != len(pairs):", "if False:", "test_json"),
+        ("dual outer fields", 'set(value) != {"keyboard", "keys", "translation"}',
+         "False", "test_dual_outer_shape"),
+        ("translation map", 'translated = resolve(value["translation"])', "translated = native",
+         "test_dual_active_and_translation_layouts"),
+        ("translation failure", 'translated = resolve(value["translation"])', "translated = native",
+         "test_dual_refuses_bad_second_request_without_partial_success"),
+        ("native map", 'native = resolve({"keyboard": value["keyboard"], "keys": value["keys"]})',
+         'native = resolve(value["translation"])', "test_dual_active_and_translation_layouts"),
         ("system includes", "context = lib.xkb_context_new(3)", "context = lib.xkb_context_new(2)",
          "test_environment_cannot_supply_names_or_includes"),
         ("XKB numbering", "code = int(text)", "code = int(text) + 8", "test_codes_use_xkb_numbering"),

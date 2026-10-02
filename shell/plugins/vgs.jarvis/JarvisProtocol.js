@@ -183,10 +183,11 @@ function replyData(message) {
                     || !printable(target.id, 1, TEXT_MAX) || !object(message.data.cursor)
                     || !Number.isFinite(message.data.cursor.x) || !Number.isFinite(message.data.cursor.y)) fail("input-reply");
         } else {
-            keys(message.data, ["ok", "keys", "effective"], "resolved-keys");
+            keys(message.data, ["ok", "keys", "translation", "effective"], "resolved-keys");
             if (!Array.isArray(message.data.keys) || message.data.keys.length < 1 || message.data.keys.length > ARGV_MAX
-                    || !Array.isArray(message.data.effective)) fail("input-reply");
-            for (var key of message.data.keys) {
+                    || !Array.isArray(message.data.effective) || !Array.isArray(message.data.translation)
+                    || message.data.translation.length !== message.data.keys.length) fail("input-reply");
+            for (var key of message.data.keys.concat(message.data.translation)) {
                 keys(key, ["modifiers", "keycode", "keysym"], "resolved-key");
                 if (!Array.isArray(key.modifiers) || !key.modifiers.every(text) || !Number.isSafeInteger(key.keycode)
                         || key.keycode < 8 || !text(key.keysym)) fail("input-reply");

@@ -54,7 +54,7 @@ const taskAnswer = { v: 1, type: "task-answer", gen: 0, revision: hello.revision
 const transcript = { v: 1, type: "transcript", gen: 0, revision: hello.revision, role: "user", text: " the time?", stage: "partial", rev: 1 };
 const changed = (message, extra) => JSON.stringify({ ...message, ...extra });
 const inputReply = { ...reply, kind: "input.observe", data: { ok: true, target: { kind: "application", id: "fixture", window: "0xa1" }, cursor: { x: 1, y: 2 } } };
-const keysReply = { ...reply, kind: "input.keys", data: { ok: true, keys: [{ modifiers: ["SUPER"], keycode: 38, keysym: "a" }], effective: [] } };
+const keysReply = { ...reply, kind: "input.keys", data: { ok: true, keys: [{ modifiers: ["SUPER"], keycode: 38, keysym: "a" }], translation: [{ modifiers: ["SUPER"], keycode: 38, keysym: "a" }], effective: [] } };
 const inputReady = { ...status, type: "input-ready", commands: ["wtype", "wlrctl"] };
 delete inputReady.daemon;
 const cases = [

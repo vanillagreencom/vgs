@@ -37,7 +37,8 @@ The exact read-only argv table belongs to `Tools.js`. Extra options, an absolute
 | `taint` | Router's value keyed to Session's turn: `{ kind: "clean" }` or `{ kind: "tainted" }`. Missing or invalid taint refuses. |
 | `denied` | Current `Denied.create` result. Every path-bearing call requires it. |
 | `input.target` | J47 or J51's send-time observation: `{ kind, id, password? }`. Kinds are application, terminal, site, VGS, lock and polkit. The code uses lower-case ids for these kinds. Unknown targets or empty identities refuse. |
-| `input.key` | J47's `{ request, chord, effective }`. `request` must equal the call's chord. `chord` and every effective Jarvis chord are `{ modifiers, keycode }` records resolved against the live keymap. |
+| `input.key` | J47's `{ request, chord, effective, emitted, emittedEffective }`. `request` must equal the call's chord. Native identities use the active device map. Emitted code and effective bind identities use the independent global group-zero translation map. Each is `{ modifiers, keycode }`; Policy alone matches and refuses own chords. |
+| `input.text` | J47's `{ effective }`. Every effective chord must resolve. Any chord with no modifiers refuses text, because wtype assigns its own raw codes. |
 | `grants` | J19's conversation-local list of application or site scope ids. It is required when the standard input rule needs a grant. A missing list refuses. |
 
 The model produces only the call. It cannot supply this context. Key parsing remains with the core key judge. J47 must then resolve both keysyms and keycodes to the same physical identity. An unresolved key or effective binding refuses. Jarvis declares [Talk, Mute and Stop](jarvis-controls.md) through the existing core shortcut capability. The policy adds no key parser or input executor; J47 owns them.

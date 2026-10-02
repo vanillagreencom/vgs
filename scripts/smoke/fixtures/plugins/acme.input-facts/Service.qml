@@ -8,6 +8,7 @@ Item {
     property bool registered: false
     readonly property bool hostFocusControl: false
     property var keys: null
+    readonly property var translation: keys === null || keys.translation === undefined ? null : keys.translation
     property var observation: null
     property int keyAnswers: 0
     property int observationAnswers: 0

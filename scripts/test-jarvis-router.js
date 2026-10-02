@@ -46,7 +46,7 @@ world(() => {
         for (const executor of ["windows", "compositor", "files", "input", "sandbox", "browser"]) {
             router.register(executor, { commands: ["hyprctl", "wtype", "wlrctl", "bwrap", "agent-browser"],
                 timeoutMs: 1000, cancellable: true,
-                observe: () => ({ target }),
+                observe: () => ({ target, text: { effective: [] } }),
                 start: (call, done) => {
                     records.push(rows().at(-1));
                     starts.push(call);

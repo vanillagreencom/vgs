@@ -3,7 +3,10 @@
 
 stdin: {keyboard: {layout, variant, options, activeLayoutIndex}, keys: [str]}.
 stdout: {ok: true, keys: [{modifiers: [str], keycode: int, keysym: str}]}
-or {ok: false, error: str}; failure exits 1. Codes use the XKB convention
+or {ok: false, error: str}; failure exits 1. A dual request adds
+translation: {keyboard, keys}; its success also includes translation: [row].
+Both requests must resolve before the helper writes a success response.
+Codes use the XKB convention
 that Hyprland uses for code: binds. A symbol names its canonical keysym;
 a code names the symbol at the active layout's base level. No input is sent.
 The caller owns key normalization in PluginLogic.hyprlandKey.
@@ -212,11 +215,22 @@ def unique_object(pairs):
     return value
 
 
+def resolve_request(value):
+    """Resolve the native and optional translation maps as one response."""
+    if not isinstance(value, dict) or "translation" not in value:
+        return resolve(value)
+    if set(value) != {"keyboard", "keys", "translation"}:
+        raise Refusal("input-shape")
+    native = resolve({"keyboard": value["keyboard"], "keys": value["keys"]})
+    translated = resolve(value["translation"])
+    return {"ok": True, "keys": native["keys"], "translation": translated["keys"]}
+
+
 def main():
     """Write one complete answer; an unresolved key never yields a partial set."""
     try:
         value = json.load(sys.stdin, object_pairs_hook=unique_object)
-        answer = resolve(value)
+        answer = resolve_request(value)
     except (ValueError, UnicodeError):
         answer = {"ok": False, "error": "input-json"}
     except Refusal as error:

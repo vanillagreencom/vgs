@@ -12,7 +12,7 @@ const Tools = require(path.join(backend, "Tools.js"));
 world(() => main().catch(error => { console.error(error); process.exitCode = 1; }), standins => {
     for (const name of ["wtype", "wlrctl", "ydotool"]) {
         const script = path.join(standins, name);
-        fs.writeFileSync(script, '#!/usr/bin/env node\nconst fs=require("node:fs"); const path=require("node:path"); const name=path.basename(process.argv[1]); const args=process.argv.slice(2); fs.appendFileSync(process.env.INPUT_LOG,JSON.stringify([name,args])+"\\n"); if(process.env.INPUT_FAIL===name)process.exit(1);\n');
+        fs.writeFileSync(script, '#!/usr/bin/env node\nconst fs=require("node:fs"); const path=require("node:path"); const name=path.basename(process.argv[1]); const args=process.argv.slice(2); fs.appendFileSync(process.env.INPUT_LOG,JSON.stringify([name,args])+"\\n"); if(process.env.INPUT_FAIL===name && (!process.env.INPUT_FAIL_INPUT_ONLY || args.at(-1)!==""))process.exit(1);\n');
         fs.chmodSync(script, 0o700);
     }
 });
@@ -28,6 +28,7 @@ async function main() {
         let cursor = { x: 4, y: 5 };
         let keycodes = [38, 9];
         let effective = [{ modifiers: ["SUPER"], keycode: 108, keysym: "Alt_R" }];
+        let emittedEffective = null;
         let moving = false;
         let observed = 0;
         const request = (kind, args, timeout, done) => {
@@ -37,18 +38,19 @@ async function main() {
                 cursor: options.constrained && moving ? { x: 0, y: 0 } : cursor }; }
             else if (kind === "input.keys") data = { ok: true,
                 keys: args.map((value, i) => ({ modifiers: value.includes("+") ? ["SUPER"] : [], keycode: keycodes[i], keysym: i === 0 ? "a" : "Escape" })).concat(effective),
+                translation: args.map((value, i) => ({ modifiers: value.includes("+") ? ["SUPER"] : [], keycode: keycodes[i], keysym: i === 0 ? "a" : "Escape" })).concat(emittedEffective || effective),
                 effective: effective.map(key => key.modifiers.concat(["code:" + key.keycode]).join("+")) };
             else if (kind === "compositor.moveCursor") { cursor = { x: args[0], y: args[1] }; moving = true; data = null; }
             else throw new Error("fixture-request-kind");
             queueMicrotask(() => done(options.unread || options.readbackFailure && observed > 1 ? { kind: "timeout" } : { kind: "answer", answer: "ok", data }));
         };
         const owner = module.create({ request, timeoutMs: 1000,
-            environment: { PATH: process.env.PATH, INPUT_LOG: log, INPUT_FAIL: options.fail || "" },
+            environment: { PATH: process.env.PATH, INPUT_LOG: log, INPUT_FAIL: options.fail || "", INPUT_FAIL_INPUT_ONLY: options.inputOnly ? "1" : "" },
             commands: options.commands || ["wtype", "wlrctl", "ydotool"] });
         const writes = () => fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map(JSON.parse) : [];
         const run = (call, record) => new Promise(resolve => record.start(call, resolve));
         return { owner, writes, run, requests,
-            target(value) { target = value; }, effective(value) { effective = value; }, keycodes(value) { keycodes = value; } };
+            target(value) { target = value; }, effective(value) { effective = value; }, globalEffective(value) { emittedEffective = value; }, keycodes(value) { keycodes = value; } };
     }
     const context = { locked: false, profile: "trusted", taint: { kind: "clean" }, grants: [] };
     function refined(id, args) { const value = Tools.refine({ id, args }); assert.equal(value.kind, "call"); return value.call; }
@@ -80,23 +82,26 @@ async function main() {
     await control("pointer-click", '["pointer", "click", a.button]', '["pointer", "click", "left"]', module => transport(module, ...argvRows[2]));
     await control("pointer-scroll", 'a.direction === "down" ? a.steps', 'a.direction === "down" ? -a.steps', module => transport(module, ...argvRows[4]));
 
-    async function refusal(module, options, configure, id, args, reason) {
+    async function refusal(module, options, configure, id, args, reason, judge = Policy) {
         const h = make(module, options);
         try {
             const record = await h.owner.ready();
             if (configure) configure(h);
             const call = refined(id, args);
             const input = await record.observe(call);
-            assert.equal(Policy.decide(call, { ...context, input }).reason, reason);
+            assert.equal(judge.decide(call, { ...context, input }).reason, reason);
             assert.equal(h.writes().filter(([, args]) => args.includes("click") || args.includes("-k") || args.includes("literal")).length, 0);
         } finally { h.owner.close(); }
     }
-    await refusal(require(file), {}, h => h.effective([{ modifiers: ["SUPER"], keycode: 9, keysym: "Escape" }]), "input.key", { chord: "SUPER+A" }, "own-shortcut");
-    await control("own-emitted-code", 'key.keycode === raw.keycode', 'false && key.keycode === raw.keycode', module =>
-        refusal(module, {}, h => h.effective([{ modifiers: ["SUPER"], keycode: 9, keysym: "Escape" }]), "input.key", { chord: "SUPER+A" }, "own-shortcut"));
-    await refusal(require(file), {}, h => h.effective([{ modifiers: [], keycode: 36, keysym: "Return" }]), "input.text", { text: "literal" }, "own-shortcut");
-    await control("text-own-bind", 'key.modifiers.length === 0', 'false && key.modifiers.length === 0', module =>
-        refusal(module, {}, h => h.effective([{ modifiers: [], keycode: 36, keysym: "Return" }]), "input.text", { text: "literal" }, "own-shortcut"));
+    const ownGlobal = h => h.globalEffective([{ modifiers: ["SUPER"], keycode: 9, keysym: "Escape" }]);
+    await refusal(require(file), {}, ownGlobal, "input.key", { chord: "SUPER+A" }, "jarvis-chord");
+    await mutant(path.join(backend, "Policy.js"), "own-emitted-code", 'if (key.emittedEffective.some(bound => sameChord(key.emitted, bound)))',
+        'if (false && key.emittedEffective.some(bound => sameChord(key.emitted, bound)))', judge =>
+            refusal(require(file), {}, ownGlobal, "input.key", { chord: "SUPER+A" }, "jarvis-chord", judge));
+    const ownText = h => h.effective([{ modifiers: [], keycode: 36, keysym: "Return" }]);
+    await refusal(require(file), {}, ownText, "input.text", { text: "literal" }, "own-shortcut");
+    await mutant(path.join(backend, "Policy.js"), "text-own-bind", 'bound.modifiers.length === 0', 'false && bound.modifiers.length === 0', judge =>
+        refusal(require(file), {}, ownText, "input.text", { text: "literal" }, "own-shortcut", judge));
     await refusal(require(file), {}, null, "input.text", { text: "x".repeat(4097) }, "input-size");
     await control("text-bound", 'Buffer.byteLength(a.text) > 4096', 'false && Buffer.byteLength(a.text) > 4096', module =>
         refusal(module, {}, null, "input.text", { text: "x".repeat(4097) }, "input-size"));
@@ -145,6 +150,17 @@ async function main() {
     }
     await readback(require(file));
     await control("delivered-readback", 'catch (error) { detail = "Readback unavailable: " + error.message + "."; }', 'catch (error) { throw error; }', readback);
+    async function partial(module) {
+        const h = make(module, { fail: "wtype", inputOnly: true });
+        const record = await h.owner.ready();
+        await record.observe(text);
+        const answer = await h.run(text, record);
+        assert.equal(answer.outcome, "unknown");
+        assert.match(answer.content, /Delivery may be partial/);
+        h.owner.close();
+    }
+    await partial(require(file));
+    await control("partial-transport", 'if (!error.deliveryPossible) throw error;', 'throw error;', partial);
     await helpEvidence();
     await routerEvidence();
     console.log("jarvis-input: pass argv, target, own-bind, terminal, readiness and serial-observation controls");
@@ -169,7 +185,7 @@ async function routerEvidence() {
         runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} }); runner.dispatch({ type: "indicator", shown: true });
         runner.dispatch({ type: "talk-down" }); transcript("final", "fixture user");
         const route = () => router.route({ id: "input-call", tool: "input.text", arguments: { text: "literal" } }, { gen: runner.state.gen, op: runner.state.turn.op });
-        return { runner, router, starts, route, resolve: () => answer({ target: { kind: "application", id: "editor" } }), advance: n => { at += n; } };
+        return { runner, router, starts, route, resolve: () => answer({ target: { kind: "application", id: "editor" }, text: { effective: [] } }), advance: n => { at += n; } };
     }
     const h = make(); const observed = h.route(); assert.equal(h.route().reason, "busy");
     h.resolve(); const hold = await observed; assert.equal(hold.kind, "held");

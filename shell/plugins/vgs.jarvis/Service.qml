@@ -272,7 +272,7 @@ Item {
                         const current = Object.values(shell.shortcut.keys).filter(key => key !== null);
                         if (JSON.stringify(current) !== JSON.stringify(effective))
                             value = { ok: false, error: "refused: keymap=binds-changed" };
-                        else if (value.ok) value = { ok: true, keys: value.keys, effective: effective };
+                        else if (value.ok) value = { ok: true, keys: value.keys, translation: value.translation, effective: effective };
                         done(value);
                     });
                 }

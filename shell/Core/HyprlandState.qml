@@ -77,7 +77,8 @@ Scope {
 
     function readDevices() {
         if (!active) return;
-        devicesReader.read(State.DEVICES_REQUEST, null);
+        devicesReader.read(keyResolution === null ? State.DEVICES_REQUEST : State.KEYS_REQUEST,
+            keyResolution === null ? null : "keys");
     }
 
     function resolveKeys(keys, done) {
@@ -112,7 +113,7 @@ Scope {
             const done = completion;
             completion = null;
             const value = done !== null && done.code === 0 && root.keyResolution !== null
-                ? State.resolvedKeys(keyOutput.text, root.keyResolution.keys.length)
+                ? State.resolvedKeys(keyOutput.text, root.keyResolution.keys.length, true)
                 : { ok: false, error: "refused: keymap=resolver-failed" };
             root.finishKeys(value);
         }
@@ -179,7 +180,10 @@ Scope {
         label: "devices"
         onReadDone: (request, text, failure) => {
             if (!root.active) return;
-            const read = failure === "" ? State.devicesState(text) : { ok: false, error: failure };
+            const facts = request === "keys" && root.keyResolution !== null
+                ? State.keyFacts(text, root.keyResolution.keys) : null;
+            const read = failure === "" ? facts !== null ? facts : State.devicesState(text)
+                : { ok: false, error: failure };
             if (!read.ok) {
                 root.devices = null;
                 root.devicesFailure = read.error;
@@ -189,10 +193,10 @@ Scope {
                 if (!root.same(read.devices, root.devices)) root.devices = read.devices;
             }
             if (root.keyResolution !== null) {
-                const request = State.keyRequest(root.devices, root.keyResolution.keys);
-                if (!request.ok) root.finishKeys(request);
+                const keyFacts = facts === null ? { ok: false, error: "refused: keymap=request" } : facts;
+                if (!keyFacts.ok) root.finishKeys(keyFacts);
                 else {
-                    const wire = JSON.stringify(request.request) + "\n";
+                    const wire = JSON.stringify(keyFacts.request) + "\n";
                     if (keyResolution.resolving) {
                         if (wire !== keyResolver.requestText) {
                             root.finishKeys({ ok: false, error: "refused: keymap=layout-changed" });

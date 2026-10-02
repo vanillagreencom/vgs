@@ -10,7 +10,7 @@ const { load } = require("../bin/lib/qml-library.js");
 const tree = path.resolve(__dirname, "..");
 const stateFile = path.join(tree, "shell/Core/HyprlandState.js");
 const dispatchFile = path.join(tree, "shell/Core/Dispatch.js");
-const same = (got, want, name) => assert.equal(JSON.stringify(got), JSON.stringify(want), name);
+const same = (got, want, name) => assert.deepEqual(JSON.parse(JSON.stringify(got)), want, name);
 const answer = (call, name) => {
     let result;
     assert.doesNotThrow(() => { result = call(); }, name + ": malformed observations return a refusal");
@@ -43,7 +43,10 @@ function stateChecks(state) {
     }
     assert.equal(state.keyRequest(devices([keyboard()]), Array(64).fill("Y")).ok, true, "the inclusive request bound");
     const reply = { ok: true, keys: [key()] };
+    same(state.resolvedKeys(JSON.stringify(reply), 1, true), { ok: false, error: "refused: keymap=translation" }, "core dual requests require both maps");
     same(state.resolvedKeys(JSON.stringify(reply), 1), reply, "a complete resolver reply survives narrowing");
+    const dual = { ok: true, keys: [key()], translation: [key({ keysym: "y" })] };
+    same(state.resolvedKeys(JSON.stringify(dual), 1), dual, "native and translation maps remain separate in the API reply");
     const responses = [
         ["malformed JSON", "ok", 1, "refused: keymap=unresolved"],
         ["resolver refusal", JSON.stringify({ ok: false, keys: [key()] }), 1, "refused: keymap=unresolved"],
@@ -54,10 +57,77 @@ function stateChecks(state) {
         ["fractional code", JSON.stringify({ ok: true, keys: [key({ keycode: 29.5 })] }), 1, "refused: keymap=reply"],
         ["evdev code instead of XKB", JSON.stringify({ ok: true, keys: [key({ keycode: 7 })] }), 1, "refused: keymap=reply"],
         ["missing symbol", JSON.stringify({ ok: true, keys: [key({ keysym: "" })] }), 1, "refused: keymap=reply"],
-        ["non-string symbol", JSON.stringify({ ok: true, keys: [key({ keysym: 1 })] }), 1, "refused: keymap=reply"]
+        ["non-string symbol", JSON.stringify({ ok: true, keys: [key({ keysym: 1 })] }), 1, "refused: keymap=reply"],
+        ["translation is not a list", JSON.stringify({ ok: true, keys: [key()], translation: null }), 1, "refused: keymap=translation"],
+        ["translation is incomplete", JSON.stringify({ ok: true, keys: [key()], translation: [] }), 1, "refused: keymap=translation"],
+        ["translation independently judges modifiers", JSON.stringify({ ok: true, keys: [key()], translation: [key({ modifiers: ["META"] })] }), 1, "refused: keymap=reply"],
+        ["translation independently judges code", JSON.stringify({ ok: true, keys: [key()], translation: [key({ keycode: 7 })] }), 1, "refused: keymap=reply"],
+        ["translation independently judges symbol", JSON.stringify({ ok: true, keys: [key()], translation: [key({ keysym: "" })] }), 1, "refused: keymap=reply"]
     ];
     for (const [name, text, count, error] of responses)
         same(answer(() => state.resolvedKeys(text, count), name), { ok: false, error }, name);
+}
+
+const rawKeyboard = { name: "wl_keyboard", rules: "evdev", model: "pc105", layout: "us,de", variant: ",", options: "caps:escape",
+    active_layout_index: 1, active_keymap: "German", main: true };
+const factsReplies = (options = {}) => {
+    const values = Object.assign({ kb_file: "[[EMPTY]]", kb_rules: "evdev", kb_model: "pc105", kb_layout: "us,de", kb_variant: "[[EMPTY]]", kb_options: "[[EMPTY]]" }, options);
+    return [JSON.stringify({ mice: [], keyboards: [rawKeyboard] }), ...["kb_file", "kb_rules", "kb_model", "kb_layout", "kb_variant", "kb_options"].map(name =>
+        JSON.stringify({ option: "input:" + name, str: values[name], set: true }))];
+};
+
+function keyFactsChecks(state) {
+    same(state.KEYS_REQUEST, ["hyprctl", "--batch", "j/devices;j/getoption input:kb_file;j/getoption input:kb_rules;j/getoption input:kb_model;j/getoption input:kb_layout;j/getoption input:kb_variant;j/getoption input:kb_options"], "devices and the global input map use one complete snapshot");
+    const keys = ["super+y", "SUPER+code:29"];
+    const want = { ok: true, devices: devices([keyboard()]), request: { keyboard: { layout: "us,de", variant: ",", options: "caps:escape", activeLayoutIndex: 1 },
+        keys: ["SUPER+Y", "SUPER+code:29"], translation: { keyboard: { layout: "us,de", variant: "", options: "", activeLayoutIndex: 0 }, keys: ["SUPER+Y", "SUPER+code:29"] } } };
+    same(state.keyFacts(factsReplies().join("\n\n\n"), keys), want, "native German and global group zero stay independent");
+    same(state.keyFacts(factsReplies({ kb_file: "", kb_rules: "", kb_model: "" }).join("\n\n\n"), keys), want, "empty rules and model use the supported standard map");
+    same(state.keyFacts(factsReplies({ kb_rules: "[[EMPTY]]", kb_model: "[[EMPTY]]" }).join("\n\n\n"), keys), want, "Hyprland empty sentinels normalize before resolver input");
+    const configured = JSON.parse(JSON.stringify(want));
+    configured.request.translation.keyboard = { layout: "us,de", variant: ",nodeadkeys", options: "caps:escape", activeLayoutIndex: 0 };
+    same(state.keyFacts(factsReplies({ kb_variant: ",nodeadkeys", kb_options: "caps:escape" }).join("\n\n\n"), keys), configured, "global variant and options reach only the translation map");
+    const refusals = [
+        ["custom keymap file", { kb_file: "/fixture/custom.xkb" }, "custom-file"],
+        ["unsupported rules", { kb_rules: "base" }, "rules"],
+        ["unsupported model", { kb_model: "custom" }, "model"],
+        ["unknown empty layout", { kb_layout: "" }, "layout"],
+        ["empty sentinel cannot establish a layout", { kb_layout: "[[EMPTY]]" }, "layout"]
+    ];
+    for (const [name, options, cause] of refusals)
+        same(state.keyFacts(factsReplies(options).join("\n\n\n"), keys), { ok: false, error: "refused: keymap=" + cause }, name);
+    const malformed = [
+        ["not JSON", "ok"],
+        ["null option", "null"],
+        ["list in place of an option", "[]"],
+        ["wrong option", JSON.stringify({ option: "input:kb_model", str: "evdev" })],
+        ["missing option name", JSON.stringify({ str: "evdev" })],
+        ["missing string", JSON.stringify({ option: "input:kb_rules" })],
+        ["non-string option", JSON.stringify({ option: "input:kb_rules", str: false })]
+    ];
+    for (const [name, text] of malformed) {
+        const replies = factsReplies();
+        replies[2] = text;
+        same(answer(() => state.keyFacts(replies.join("\n\n\n"), keys), name), { ok: false, error: "refused: keymap=option name=kb_rules" }, name);
+    }
+    for (const field of ["kb_file", "kb_rules", "kb_model", "kb_layout", "kb_variant", "kb_options"])
+        same(state.keyFacts(factsReplies({ [field]: null }).join("\n\n\n"), keys), { ok: false, error: "refused: keymap=option name=" + field }, "every global option must be read: " + field);
+    const missing = factsReplies().slice(0, -1);
+    same(state.keyFacts(missing.join("\n\n\n"), keys), { ok: false, error: "refused: key facts=parts count=6 want=7" }, "a partial snapshot refuses");
+    const badDevices = factsReplies();
+    badDevices[0] = JSON.stringify({ mice: [], keyboards: [] });
+    same(state.keyFacts(badDevices.join("\n\n\n"), keys), { ok: false, error: "refused: keymap=main-keyboard" }, "global facts cannot stand in for the missing native keyboard");
+    badDevices[0] = "{}";
+    same(state.keyFacts(badDevices.join("\n\n\n"), keys), { ok: false, error: "refused: devices=shape want=mice,keyboards" }, "malformed native device facts refuse");
+    for (const [field, value, cause] of [["rules", "base", "native-rules"], ["model", "custom", "native-model"], ["rules", null, "native-rules"], ["model", null, "native-model"]]) {
+        const replies = factsReplies();
+        replies[0] = JSON.stringify({ mice: [], keyboards: [Object.assign({}, rawKeyboard, { [field]: value })] });
+        same(state.keyFacts(replies.join("\n\n\n"), keys), { ok: false, error: "refused: keymap=" + cause }, "unsupported native " + field);
+    }
+    const emptyNative = factsReplies();
+    emptyNative[0] = JSON.stringify({ mice: [], keyboards: [Object.assign({}, rawKeyboard, { rules: "", model: "" })] });
+    same(state.keyFacts(emptyNative.join("\n\n\n"), keys), want, "empty native rules and model use the standard map");
+    assert.equal(state.keyFacts(factsReplies().join("\n\n\n"), ["SUPER+Y;exec"]).ok, false, "global facts use the existing key judge");
 }
 
 const client = extra => Object.assign({ address: "0xabc", mapped: true, visible: true, class: "Editor", at: [100, 100], size: [200, 100],
@@ -132,8 +202,10 @@ function dispatchChecks(dispatch) {
 }
 
 stateChecks(load(stateFile));
+keyFactsChecks(load(stateFile));
 dispatchChecks(load(dispatchFile));
 const controls = [
+    [stateFile, stateChecks, "required translation map", "requireTranslation && ", "false && "],
     [stateFile, stateChecks, "read keyboard devices", "devices === null || ", ""],
     [stateFile, stateChecks, "key request list", "!Array.isArray(keys) || ", ""],
     [stateFile, stateChecks, "key request bound", " || keys.length > 64", ""],
@@ -152,6 +224,21 @@ const controls = [
     [stateFile, stateChecks, "XKB code floor", " || key.keycode < 8", ""],
     [stateFile, stateChecks, "symbol type", 'typeof key.keysym !== "string"', "false"],
     [stateFile, stateChecks, "nonempty symbol", " || key.keysym.length === 0", ""],
+    [stateFile, stateChecks, "translation list", "!Array.isArray(read.value.translation)", "false"],
+    [stateFile, stateChecks, "translation exact count", " || read.value.translation.length !== count", ""],
+    [stateFile, stateChecks, "translation independent narrowing", "lists.push(read.value.translation);", "lists.push([]);"],
+    [stateFile, keyFactsChecks, "global option string", ' || typeof read.value.str !== "string"', ""],
+    [stateFile, keyFactsChecks, "global option name", 'read.value.option !== "input:" + KEY_OPTIONS[i]', "false"],
+    [stateFile, keyFactsChecks, "empty global sentinel", 'read.value.str === "[[EMPTY]]" ? "" : read.value.str', "read.value.str"],
+    [stateFile, keyFactsChecks, "custom keymap refused", 'if (global.kb_file !== "")', "if (false)"],
+    [stateFile, keyFactsChecks, "native rules supported", 'if (main.rules !== "" && main.rules !== "evdev")', "if (false)"],
+    [stateFile, keyFactsChecks, "native model supported", 'if (main.model !== "" && main.model !== "pc105")', "if (false)"],
+    [stateFile, keyFactsChecks, "rules supported", 'if (global.kb_rules !== "" && global.kb_rules !== "evdev")', "if (false)"],
+    [stateFile, keyFactsChecks, "model supported", 'if (global.kb_model !== "" && global.kb_model !== "pc105")', "if (false)"],
+    [stateFile, keyFactsChecks, "global layout available", 'if (global.kb_layout === "")', "if (false)"],
+    [stateFile, keyFactsChecks, "global group zero", "options: global.kb_options, activeLayoutIndex: 0", "options: global.kb_options, activeLayoutIndex: native.request.keyboard.activeLayoutIndex"],
+    [stateFile, keyFactsChecks, "global variant independent", "variant: global.kb_variant", "variant: native.request.keyboard.variant"],
+    [stateFile, keyFactsChecks, "global options independent", "options: global.kb_options, activeLayoutIndex", "options: native.request.keyboard.options, activeLayoutIndex"],
     [dispatchFile, dispatchChecks, "keyboard layer activation", "point === null && keyboardProtected", "point === null && false"],
     [dispatchFile, dispatchChecks, "observed cursor", "!Number.isFinite(cursor.x) || !Number.isFinite(cursor.y)", "false"],
     [dispatchFile, dispatchChecks, "known keyboard activation", ' || typeof keyboardProtected !== "boolean"', ""],

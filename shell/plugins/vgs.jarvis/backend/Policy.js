@@ -179,14 +179,25 @@ function decide(call, context) {
         if (refined.input === "key") {
             const key = input.key;
             if (!key || key.request !== call.args.chord || !chord(key.chord)
-                    || !Array.isArray(key.effective) || !key.effective.every(chord))
+                    || !Array.isArray(key.effective) || !key.effective.every(chord)
+                    || !chord(key.emitted) || !Array.isArray(key.emittedEffective) || !key.emittedEffective.every(chord))
                 return { kind: "refuse", reason: "key-context" };
             if (key.effective.some(bound => sameChord(key.chord, bound)))
+                return { kind: "refuse", reason: "jarvis-chord" };
+            if (key.emittedEffective.some(bound => sameChord(key.emitted, bound)))
                 return { kind: "refuse", reason: "jarvis-chord" };
         }
         if (refined.input === "text" && input.target.kind === "terminal") {
             if (context.profile !== "trusted") return { kind: "refuse", reason: "terminal-text" };
             effect = "destructive";
+        }
+        if (refined.input === "text") {
+            if (!input.text || !Array.isArray(input.text.effective) || !input.text.effective.every(chord))
+                return { kind: "refuse", reason: "text-context" };
+            // wtype text has no modifiers. Any unmodified own bind could
+            // match one of its dynamically assigned codes in either mode.
+            if (input.text.effective.some(bound => bound.modifiers.length === 0))
+                return { kind: "refuse", reason: "own-shortcut" };
         }
         if (input.target.kind !== "terminal") scope = input.target.kind + ":" + input.target.id;
     }

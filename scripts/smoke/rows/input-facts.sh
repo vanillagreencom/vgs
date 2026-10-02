@@ -51,7 +51,7 @@ print("pending" if d is None else json.dumps(d.get(sys.argv[1]), separators=(","
 input_facts_key_codes() {
   input_facts_read keys | py_reply 'import json,sys
 d=json.load(sys.stdin)
-print(json.dumps([[k["modifiers"],k["keycode"],k["keysym"]] for k in d["keys"]], separators=(",", ":")) if d and d.get("ok") else json.dumps(d))'
+print(json.dumps([[k["modifiers"],k["keycode"],k["keysym"]] for k in d[sys.argv[1]]], separators=(",", ":")) if d and d.get("ok") else json.dumps(d))' "${1:-keys}"
 }
 input_facts_main_layout() {
   hypr -j devices | py_reply 'import json,sys
@@ -84,11 +84,15 @@ expect_poll "the main keyboard reports US" 'English (US)' input_facts_main_layou
 input_facts_keys '["SUPER+Y","SUPER+code:29","SUPER+RETURN","SUPER+code:36"]'
 expect "US symbols and physical aliases have the same native key identity" \
   '[[["SUPER"],29,"y"],[["SUPER"],29,"y"],[["SUPER"],36,"Return"],[["SUPER"],36,"Return"]]' input_facts_key_codes
+expect "the global translation map uses its first US group" \
+  '[[["SUPER"],29,"y"],[["SUPER"],29,"y"],[["SUPER"],36,"Return"],[["SUPER"],36,"Return"]]' input_facts_key_codes translation
 expect "the nested keyboard switches to German" ok hypr switchxkblayout all 1
 expect_poll "the main keyboard reports German" German input_facts_main_layout
 input_facts_keys '["SUPER+Y","SUPER+code:29","SUPER+RETURN","SUPER+code:36"]'
 expect "German resolves the moved symbol and preserves Return's alias identity" \
   '[[["SUPER"],52,"y"],[["SUPER"],29,"z"],[["SUPER"],36,"Return"],[["SUPER"],36,"Return"]]' input_facts_key_codes
+expect "the global translation map keeps group zero while the native keyboard uses German" \
+  '[[["SUPER"],29,"y"],[["SUPER"],29,"y"],[["SUPER"],36,"Return"],[["SUPER"],36,"Return"]]' input_facts_key_codes translation
 
 expect "the surfaces fixture enables its background for pointer protection" ok ipc shell setPluginEnabled acme.surfaces true
 expect_poll "a VGS background is mapped below the external application" "$monitors" layer_count vgs:background
