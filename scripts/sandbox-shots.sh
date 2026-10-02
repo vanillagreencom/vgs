@@ -784,6 +784,13 @@ scene_settings() { # MODE
   park_pointer
   expect "the window opens the launcher's page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.launcher
   expect_poll "the launcher's page is shown" '"vgs.launcher"' settings_page
+  if section="$(settings_section Keys KeyField toggle)"; then
+    read -r start _ _ <<<"$section"
+    settings_scroll_to "$((start - margin))" || fail "the scroll to the Keys section failed"
+  else
+    fail "the launcher's Keys section is unreadable: $section"
+  fi
+  park_pointer
   take "settings-$1-keys"
   if "$has_agent_warden"; then
     expect "the window opens the Agent Warden page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.agent-warden
