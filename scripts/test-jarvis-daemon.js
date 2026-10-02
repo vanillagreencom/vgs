@@ -197,7 +197,7 @@ async function inside() {
     await control("state-publish", 'if (!ending && context !== null) write({ v: 1, type: "state"',
         'if (false && !ending && context !== null) write({ v: 1, type: "state"',
         file => run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false])));
-    await control("intent-identity", 'if (context === null || message.revision !== context.revision)\n                        throw new Error("jarvis: protocol=identity");',
+    await control("intent-identity", 'if (context === null || message.revision !== context.revision)\n            throw new Error("jarvis: protocol=identity");',
         'if (false) throw new Error("jarvis: protocol=identity");',
         file => run(file, [JSON.stringify(hello) + "\n",
             JSON.stringify({ ...intent("stop"), revision: "b".repeat(64) }) + "\n"],

@@ -5,5 +5,6 @@ import QtQml
 // event socket's events by hand, as { name, data }.
 QtObject {
     property bool usingLua: true
+    property var focusedMonitor: null
     signal rawEvent(var event)
 }
