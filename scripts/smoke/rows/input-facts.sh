@@ -34,7 +34,9 @@ input_facts_read() { ipc smoke readInstance service acme.input-facts "$1"; }
 input_facts_keys() {
   local before
   before="$(input_facts_read keyAnswers)" || return 1
-  expect "the core accepts a layout resolution request" ok ipc acme.input-facts invoke keys "$1"
+  # Quickshell's CLI parser expands bracketed argv into multiple arguments.
+  # JSON whitespace keeps the key list in one string for the fixture.
+  expect "the core accepts a layout resolution request" ok ipc acme.input-facts invoke keys " $1"
   expect_poll "the core completes the layout resolution" "$((before + 1))" input_facts_read keyAnswers
 }
 input_facts_observe() {

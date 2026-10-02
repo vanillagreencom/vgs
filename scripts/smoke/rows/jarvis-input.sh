@@ -30,4 +30,5 @@ input_open status
 input_open launcher
 cp -- "$sandbox/input-tui-original" "$input_tui"
 jarvis_rescan
+settings_page_close vgs.jarvis
 jarvis_disable
