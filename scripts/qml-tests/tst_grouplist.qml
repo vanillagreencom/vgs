@@ -116,7 +116,7 @@ Item {
             compare(disclosure.visible, true);
             compare(disclosure.y - (field.y + field.height), Theme.field.gap);
             compare(warden.spacing, Theme.field.gap);
-            const row = field.children.find(child => child.spacing === Theme.field.labelGap);
+            const row = field.children.find(child => child.objectName === "fieldRow");
             const hint = field.children.find(child => child.height > 0 && child.children.length === 1 && child.children[0].role === "hint");
             verify(row !== undefined && hint !== undefined, "the field holds its row and its hint");
             compare(hint.y - (row.y + row.height), Theme.field.gap);

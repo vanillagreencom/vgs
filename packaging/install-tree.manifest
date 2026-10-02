@@ -101,6 +101,7 @@ f share/vgs/shell/Ui/controls/Button.qml
 f share/vgs/shell/Ui/controls/Checkbox.qml
 f share/vgs/shell/Ui/controls/DateField.qml
 f share/vgs/shell/Ui/controls/Field.qml
+f share/vgs/shell/Ui/controls/FormRow.qml
 f share/vgs/shell/Ui/controls/IconButton.qml
 f share/vgs/shell/Ui/controls/IndicatorLabel.qml
 f share/vgs/shell/Ui/controls/PathField.qml
@@ -126,6 +127,7 @@ f share/vgs/shell/Ui/feedback/EmptyState.qml
 f share/vgs/shell/Ui/feedback/Kbd.qml
 f share/vgs/shell/Ui/feedback/KeyCaps.qml
 f share/vgs/shell/Ui/feedback/KeyHints.qml
+f share/vgs/shell/Ui/feedback/LevelOsd.qml
 f share/vgs/shell/Ui/feedback/ProgressBar.qml
 f share/vgs/shell/Ui/feedback/Spinner.qml
 f share/vgs/shell/Ui/feedback/Toast.qml
@@ -149,6 +151,7 @@ f share/vgs/shell/Ui/icons/LICENSE
 f share/vgs/shell/Ui/icons/Lucide.js
 f share/vgs/shell/Ui/layout/AngledCard.qml
 f share/vgs/shell/Ui/layout/CardCarousel.qml
+f share/vgs/shell/Ui/layout/DeviceRow.qml
 f share/vgs/shell/Ui/layout/Disclosure.qml
 f share/vgs/shell/Ui/layout/GroupList.qml
 f share/vgs/shell/Ui/layout/ListAnimation.qml

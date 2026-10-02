@@ -176,7 +176,9 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `Slider` | `T.Slider` | `from`, `to`, `value`, `stepSize`, `pageStep`, `focusPreview` |
 | `TextField` | `T.TextField` | `placeholderText`, `leadingIcon`, `trailingIcon`, `actions`, `error`, `validator`, `password`, which masks what is typed |
 | `Field` | `Column` | `label`, `hint`, `error`, `inline`; the control as its child |
+| `FormRow` | `Item` | the one key/value row, which `Field` composes: `label`, the control as its child, ending on the row's end edge; `warning` and `warningTone`, a `Badge` first in the value column; `labelColumn`; `valueX` |
 | `Spinner`, `ProgressBar` | `Item`, `T.ProgressBar` | `running`; `value`, `indeterminate` |
+| `LevelOsd` | `Rectangle` | an on-screen display's card for a passive layer: `iconName`, `level` (a share, held to 0 to 1), `text` (the percentage unless the caller names it, such as Muted); takes no focus and no press |
 | `VoiceOrb` | `Item` | decorative `tone` (`accent`, `info`, `success`, `warning`, `danger`, `muted`), `level`, `secondaryLevel` (bounded shares), `active`; [`docs/architecture/components-media.md` § VoiceOrb](../../../../docs/architecture/components-media.md#voiceorb) |
 | `Badge`, `Kbd`, `KeyCaps`, `KeyHints` | `Rectangle`, `Row` | `text`, `iconName`, `tone` (`neutral`, `accent`, `success`, `warning`, `danger`, `info`); `text`; `shortcut`; `hints` |
 | `CodeLine` | `Rectangle` | `text`, a command or path, wrapped whole; `copyLabel`, the Copy button's label; `copy()`, `copied()`, `confirming` while the button shows its check mark |
@@ -188,6 +190,7 @@ Types refused as an instantiation anywhere in a plugin's QML or JS: `PanelWindow
 | `ListItem` | `T.ItemDelegate` | `text`, `secondary`, `iconName`, `trailing`, `highlighted`; `cursor`, the list's `ListCursor`, which then draws the highlight, `pointed` when a hover the cursor lets through should select the row, `enters` (true with a cursor) |
 | `ListCursor` | `Item` | the one highlight of a list, declared in the item that holds the rows or a view's `contentItem`: `follow(row, holds)`, `snap()`, `hoverTakes(scenePoint)`, `disarm()` on a key, `arm()`, `enterSlot()`, `shown`; `motion` (`Theme.motion.list` by default), `color`, `radius`, `background`: [`docs/architecture/motion.md`](../../../../docs/architecture/motion.md) |
 | `ListEntrance` | `Translate` | a row's entrance, as its `transform`: `start(slot, direction)`, `progress` for the row's opacity, `shift`, `motion` |
+| `DeviceRow` | `ListItem` | one device of a list, of any kind: `text`, `secondary`, `iconName`, `cursor` as `ListItem` takes them; `battery` (a share, toned by `deviceRow.battery`) or `badge`, `badgeTone`, `badgeIcon`; `actions`; `menuEntries`, the `MenuItem`s of its overflow menu, `menuLabel`, `openMenu()`; `clicked` on a click, Enter, Return or Space; Shift+F10 and the Menu key open the overflow menu |
 | `Disclosure` | `Column` | `text`, `secondary`, `iconName`, `trailing` as `ListItem` takes them, `expanded`, `expandable`; its content as children, shown under the row while expanded |
 | `SectionHeader` | `Column` | `text`, `description`; `leftPadding` and `rightPadding` inset both lines |
 | `GroupList` | `Item` | groups as children, each a row with its own lines: `groupList.gap` between groups with a hairline centred in each gap; a nested list divides its own groups alike |

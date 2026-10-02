@@ -27,9 +27,11 @@ TimeField 1.0 controls/TimeField.qml
 DateField 1.0 controls/DateField.qml
 PathField 1.0 controls/PathField.qml
 Field 1.0 controls/Field.qml
+FormRow 1.0 controls/FormRow.qml
 Spinner 1.0 feedback/Spinner.qml
 VoiceOrb 1.0 feedback/VoiceOrb.qml
 ProgressBar 1.0 feedback/ProgressBar.qml
+LevelOsd 1.0 feedback/LevelOsd.qml
 Badge 1.0 feedback/Badge.qml
 EmptyState 1.0 feedback/EmptyState.qml
 Kbd 1.0 feedback/Kbd.qml
@@ -43,6 +45,7 @@ SlimScrollBar 1.0 layout/SlimScrollBar.qml
 Pane 1.0 layout/Pane.qml
 Tabs 1.0 layout/Tabs.qml
 ListItem 1.0 layout/ListItem.qml
+DeviceRow 1.0 layout/DeviceRow.qml
 ListCursor 1.0 layout/ListCursor.qml
 ListEntrance 1.0 layout/ListEntrance.qml
 Disclosure 1.0 layout/Disclosure.qml
