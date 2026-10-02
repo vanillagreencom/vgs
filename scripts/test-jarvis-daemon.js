@@ -299,6 +299,41 @@ async function inside() {
             if (child.exitCode === null) { child.kill("SIGKILL"); await closed; }
         }
     }
+    async function taskWire(file) {
+        const gates = path.join(path.dirname(file), "task-wire-gates");
+        fs.mkdirSync(gates);
+        const fixture = cp.spawnSync("node", [path.join(tree, "scripts/fixtures/jarvis/prepare.js"),
+            "--task-requests", file, gates], { env: { PATH: process.env.PATH, HOME: process.env.HOME },
+            encoding: "utf8", timeout: 3000 });
+        assert.equal(fixture.status, 0, fixture.stdout + fixture.stderr);
+        await conversation(file, async w => {
+            for (const [n, answer] of [[1, "ok"], [2, "refused: tui=task reason=busy"]]) {
+                fs.writeFileSync(path.join(gates, "request-" + n), "");
+                let request;
+                // The fixture crosses the daemon's pipe; poll its actual
+                // output, not a simulated request-owner result.
+                for (let attempts = 0; attempts < 300; attempts++) {
+                    request = w.messages.find(message => message.type === "request" && message.id === n);
+                    if (request !== undefined) break;
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                }
+                assert.deepEqual(request, { v: 1, type: "request", gen: w.last().gen,
+                    revision: hello.revision, id: n, kind: "tui.run", args: [path.join(gates, "spec-" + n + ".json")] });
+                w.raw({ v: 1, type: "reply", gen: request.gen, revision: request.revision,
+                    id: request.id, kind: request.kind, answer, data: null });
+                const replies = path.join(gates, "replies.jsonl");
+                for (let attempts = 0; attempts < 300; attempts++) {
+                    if (fs.existsSync(replies) && fs.readFileSync(replies, "utf8").trim().split("\n").length === n) break;
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                }
+                assert.equal(JSON.parse(fs.readFileSync(replies, "utf8").trim().split("\n").at(-1)).answer,
+                    answer, "the task display receives the shared owner's reply");
+            }
+        });
+    }
+    await taskWire(daemonCopy("task-wire"));
+    await control("task-request-owner", 'requests.send("tui.run", args, 20000, result => {',
+        'requests.send("desktop.list", [], 20000, result => {', taskWire);
     const muteFile = path.join(hello.directories.state, "mute.json");
     const muteCheck = async file => {
         await conversation(file, async w => {

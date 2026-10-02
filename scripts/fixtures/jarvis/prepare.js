@@ -153,7 +153,7 @@ function taskRequests(file, gates) {
                         const n = fixtureNext;
                         if (!fixtureFs.existsSync(path.join(${JSON.stringify(gates)}, "request-" + n))) return;
                         fixtureNext++;
-                        void request({ kind: "tui.run", name: "task", args: [path.join(${JSON.stringify(gates)}, "spec-" + n + ".json")] })
+                        void taskTui([path.join(${JSON.stringify(gates)}, "spec-" + n + ".json")])
                             .then(answer => fixtureFs.appendFileSync(path.join(${JSON.stringify(gates)}, "replies.jsonl"),
                                 JSON.stringify({ n, answer }) + "\\n"));
                     }, 10); // Wait for the row's explicit gate, not a startup delay.

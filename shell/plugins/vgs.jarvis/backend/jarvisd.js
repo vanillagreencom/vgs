@@ -51,9 +51,6 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let desktop = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
-    // Requests awaiting the service's reply, by id; one resolver each.
-    const replies = new Map();
-    let nextRequest = 0;
 
     function teardown() {
         runner.close();
@@ -61,8 +58,6 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         if (requests !== null) requests.close();
         if (audit !== null) audit.close();
         if (tasks !== null) tasks.close();
-        for (const resolve of replies.values()) resolve("refused: daemon=ending");
-        replies.clear();
     }
 
     function fatal(error) {
@@ -74,15 +69,19 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             : error.message.startsWith("jarvis: mute=") ? 78 : 65, error.message);
     }
 
-    // Ask the service for a shell-side call; resolves with its reply text.
-    function request(fields) {
+    // Adapt the shared request result to the task display's text contract.
+    function taskTui(args) {
         if (ending || context === null) return Promise.resolve("refused: daemon=ending");
-        if (replies.size >= Protocol.MAX_PENDING_REQUESTS)
-            return Promise.resolve("refused: request=" + fields.kind + " reason=busy");
-        const id = ++nextRequest;
         return new Promise(resolve => {
-            replies.set(id, resolve);
-            write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, id, ...fields });
+            requests.send("tui.run", args, 20000, result => {
+                switch (result.kind) {
+                case "answer": resolve(result.answer); break;
+                case "busy": resolve("refused: request=tui.run reason=busy"); break;
+                case "timeout": resolve("refused: request=tui.run reason=timeout"); break;
+                case "refused": resolve(result.reason); break;
+                default: throw new Error("jarvis: requests=result-kind");
+                }
+            });
         });
     }
 
@@ -215,10 +214,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                 }
                 if (message.type === "reply") {
                     intentIdentity(message);
-                    const resolve = replies.get(message.id);
-                    if (resolve === undefined) throw new Error("jarvis: protocol=reply-identity");
-                    replies.delete(message.id);
-                    resolve(message.answer);
+                    requests.reply(message);
                     continue;
                 }
                 if (message.type === "intent") {
@@ -235,11 +231,6 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         if (["mute", "stop"].includes(message.intent)) audit.cleanup(message.intent, dispatch);
                         else dispatch();
                     }
-                    continue;
-                }
-                if (message.type === "reply") {
-                    intentIdentity(message);
-                    requests.reply(message);
                     continue;
                 }
                 if (message.type === "shown") {
@@ -285,7 +276,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     // TaskRunner only observes and stops recorded tasks.
                     tasks = TaskRunner.create({ directories: context.directories, engine, backend: __dirname,
                         settings: () => context.settings,
-                        display: { run: args => request({ kind: "tui.run", name: "task", args }) },
+                        display: { run: taskTui },
                         count: count => {
                             if (!ending) write({ v: 1, type: "tasks", gen: runner.state.gen,
                                 revision: context.revision, count });

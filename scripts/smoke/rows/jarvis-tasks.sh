@@ -111,7 +111,7 @@ jarvis_disable
 
 task_controls=(
   "forward|onTaskTuiRunningChanged: sendTuiState()|onTaskTuiRunningChanged: {}|the service forwards the running task TUI"
-  "argv|String(shell.tui.run(message.name, message.args, () => {|String(shell.tui.run(message.name, [], () => {|the core runs the task TUI with the spec path alone"
+  "argv|shell.tui.run(\"task\", args, () => {|shell.tui.run(\"task\", [], () => {|the core runs the task TUI with the spec path alone"
   "count|const reply = shell.status.set(\"tasks\", message.count);|const reply = \"ok\";|the daemon's live task count reaches the status"
   "intent|        send(fields);
         return \"ok\";|        return \"ok\";|the daemon receives the task-stop intent"

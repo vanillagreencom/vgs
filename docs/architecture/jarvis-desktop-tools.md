@@ -73,7 +73,7 @@ These are recovery rules for a compositor or service that does not answer, not m
 
 The plan's [§ 3.3](../plans/v2-jarvis-plan.md#33-the-wire-between-shell-and-daemon) names the `request` and `reply` types. `JarvisProtocol.REQUESTS` is the closed kind table. Each kind lists its argument types and its reply data shape. The compositor kinds carry the dispatcher's arguments; the core's argument check still judges their values.
 
-- `request` is daemon to shell: `{v, type, gen, revision, id, kind, args}`. `id` is a positive integer the daemon assigns in order. A text argument holds 1 to 4096 characters without NUL. A command holds 1 to 64 such words.
+- `request` is daemon to shell: `{v, type, gen, revision, id, kind, args}`. `id` is a positive integer assigned in order. Text holds 1 to 4096 characters without NUL. A command holds 1 to 64 such words. [Task display](jarvis-task-control.md#display) shares this owner: `tui.run` holds one absolute spec path and opens only `task`.
 - `reply` is shell to daemon: `{v, type, gen, revision, id, kind, answer, data}`. `answer` is `ok` or the capability's refusal, one printable line of at most 300 characters. `data` is `null` unless the answer is `ok` and the kind returns data.
 - `desktop.list` data holds at most 512 entries `{id, name, startupClass}`, sorted by id, and `complete`. The service stops adding entries at 192 KiB, so the reply stays under the 256 KiB line bound. `desktop.launch` data is the launched entry `{id, name, startupClass, terminal}`.
 - `JarvisProtocol.desktopEntries`, `desktopEntry` and `answer` build those values in the service, so the service never writes a reply the judge refuses.

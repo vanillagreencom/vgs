@@ -49,10 +49,16 @@ function checks(ShellRequests) {
 
     // The plan's bound: sixteen await a reply, the seventeenth is busy.
     h = harness(ShellRequests);
-    for (let n = 0; n < Protocol.MAX_PENDING_REQUESTS; n++) h.send();
+    for (let n = 0; n < Protocol.MAX_PENDING_REQUESTS; n++)
+        if (n % 2 === 0) h.send("tui.run", ["/private/task-" + n + ".json"]);
+        else h.send("desktop.list", []);
     const extra = h.send();
     assert.deepEqual(h.answers[extra], [{ kind: "busy" }]);
     assert.equal(h.written.length, 16, "a busy request is never written");
+    assert.deepEqual(h.written.map(row => row.id), Array.from({ length: 16 }, (_, n) => n + 1),
+        "task and desktop requests share one id sequence");
+    h.reply(1, "tui.run", "refused: tui=task reason=busy");
+    assert.deepEqual(h.answers[0], [{ kind: "answer", answer: "refused: tui=task reason=busy", data: null }]);
 
     // A timed-out request still awaits its reply: it holds its slot and its
     // late reply is dropped without a second answer.

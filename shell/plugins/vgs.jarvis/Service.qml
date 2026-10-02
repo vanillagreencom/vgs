@@ -160,16 +160,6 @@ Item {
         send({ type: "tui-state", name: "task", running: taskTuiRunning });
     }
 
-    function answerRequest(message) {
-        // The protocol admits only the task TUI. `done` reports a run that
-        // ended before its record said running, such as a failed launch.
-        const answer = String(shell.tui.run(message.name, message.args, () => {
-            if (lifetime.kind === "ready" && cause === "" && child.running)
-                send({ type: "tui-state", name: "task", running: false });
-        }));
-        send({ type: "reply", id: message.id, answer: answer.slice(0, 200) });
-    }
-
     function taskAnswer(message) {
         if (message.answer === "stopped") return;
         console.warn("jarvis: task-stop=" + message.answer + " task=" + message.task);
@@ -200,6 +190,11 @@ Item {
     // effect back from Hyprland itself. Each handler answers {answer, data}.
     function requestHandlers() {
         const handlers = {
+            "tui.run": args => ({ answer: shell.tui.run("task", args, () => {
+                // A launch can end before its record reports running.
+                if (lifetime.kind === "ready" && cause === "" && child.running)
+                    send({ type: "tui-state", name: "task", running: false });
+            }), data: null }),
             "compositor.reveal": args => ({ answer: shell.compositor.reveal([args[0]], false), data: null }),
             "run.detached": args => ({ answer: shell.run.detached(args), data: null }),
             "toast": args => {
@@ -283,10 +278,6 @@ Item {
                     audioHealth = { kind: "fault", reason: message.reason };
                     const report = shell.status.set("audio", { tone: "danger", text: message.reason });
                     if (report !== "ok") throw new Error("jarvis: " + report);
-                    continue;
-                }
-                if (message.type === "request") {
-                    answerRequest(message);
                     continue;
                 }
                 if (message.type === "tasks") {
