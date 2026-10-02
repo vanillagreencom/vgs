@@ -123,7 +123,7 @@ Item {
     // A run writes its started and ended records under new names, so the
     // listing's count moves with each; the list the change asks for waits a
     // moment for the records that come together. The listing can miss a
-    // change under load (docs/architecture/runtime-qml-folders.md), which the
+    // change under load (docs/architecture/runtime-qml.md), which the
     // refresh timer bounds.
     FolderListModel {
         id: runs

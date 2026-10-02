@@ -2,7 +2,7 @@
 
 Covers: scripts/qml-smoke.sh, scripts/smoke/, scripts/test-smoke-teardown.sh
 
-The nested sandbox, its harness and the smoke's verdicts. The process rules the sandbox obeys are in [runtime.md § Process](runtime.md#process), and the check selector that runs the smoke is [validation.md](validation.md). The latencies the smoke reads and their budgets are in [validation-latency.md](validation-latency.md). The sandbox faults the smoke excuses as not measured, a held mode among them, are in [validation-smoke-faults.md](validation-smoke-faults.md). The harness's shared helpers, the row runner and its gates are in [validation-smoke-harness.md](validation-smoke-harness.md). The probe's readers, its disposable QML controls and the nested input helpers are in [validation-smoke-input.md](validation-smoke-input.md).
+The nested sandbox, its harness and the smoke's verdicts. The process rules the sandbox obeys are in [runtime.md § Process](runtime.md#process), and the check selector that runs the smoke is [validation.md](validation.md). The latencies the smoke reads and their budgets are in [validation-latency.md](validation-latency.md). The sandbox faults the smoke excuses as not measured, a held mode among them, are in [validation-smoke-faults.md](validation-smoke-faults.md). The harness's shared helpers, the row runner and its gates, the probe's readers and the nested input helpers are in [validation-smoke-harness.md](validation-smoke-harness.md).
 
 The shader frame row observes a passive layer's own window. It separates advancing presentation from quiet reduced-motion and unmapped windows, with controls in that row. GPU cost runs in a standalone scene through the same harness, with no product services: [validation-shaders.md](validation-shaders.md).
 

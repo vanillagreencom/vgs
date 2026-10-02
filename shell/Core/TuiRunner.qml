@@ -34,7 +34,7 @@ Scope {
 
     // The directory bin/vgsh-tui writes the records in. `bin/vgsh run`
     // creates it before the shell starts: FolderListModel lists the working
-    // directory for a folder that is absent (runtime-qml-folders.md).
+    // directory for a folder that is absent (runtime-qml.md).
     readonly property string recordDir: Quickshell.env("XDG_RUNTIME_DIR") + "/vgs/tui"
     // The core's bin/ beside the shell directory, where a core TUI's command
     // lives: the shell's PATH need not hold it.

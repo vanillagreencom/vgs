@@ -12,8 +12,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [hyprland-options.md](hyprland-options.md): read before touching a manifest's `hyprland.options`, the option table or the `hyprland` capability.
 - [hyprland-monitors.md](hyprland-monitors.md): read before touching `monitors.json`, its judge, the layer's monitor rules or the `monitors` capability.
 - [hyprland-monitors-preview.md](hyprland-monitors-preview.md): read before touching a monitor preview, its record, its guard or `bin/vgsh-monitor-guard`.
-- [status.md](status.md): read before touching plugin status or the Settings page's Status rows.
-- [status-actions.md](status-actions.md): read before touching a setup step a user takes and its one-click rule, a status action, a manifest's `secrets` or the core's libsecret writer.
+- [status.md](status.md): read before touching plugin status, the Settings page's Status rows, a setup step a user takes and its one-click rule, a status action, a manifest's `secrets` or the core's libsecret writer.
 - [jarvis.md](jarvis.md): read before implementing a Jarvis plan consumer of a landed core contract.
 - [jarvis-local.md](jarvis-local.md): read before changing local speech artifacts, model input bounds, fixture outcomes or the measurement instrument.
 - [jarvis-policy.md](jarvis-policy.md): read before touching the Jarvis action judge, tool schemas, protected paths or turn taint.
@@ -34,7 +33,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.
 - [design-layout.md](design-layout.md): read before touching a container's inset, the corner-clearing rule or a component's spacing.
 - [design-quality.md](design-quality.md): read before judging or changing how a surface looks: its grid, type, control sizes, container class or states.
-- [components.md](components.md), [components-controls.md](components-controls.md), [components-layout.md](components-layout.md), [components-media.md](components-media.md), [components-overlays.md](components-overlays.md) and [components-gallery.md](components-gallery.md): read before adding or changing a component of `qs.Ui` or the Gallery.
+- [components.md](components.md), [components-media.md](components-media.md), [components-overlays.md](components-overlays.md) and [components-gallery.md](components-gallery.md): read before adding or changing a component of `qs.Ui` or the Gallery.
 - [keyboard.md](keyboard.md): read before adding a pointer action, a focusable control or a keyboard path.
 - [motion.md](motion.md): read before touching a list's highlight, a row's entrance, a `motion.list` token or how hover and keys share a list's selection.
 - [themes.md](themes.md): read before touching a theme package, package judge, or theme runner.
@@ -58,7 +57,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [requirement-notice.md](requirement-notice.md): read before touching the core notice host, a requirement notice, its triggers, the Hyprland consent question or the `requirements` and `doctor` capabilities.
 - [tui.md](tui.md), [tui-capability.md](tui-capability.md), [tui-records.md](tui-records.md) and [tui-sudo.md](tui-sudo.md): read before touching a floating TUI, the `tui` capability, its exit records or `vgsh sudo`.
 - [runtime.md](runtime.md): read before touching anything that starts, stops, measures or talks to the shell.
-- [runtime-qml-folders.md](runtime-qml-folders.md): read before touching `FolderListModel`, folder pickers or directory listings in QML.
+- [runtime-qml.md](runtime-qml.md): read before writing QML, for the Quickshell and Qt facts it rests on, `FolderListModel` and folder listings included.
 - [runtime-qml-focus.md](runtime-qml-focus.md): read before touching keyboard focus in QML: a layer-shell focus rule, summoned-surface initial focus, a focus reason, a focus scope, or a row that hands a window the keyboard.
 - [runtime-hyprland.md](runtime-hyprland.md): read before touching a dispatch, `Compositor` or `Dispatch.js`, or relying on what Hyprland does.
 - [runtime-hyprland-nested.md](runtime-hyprland-nested.md): read before touching the nested sandbox's outputs, `scripts/smoke/shot.sh` or a fault that names the nested window.
@@ -66,7 +65,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [runtime-hyprland-input.md](runtime-hyprland-input.md): read before relying on a Hyprland input option, a device, a bind reading or `switchxkblayout`.
 - [runtime-hyprland-monitors.md](runtime-hyprland-monitors.md): read before relying on an `hl.monitor` field, rule matching, the `monitors -j` reply or a monitor event.
 - [runtime-pointer.md](runtime-pointer.md): read before touching a pointer handler, a cursor, a hover reading or a popup.
-- [validation.md](validation.md), [validation-qml-unit.md](validation-qml-unit.md), [validation-smoke.md](validation-smoke.md), [validation-smoke-harness.md](validation-smoke-harness.md) and [validation-smoke-input.md](validation-smoke-input.md): read before touching `scripts/validate`, the nested sandbox, the HiDPI smoke row, its harness or a smoke row's verdict.
+- [validation.md](validation.md), [validation-qml-unit.md](validation-qml-unit.md), [validation-smoke.md](validation-smoke.md) and [validation-smoke-harness.md](validation-smoke-harness.md): read before touching `scripts/validate`, the nested sandbox, the HiDPI smoke row, its harness, the probe or a smoke row's verdict.
 - [validation-jarvis.md](validation-jarvis.md): read before touching the shared Jarvis test world, `scripts/lib/jarvis-env.sh` or a Jarvis suite's private services.
 - [validation-shaders.md](validation-shaders.md): read before touching `scripts/measure-shader.sh`, the passive-layer presentation row or its fixture plugin.
 - [validation-smoke-host.md](validation-smoke-host.md): read before touching a sentinel, the stand-in terminal, a host command's stand-in in the shell's stand-in directory or a row that presses a button which opens a TUI.
@@ -80,5 +79,5 @@ One line per architecture document: the change to read it before. [overview.md](
 - [distribution.md](distribution.md): read before touching the licence, `VERSION`, `vgsh --version` or anything that packages or installs VGS; it links each channel's file.
 - [install-guide.md](install-guide.md): read before touching README § Install, `scripts/check-readme.js` or `scripts/readme-install.sh`.
 - [memory.md](memory.md): read before attributing memory growth or writing a memory budget.
-- [decisions.md](decisions.md): read for the one-line lists of decisions, and add each new record to its topic list.
+- [decisions.md](decisions.md): read for the one-line list of decisions, and add a line there with each new decision record.
 - [jarvis-tasks.md](jarvis-tasks.md): read before changing coding-task records, their event producer or consumers.

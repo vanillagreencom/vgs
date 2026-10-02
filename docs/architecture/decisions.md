@@ -2,7 +2,7 @@
 
 Covers: docs/decisions/
 
-One line per decision record that shapes the architecture. [Jarvis decisions](decisions-jarvis.md) holds the assistant's records. The full log with dates, rationale and status is [INDEX.md](../decisions/INDEX.md).
+One line per decision record that shapes the architecture; the full log with dates, rationale and status is [INDEX.md](../decisions/INDEX.md).
 
 - [D001](../decisions/D001-hyprland-only.md): Hyprland only.
 - [D002](../decisions/D002-quickshell-0-3-1-baseline.md): Quickshell 0.3.1 is the baseline.
@@ -73,3 +73,18 @@ One line per decision record that shapes the architecture. [Jarvis decisions](de
 - [D086](../decisions/D086-key-capture-passthrough-submap.md): the Settings key field captures a pressed combo while Hyprland is in the layer's `vgs:passthrough` submap, whose one bind is Escape; `KeyCapture.qml` owns the capture and leaves the submap on commit, focus loss and teardown, and the layer leaves it on Escape, its window's close, a 10 s timeout and each load. Refines D028 and D067.
 - [D088](../decisions/D088-system-panes.md): System sections are pane plugins mounted by the one `panes` holder, and pane writes update every settings entry the plugin reads. Refines D013, D032 and D044.
 - [D090](../decisions/D090-core-input-facts.md): existing core owners supply fresh read-only input targets and layout-resolved key identities.
+
+## Jarvis
+
+- [D064](../decisions/D064-jarvis-child-lease.md): Jarvis owns a child leased by stdin and one wire judge; bounded recovery reports a problem without a systemd unit.
+- [D066](../decisions/D066-pinned-local-speech-and-bounded-inputs.md): local speech uses pinned exports, bounded Moonshine inputs and CPU streaming captions, measured with actual local artifacts and synthetic audio.
+- [D070](../decisions/D070-jarvis-action-policy.md): Jarvis actions use one typed policy gate and protected real paths; routing, approval and kernel confinement keep separate owners.
+- [D072](../decisions/D072-coding-task-records-and-four-fact-state.md): coding-task records preserve process, turn, wait and outcome facts; the copied event producer and disk replay stay separate from process control. Refines D033 and D052.
+- [D073](../decisions/D073-jarvis-release-and-origin-bound-keys.md): Jarvis releases labelled content to the whole immutable brain and speech recipient set through one origin-bound network door, `net.js`, which attaches a key only to its exact stored origin and refuses redirects. Refines D046.
+- [D074](../decisions/D074-jarvis-kernel-sandbox.md): Jarvis commands require a real kernel sandbox probe, protected masks and private endpoints.
+- [D079](../decisions/D079-brains-wire-and-harness-adapters.md): Jarvis brains are wire adapters through the origin-bound network door or harness adapters that start the vendor's own program with its own tools off and the tool bridge as its only server; one provider table and one bounded event stream reader serve them, with no npm dependency. Refines D009 and D046.
+- [D082](../decisions/D082-jarvis-approval-bound-to-the-action.md): Jarvis routes serial immutable actions; Session judges confirmation identity and time, Policy rejudges fresh facts and Audit gates starts. Refines D070.
+- [D084](../decisions/D084-duplex-speech-engine-sessions.md): the GPT-Live duplex engine owns one session per conversation behind Session's speech port and Audio's sink and source; interruption discards by session timeline, idle closes at 60 s, and client delegation is refused until J37.
+- [D087](../decisions/D087-jarvis-task-control.md): a launcher records a coding task's process-group identity before the agent execs; stops verify it before every signal and write `stopped` only after the group reads empty; tmux or the floating TUI only display the task. Refines D072 and D033.
+- [D089](../decisions/D089-jarvis-chained-engine-and-heard-prefix.md): the chained speech engine owns one conversation's resources, routes the brain's calls and tells the brain the prefix Audio reports as heard after a barge-in; the speech table ships empty.
+- [D093](../decisions/D093-jarvis-screenshots.md): Jarvis captures the screen only for the user's live turn, reads Hyprland before and after, paints private windows out before the image leaves the executor and releases it by `cloudVision`; masking is limited protection. Refines D070 and D082.
