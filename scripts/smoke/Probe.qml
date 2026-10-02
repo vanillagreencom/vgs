@@ -872,7 +872,7 @@ Scope {
             return index < 0 || index >= texts.length ? "absent" : root.revealIn(item, texts[index]);
         }
         // A colour one gallery example draws with, read as a property: the
-        // first item named `type` in the section under the SectionHeader
+        // first shown item named `type` in the section under the SectionHeader
         // reading `section`, through `property`, a dotted path. Written as
         // ThemeLogic writes a resolved colour, `#rrggbbaa`, so a row compares
         // it with the package's token without reading a frame.
@@ -886,7 +886,7 @@ Scope {
             let at = 0;
             while (siblings[at] !== header) at++;
             for (at++; at < siblings.length && typeOf(siblings[at]) !== "SectionHeader"; at++) {
-                const example = root.descendants(siblings[at]).find(child => typeOf(child) === type);
+                const example = root.descendants(siblings[at]).find(child => typeOf(child) === type && root.visibleInTree(child));
                 if (example === undefined) continue;
                 let value = example;
                 for (const key of property.split(".")) value = value === null || value === undefined ? undefined : value[key];
