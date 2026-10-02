@@ -792,6 +792,8 @@ scene_settings() { # MODE
   fi
   park_pointer
   take "settings-$1-keys"
+  ipc smoke scrollTo "$settings_kind" vgs.settings 0 >/dev/null || fail "the Keys screenshot did not restore its page's scroll"
+  expect_poll "the Keys screenshot leaves the page at its top" True settings_at_top
   if "$has_agent_warden"; then
     expect "the window opens the Agent Warden page" ok ipc smoke invokeInstance "$settings_kind" vgs.settings openPlugin vgs.agent-warden
     expect_poll "the Agent Warden page is shown" '"vgs.agent-warden"' settings_page
