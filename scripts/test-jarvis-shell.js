@@ -329,57 +329,63 @@ world(async () => {
     // Deferred probes reach the real owner and real router without starting
     // an installer. Superseded completions arrive deliberately out of order.
     async function rescans(edits, mustFail = false) {
-        await pluginCopy(path.join(backend, "Shell.js"), edits, async root => {
-            const probes = [];
-            require(path.join(root, "backend/Sandbox.js")).available = options =>
-                new Promise(resolve => probes.push({ options, resolve }));
-            const check = async () => {
-                const discovered = [];
-                const added = w.home + "/.claude-rescan";
-                fs.rmSync(added, { recursive: true, force: true });
-                fs.writeFileSync(w.roots.state + "/vgs/jarvis/accounts.json", "[]");
-                const f = make(require(path.join(root, "backend/Shell.js")), {
-                    roots: () => { const value = trusted(); discovered.push(value); return value; }
-                });
-                // The frozen real router owns registration; its duplicate
-                // guard makes the next successful refresh a behavioral check.
-                probes[0].resolve({ kind: "unavailable", reason: "bwrap-missing" });
-                await f.shell.ready;
-                assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
-                assert.equal(discovered.length, 1);
-                assert.equal(discovered[0].accountRoots.includes(added), false);
-                fs.mkdirSync(added, { recursive: true });
-                fs.writeFileSync(w.roots.state + "/vgs/jarvis/accounts.json", JSON.stringify([
-                    { provider: "codex", directory: added, label: "Rescan" }
-                ]));
-                const recovered = f.shell.refresh();
-                assert.equal(discovered.length, 2, "rescan rebuilds protected roots");
-                assert.ok(discovered[1].accountRoots.includes(added), "new account metadata reaches current protected roots");
-                probes[1].resolve({ kind: "available" }); await recovered;
-                assert.deepEqual(f.router.offer().filter(row => row.id.startsWith("shell.")).map(row => row.id),
-                    ["shell.argv", "shell.line"]);
-                const repeated = f.shell.refresh();
-                assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false, "checking withdraws offers");
-                const missing = f.shell.refresh();
-                assert.equal(probes[2].options.signal.aborted, true, "new scan aborts superseded probe");
-                probes[3].resolve({ kind: "unavailable", reason: "bwrap-missing" }); await missing;
-                probes[2].resolve({ kind: "available" }); await repeated;
-                assert.deepEqual(f.statuses.at(-1), { kind: "unavailable", reason: "bwrap-missing" }, "stale probe cannot recover readiness");
-                assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
-                assert.equal(f.call("shell.argv", a).reason, "executor-unavailable");
-                const again = f.shell.refresh(); probes[4].resolve({ kind: "available" }); await assert.doesNotReject(again);
-                assert.equal(f.router.offer().filter(row => row.id.startsWith("shell.")).length, 2, "registration survives repeat success once");
-                const closing = f.shell.refresh(); f.shell.close();
-                assert.equal(probes[5].options.signal.aborted, true);
-                const last = f.statuses.length;
-                probes[5].resolve({ kind: "available" }); await closing;
-                assert.equal(f.statuses.length, last, "closed lease suppresses late rescan");
-                assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
-                f.close();
-            };
-            if (mustFail) await assert.rejects(check, assert.AssertionError);
-            else await check();
-        });
+        const accounts = w.roots.state + "/vgs/jarvis/accounts.json";
+        const baseline = fs.readFileSync(accounts);
+        try {
+            await pluginCopy(path.join(backend, "Shell.js"), edits, async root => {
+                const probes = [];
+                require(path.join(root, "backend/Sandbox.js")).available = options =>
+                    new Promise(resolve => probes.push({ options, resolve }));
+                const check = async () => {
+                    const discovered = [];
+                    const added = w.home + "/.claude-rescan";
+                    fs.rmSync(added, { recursive: true, force: true });
+                    fs.writeFileSync(w.roots.state + "/vgs/jarvis/accounts.json", "[]");
+                    const f = make(require(path.join(root, "backend/Shell.js")), {
+                        roots: () => { const value = trusted(); discovered.push(value); return value; }
+                    });
+                    // The frozen real router owns registration; its duplicate
+                    // guard makes the next successful refresh a behavioral check.
+                    probes[0].resolve({ kind: "unavailable", reason: "bwrap-missing" });
+                    await f.shell.ready;
+                    assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
+                    assert.equal(discovered.length, 1);
+                    assert.equal(discovered[0].accountRoots.includes(added), false);
+                    fs.mkdirSync(added, { recursive: true });
+                    fs.writeFileSync(w.roots.state + "/vgs/jarvis/accounts.json", JSON.stringify([
+                        { provider: "codex", directory: added, label: "Rescan" }
+                    ]));
+                    const recovered = f.shell.refresh();
+                    assert.equal(discovered.length, 2, "rescan rebuilds protected roots");
+                    assert.ok(discovered[1].accountRoots.includes(added), "new account metadata reaches current protected roots");
+                    probes[1].resolve({ kind: "available" }); await recovered;
+                    assert.deepEqual(f.router.offer().filter(row => row.id.startsWith("shell.")).map(row => row.id),
+                        ["shell.argv", "shell.line"]);
+                    const repeated = f.shell.refresh();
+                    assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false, "checking withdraws offers");
+                    const missing = f.shell.refresh();
+                    assert.equal(probes[2].options.signal.aborted, true, "new scan aborts superseded probe");
+                    probes[3].resolve({ kind: "unavailable", reason: "bwrap-missing" }); await missing;
+                    probes[2].resolve({ kind: "available" }); await repeated;
+                    assert.deepEqual(f.statuses.at(-1), { kind: "unavailable", reason: "bwrap-missing" }, "stale probe cannot recover readiness");
+                    assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
+                    assert.equal(f.call("shell.argv", a).reason, "executor-unavailable");
+                    const again = f.shell.refresh(); probes[4].resolve({ kind: "available" }); await assert.doesNotReject(again);
+                    assert.equal(f.router.offer().filter(row => row.id.startsWith("shell.")).length, 2, "registration survives repeat success once");
+                    const closing = f.shell.refresh(); f.shell.close();
+                    assert.equal(probes[5].options.signal.aborted, true);
+                    const last = f.statuses.length;
+                    probes[5].resolve({ kind: "available" }); await closing;
+                    assert.equal(f.statuses.length, last, "closed lease suppresses late rescan");
+                    assert.equal(f.router.offer().some(row => row.id.startsWith("shell.")), false);
+                    f.close();
+                };
+                if (mustFail) await assert.rejects(check, assert.AssertionError);
+                else await check();
+            });
+        } finally {
+            fs.writeFileSync(accounts, baseline);
+        }
     }
     await rescans([]);
     for (const [name, needle, replacement] of [
