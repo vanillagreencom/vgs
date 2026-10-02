@@ -29,7 +29,7 @@ function freshSuite(tree, suite, root) {
         "scripts/fixtures/jarvis/scripted.js", "shell/plugins/vgs.jarvis/backend/Audio.js",
         "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
         "scripts/fixtures/jarvis/audio-tool.py", "scripts/fixtures/jarvis/desktop.js",
-        "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Commons/DesktopLaunch.js"])
+        "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Core/HyprlandLayer.js", "shell/Commons/DesktopLaunch.js"])
         fs.copyFileSync(path.join(tree, file), path.join(clone, file));
     for (const name of ["ShellRequests.js", "Desktop.js", "ToolRouter.js", "Audit.js", "Redact.js", "Tools.js", "Policy.js", "TaskRunner.js",
         "AgentProfiles.js", "task-run.py", "ToolBridge.js", "Mcp.js", "Private.js"])
