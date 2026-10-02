@@ -190,10 +190,12 @@ function derive(events, noisy = false, terminal = null) {
 }
 
 // Data copies remain readable after a rescan deletes the plugin snapshot.
-// Both files enter under one directory rename; consumers never see half a copy.
+// Every file enters under one directory rename; consumers never see half a copy.
 function publish(data, source) {
     absolute(data);
-    const files = ["Tasks.js", "task-event"];
+    // The hook and its relay run from this copy too: a held hook outlives
+    // the snapshot as a task does.
+    const files = ["Tasks.js", "task-event", "TaskRelay.js", "claude-hook"];
     const contents = files.map(file => io("engine-read", path.join(source, file), () => fs.readFileSync(path.join(source, file))));
     const hash = crypto.createHash("sha256");
     for (let i = 0; i < files.length; i++) hash.update(files[i]).update("\0").update(contents[i]);

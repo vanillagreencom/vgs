@@ -382,6 +382,20 @@ class Accounts {
     }
 
     /**
+     * A coding task's account: the directory of the discovered CLI account id
+     * for providerId, which the task's profile puts in its account variable.
+     * Null for an unknown id, another provider's account or an absent
+     * directory. It runs no vendor command, so it proves no login.
+     */
+    cliDirectory(providerId, id) {
+        for (const candidate of this.candidates()) {
+            if (candidate.provider !== providerId || identity("cli", [candidate.provider, candidate.directory]) !== id) continue;
+            return directory(candidate.directory).kind === "directory" ? candidate.directory : null;
+        }
+        return null;
+    }
+
+    /**
      * Explicit user action only. Each operation names the current discovery
      * epoch. A refresh or a replacement Verify invalidates its late result.
      * Production uses the origin-bound door; a caller may supply a transport

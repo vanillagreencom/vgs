@@ -165,7 +165,7 @@ async function inside() {
     const floorDir = path.join(root, "floor");
     fs.mkdirSync(path.join(floorDir, "backend"), { recursive: true });
     fs.writeFileSync(path.join(floorDir, "JarvisProtocol.js"), protocol);
-    for (const name of ["Tasks.js", "task-event"])
+    for (const name of ["Tasks.js", "task-event", "TaskRelay.js", "claude-hook"])
         fs.copyFileSync(path.join(path.dirname(daemon), name), path.join(floorDir, "backend", name));
     const floorFile = path.join(floorDir, "backend/jarvisd.js");
     const floorNeedle = 'if (Number(process.versions.node.split(".")[0]) < 22)';

@@ -278,6 +278,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/ShellRequests.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Speakable.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/SpeechLanguage.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Sse.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/TaskRelay.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/TaskRunner.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tasks.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ToolBridge.js
@@ -287,6 +288,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/WireBrain.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/accounts.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/audio-child.py
 f share/vgs/shell/plugins/vgs.jarvis/backend/browser-setup.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/claude-hook
 f share/vgs/shell/plugins/vgs.jarvis/backend/input-check.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/jarvisd.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/keys.js

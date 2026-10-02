@@ -50,7 +50,7 @@ async function inside() {
     const store = new Tasks.Store(state);
     const snapshot = path.join(root, "snapshot");
     fs.mkdirSync(snapshot);
-    for (const name of ["Tasks.js", "task-event"]) {
+    for (const name of ["Tasks.js", "task-event", "TaskRelay.js", "claude-hook"]) {
         fs.copyFileSync(path.join(backend, name), path.join(snapshot, name));
         fs.chmodSync(path.join(snapshot, name), 0o400);
     }
@@ -281,6 +281,7 @@ async function inside() {
     for (const name of ["prefix-good", "prefix-control"]) {
         fs.mkdirSync(path.join(root, name));
         fs.copyFileSync(engine, path.join(root, name, "task-event"));
+        for (const file of ["TaskRelay.js", "claude-hook"]) fs.copyFileSync(path.join(backend, file), path.join(root, name, file));
         fs.writeFileSync(path.join(root, name, "Tasks.js"), name === "prefix-good" ? taskSource : changed);
     }
     prefixInside(path.join(root, "prefix-good"));

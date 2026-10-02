@@ -104,6 +104,7 @@ async function inside() {
             engine: options.engine ?? engine, backend, profiles,
             settings: () => ({ taskTerminal: options.terminal ?? "floating" }), display,
             count: value => seen.counts.push(value), failed: error => seen.failures.push(error.message),
+            accounts: (agent, reference) => reference,
             environment: { ...env, XDG_RUNTIME_DIR: path.join(root, "run"), VGSH_RUNNER_PID: "1", FIXTURE_SECRET: "x" },
             lookup: command => command === "fixture-agent" || (command === "tmux" && options.tmuxPresent !== false),
             tmux: options.tmux ?? path.join(root, "bootstrap/tmux"),
@@ -216,7 +217,7 @@ const answer = spawnFixture("python3", ["-I", "-c", "import os; os._exit(23)"],
         assert.notEqual(changed, source);
         const copy = path.join(root, "control-" + name);
         fs.mkdirSync(copy);
-        for (const entry of ["Tasks.js", "task-event", "TaskRunner.js", "AgentProfiles.js", "task-run.py"])
+        for (const entry of ["Tasks.js", "task-event", "TaskRelay.js", "claude-hook", "TaskRunner.js", "AgentProfiles.js", "task-run.py"])
             fs.copyFileSync(path.join(backend, entry), path.join(copy, entry));
         fs.writeFileSync(path.join(copy, file), changed);
         await assert.rejects(async () => check({ Runner: require(path.join(copy, "TaskRunner.js")),
@@ -635,7 +636,7 @@ const answer = spawnFixture("python3", ["-I", "-c", "import os; os._exit(23)"],
         assert.throws(() => current.Profiles.table({ [id]: { ...good, ...change } }), /jarvis: profiles=(row|id)/, name);
     const table = current.Profiles.table({ agent: { ...good, argv: () => ["other"] } });
     assert.throws(() => current.Profiles.command(table.agent, {}), { message: "jarvis: profiles=argv program=agent" });
-    assert.deepEqual(current.Profiles.TABLE, {}, "production ships no agent profile");
+    assert.deepEqual(Object.keys(current.Profiles.TABLE), ["claude"], "production ships the Claude Code profile");
     cases += profileRows.length + 1;
 
     // task-run.py directly: the spec is one-shot and judged; started is

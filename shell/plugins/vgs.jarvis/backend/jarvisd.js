@@ -350,11 +350,13 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         routerSync(state);
                         if (browser !== null) browser.sync(state);
                     };
-                    // The task executor needs an agent profile and a release port
-                    // for the conversation's recipients. Neither exists yet, so
+                    // The task executor needs a release port for the
+                    // conversation's recipients, which does not exist yet, so
                     // TaskRunner only observes and stops recorded tasks.
                     tasks = TaskRunner.create({ directories: context.directories, engine: taskEvent, backend: __dirname,
                         settings: () => context.settings,
+                        accounts: (agent, reference) => new Accounts(context.directories.state, process.env)
+                            .cliDirectory(agent, reference),
                         display: { run: taskTui },
                         count: count => {
                             if (!ending) write({ v: 1, type: "tasks", gen: runner.state.gen,

@@ -1,0 +1,178 @@
+#!/usr/bin/env node
+// Claude Code task hook. The profile wires it through --settings, exec form:
+//   node ENGINE/claude-hook --state ABS --prompts ABS --window MS TASK EVENT
+// It runs from the task engine copy, beside task-event, TaskRelay.js and
+// Tasks.js. Stdin is the hook input Claude Code documents for EVENT
+// (code.claude.com/docs/en/hooks). Each event reports task facts through
+// task-event:
+//   UserPromptSubmit   wait none, working
+//   Notification       wait permission | idle | question by notification_type
+//   PermissionRequest  wait permission, then holds the prompt for the user
+//   Stop               turn-ended; without a reported outcome, wait question
+//                      and holds the agent's last message for the user
+//   StopFailure        turn-failed with the documented error type
+//   SessionEnd         wait none
+// Stdout: only a held prompt's answer. PermissionRequest prints its
+// hookSpecificOutput decision; Stop prints {decision:"block", reason}. An
+// answered prompt reports wait none (and working after Stop) first. No
+// answer within the window, or a full relay, prints nothing: the agent then
+// asks in its own terminal. Every other event prints nothing, since Claude
+// Code adds UserPromptSubmit stdout to the agent's context.
+// Exit 0, or 1 with one keyed jarvis: claude-hook= line on stderr. Never 2,
+// which Claude Code reads as a block on Stop and UserPromptSubmit.
+"use strict";
+const path = require("node:path");
+const cp = require("node:child_process");
+const Relay = require("./TaskRelay.js");
+const Tasks = require("./Tasks.js");
+
+const EVENTS = ["UserPromptSubmit", "Notification", "PermissionRequest", "Stop", "StopFailure", "SessionEnd"];
+const MAX_INPUT = 8 * 1024 * 1024;
+// How often a held hook reads for the answer file. A poll, because inotify
+// is not guaranteed on every runtime directory's filesystem.
+const POLL_MS = 200;
+// Notification types that mean the agent waits; others report nothing.
+const NOTIFIED = Object.freeze({ permission_prompt: "permission", idle_prompt: "idle",
+    elicitation_dialog: "question", elicitation_url_dialog: "question" });
+// StopFailure's documented error types; any other value reports "unknown".
+const FAILURES = Object.freeze(["rate_limit", "overloaded", "authentication_failed", "oauth_org_not_allowed",
+    "account_on_hold", "billing_error", "invalid_request", "model_not_found", "server_error", "max_output_tokens",
+    "cloud_credential_error", "unknown"]);
+
+class Failure extends Error {}
+function fail(reason) { throw new Failure("jarvis: claude-hook=" + reason); }
+
+function argv(args) {
+    if (args.length !== 8 || args[0] !== "--state" || args[2] !== "--prompts" || args[4] !== "--window"
+            || !path.isAbsolute(args[1]) || !path.isAbsolute(args[3]) || !/^[0-9]{4,6}$/.test(args[5])
+            || Number(args[5]) < Relay.MIN_WINDOW_MS || Number(args[5]) > Relay.WINDOW_MS
+            || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(args[6]) || !EVENTS.includes(args[7]))
+        fail("arguments");
+    return { state: args[1], prompts: args[3], window: Number(args[5]), task: args[6], event: args[7] };
+}
+
+async function input(event) {
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of process.stdin) {
+        size += chunk.length;
+        if (size > MAX_INPUT) fail("input-bytes");
+        chunks.push(chunk);
+    }
+    let value;
+    try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); }
+    catch { fail("input-json"); }
+    if (value === null || typeof value !== "object" || Array.isArray(value) || value.hook_event_name !== event)
+        fail("input-event event=" + event);
+    return value;
+}
+
+function record(hook, kind, data = {}) {
+    const result = cp.spawnSync(process.execPath, [path.join(__dirname, "task-event"), "--state", hook.state, hook.task, kind], {
+        input: JSON.stringify(data), encoding: "utf8", maxBuffer: 8192, timeout: 30000,
+        env: { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" }
+    });
+    if (result.error) fail("record kind=" + kind + " cause=" + (result.error.code || result.error.message));
+    if (result.status !== 0)
+        fail("record kind=" + kind + " status=" + result.status + " cause=" + (result.stderr.trim().split("\n")[0] || "none"));
+}
+
+let held = null;
+
+// Holds one prompt until its answer or its deadline. null: no answer, or no
+// room in the relay; the agent then asks in its own terminal.
+async function hold(hook, detail) {
+    const prompt = Relay.ask(hook.prompts, hook.task, detail, Date.now(), hook.window);
+    if (prompt === null) return null;
+    held = { hook, prompt };
+    try {
+        for (;;) {
+            const answer = Relay.answerTo(hook.prompts, prompt);
+            if (answer !== null) return answer;
+            if (Date.now() >= prompt.deadline) return null;
+            await new Promise(resolve => setTimeout(resolve, Math.min(POLL_MS, Math.max(1, prompt.deadline - Date.now()))));
+        }
+    } finally {
+        held = null;
+        Relay.withdraw(hook.prompts, prompt);
+    }
+}
+
+async function permission(hook, value) {
+    if (typeof value.tool_name !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(value.tool_name)) fail("input-tool");
+    record(hook, "wait", { kind: "permission" });
+    const answer = await hold(hook, { kind: "permission", tool: value.tool_name,
+        text: value.tool_name + " " + JSON.stringify(value.tool_input ?? null) });
+    if (answer === null) return null;
+    record(hook, "wait", { kind: "none" });
+    switch (answer.kind) {
+    case "allow":
+        return { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } };
+    case "deny":
+        return { hookSpecificOutput: { hookEventName: "PermissionRequest",
+            decision: { behavior: "deny", message: "The user denied this request." } } };
+    default:
+        fail("answer-kind");
+    }
+}
+
+// Stop is a turn end, never a finished task. A turn that ends before the
+// agent reported its outcome waits on the user.
+async function stop(hook, value) {
+    record(hook, "turn-ended");
+    const task = new Tasks.Store(hook.state).find(hook.task);
+    if (task === null) fail("task-unknown");
+    if (task.outcome.kind !== "none") return null;
+    record(hook, "wait", { kind: "question" });
+    const text = typeof value.last_assistant_message === "string" ? value.last_assistant_message : "";
+    const answer = await hold(hook, { kind: "question", tool: null, text });
+    if (answer === null) return null;
+    record(hook, "wait", { kind: "none" });
+    record(hook, "working");
+    return { decision: "block", reason: "The user answered: " + answer.text };
+}
+
+async function main() {
+    const hook = argv(process.argv.slice(2));
+    const value = await input(hook.event);
+    switch (hook.event) {
+    case "UserPromptSubmit":
+        record(hook, "wait", { kind: "none" });
+        record(hook, "working");
+        return null;
+    case "Notification": {
+        const kind = Object.hasOwn(NOTIFIED, value.notification_type) ? NOTIFIED[value.notification_type] : null;
+        if (kind !== null) record(hook, "wait", { kind });
+        return null;
+    }
+    case "PermissionRequest": return permission(hook, value);
+    case "Stop": return stop(hook, value);
+    case "StopFailure":
+        record(hook, "turn-failed", { kind: FAILURES.includes(value.error) ? value.error : "unknown" });
+        return null;
+    case "SessionEnd":
+        record(hook, "wait", { kind: "none" });
+        return null;
+    default:
+        fail("event");
+    }
+}
+
+function ended(error) {
+    process.stderr.write((error instanceof Failure || error.message.startsWith("jarvis: ") ? error.message
+        : "jarvis: claude-hook=failed cause=" + (error.code || error.message)).split("\n")[0] + "\n");
+    process.exitCode = 1;
+}
+
+// Claude Code ends a hook past its timeout; the prompt leaves with it.
+process.once("SIGTERM", () => {
+    if (held !== null) {
+        try { Relay.withdraw(held.hook.prompts, held.prompt); }
+        catch (error) { ended(error); }
+    }
+    process.exit(1);
+});
+
+main().then(output => {
+    if (output !== null) process.stdout.write(JSON.stringify(output) + "\n");
+}, ended);

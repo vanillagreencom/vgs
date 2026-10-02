@@ -12,6 +12,7 @@ const crypto = require("node:crypto");
 const cp = require("node:child_process");
 const Tasks = require("./Tasks.js");
 const Profiles = require("./AgentProfiles.js");
+const Relay = require("./TaskRelay.js");
 
 const LAUNCH_MS = 20000;
 // A task with no started record after this is lost; its spec is stale.
@@ -94,16 +95,20 @@ const PROCESSES = {
  * backend: the directory holding task-run.py; profiles: AgentProfiles.table;
  * settings() -> {taskTerminal}; display.run(args) -> Promise<answer> asks the
  * service to open the `task` TUI; count(n) receives the live-task count;
- * failed(error) receives an observation failure. environment, lookup, tmux,
- * clock {now,set,clear}, processes and spawn are injectable for tests.
+ * failed(error) receives an observation failure; accounts(agent, reference)
+ * answers the value of the agent's account variable for a discovered
+ * account, or null. clock.now is wall-clock milliseconds, the relay's time.
+ * environment, lookup, tmux, clock {now,set,clear}, processes and spawn are
+ * injectable for tests.
  */
-function create({ directories, engine, backend, profiles = Profiles.TABLE, settings, display, count, failed,
+function create({ directories, engine, backend, profiles = Profiles.TABLE, settings, display, count, failed, accounts,
     environment = process.env, lookup = command => onPath(command, environment.PATH),
     tmux = "tmux", clock, processes = PROCESSES, spawn = spawnProcess }) {
     const { state, runtime } = directories;
     const store = new Tasks.Store(state);
     const specs = path.join(runtime, "tasks");
     const socket = path.join(runtime, "tmux.sock");
+    const prompts = path.join(runtime, "prompts");
     const base = Profiles.base(environment);
     const stopping = new Set();
     // The `task` TUI as the service last reported it; unknown until it does.
@@ -311,6 +316,8 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
         if (entry === undefined) return { reason: "agent-unavailable" };
         const account = args.account ?? "";
         if (account !== "" && entry.row.account === null) return { reason: "account-unsupported" };
+        const value = account === "" ? "" : accounts(agent, account);
+        if (value === null) return { reason: "account-unknown" };
         const kind = terminal();
         if (kind === null) return { reason: "tmux-missing" };
         // The router runs one action at a time, so no second start overlaps.
@@ -324,8 +331,9 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
         try {
             const brief = Profiles.brief({ goal: args.goal, engine, state, id });
             await writeSpec(file, { v: 1, id, state, engine, cwd: args.cwd,
-                argv: Profiles.command(entry.row, { brief, cwd: args.cwd, account }),
-                env: Profiles.environment(entry.row, account, environment) });
+                argv: Profiles.command(entry.row, { id, brief, cwd: args.cwd, account: value, engine, state, prompts,
+                    node: process.execPath }),
+                env: Profiles.environment(entry.row, value, environment) });
             refusal = await show(kind, id, args.cwd, file);
         } finally {
             if (refusal !== null) {
@@ -355,6 +363,21 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
         };
     }
 
+    /** The prompts a task's hook holds for the user, oldest first. */
+    function held() {
+        return Relay.pending(prompts, clock.now());
+    }
+
+    /**
+     * The user's answer to one held prompt: {v:1, kind:"allow"|"deny"} for a
+     * permission, {v:1, kind:"reply", text} for a question. Answers
+     * "answered" or a keyed refusal from TaskRelay.answer. Only the user's
+     * own words reach here; the brain never answers a prompt.
+     */
+    function answer(task, prompt, value) {
+        return Relay.answer(prompts, task, prompt, value, clock.now());
+    }
+
     /** Teardown stops observation only. Tasks outlive the daemon. */
     function close() {
         closed = true;
@@ -362,7 +385,7 @@ function create({ directories, engine, backend, profiles = Profiles.TABLE, setti
         timer = null;
     }
 
-    return Object.freeze({ executor, stop, observe, tuiState, close });
+    return Object.freeze({ executor, stop, observe, tuiState, held, answer, close });
 }
 
 module.exports = { create, PROCESSES };
