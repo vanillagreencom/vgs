@@ -21,7 +21,7 @@ Covers: shell/plugins/vgs.jarvis/backend/ClaudeCode.js, scripts/test-jarvis-clau
 | `send(turn, grants?)` | `turn` is `{kind: "user", items, images?}`, as for the wire brains. It returns `{release: {withheld, needed, labels}, events}`; nothing leaves before the caller reads `events`. A `tool-results` turn refuses `brain=tool-results`: the bridge answers each call. |
 | `events` | Yields `{kind: "text", text}` for each text block, then `{kind: "done", reason: "stop"}` on a successful result. Every other ending throws a keyed error. |
 | `cancel()` | Interrupts the live turn and resolves once its result is read, or once the process is gone. |
-| `close()` | Ends the conversation and resolves once the process is gone, the bridge session closed and the working directory removed. |
+| `close()` | Ends the conversation and resolves, for every call, once the process is gone, the bridge session closed and the working directory removed. |
 | `verify({...})` | One tool-less conversation for account Verify; below. |
 
 ## Launch
@@ -80,10 +80,11 @@ Each user item passes `Policy.release` against the conversation's recipient set 
 | User turns | 40, the plan's context bound | `context-limit`; nothing is summarised |
 | Offered tools | 64 | `tools` |
 | An interrupt's answer | 2 s, the plan's cancel bound | the process group is killed |
+| Account Verify | 30 s, the HTTP probe's bound, one constant in `Accounts` | `harness-timeout`; the conversation closes |
 
 ## Account Verify
 
-A Claude subscription account verifies through `ClaudeCode.verify`: the same argv with no MCP server, the system prompt "Answer in one word." and the fixed prompt "Reply OK." `Accounts::released` judges the command-labelled prompt for the account's recipient set under the user's Verify grant and records it with `Audit.before` before the program starts. Verify is `{kind: "inference"}` only after a successful result with non-empty text. Another subscription keeps `subscription-handoff-unavailable`. The account directory is rechecked without following a link first.
+A Claude subscription account verifies through `ClaudeCode.verify`: the same argv with no MCP server, the system prompt "Answer in one word." and the fixed prompt "Reply OK." `Accounts::released` judges the command-labelled prompt for the account's recipient set under the user's Verify grant and records it with `Audit.before` before the program starts. Verify is `{kind: "inference"}` only after a successful result with non-empty text. Past the Verify bound the conversation closes, so its process group dies and its directory goes, and Verify fails `harness-timeout`. Another subscription keeps `subscription-handoff-unavailable`. The account directory is rechecked without following a link first.
 
 ## Residual risk
 
@@ -92,8 +93,8 @@ Managed settings an organisation installs can still configure hooks or servers t
 ## Evidence
 
 - `scripts/test-jarvis-claude.js` runs in the [Jarvis test world](validation-jarvis.md). Its stand-in `claude` reads its script from the account directory, honours `--tools` and `--strict-mcp-config`, starts the configured MCP server and checks every line it reads and every line it builds against the excerpt. Only a refusal row's malformed or out-of-excerpt line, and a line that never ends, are written unchecked.
-- Its cases cover the pinned argv and environment, with keys, tokens and a runner pid planted in what the adapter and Verify are handed, one program per conversation, a scripted call through the real `mcp-shim`, bridge and router with its pre-start audit record, a held approval confirmed in Session, a locked refusal, built-in tools in init or in a call, a failed server, `EndConversation` without an offer, an answered and an unanswered interrupt on the manual clock, text queued at the interrupt, an answer that follows its turn's result, a foreign answer, each result kind, malformed messages, a reply before init or between turns, a line that never ends, release markers and grants, each bound in the table at and past its ceiling but the interrupt's, which the two interrupt cases cover, close, and Verify through the real Accounts judge, text before a failed result or an exit included.
-- Disposable mutants remove each rule: the tools, strict-config, hook and session flags, the token file, the environment and a key added to its allowlist, one process, the init and call checks, the server check, the `EndConversation` scope, release, the empty release, the interrupt, its timer, disarm and bound, the cancelled read, the late and foreign answers, the subagent, result, API error, block, control request, init order and between-turns checks, the line and unterminated line, turn, request, context and tool bounds, close's session, late session and directory, and Verify's route, audit, result and text proofs and reason.
+- Its cases cover the pinned argv and environment, with keys, tokens and a runner pid planted in what the adapter and Verify are handed, one program per conversation, a scripted call through the real `mcp-shim`, bridge and router with its pre-start audit record, a held approval confirmed in Session, a locked refusal, built-in tools in init or in a call, a failed server, `EndConversation` without an offer, an answered and an unanswered interrupt on the manual clock, text queued at the interrupt, an answer that follows its turn's result, a foreign answer, each result kind, malformed messages, a reply before init or between turns, a line that never ends, release markers and grants, each bound in the table at and past its ceiling but the interrupt's, which the two interrupt cases cover, close, a Verify deadline on the injected clock, and Verify through the real Accounts judge, text before a failed result or an exit included.
+- Disposable mutants remove each rule: the tools, strict-config, hook and session flags, the token file, the environment and a key added to its allowlist, one process, the init and call checks, the server check, the `EndConversation` scope, release, the empty release, the interrupt, its timer, disarm and bound, the cancelled read, the late and foreign answers, the subagent, result, API error, block, control request, init order and between-turns checks, the line and unterminated line, turn, request, context and tool bounds, close's session, late session, repeated close and directory, and Verify's deadline, route, audit, result and text proofs and reason.
 
 ## Omarchy comparison
 

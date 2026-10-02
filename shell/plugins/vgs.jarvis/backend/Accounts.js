@@ -13,6 +13,8 @@ const MAX_ENTRIES = 200;
 const MAX_ROWS = 32; // The core's presenceList and choices ceiling.
 const MAX_BYTES = 64 * 1024;
 const PROBE_TEXT = "Reply OK.";
+// Every Verify route's bound on a stalled provider or program, not a latency budget.
+const PROBE_MS = 30000;
 // The harness probe's whole system prompt, so the probe stays one short turn.
 const HARNESS_INSTRUCTIONS = "Answer in one word.";
 
@@ -419,7 +421,8 @@ class Accounts {
             return this.released(account, row.id, row.origin, PROBE_TEXT, release => ClaudeCode.verify({
                 directory: account.source.directory, model: modelOf(requestedModel), recipients: release.selected, item: release.item,
                 grants: release.grants, parent: path.join(this.env.XDG_RUNTIME_DIR, "vgs/jarvis"),
-                environment: this.env, instructions: HARNESS_INSTRUCTIONS, start: events => release.start(() => events.next())
+                environment: this.env, instructions: HARNESS_INSTRUCTIONS, deadline: PROBE_MS,
+                start: events => release.start(() => events.next())
             }).then(text => text.trim() !== ""));
         }
         if (account.source.kind === "variable") fail("verify=key-reference-required");
@@ -450,7 +453,7 @@ class Accounts {
         return this.released(account, row.id, target.origin, JSON.stringify(body), async ({ selected, item, grants, start }) => {
             const door = Net.create(selected);
             let keyBytes, response;
-            const signal = AbortSignal.timeout(30000); // Bound a stalled provider, not a latency budget.
+            const signal = AbortSignal.timeout(PROBE_MS);
             try {
                 let key;
                 if (ref !== null) {

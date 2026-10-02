@@ -163,7 +163,8 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
     let workdir = null;
     let active = null;
     let sent = 0;
-    let closed = false;
+    // null while open; once closing, the one promise every close returns.
+    let closing = null;
     let requests = 0;
     // Interrupts written and not yet answered. A turn can end before the
     // program reads its interrupt, so the answer may arrive between turns or
@@ -171,7 +172,7 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
     const interrupts = new Set();
 
     function usable() {
-        if (closed) fail("closed");
+        if (closing !== null) fail("closed");
         if (active !== null) fail("busy");
     }
 
@@ -220,7 +221,7 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
         fs.mkdirSync(cwd, { mode: 0o700 });
         if (context.offered.size !== 0) launch = await bridge.open();
         // close() ran while the session opened; it could not close it then.
-        if (closed) { launch?.close(); fail("closed"); }
+        if (closing !== null) { launch?.close(); fail("closed"); }
         // The token stays out of argv: the config is a private file.
         const servers = launch === null ? {} : { [SERVER]: { type: "stdio", command: launch.command,
             args: [...launch.args], env: { ...launch.env } } };
@@ -486,11 +487,12 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
      * End the conversation: the live turn is cancelled, stdin closes and the
      * process group gets SIGTERM, then SIGKILL after the cancel bound. The
      * bridge session closes and the working directory is removed once the
-     * process is gone. Resolves then; callers may ignore it.
+     * process is gone. Resolves then, for every call; callers may ignore it.
      */
     function close() {
-        if (closed) return Promise.resolve();
-        closed = true;
+        if (closing !== null) return closing;
+        let ended;
+        closing = new Promise(resolve => { ended = resolve; });
         if (active !== null) void active.cancel();
         const record = owned;
         process_ = { kind: "ended" };
@@ -502,9 +504,10 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
             const timer = clock.set(() => signal(record, "SIGKILL"), CANCEL_MS);
             exited = record.exited.finally(() => clock.clear(timer));
         }
-        return exited.then(() => {
+        ended(exited.then(() => {
             if (workdir !== null) fs.rmSync(workdir, { recursive: true, force: true });
-        });
+        }));
+        return closing;
     }
 
     return Object.freeze({ start, send, cancel, close });
@@ -514,10 +517,15 @@ function create({ directory, model = "", recipients, bridge = null, parent, envi
  * Account verification: one tool-less harness conversation sends the release
  * item the caller judged and audited, and resolves the reply text only after
  * a successful result. start(events) runs the first read inside the caller's
- * audit record. Login status or a model list never reaches here.
+ * audit record. Past deadline ms the conversation closes, so its process
+ * group dies and its directory goes, and Verify fails `harness-timeout`.
+ * Login status or a model list never reaches here.
  */
-async function verify({ directory, model, recipients, item, grants, parent, environment, instructions, start }) {
-    const brain = create({ directory, model, recipients, bridge: null, parent, environment });
+async function verify({ directory, model, recipients, item, grants, parent, environment, instructions, deadline, start,
+    clock = { set: setTimeout, clear: clearTimeout } }) {
+    const brain = create({ directory, model, recipients, bridge: null, parent, environment, clock });
+    let expired = false;
+    const timer = clock.set(() => { expired = true; void brain.close(); }, deadline);
     try {
         brain.start({ instructions, tools: [] });
         const reply = brain.send({ kind: "user", items: [item] }, grants);
@@ -528,7 +536,13 @@ async function verify({ directory, model, recipients, item, grants, parent, envi
             else if (step.value.kind === "done") return text;
             else fail("harness-event");
         }
-    } finally { await brain.close(); }
+    } catch (error) {
+        if (expired) fail("harness-timeout");
+        throw error;
+    } finally {
+        clock.clear(timer);
+        await brain.close();
+    }
 }
 
 module.exports = { create, verify };

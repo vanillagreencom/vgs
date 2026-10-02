@@ -425,6 +425,26 @@ world(async () => {
             [{ turns: [[...say("OK"), { result: "error_during_execution" }]] }, "harness-error-during-execution"],
             [{ turns: [[...say("OK"), { exit: 5 }]] }, "harness-exit"]
         ]) assert.deepEqual((await verify(folder, script)).result, { kind: "unavailable", reason }, reason);
+        // A stalled program: at the deadline the conversation closes, its
+        // process and directory go, and Verify fails keyed.
+        const ClaudeCode = require(path.join(folder, "ClaudeCode.js")), Policy = require(path.join(folder, "Policy.js"));
+        const stalled = account({ turns: [[{ hang: true }]] });
+        const timers = [];
+        const clock = { set: (fn, ms) => { const timer = { fn, ms }; timers.push(timer); return timer; },
+            clear: timer => { timer.cleared = true; } };
+        const recipients = Policy.recipients({ conversation: "verify-deadline", profile: "standard", cloudVision: "never",
+            brain: { kind: "network", provider: "claude", account: "fixture", origin: "https://api.anthropic.com" },
+            speech: [{ kind: "local", provider: "verification-result", account: "fixture" }] });
+        const stalling = ClaudeCode.verify({ directory: stalled.directory, model: "", recipients, item: Policy.item("Reply OK.", ["command"]),
+            grants: [{ recipients, labels: ["command"] }], parent: path.join(process.env.JARVIS_TEST_ROOT, "rv"), environment: env,
+            instructions: "", deadline: 30000, clock, start: events => events.next() }).then(() => null, error => error.message);
+        for (let tries = 0; tries < 300 && !stalled.events().some(event => event.kind === "input"); tries++)
+            await new Promise(resolve => setTimeout(resolve, 10));
+        assert.deepEqual(timers.map(timer => timer.ms), [30000], "one deadline, armed before the program answers");
+        timers[0].fn();
+        assert.equal(await bounded(stalling, "verify deadline"), "jarvis: brain=harness-timeout");
+        // Close removes the directory only once the process is gone.
+        assert.equal(fs.existsSync(path.dirname(stalled.calls()[0].cwd)), false, "the probe's working directory is removed");
         // Another vendor's subscription keeps its refusal; no program starts.
         const codex = { id: "codex-fixture", provider: "codex", label: "default", source: { kind: "cli", directory: verifyAccount.directory },
             state: { kind: "verifying", operation: 1 } };
@@ -492,9 +512,12 @@ world(async () => {
             ["request-bound", "const REQUEST_BYTES = 20 * 1024 * 1024;", "const REQUEST_BYTES = 20 * 1024 * 1024 - 1;", "bounds"],
             ["tools-bound", "const TOOLS = 64;", "const TOOLS = 65;", "bounds"],
             ["close-bridge", "        launch?.close();\n        let exited", "        let exited", "close"],
-            ["close-late-session", "if (closed) { launch?.close(); fail(\"closed\"); }", "if (closed) fail(\"closed\");", "close"],
+            ["close-late-session", "if (closing !== null) { launch?.close(); fail(\"closed\"); }", "if (closing !== null) fail(\"closed\");", "close"],
+            ["close-again", "if (closing !== null) return closing;", "if (closing !== null) return Promise.resolve();", "verify"],
             ["close-workdir", "if (workdir !== null) fs.rmSync(workdir, { recursive: true, force: true });", "", "close"],
-            ["verify-result", 'if (step.value.kind === "text") text += step.value.text;', 'if (step.value.kind === "text") return step.value.text;', "verify"]
+            ["verify-result", 'if (step.value.kind === "text") text += step.value.text;', 'if (step.value.kind === "text") return step.value.text;', "verify"],
+            ["verify-deadline", "const timer = clock.set(() => { expired = true; void brain.close(); }, deadline);",
+                "const timer = clock.set(() => { expired = true; }, deadline);", "verify"]
         ]) await control(harnessFile, name, needle, replacement, row);
         for (const [name, needle, replacement] of [
             ["verify-route", 'if (row.id !== "claude") fail("verify=subscription-handoff-unavailable");', ""],
