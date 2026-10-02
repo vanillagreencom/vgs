@@ -115,10 +115,13 @@ expect "the shell's only client is the Settings window, not the themes panel" '[
 expect "hiding the Settings window before the layer controls is allowed" ok ipc shell hide window vgs.settings
 expect_poll "the Settings window is gone before the layer controls" 0 window_count Settings
 window_border_on
+# The panel's edge: its box inside its layer, which covers the screen,
+# plus the layer's origin.
 panel_edge() {
-  local box x y colour
+  local box item x y colour
   box="$(one_layer vgs:panel)" && [[ $box == \[* ]] || { echo "$box"; return; }
-  read -r x y < <(python3 -c 'import json,sys; b=json.loads(sys.argv[1]); print(b[0] - 2, b[1] + b[3] // 2)' "$box")
+  item="$(ipc smoke instanceGeometry panel vgs.themes)" && [[ $item == \[* ]] || { echo "$item"; return; }
+  read -r x y < <(python3 -c 'import json,sys; l=json.loads(sys.argv[1]); b=json.loads(sys.argv[2]); print(l[0] + b[0] - 2, l[1] + b[1] + b[3] // 2)' "$box" "$item")
   colour="$(pixel "$x" "$y")" || { echo "$colour"; return; }
   no_border_colour "$colour"
 }

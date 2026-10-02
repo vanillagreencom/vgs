@@ -58,6 +58,11 @@ Scope {
     // file a row writes beside the shipped one for a dismissal control, by
     // the name the row gives each.
     property var popupCopies: ({})
+    // name -> how many times the SummonLayer copy of that name was dismissed.
+    property var layerDismissals: ({})
+    // [window, size] per window windowDrawn listens on: the size, `WxH`,
+    // of the last frame it presented.
+    property var drawnWindows: []
     // The vgs.polkit prompt over a stand-in authentication flow, for the
     // polkit scene of scripts/sandbox-shots.sh: no sandbox path runs a live
     // flow (docs/architecture/lock-polkit.md § Validation). While shown it
@@ -366,6 +371,23 @@ Scope {
         const value = item[property];
         const json = root.json(value);
         return json === undefined ? "undefined" : json;
+    }
+
+    // Build a disposable host copy from FILE on the focused screen, kept
+    // under NAME for popupDrop, with the properties PROPERTIESOF returns for
+    // that screen: the made copy, or the answer that refuses it.
+    function hostCopy(name, file, propertiesOf) {
+        if (name in root.popupCopies) return "loaded";
+        const screen = Compositor.focusedScreen();
+        if (screen === null) return "refused: screen=none";
+        const component = Qt.createComponent("file://" + file);
+        if (component.status !== Component.Ready) return root.answer("error: " + component.errorString().trim().replace(/\n/g, " "));
+        const made = component.createObject(root, propertiesOf(screen));
+        if (made === null) return "error: create";
+        const next = Object.assign({}, root.popupCopies);
+        next[name] = made;
+        root.popupCopies = next;
+        return made;
     }
 
     function invoke(hostKey, id, name, arg) {
@@ -1008,6 +1030,27 @@ Scope {
                 entry.pluginId === "vgs.jarvis" && entry.title === title && entry.message.indexOf(cause) !== -1).length;
         }
         function instanceGeometry(hostKey: string, id: string): string { return root.geometry(root.instance(hostKey, id)); }
+        // `drawn` once the window of plugin ID's HOST_KEY instance has
+        // presented a frame at its current size, else `pending`. The first
+        // read starts listening, and each pending read asks the window for
+        // a frame. A layer surface takes a press only where its presented
+        // buffer reaches, so a row waits for this before it presses beside
+        // a summon that has just mapped.
+        function windowDrawn(hostKey: string, id: string): string {
+            const item = root.instance(hostKey, id);
+            if (item === null) return "absent";
+            const win = item.Window.window;
+            if (win === null) return "no-window";
+            let entry = root.drawnWindows.find(row => row[0] === win);
+            if (entry === undefined) {
+                entry = [win, ""];
+                root.drawnWindows = root.drawnWindows.concat([entry]);
+                win.frameSwapped.connect(() => { entry[1] = win.width + "x" + win.height; });
+            }
+            if (entry[1] === win.width + "x" + win.height) return "drawn";
+            win.update();
+            return "pending";
+        }
         // Every item under an instance, the instance first, breadth first:
         // its type name as typeName writes it, its objectName, its box in screen
         // coordinates, its implicit size, the index of its parent in the
@@ -1500,17 +1543,29 @@ Scope {
         // screen. Rows use this for host controls whose window activation
         // must behave like a real unanchored summon.
         function panelHostLoad(name: string, file: string, id: string): string {
-            if (name in root.popupCopies) return "loaded";
-            const screen = Compositor.focusedScreen();
-            if (screen === null) return "refused: screen=none";
-            const component = Qt.createComponent("file://" + file);
-            if (component.status !== Component.Ready) return root.answer("error: " + component.errorString().trim().replace(/\n/g, " "));
-            const made = component.createObject(root, { pluginId: id, screen: screen });
-            if (made === null) return "error: create";
-            const next = Object.assign({}, root.popupCopies);
-            next[name] = made;
-            root.popupCopies = next;
+            const made = root.hostCopy(name, file, screen => ({ pluginId: id, screen: screen }));
+            return typeof made === "string" ? made : "ok";
+        }
+        // Build a disposable SummonLayer copy from FILE: plugin ID's KIND
+        // summoned without an anchor on the focused screen, as SummonHost
+        // builds it; the row calls the plugin's open(), as the host does
+        // once the slot has built it. The copy's `dismissed` is counted
+        // under NAME, which summonLayerDismissals reads.
+        function summonLayerLoad(name: string, file: string, id: string, kind: string): string {
+            const made = root.hostCopy(name, file, screen => ({ pluginId: id, kind: kind, request: { payloadJson: "{}", anchor: null, anchored: false, screen: screen, returnFocus: null, returnFocusWasVisual: false } }));
+            if (typeof made === "string") return made;
+            const counts = Object.assign({}, root.layerDismissals);
+            counts[name] = 0;
+            root.layerDismissals = counts;
+            made.dismissed.connect(() => {
+                const next = Object.assign({}, root.layerDismissals);
+                next[name] = (next[name] || 0) + 1;
+                root.layerDismissals = next;
+            });
             return "ok";
+        }
+        function summonLayerDismissals(name: string): string {
+            return name in root.layerDismissals ? String(root.layerDismissals[name]) : "absent";
         }
         // Build a disposable OverlaySurface copy with the real layer
         // component, on its first screen. Only the copy's mask differs;

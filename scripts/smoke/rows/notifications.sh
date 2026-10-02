@@ -204,6 +204,7 @@ click_panel_item() { # TYPE TEXT
   local rect x y
   rect="$(ipc smoke itemGeometry panel vgs.notifications "$1" "$2")" || return 1
   [[ $rect == \[* ]] || return 1
+  summon_drawn panel vgs.notifications || return 1
   read -r x y < <(panel_point "$rect" - -) || return 1
   hover "$((x + 1))" "$y" || return 1
   click "$x" "$y"
@@ -1350,18 +1351,17 @@ expect_poll "the shortcut opened the inbox" '"inbox"' read_notes panelMode
 expect "the shortcut closes it again" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
 expect_poll "the shortcut closed the inbox" '""' read_notes panelMode
 
-# The inbox's content against its window: the header, the card list and
-# its scroll bar inside the panel's layer, every card and the key hints
-# inside the list and the layer across, and the list and its first card
-# below the header.
-# panel_fit_value reads the layer's [x, y, w, h] on its first line and the
-# panel's descendantGeometry on its second, boxes in the window's
-# coordinates: `fits`, or each violation as `clipped=<part>` or
-# `under-header=<part>`.
+# The inbox's content against the panel's own box, the size the panel asks
+# for: the header, the card list and its scroll bar inside it, every card
+# and the key hints inside the list and the panel across, and the list and
+# its first card below the header.
+# panel_fit_value reads the panel's [x, y, w, h] on its first line and its
+# descendantGeometry on its second, every box in the layer's coordinates:
+# `fits`, or each violation as `clipped=<part>` or `under-header=<part>`.
 panel_fit_value() {
   py_reply 'import json,sys
 lines = sys.stdin.read().splitlines()
-w, h = json.loads(lines[0])[2:4]
+px, py, w, h = json.loads(lines[0])
 items = [i for i in json.loads(lines[1]) if i["visible"]]
 def first(pred):
     return next((i for i in items if pred(i)), None)
@@ -1373,7 +1373,7 @@ if header is None or view is None or not cards:
     sys.exit()
 bad = []
 def inside(name, box, vertical=True):
-    x, y, bw, bh = box
+    x, y, bw, bh = box[0] - px, box[1] - py, box[2], box[3]
     if x < -0.5 or x + bw > w + 0.5 or (vertical and (y < -0.5 or y + bh > h + 0.5)):
         bad.append("clipped=" + name)
 inside("header", header["box"])
@@ -1394,17 +1394,17 @@ if top["box"][1] < header_bottom - 0.5: bad.append("under-header=card")
 print(" ".join(sorted(set(bad))) if bad else "fits")'
 }
 panel_fit() {
-  local layer items
-  layer="$(surface_box vgs:panel)" || return 1
+  local panel items
+  panel="$(ipc smoke instanceGeometry panel vgs.notifications)" || return 1
   items="$(ipc smoke descendantGeometry panel vgs.notifications)" || return 1
-  printf '%s\n%s\n' "$layer" "$items" | panel_fit_value
+  printf '%s\n%s\n' "$panel" "$items" | panel_fit_value
 }
 # Controls: the readings the predicate must refuse. The clipped one is the
-# panel as it drew before its width followed its column, a 420 px window
+# panel as it drew before its width followed its column, a 420 px panel
 # under a 500 px column, read in the sandbox at scale 1; the other puts the
 # first card's top 18 px into the header.
-panel_fit_reading() { # WINDOW_W HEADER_X CARD_Y
-  printf '[668, 36, %s, 303]\n' "$1"
+panel_fit_reading() { # PANEL_W HEADER_X CARD_Y
+  printf '[0, 0, %s, 303]\n' "$1"
   printf '[{"type":"InboxHeader","name":"","box":[%s,0,420,48],"visible":true},' "$2"
   printf '{"type":"QQuickFlickable","name":"","box":[0,52,500,251],"visible":true},'
   printf '{"type":"SlimScrollBar","name":"notificationPanelScrollBar","box":[464,52,12,251],"visible":false},'
@@ -1422,10 +1422,38 @@ expect_poll "the fit toasts are listed" True has_row live "Fit 8"
 expect "the inbox shortcut opens the panel for the fit check" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
 expect_poll "the fit inbox is open" '"inbox"' read_notes panelMode
 expect_poll "the fit inbox lists the eight toasts" True has_row panel "Fit 1"
-geometry expect_poll "the inbox draws whole inside its window, its list below the header" fits panel_fit
+geometry expect_poll "the inbox draws whole inside its own box, its list below the header" fits panel_fit
 
-expect "the fit inbox closes" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
-expect_poll "the fit inbox is closed" '""' read_notes panelMode
+# A press beside the panel closes it, on the desktop and over a client
+# window (SummonLayer's catcher; rows/surfaces.sh holds the control); a
+# press on the header or on a card does not.
+if summon_drawn panel vgs.notifications && title_box="$(ipc smoke itemGeometry panel vgs.notifications QQuickText Notifications)" && [[ $title_box == \[* ]] && read -r x y < <(panel_point "$title_box" - -); then
+  click "$x" "$y" || fail "the press on the panel's header failed"
+  sleep 0.5 # a press beside the panel closes it well within this; a press that closes nothing marks nothing
+  expect "a press on the header leaves the inbox open" '"inbox"' read_notes panelMode
+else
+  fail "the panel's title is unreadable"
+fi
+click_panel_item NotificationCard "Fit 8" || fail "the press on a card failed"
+sleep 0.5 # as above
+expect "a press on a card leaves the inbox open" '"inbox"' read_notes panelMode
+click 40 "$((mon_h - 40))" || fail "the press on the desktop beside the inbox failed"
+expect_poll "a press on the desktop closes the inbox" '""' read_notes panelMode
+expect_poll "the inbox closed by the desktop press leaves no panel layer" 0 layer_count vgs:panel
+if open_other "$sandbox/toplevel-notifications-outside-press.log"; then
+  expect "the inbox shortcut opens the panel over the other window" ok hypr dispatch 'hl.dsp.global("vgs.notifications:inbox")'
+  expect_poll "the inbox is open over the other window" '"inbox"' read_notes panelMode
+  summon_drawn panel vgs.notifications || fail "the inbox over the other window never drew"
+  click "$((mon_w / 4))" "$((mon_h / 2))" || fail "the press over the other window failed"
+  expect_poll "a press over a client window closes the inbox" '""' read_notes panelMode
+  # The inbox also closes when the window takes the keyboard, so the
+  # catcher, not a focus loss, closed it only if the press never reached
+  # the window.
+  expect "the press beside the inbox never reached the other window" 0 other_events "^button 272 pressed$"
+  close_other "the outside-press helper exits 0 on SIGTERM"
+else
+  fail "opening the outside-press helper failed"
+fi
 expect "dismissing the fit toasts is allowed" ok notes dismiss-all
 expect_poll "the fit toasts are gone" 0 on_screen
 notify smoke-app 0 "Focus loss closes" "" '[]' '{"urgency": <byte 0>}' 0 >/dev/null

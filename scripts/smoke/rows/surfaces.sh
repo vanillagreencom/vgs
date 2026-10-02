@@ -24,7 +24,16 @@ expect "the background receives its screen" "\"$screen_name\"" ipc smoke readIns
 expect "a panel summons over IPC" ok ipc shell summon panel acme.surfaces '{"n":1}'
 expect "the panel received its payload" '"{\"n\":1}"' ipc smoke readInstance panel acme.surfaces lastPayload
 expect_poll "the panel host maps one surface" 1 layer_count vgs:panel
-geometry expect_poll "the panel takes its top-right placement below the bar" "[[$((mon_w - 8 - 200)), $((bar_reserved + 8)), 200, 120]]" layers_of vgs:panel
+# summon_box KIND: the plugin's box on the output, [x, y, w, h]: the layer's
+# origin plus the instance's box in the layer, which covers the free area.
+summon_box() {
+  local layer item
+  layer="$(surface_box "vgs:$1")" || return 1
+  item="$(ipc smoke instanceGeometry "$1" acme.surfaces)" || return 1
+  python3 -c 'import json,sys; l=json.loads(sys.argv[1]); r=json.loads(sys.argv[2]); print(json.dumps([l[0] + r[0], l[1] + r[1], r[2], r[3]]))' "$layer" "$item"
+}
+geometry expect_poll "the panel's layer covers the free area below the bar" "[[0, $bar_reserved, $mon_w, $((mon_h - bar_reserved))]]" layers_of vgs:panel
+geometry expect_poll "the panel takes its top-right placement below the bar" "[$((mon_w - 8 - 200)), $((bar_reserved + 8)), 200, 120]" summon_box panel
 if before="$(builds)"; then
   expect "summoning an open panel is allowed" ok ipc shell summon panel acme.surfaces '{"n":2}'
   expect "the open panel received the new payload" 2 ipc smoke readInstance panel acme.surfaces opened
@@ -54,6 +63,7 @@ slot_mouse="$repo/shell/Hosts/PluginSlotMouseReason.qml"
 slot_mouse_panel="$repo/shell/Hosts/PluginSlotMouseReasonPanel.qml"
 summon_noescape="$repo/shell/Hosts/SummonPopupNoEscape.qml"
 summon_copy="$repo/shell/Hosts/SummonPopupNoGrab.qml"
+layer_copy="$repo/shell/Hosts/SummonLayerNoCatch.qml"
 focus_control="$home/.config/vgs/plugins/acme.focus-control"
 python3 - "$repo/shell/Hosts/PluginSlot.qml" "$slot_now" <<'PYEDIT'
 import pathlib, sys
@@ -90,6 +100,14 @@ source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 text = source.read_text()
 assert text.count("    grabFocus: true\n") == 1, "the SummonPopup grab must occur once"
 target.write_text(text.replace("    grabFocus: true\n", "    grabFocus: false\n"))
+PYEDIT
+python3 - "$repo/shell/Hosts/SummonLayer.qml" "$layer_copy" <<'PYEDIT'
+import pathlib, sys
+source, target = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+text = source.read_text()
+old = "        enabled: win.catches\n"
+assert text.count(old) == 1, "the SummonLayer catcher must occur once"
+target.write_text(text.replace(old, "        enabled: false\n"))
 PYEDIT
 cat >"$slot_now_panel" <<'QML'
 import QtQuick
@@ -256,6 +274,78 @@ expect "a menu summons over IPC" ok ipc shell summon menu acme.surfaces '{}'
 expect_poll "the menu host maps one surface" 1 layer_count vgs:menu
 expect "hiding the menu is allowed" ok ipc shell hide menu acme.surfaces
 expect_poll "the menu host destroyed its surface" 0 layer_count vgs:menu
+
+# An unanchored panel or menu covers its screen and catches a press beside
+# it (SummonLayer), so a press outside the plugin closes it through the hide
+# path, over a client window or on the empty desktop, and a press inside it
+# does not. The fixture sits at the top right; the desktop point is the
+# bottom left, and the other window tiles the screen, so its point is left
+# of the panel and above the desktop point's row. A layer takes a press
+# only once it has drawn at its size, so each press beside a summon that
+# has just mapped waits for that (summon_drawn).
+layer_desktop_point="40 $((mon_h - 40))"
+layer_window_point="$((mon_w / 4)) $((mon_h / 2))"
+# layer_press LABEL POINT: one press at POINT, `x y`.
+layer_press() {
+  local x y
+  read -r x y <<<"$2"
+  click "$x" "$y" || fail "$1: the press failed"
+}
+# layer_copy_state NAME: the dismissals the probe counted for SummonLayer
+# copy NAME and the panel layers mapped, as `<dismissals> <layers>`.
+layer_copy_state() { printf '%s %s\n' "$(ipc smoke summonLayerDismissals "$1")" "$(layer_count vgs:panel)"; }
+expect "a panel summons for the outside press on the desktop" ok ipc shell summon panel acme.surfaces "{\"closeMarker\":\"$sandbox/closed-by-desktop-press\"}"
+expect_poll "the panel is mapped before the inside press" 1 layer_count vgs:panel
+summon_drawn panel acme.surfaces || fail "the panel never drew before the inside press"
+# The inside point is 6 px into the fixture's top-left corner, clear of its
+# centred control, so no item of the plugin takes the press and the catcher
+# under it must leave it.
+if panel_inside="$(python3 -c 'import json,sys; b=json.loads(sys.argv[1]); print(int(b[0] + 6), int(b[1] + 6))' "$(summon_box panel)")"; then
+  layer_press "the press inside the panel" "$panel_inside"
+  sleep 0.5 # a press outside closes the panel well within this; nothing else marks a press that closed nothing
+  expect "a press inside the panel leaves it open" 1 layer_count vgs:panel
+else
+  fail "the panel's box is unreadable"
+fi
+layer_press "the press on the desktop" "$layer_desktop_point"
+expect_poll "a press on the desktop called the panel's close()" yes marker "$sandbox/closed-by-desktop-press"
+expect_poll "a press on the desktop closes an unanchored panel" 0 layer_count vgs:panel
+expect "a menu summons for the outside press" ok ipc shell summon menu acme.surfaces '{}'
+expect_poll "the menu is mapped before the outside press" 1 layer_count vgs:menu
+summon_drawn menu acme.surfaces || fail "the menu never drew before the outside press"
+layer_press "the press beside the menu" "$layer_desktop_point"
+expect_poll "a press on the desktop closes an unanchored menu" 0 layer_count vgs:menu
+expect_poll "the closed menu leaves the build records" absent ipc smoke readInstance menu acme.surfaces opened
+if open_other "$sandbox/toplevel-surfaces-outside-press.log"; then
+  expect "a panel summons over the other window" ok ipc shell summon panel acme.surfaces '{}'
+  expect_poll "the panel is mapped over the other window" 1 layer_count vgs:panel
+  summon_drawn panel acme.surfaces || fail "the panel over the other window never drew"
+  layer_press "the press on the other window" "$layer_window_point"
+  expect_poll "a press on a client window closes an unanchored panel" 0 layer_count vgs:panel
+  expect "the press beside the panel never reached the other window" 0 other_events "^button 272 pressed$"
+  expect_poll "the panel closed by the window press leaves the build records" absent ipc smoke readInstance panel acme.surfaces opened
+
+  # Control: the SummonLayer copy whose catcher takes no press, written at
+  # the top of the row, stays open under the same presses, over the window
+  # and on the desktop. The probe counts the copy's dismissals.
+  expect "the probe builds the SummonLayer copy without the catcher" ok ipc smoke summonLayerLoad layer-nocatch "$layer_copy" acme.surfaces panel
+  ipc smoke invokeInstance panel acme.surfaces open '{}' >/dev/null || fail "the catchless layer copy's open() could not be called"
+  expect_poll "the catchless layer copy has opened its panel" 1 ipc smoke readInstance panel acme.surfaces opened
+  expect_poll "the catchless layer copy is mapped" "0 1" layer_copy_state layer-nocatch
+  summon_drawn panel acme.surfaces || fail "the catchless layer copy never drew"
+  layer_press "the press on the other window beside the catchless copy" "$layer_window_point"
+  sleep 0.5 # the shipped layer closed on the same press within this time
+  expect "control: a press on a client window leaves the catchless copy open" "0 1" layer_copy_state layer-nocatch
+  layer_press "the press on the desktop beside the catchless copy" "$layer_desktop_point"
+  sleep 0.5 # as above
+  expect "control: a press on the desktop leaves the catchless copy open" "0 1" layer_copy_state layer-nocatch
+  expect "the probe drops the catchless layer copy" ok ipc smoke popupDrop layer-nocatch
+  expect_poll "the catchless layer copy leaves the build records" absent ipc smoke readInstance panel acme.surfaces opened
+  expect_poll "the catchless layer copy's surface is gone" 0 layer_count vgs:panel
+  close_other "the outside-press window's helper exits 0 on SIGTERM"
+else
+  fail "the other window for the outside press did not map"
+fi
 
 # An application window: a client of the shell's class titled with the
 # plugin's name, at the size the instance asks, whatever the plugin's

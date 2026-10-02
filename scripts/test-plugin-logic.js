@@ -789,6 +789,10 @@ function suite(ctx, check) {
     check("capturesOverlayKeyboard refuses a kind no host summons", (() => { try { return ctx.capturesOverlayKeyboard("background", false); } catch (e) { return e.message; } })(), "capturesOverlayKeyboard: kind \"background\" is not summonable");
     check("layerKeyboardFocus: capturing overlay is exclusive", ctx.layerKeyboardFocus("overlay", false), "exclusive");
     check("layerKeyboardFocus: non-capturing layer is on demand", ctx.layerKeyboardFocus("panel", false), "on-demand");
+    check("layerCatchesOutside: a panel layer catches a press beside it", ctx.layerCatchesOutside("panel"), true);
+    check("layerCatchesOutside: a menu layer catches a press beside it", ctx.layerCatchesOutside("menu"), true);
+    check("layerCatchesOutside: an overlay layer catches nothing", ctx.layerCatchesOutside("overlay"), false);
+    check("layerCatchesOutside refuses a kind never built as a layer", (() => { try { return ctx.layerCatchesOutside("window"); } catch (e) { return e.message; } })(), "layerCatchesOutside: kind \"window\" is never a layer summon");
 }
 
 suite(load(LOGIC), report);
@@ -926,6 +930,9 @@ const CONTROLS = [
     ["only full-screen overlays capture the keyboard", "return kind === \"overlay\" && !anchored;", "return kind === \"overlay\";"],
     ["keyboard capture refuses an unsummonable kind", "if (SUMMONABLE_KINDS.indexOf(kind) === -1)\n        throw new Error(\"capturesOverlayKeyboard", "if (false)\n        throw new Error(\"capturesOverlayKeyboard"],
     ["capturing layers take exclusive focus", "return capturesOverlayKeyboard(kind, anchored) ? \"exclusive\" : \"on-demand\";", "return \"on-demand\";"],
+    ["a panel or menu layer catches a press beside it", "return !capturesOverlayKeyboard(kind, false);", "return false;"],
+    ["an overlay layer catches nothing", "return !capturesOverlayKeyboard(kind, false);", "return true;"],
+    ["the catcher refuses a kind never built as a layer", "if (summonSurface(kind, false) !== \"layer\")\n        throw new Error(\"layerCatchesOutside", "if (false)\n        throw new Error(\"layerCatchesOutside"],
     ["a centred surface ignores reserved space", "exclusion: placement === \"center\" ? \"ignore\" : \"normal\"", "exclusion: \"normal\""],
     ["requires is refused by name", "if (hasOwn(raw, \"requires\"))", "if (false)"],
     ["requirements is a manifest key", "\"hyprland\", \"requirements\", ", "\"hyprland\", "],

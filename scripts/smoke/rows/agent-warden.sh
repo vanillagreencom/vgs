@@ -378,6 +378,16 @@ expect_poll "the stand-in vsys reads as present" '"present"' warden_value vsys
 expect_poll "the shield reads not set up" '["shield-question-mark", "neutral", "", "Agent Warden isn'"'"'t set up"]' warden_shield
 # Keyboard-only path.
 expect "the Agent Warden panel is closed before the keyboard path" ok ipc shell hide panel vgs.agent-warden
+# The shortcut's summon has no anchor, so the panel is the summon host's
+# layer, which covers the screen: a press on the desktop's bottom left
+# corner, beside the centred panel, closes it (SummonLayer's catcher;
+# rows/surfaces.sh holds the control).
+expect "the Agent Warden shortcut opens the panel for an outside press" ok hypr dispatch 'hl.dsp.global("vgs.agent-warden:toggle")'
+expect_poll "the shortcut's panel is one panel layer" 1 layer_count vgs:panel
+summon_drawn panel vgs.agent-warden || fail "the shortcut's panel never drew before the outside press"
+click 40 "$((mon_h - 40))" || fail "the press outside the Agent Warden panel failed"
+expect_poll "a press on the desktop closes the shortcut's Agent Warden panel" hidden warden_panel_shown
+expect_poll "the closed Agent Warden panel leaves no panel layer" 0 layer_count vgs:panel
 expect "the Agent Warden shortcut opens the panel" ok hypr dispatch 'hl.dsp.global("vgs.agent-warden:toggle")'
 expect_poll "the shortcut opens on the primary button with a visible focus ring" '["Set up", true, true, true]' warden_focused
 forget_record

@@ -1499,6 +1499,18 @@ reserved_total() { hypr -j monitors | python3 -c 'import json,sys; print(sum(sum
 # Live layers with a namespace as [[x, y, w, h], ...], sorted.
 layers_of() { hypr -j layers | python3 -c 'import json,sys; print(json.dumps(sorted([l["x"],l["y"],l["w"],l["h"]] for m in json.load(sys.stdin).values() for lv in m["levels"].values() for l in lv if l["namespace"]==sys.argv[1] and l["pid"]!=-1)))' "$1"; }
 layer_count() { layers_of "$1" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+# summon_drawn KIND ID: 0 once the window of plugin ID's summoned KIND has
+# presented a frame at its configured size (Probe windowDrawn), 1 when it
+# has not within 5 s. A layer that has just mapped takes no press before
+# that ([runtime-pointer.md](../../docs/architecture/runtime-pointer.md)),
+# so a row waits for it before it presses on or beside a fresh summon.
+summon_drawn() { # KIND ID
+  for _ in $(seq 1 25); do
+    [[ $(ipc smoke windowDrawn "$1" "$2") == drawn ]] && return 0
+    sleep 0.2
+  done
+  return 1
+}
 # The acme.layers fixture's passive layer, which rows/toasts.sh,
 # rows/layers.sh and rows/notices.sh put under other surfaces: layered
 # VERB [ARG] runs one of its IPC verbs, read_layers PROPERTY reads its

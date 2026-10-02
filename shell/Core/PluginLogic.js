@@ -3118,6 +3118,16 @@ function layerKeyboardFocus(kind, anchored) {
     return capturesOverlayKeyboard(kind, anchored) ? "exclusive" : "on-demand";
 }
 
+// Whether a layer summon of KIND catches a press beside it and closes, as
+// an anchored popup's grab does: it covers its screen and places the plugin
+// inside. An overlay already covers its screen with the plugin and catches
+// nothing. A kind built as no layer is refused.
+function layerCatchesOutside(kind) {
+    if (summonSurface(kind, false) !== "layer")
+        throw new Error("layerCatchesOutside: kind " + JSON.stringify(kind) + " is never a layer summon");
+    return !capturesOverlayKeyboard(kind, false);
+}
+
 // Layer placement for a summon without an item anchor. Popups delegate
 // anchored placement to the compositor. Unknown user placement falls back
 // to center and returns an error for the host to report. A centred panel or
