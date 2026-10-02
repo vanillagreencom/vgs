@@ -164,12 +164,14 @@ function answerTo(directory, prompt) {
     return answer;
 }
 
-/** Daemon side: the prompts still inside their window, oldest first. A
- * missing directory means no hook has held one. */
+/** Daemon side: the unanswered prompts still inside their window, oldest
+ * first. An answered prompt stays on disk until its hook reads the answer;
+ * it is not asked again. A missing directory means no hook has held one. */
 function pending(directory, now) {
     if (!fs.existsSync(directory)) return [];
     directoryOf(directory);
-    return prompts(directory).filter(item => item.deadline > now).sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+    return prompts(directory).filter(item => item.deadline > now && !fs.existsSync(answerFile(directory, item.task, item.id)))
+        .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
 
 /**

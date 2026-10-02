@@ -262,6 +262,35 @@ world(async () => {
         folder => resolution(require(path.join(folder, "backend/Accounts.js")).Accounts));
     controls++;
     cases++;
+    // A coding task's account is a discovered CLI directory of its own
+    // provider, present now, found without a vendor command.
+    const taskAccount = Judge => {
+        const judge = new Judge(directory, env);
+        const found = store.discover();
+        const before = calls("cli-calls").length;
+        const claude = found.find(item => item.provider === "claude" && item.source.directory === path.join(env.HOME, ".claude"));
+        const codex = found.find(item => item.provider === "codex" && item.source.kind === "cli");
+        assert.ok(claude && codex, "the world holds a default Claude directory and a Codex one");
+        assert.equal(judge.cliDirectory("claude", claude.id), claude.source.directory);
+        for (const [provider, id] of [["codex", claude.id], ["claude", codex.id], ["claude", ""], ["claude", "cli:0"]])
+            assert.equal(judge.cliDirectory(provider, id), null, provider + " " + id);
+        const away = claude.source.directory + ".away";
+        fs.renameSync(claude.source.directory, away);
+        try { assert.equal(judge.cliDirectory("claude", claude.id), null, "an absent directory is no task account"); }
+        finally { fs.renameSync(away, claude.source.directory); }
+        assert.equal(calls("cli-calls").length, before, "no vendor command runs");
+    };
+    taskAccount(Accounts);
+    for (const [name, needle, replacement] of [
+        ["task-account-provider", "if (candidate.provider !== providerId || identity(", "if (identity("],
+        ["task-account-absent", 'return directory(candidate.directory).kind === "directory" ? candidate.directory : null;',
+            "return candidate.directory;"]
+    ]) {
+        await mutant("backend/Accounts.js", name, needle, replacement,
+            folder => taskAccount(require(path.join(folder, "backend/Accounts.js")).Accounts));
+        controls++;
+    }
+    cases++;
     safe(fs.readFileSync(references.file, "utf8"));
     assert.throws(() => store.remember("/org/freedesktop/secrets/collection/test/cli", "openai", "login"), /reference=item-unavailable/);
     assert.throws(() => store.remember(items[0].path, "claude", "login"), /reference=provider/);
