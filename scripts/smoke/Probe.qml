@@ -367,6 +367,22 @@ Scope {
         return "no-view";
     }
 
+    // dialogCard's items: the one Dialog under the instance and the
+    // MouseArea among the children of its card, the Rectangle it draws
+    // behind its content, or `absent`, `dialogs=<n>` or `no-card-area`.
+    function dialogCardArea(hostKey, id) {
+        const item = root.instance(hostKey, id);
+        if (item === null) return "absent";
+        const dialogs = root.descendants(item).filter(child => root.typeName(child) === "Dialog");
+        if (dialogs.length !== 1) return "dialogs=" + dialogs.length;
+        for (const card of dialogs[0].children) {
+            if (root.typeName(card) !== "QQuickRectangle") continue;
+            const area = card.children.find(child => root.typeName(child) === "QQuickMouseArea");
+            if (area !== undefined) return { dialog: dialogs[0], area: area };
+        }
+        return "no-card-area";
+    }
+
     function windowBox(item) {
         const at = item.mapToItem(null, 0, 0);
         return [at.x, at.y, item.width, item.height];
@@ -1413,6 +1429,25 @@ Scope {
             if (typeof view === "string") return view;
             const before = view.acceptedButtons;
             view.acceptedButtons = buttons;
+            return String(before);
+        }
+        // The one Dialog under an instance: its box in the window's
+        // coordinates and whether its card's own MouseArea, which takes the
+        // presses that land on the card's empty space, is enabled; or a
+        // failure word from dialogCardArea.
+        function dialogCard(hostKey: string, id: string): string {
+            const area = root.dialogCardArea(hostKey, id);
+            if (typeof area === "string") return area;
+            return root.json({ box: root.windowBox(area.dialog), enabled: area.area.enabled, shown: root.visibleInTree(area.dialog) });
+        }
+        // Turns that MouseArea on or off, so a row's control lets a click
+        // on the card fall through to what lies under the dialog; answers
+        // whether it was enabled before.
+        function setDialogCard(hostKey: string, id: string, enabled: bool): string {
+            const area = root.dialogCardArea(hostKey, id);
+            if (typeof area === "string") return area;
+            const before = area.area.enabled;
+            area.area.enabled = enabled;
             return String(before);
         }
         // Whether an item under the instance holds keyboard focus in an

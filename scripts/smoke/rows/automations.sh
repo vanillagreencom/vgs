@@ -207,6 +207,27 @@ expect_poll "the question shows" '"clear"' ui_confirm
 expect "Escape dismisses the question" ok ui_keys -k Escape
 expect_poll "the question is gone" '""' ui_confirm
 expect "the dismissed question clears nothing" 1 auto_history_count smoke-ui
+# The question's Dialog sits over a scrim that dismisses it on a click
+# away; a click on the card's empty space, 3 px below its top edge in the
+# padding above the title, leaves it open. The control turns the card's own
+# area off through the probe, and the same click falls to the scrim.
+# dialog_card_click: that click; question_after_click: the question read
+# 0.5 s after it, which a dismissal reaches within the click's frame.
+dialog_card_click() {
+  local card window x y
+  card="$(ipc smoke dialogCard window vgs.automations)" || return 1
+  [[ $card == \{* ]] || { echo "$card"; return 0; }
+  window="$(surface_box window:Automations)" || return 1
+  read -r x y < <(python3 -c 'import json,sys; c=json.loads(sys.argv[1])["box"]; w=json.loads(sys.argv[2]); print(int(w[0] + c[0] + c[2] / 2), int(w[1] + c[1] + 3))' "$card" "$window") || return 1
+  hover "$x" "$((y + 1))" && click "$x" "$y" && echo ok
+}
+question_after_click() { dialog_card_click >/dev/null || return 1; sleep 0.5; ui_confirm; }
+expect "Clear history asks for the card click" ok ui_click Button "Clear history"
+expect_poll "the question shows for the card click" '"clear"' ui_confirm
+expect "a click on the Dialog card's empty space leaves the question open" '"clear"' question_after_click
+expect "control: the probe turns the card's own area off" true ipc smoke setDialogCard window vgs.automations false
+expect "control: the same click falls to the scrim, which dismisses the question" '""' question_after_click
+expect "the card's own area is on again" false ipc smoke setDialogCard window vgs.automations true
 expect "Clear history asks again" ok ui_click Button "Clear history"
 expect "Return confirms" ok ui_keys -k Return
 expect_poll "the CLI reads history cleared by the window" 0 auto_history_count smoke-ui
