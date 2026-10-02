@@ -191,9 +191,31 @@ world(async () => {
     }
     for (const edge of ["generation", "end", "lease"]) await lifecycle(Browser, edge);
 
+    function setupAfterStart(implementation) {
+        mode({}); fs.rmSync(marker, { force: true });
+        const records = {};
+        const lease = implementation.install({ environment, router: { register(id, record) { records[id] = record; } } });
+        assert.equal(records.browser, undefined, "unverified browser is not offered");
+        lease.sync({ gen: 1, conversation: { kind: "ended" } });
+        fs.writeFileSync(marker, JSON.stringify({ version: "0.38.1" }));
+        lease.sync({ gen: 2, conversation: { kind: "started" } });
+        assert.equal(typeof records.browser?.start, "function", "setup becomes available to the next conversation");
+        fs.rmSync(marker, { force: true });
+        assert.equal(records.browser.observe(call("fill", { ref: "@e1", text: "fixture" })), undefined,
+            "stale readiness produces an unavailable input target");
+        assert.throws(() => records.browser.start(call("read"), () => {}), /unverified/,
+            "a removed or stale verification cannot start a new session");
+        lease.close();
+    }
+    setupAfterStart(Browser);
     let controls = 0;
     async function control(name, needle, replacement, check) { await mutant(file, name, needle, replacement, check); controls++; }
     const one = name => implementation => check(implementation, ...cases.find(row => row[0] === name));
+    await control("setup-after-start", 'if (changed && !ended) prepare();', 'void changed;', setupAfterStart);
+    await control("live-verification", 'if (status(environment).tone !== "ok") throw new Error("jarvis: browser=unverified");',
+        'if (false) throw new Error("jarvis: browser=unverified");', setupAfterStart);
+    await control("unverified-observation", 'try { return owner().record.observe(call); } catch { return undefined; }',
+        'return owner().record.observe(call);', setupAfterStart);
     await control("private-home", "HOME: privateHome, LANG:", "HOME: environment.HOME, LANG:", confinement);
     await control("private-session", 'const session = "jarvis-" + crypto.randomUUID();', 'const session = "jarvis-fixed";', confinement);
     await control("neutral-config", "AGENT_BROWSER_CONFIG: configFile", "AGENT_BROWSER_CONFIG: environment.AGENT_BROWSER_CONFIG", confinement);
@@ -243,7 +265,8 @@ world(async () => {
         assert.equal(implementation.refine(call("fill", { ref: "@e1", text: "--cdp" })).kind, "refuse");
     }); controls++;
     await control("cancel-child", 'if (active !== null) active.kill("SIGKILL");', 'if (false && active !== null) active.kill("SIGKILL");', cancellation);
-    await control("generation-close", 'generation !== state.gen ||', 'false ||', implementation => lifecycle(implementation, "generation"));
+    await control("generation-close", 'if (generation !== state.gen || state.conversation.kind === "ended") clear();',
+        'if (state.conversation.kind === "ended") clear();', implementation => lifecycle(implementation, "generation"));
     await control("conversation-close", 'if (generation !== state.gen || state.conversation.kind === "ended") clear();',
         'if (generation !== state.gen) clear();', implementation => lifecycle(implementation, "end"));
     await control("lease-close", 'close() { closed = true; clear(); }', 'close() { closed = true; }', implementation => lifecycle(implementation, "lease"));

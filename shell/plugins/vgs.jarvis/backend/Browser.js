@@ -233,14 +233,17 @@ function create({ environment, commandMs = COMMAND_MS }) {
 
 /** Register only a setup-verified driver and browser. Help uses the same owner. */
 function install({ router, environment }) {
-    if (status(environment).tone !== "ok") return null;
+    let registered = false;
     let current = null;
     let generation = null;
     let ended = false;
     let closed = false;
     function owner() {
         if (closed || ended) throw new Error("jarvis: browser=conversation-ended");
-        if (current === null) current = create({ environment });
+        if (current === null) {
+            if (status(environment).tone !== "ok") throw new Error("jarvis: browser=unverified");
+            current = create({ environment });
+        }
         return current;
     }
     function clear() {
@@ -249,21 +252,31 @@ function install({ router, environment }) {
         current = null;
         previous.close();
     }
-    router.register("browser", { commands: ["agent-browser"], timeoutMs: COMMAND_MS * 5 + 1000, cancellable: true,
-        observe(call) { return owner().record.observe(call); },
-        start(call, done) { owner().record.start(call, done); },
-        cancel() { clear(); } });
-    router.register("guidance", ComputerHelp.create(undefined, { timeoutMs: COMMAND_MS + 1000,
+    const guidance = ComputerHelp.create(undefined, { timeoutMs: COMMAND_MS + 1000,
         start(call, done) {
-            if (call.args.topic !== "browser") { done({ outcome: "failed", content: "help-topic-unavailable" }); return; }
             try { done({ outcome: "completed", content: owner().guidance() }); }
             catch (error) { done({ outcome: "failed", content: error.message }); }
-        } }));
+        } });
+    router.register("guidance", guidance);
+    function prepare() {
+        if (registered || closed || status(environment).tone !== "ok") return;
+        router.register("browser", { commands: ["agent-browser"], timeoutMs: COMMAND_MS * 5 + 1000, cancellable: true,
+            observe(call) {
+                try { return owner().record.observe(call); } catch { return undefined; }
+            },
+            start(call, done) { owner().record.start(call, done); },
+            cancel() { clear(); } });
+        guidance.enableBrowser();
+        registered = true;
+    }
+    prepare();
     return Object.freeze({
         sync(state) {
+            const changed = generation !== state.gen || ended;
             if (generation !== state.gen || state.conversation.kind === "ended") clear();
             generation = state.gen;
             ended = state.conversation.kind === "ended";
+            if (changed && !ended) prepare();
         },
         close() { closed = true; clear(); }
     });

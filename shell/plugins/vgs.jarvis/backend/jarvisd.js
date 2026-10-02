@@ -34,7 +34,6 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const ShellRequests = require("./ShellRequests.js");
     const Executors = require("./Executors.js");
     const Input = require("./Input.js");
-    const ComputerHelp = require("./ComputerHelp.js");
     const Browser = require("./Browser.js");
     const TaskRunner = require("./TaskRunner.js");
     const ToolBridge = require("./ToolBridge.js");
@@ -320,7 +319,6 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                             write({ v: 1, type: "input-ready", gen: runner.state.gen, revision: context.revision, commands: record.commands });
                     });
                     browser = Browser.install({ router, environment: process.env });
-                    if (browser === null) router.register("guidance", ComputerHelp.create());
                     const routerSync = runner.ports.tools.sync;
                     runner.ports.tools.sync = state => {
                         routerSync(state);

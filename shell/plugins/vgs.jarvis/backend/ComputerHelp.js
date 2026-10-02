@@ -11,8 +11,11 @@ function create(root = ROOT, browser = null) {
         try { return fs.lstatSync(path.join(root, topic + ".md")).isFile(); }
         catch (error) { if (error.code === "ENOENT") return false; throw error; }
     });
-    if (browser !== null) topics.push("browser");
     return { commands: [], topics, timeoutMs: browser === null ? 2000 : browser.timeoutMs, cancellable: false,
+        enableBrowser() {
+            if (browser === null) throw new Error("help-browser-unavailable");
+            if (!topics.includes("browser")) topics.push("browser");
+        },
         start(call, done) {
             let fd;
             try {
