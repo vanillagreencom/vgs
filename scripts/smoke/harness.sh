@@ -1728,7 +1728,10 @@ click_in() {
 # probe's viewHolding finds for TEXT in that instance, drawn in SURFACE, a
 # surface_box name, either a mouse drag from two thirds down the view to
 # one third, 4 px in from its left edge where a row's padding lies, or one
-# wheel notch down there, the pointer hovered at the start first. Answers
+# wheel notch down there, the pointer hovered at the start first. It reads
+# the view once two contentY readings 0.1 s apart match, so a flick an
+# earlier wheel notch or drag left running is over, and answers
+# `unsettled` with the reading when none match within 3 s. Answers
 # `moved` once the view's contentY changes, polled every 0.1 s, or `still`
 # when it holds for 1 s: a drag steals the press within its moves, and a
 # wheel notch starts the view's flick in the frame that takes it. A view
@@ -1737,9 +1740,16 @@ click_in() {
 # probe's answer, and a SURFACE that names no one window SURFACE with
 # surface_box's count, before any input.
 view_pointer() { # SURFACE HOST_KEY ID TEXT drag|wheel
-  local view surface plan x y y2 now
-  view="$(ipc smoke viewHolding "$2" "$3" "$4")" || return 1
-  [[ $view == \{* ]] || { echo "$view"; return 0; }
+  local view surface plan x y y2 now last="" settled=""
+  for _ in $(seq 1 30); do
+    view="$(ipc smoke viewHolding "$2" "$3" "$4")" || return 1
+    [[ $view == \{* ]] || { echo "$view"; return 0; }
+    now="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["contentY"])' "$view")" || return 1
+    [[ $now == "$last" ]] && { settled=1; break; }
+    last="$now"
+    sleep 0.1
+  done
+  [[ -n $settled ]] || { echo "unsettled $view"; return 0; }
   surface="$(surface_box "$1")" || return 1
   [[ $surface == \[* ]] || { echo "$1 $surface"; return 0; }
   plan="$(python3 -c '
