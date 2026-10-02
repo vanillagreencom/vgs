@@ -197,7 +197,7 @@ Item {
                 Section {
                     title: "Inputs"
                     rowSpacing: Theme.stack.group
-                    description: "Text fields with icons, actions and errors; a field with its hint"
+                    description: "Text fields with icons, actions and errors; a field with its hint; form rows, one with a warning"
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline
@@ -216,6 +216,12 @@ Item {
                     Field { label: "Badge"; inline: true; width: parent.width; Badge { text: "synced"; tone: "success" } }
                     Field { label: "Button"; inline: true; width: parent.width; Button { text: "Open"; size: "sm"; variant: "secondary" } }
                     Field { label: "Select"; inline: true; hint: "Hints start under the value column."; width: parent.width; Select { width: parent.width; model: ["Default", "Ocean", "Forest"] } }
+                }
+                Column {
+                    width: parent.width
+                    spacing: Theme.stack.row
+                    FormRow { label: "Natural scroll"; width: parent.width; Switch { size: "sm"; checked: true } }
+                    FormRow { label: "Pointer speed"; warning: "Overridden"; width: parent.width; Slider { from: 0; to: 100; value: 40; width: parent.width } }
                 }
                 Field { label: "Command"; hint: "Multi-line command text"; width: parent.width; TextArea { width: parent.width; text: "echo hello\nprintf '%s\\n' done" } }
                 Field { label: "Date"; hint: "A keyboard picker"; width: parent.width; DateField { date: "2026-01-05" } }
@@ -253,13 +259,20 @@ Item {
                 Section {
                     title: "Feedback"
                     rowSpacing: Theme.stack.group
-                    description: "Progress, spinner, badges, key caps, a code line to copy and an empty result"
+                    description: "Progress, spinner, level displays, badges, key caps, a code line to copy and an empty result"
                 Flow {
                     width: parent.width
                     spacing: Theme.stack.inline
                     Spinner {}
                     ProgressBar { value: 0.6 }
                     ProgressBar { indeterminate: true }
+                }
+                Flow {
+                    width: parent.width
+                    spacing: Theme.stack.inline
+                    LevelOsd { iconName: "volume-2"; level: 0.45 }
+                    LevelOsd { iconName: "volume-x"; level: 0; text: "Muted" }
+                    LevelOsd { iconName: "sun"; level: 0.8; text: "Studio Display" }
                 }
                 Flow {
                     width: parent.width
@@ -581,7 +594,7 @@ Item {
                         }
                     }
                     Field {
-                        label: "Tabs and disclosure"
+                        label: "Tabs and rows"
                         inline: true
                         width: parent.width
                         Column {
@@ -602,6 +615,15 @@ Item {
                                 iconName: "package"
                                 expanded: true
                                 Label { role: "hint"; text: "The disclosure row is the focusable control." }
+                            }
+                            DeviceRow {
+                                property string focusExample: "DeviceRow"
+                                width: parent.width
+                                text: "Focused device"
+                                secondary: "Connected"
+                                iconName: "bluetooth"
+                                battery: 0.5
+                                menuEntries: [ MenuItem { text: "Forget" } ]
                             }
                         }
                     }
@@ -780,7 +802,7 @@ Item {
                 Section {
                     title: "Lists"
                     rowSpacing: Theme.stack.group
-                    description: "Tabs, list items, a disclosure row open on its content, and dividers"
+                    description: "Tabs, list items, a disclosure row open on its content, dividers, and device rows under one cursor"
                 Tabs { model: ["Installed", "Available", "Updates"] }
                 Column {
                     width: parent.width
@@ -801,6 +823,56 @@ Item {
                     Divider { width: parent.width }
                     MenuItem { text: "A menu entry, as the menu draws it"; iconName: "check"; shortcut: "Enter" }
                     MenuItem { text: "The checked entry of a menu"; iconName: "palette"; checked: true }
+                }
+                Item {
+                    id: deviceList
+                    property int current: 0
+                    width: parent.width
+                    height: deviceColumn.height
+
+                    ListCursor { id: deviceCursor }
+                    Column {
+                        id: deviceColumn
+                        width: parent.width
+                        DeviceRow {
+                            width: parent.width
+                            cursor: deviceCursor
+                            highlighted: deviceList.current === 0
+                            onPointed: deviceList.current = 0
+                            onActiveFocusChanged: if (activeFocus) deviceList.current = 0
+                            text: "Headphones"
+                            secondary: "Connected"
+                            iconName: "headphones"
+                            battery: 0.72
+                            actions: [ Button { text: "Disconnect"; size: "sm"; variant: "secondary" } ]
+                            menuEntries: [ MenuItem { text: "Rename" }, MenuItem { text: "Trust" }, MenuItem { text: "Forget" } ]
+                        }
+                        DeviceRow {
+                            width: parent.width
+                            cursor: deviceCursor
+                            highlighted: deviceList.current === 1
+                            onPointed: deviceList.current = 1
+                            onActiveFocusChanged: if (activeFocus) deviceList.current = 1
+                            text: "Mouse"
+                            secondary: "Connected"
+                            iconName: "mouse"
+                            battery: 0.08
+                            menuEntries: [ MenuItem { text: "Rename" }, MenuItem { text: "Forget" } ]
+                        }
+                        DeviceRow {
+                            width: parent.width
+                            cursor: deviceCursor
+                            highlighted: deviceList.current === 2
+                            onPointed: deviceList.current = 2
+                            onActiveFocusChanged: if (activeFocus) deviceList.current = 2
+                            text: "Speaker"
+                            secondary: "Not connected"
+                            iconName: "speaker"
+                            badge: "Nearby"
+                            badgeTone: "info"
+                            actions: [ Button { text: "Connect"; size: "sm"; variant: "primary" } ]
+                        }
+                    }
                 }
                 }
                 Section {

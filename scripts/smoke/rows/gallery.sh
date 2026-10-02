@@ -13,12 +13,39 @@ expect "the gallery maps no layer surface" 0 layer_count vgs:panel
 # Every component the module's qmldir lists is drawn, read back by type
 # name; the headings have a size, so they show.
 expect_poll "the gallery draws every component of the module" '[]' ipc smoke galleryMissing window vgs.gallery
+# The key/value row, the device row and the level display draw with a
+# size in each state the gallery shows: a form row with and without its
+# warning badge, a device row per badge (a battery, a low battery by its
+# text, a level), and a level display read as a percentage, as Muted and
+# as a device's name, each read back by type and text. The control
+# flattens the first box, which the check names. `[]` is the pass.
+gallery_drawn_rows=("FormRow|Natural scroll" "FormRow|Pointer speed" "Badge|Overridden" "DeviceRow|Headphones" "DeviceRow|Mouse" "Badge|8%" "DeviceRow|Speaker" "LevelOsd|45%" "LevelOsd|Muted" "LevelOsd|Studio Display")
+gallery_drawn() {
+  local boxes=() entry
+  for entry in "${gallery_drawn_rows[@]}"; do boxes+=("$entry=$(ipc smoke shownWindowGeometry window vgs.gallery "${entry%%|*}" "${entry#*|}")"); done
+  python3 - "${1:-}" "${boxes[@]}" <<'PY'
+import json, sys
+plant, rows = sys.argv[1] == "flat", sys.argv[2:]
+out = []
+for n, row in enumerate(rows):
+    name, _, raw = row.partition("=")
+    if not raw.startswith("["):
+        out.append("%s=%s" % (name, raw)); continue
+    box = json.loads(raw)
+    if plant and n == 0: box[3] = 0
+    if box[2] <= 0 or box[3] <= 0: out.append("%s.height=%s" % (name, box[3]))
+print(json.dumps(out))
+PY
+}
+gallery_drawn_planted() { gallery_drawn flat | py_reply 'import json,sys; print(json.load(sys.stdin) == ["FormRow|Natural scroll.height=0"])'; }
+geometry expect_poll "the gallery draws its form rows, device rows and level displays" '[]' gallery_drawn
+expect "control: a form row drawn flat is named" True gallery_drawn_planted
 
 
 expect_poll "the gallery draws every focus example" '[]' ipc smoke galleryFocusMissing window vgs.gallery
 gallery_tab_tour() {
   local required focus label seen_json
-  required='["Button primary","Button secondary","Button tertiary","Button ghost","Button danger","ToggleButton","IconButton","BarItem","Switch","Checkbox","SegmentedControl","Select","TextField","Slider","TitleButton","Tabs","Disclosure","CardCarousel","KeyNav list","Dialog accept action"]'
+  required='["Button primary","Button secondary","Button tertiary","Button ghost","Button danger","ToggleButton","IconButton","BarItem","Switch","Checkbox","SegmentedControl","Select","TextField","Slider","TitleButton","Tabs","Disclosure","DeviceRow","CardCarousel","KeyNav list","Dialog accept action"]'
   seen_json='[]'
   [[ $(ipc smoke focusExample window vgs.gallery "Button primary") == focused ]] || { echo "focus-start-failed"; return 1; }
   for _ in $(seq 1 220); do

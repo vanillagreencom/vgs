@@ -714,7 +714,7 @@ Scope {
                     "Button primary", "Button secondary", "Button tertiary", "Button ghost", "Button danger",
                     "IconButton", "ToggleButton", "BarItem", "Switch", "Checkbox", "Radio",
                     "SegmentedControl", "Select", "TextField", "Slider", "TitleButton",
-                    "Tabs", "Disclosure", "Dialog accept action", "CardCarousel", "KeyCaps", "KeyNav list"
+                    "Tabs", "Disclosure", "DeviceRow", "Dialog accept action", "CardCarousel", "KeyCaps", "KeyNav list"
                 ];
                 const previewRequired = {
                     "Button primary": true, "Button secondary": true, "Button tertiary": true, "Button ghost": true, "Button danger": true,
