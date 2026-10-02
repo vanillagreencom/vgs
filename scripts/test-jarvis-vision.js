@@ -234,12 +234,17 @@ async function main() {
     }
     const scene = (layout, clients) => ({ monitors: layout.monitors, outputs: layout.outputs, clients, colors: COLORS });
     const refusal = reason => JSON.stringify({ kind: "refuse", reason });
-    // The executor's own deadline, fired once the stand-in holds.
-    const onHeld = (name, ms) => ({ set(fn, wanted) {
-        assert.equal(wanted, ms);
-        held(name).then(fn);
-        return name;
-    }, clear() {} });
+    // The deadline of the call's index-th command, fired once the stand-in
+    // holds; the other commands keep real timers.
+    const onHeld = (name, ms, index = 0) => {
+        let count = 0;
+        return { set(fn, wanted) {
+            if (count++ !== index) return setTimeout(fn, wanted);
+            assert.equal(wanted, ms);
+            held(name).then(fn);
+            return name;
+        }, clear(timer) { if (timer !== name) clearTimeout(timer); } };
+    };
     async function held(name) {
         const marker = path.join(screen.fixture, name + ".held");
         for (let i = 0; i < 1000 && !fs.existsSync(marker); i++) await pause(5);
@@ -596,7 +601,7 @@ async function main() {
                 assert.deepEqual(left(), []);
             });
             screen.set(scene(flat, [plain("0xb2", [150, 40], [100, 80]), secret("0xa1", [20, 30], [100, 50])]), { magick: { hold: true } });
-            await within(folder, { clock: clock ?? onHeld("magick", 5000) }, async w => {
+            await within(folder, { clock: clock ?? onHeld("magick", 5000, 1) }, async w => {
                 const value = await w.send("vision.screen");
                 assert.equal(value.item.content, JSON.stringify({ kind: "stopped", command: "magick", reason: "timeout" }));
                 assert.deepEqual(left(), []);
