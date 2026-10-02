@@ -1,0 +1,803 @@
+{
+ "source": {
+  "package": "@anthropic-ai/claude-agent-sdk",
+  "version": "0.3.287",
+  "claudeCodeVersion": "2.1.287",
+  "tarball": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.287.tgz",
+  "integrity": "sha512-DrYUMzmSVfL1VciNDo/9BhxiVnTsSCKVzxLHB3+NvvRiyN4pfWTKFrUzQesPnWswds9x1Ir10Gi6GRsnjT0UkA==",
+  "path": "package/sdk.d.ts",
+  "sha256": "e21c63715af18e383c817716d8cb4a68466ef1b8aff93fc5807c9fcaabbaf240",
+  "fetched": "2026-10-02",
+  "pages": [
+   "https://code.claude.com/docs/en/cli-reference",
+   "https://code.claude.com/docs/en/headless"
+  ]
+ },
+ "rule": [
+  "Anthropic publishes the stream-json wire as TypeScript declarations, not JSON Schema. Each schema is transcribed by hand from the named declaration in sdk.d.ts.",
+  "String literal unions become enum. A property the declaration marks optional is listed but not required, and only when a fixture writes it.",
+  "UserInput is SDKUserMessage; InterruptRequest is SDKControlRequest with SDKControlInterruptRequest; SystemInit is SDKSystemMessage; Assistant is SDKAssistantMessage; ResultSuccess and ResultError are SDKResultSuccess and SDKResultError; ControlResponse is SDKControlResponse with ControlResponse; ApiRetry is SDKAPIRetryMessage.",
+  "Message, the content blocks and MessageParam come from @anthropic-ai/sdk BetaMessage and MessageParam, which sdk.d.ts imports; only the block types the adapter reads or a fixture writes are kept.",
+  "usage, modelUsage and a tool input stay open objects: the adapter reads none of their fields."
+ ],
+ "omitted": [
+  "SDKPartialAssistantMessage",
+  "SDKUserMessageReplay",
+  "SDKCompactBoundaryMessage",
+  "SDKStatusMessage",
+  "SDKHookStartedMessage",
+  "SDKPermissionDeniedMessage",
+  "SDKRateLimitEvent",
+  "the other control request subtypes"
+ ],
+ "schemas": {
+  "TextBlock": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "text"
+     ]
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "text"
+   ]
+  },
+  "ImageBlock": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "image"
+     ]
+    },
+    "source": {
+     "type": "object",
+     "properties": {
+      "type": {
+       "enum": [
+        "base64"
+       ]
+      },
+      "media_type": {
+       "enum": [
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp"
+       ]
+      },
+      "data": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "type",
+      "media_type",
+      "data"
+     ]
+    }
+   },
+   "required": [
+    "type",
+    "source"
+   ]
+  },
+  "ToolUseBlock": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "tool_use"
+     ]
+    },
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "input": {
+     "type": "object",
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "type",
+    "id",
+    "name",
+    "input"
+   ]
+  },
+  "ThinkingBlock": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "thinking"
+     ]
+    },
+    "thinking": {
+     "type": "string"
+    },
+    "signature": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "thinking",
+    "signature"
+   ]
+  },
+  "ToolResultBlock": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "tool_result"
+     ]
+    },
+    "tool_use_id": {
+     "type": "string"
+    },
+    "content": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "array",
+       "items": {
+        "$ref": "#/schemas/TextBlock"
+       }
+      }
+     ]
+    },
+    "is_error": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "type",
+    "tool_use_id",
+    "content"
+   ]
+  },
+  "UserInput": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "user"
+     ]
+    },
+    "message": {
+     "type": "object",
+     "properties": {
+      "role": {
+       "enum": [
+        "user"
+       ]
+      },
+      "content": {
+       "type": "array",
+       "minItems": 1,
+       "items": {
+        "oneOf": [
+         {
+          "$ref": "#/schemas/TextBlock"
+         },
+         {
+          "$ref": "#/schemas/ImageBlock"
+         }
+        ]
+       }
+      }
+     },
+     "required": [
+      "role",
+      "content"
+     ]
+    },
+    "parent_tool_use_id": {
+     "type": "null"
+    }
+   },
+   "required": [
+    "type",
+    "message",
+    "parent_tool_use_id"
+   ]
+  },
+  "InterruptRequest": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "control_request"
+     ]
+    },
+    "request_id": {
+     "type": "string"
+    },
+    "request": {
+     "type": "object",
+     "properties": {
+      "subtype": {
+       "enum": [
+        "interrupt"
+       ]
+      },
+      "cancel_queued": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "subtype"
+     ]
+    }
+   },
+   "required": [
+    "type",
+    "request_id",
+    "request"
+   ]
+  },
+  "McpServer": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "status": {
+     "enum": [
+      "connected",
+      "failed",
+      "needs-auth",
+      "pending",
+      "disabled"
+     ]
+    }
+   },
+   "required": [
+    "name",
+    "status"
+   ]
+  },
+  "SystemInit": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "system"
+     ]
+    },
+    "subtype": {
+     "enum": [
+      "init"
+     ]
+    },
+    "apiKeySource": {
+     "enum": [
+      "ANTHROPIC_API_KEY",
+      "apiKeyHelper",
+      "/login managed key",
+      "none",
+      "user",
+      "project",
+      "org",
+      "temporary",
+      "oauth"
+     ]
+    },
+    "claude_code_version": {
+     "type": "string"
+    },
+    "cwd": {
+     "type": "string"
+    },
+    "tools": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "mcp_servers": {
+     "type": "array",
+     "items": {
+      "$ref": "#/schemas/McpServer"
+     }
+    },
+    "model": {
+     "type": "string"
+    },
+    "permissionMode": {
+     "enum": [
+      "default",
+      "acceptEdits",
+      "bypassPermissions",
+      "plan",
+      "dontAsk",
+      "auto"
+     ]
+    },
+    "slash_commands": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "output_style": {
+     "type": "string"
+    },
+    "skills": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "plugins": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string"
+       },
+       "path": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "name",
+       "path"
+      ]
+     }
+    },
+    "capabilities": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "uuid": {
+     "type": "string"
+    },
+    "session_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "subtype",
+    "apiKeySource",
+    "claude_code_version",
+    "cwd",
+    "tools",
+    "mcp_servers",
+    "model",
+    "permissionMode",
+    "slash_commands",
+    "output_style",
+    "skills",
+    "plugins",
+    "uuid",
+    "session_id"
+   ]
+  },
+  "Message": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "type": {
+     "enum": [
+      "message"
+     ]
+    },
+    "role": {
+     "enum": [
+      "assistant"
+     ]
+    },
+    "model": {
+     "type": "string"
+    },
+    "content": {
+     "type": "array",
+     "items": {
+      "oneOf": [
+       {
+        "$ref": "#/schemas/TextBlock"
+       },
+       {
+        "$ref": "#/schemas/ToolUseBlock"
+       },
+       {
+        "$ref": "#/schemas/ThinkingBlock"
+       }
+      ]
+     }
+    },
+    "stop_reason": {
+     "type": "string",
+     "nullable": true
+    },
+    "stop_sequence": {
+     "type": "string",
+     "nullable": true
+    },
+    "usage": {
+     "type": "object",
+     "additionalProperties": true
+    }
+   },
+   "required": [
+    "id",
+    "type",
+    "role",
+    "model",
+    "content",
+    "stop_reason",
+    "stop_sequence",
+    "usage"
+   ]
+  },
+  "Assistant": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "assistant"
+     ]
+    },
+    "message": {
+     "$ref": "#/schemas/Message"
+    },
+    "parent_tool_use_id": {
+     "type": "string",
+     "nullable": true
+    },
+    "uuid": {
+     "type": "string"
+    },
+    "session_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "message",
+    "parent_tool_use_id",
+    "uuid",
+    "session_id"
+   ]
+  },
+  "ToolResultEcho": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "user"
+     ]
+    },
+    "message": {
+     "type": "object",
+     "properties": {
+      "role": {
+       "enum": [
+        "user"
+       ]
+      },
+      "content": {
+       "type": "array",
+       "items": {
+        "$ref": "#/schemas/ToolResultBlock"
+       }
+      }
+     },
+     "required": [
+      "role",
+      "content"
+     ]
+    },
+    "parent_tool_use_id": {
+     "type": "null"
+    },
+    "uuid": {
+     "type": "string"
+    },
+    "session_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "message",
+    "parent_tool_use_id",
+    "uuid",
+    "session_id"
+   ]
+  },
+  "ResultSuccess": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "result"
+     ]
+    },
+    "subtype": {
+     "enum": [
+      "success"
+     ]
+    },
+    "duration_ms": {
+     "type": "number"
+    },
+    "duration_api_ms": {
+     "type": "number"
+    },
+    "is_error": {
+     "type": "boolean"
+    },
+    "api_error_status": {
+     "type": "integer",
+     "nullable": true
+    },
+    "num_turns": {
+     "type": "integer"
+    },
+    "result": {
+     "type": "string"
+    },
+    "stop_reason": {
+     "type": "string",
+     "nullable": true
+    },
+    "total_cost_usd": {
+     "type": "number"
+    },
+    "usage": {
+     "type": "object",
+     "additionalProperties": true
+    },
+    "modelUsage": {
+     "type": "object",
+     "additionalProperties": true
+    },
+    "permission_denials": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "tool_name": {
+        "type": "string"
+       },
+       "tool_use_id": {
+        "type": "string"
+       },
+       "tool_input": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      },
+      "required": [
+       "tool_name",
+       "tool_use_id",
+       "tool_input"
+      ]
+     }
+    },
+    "uuid": {
+     "type": "string"
+    },
+    "session_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "subtype",
+    "duration_ms",
+    "duration_api_ms",
+    "is_error",
+    "num_turns",
+    "result",
+    "stop_reason",
+    "total_cost_usd",
+    "usage",
+    "modelUsage",
+    "permission_denials",
+    "uuid",
+    "session_id"
+   ]
+  },
+  "ResultError": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "result"
+     ]
+    },
+    "subtype": {
+     "enum": [
+      "error_during_execution",
+      "error_max_turns",
+      "error_max_budget_usd",
+      "error_max_structured_output_retries"
+     ]
+    },
+    "duration_ms": {
+     "type": "number"
+    },
+    "duration_api_ms": {
+     "type": "number"
+    },
+    "is_error": {
+     "type": "boolean"
+    },
+    "num_turns": {
+     "type": "integer"
+    },
+    "stop_reason": {
+     "type": "string",
+     "nullable": true
+    },
+    "total_cost_usd": {
+     "type": "number"
+    },
+    "usage": {
+     "type": "object",
+     "additionalProperties": true
+    },
+    "modelUsage": {
+     "type": "object",
+     "additionalProperties": true
+    },
+    "permission_denials": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "tool_name": {
+        "type": "string"
+       },
+       "tool_use_id": {
+        "type": "string"
+       },
+       "tool_input": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      },
+      "required": [
+       "tool_name",
+       "tool_use_id",
+       "tool_input"
+      ]
+     }
+    },
+    "errors": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "uuid": {
+     "type": "string"
+    },
+    "session_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "subtype",
+    "duration_ms",
+    "duration_api_ms",
+    "is_error",
+    "num_turns",
+    "stop_reason",
+    "total_cost_usd",
+    "usage",
+    "modelUsage",
+    "permission_denials",
+    "errors",
+    "uuid",
+    "session_id"
+   ]
+  },
+  "ControlResponse": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "control_response"
+     ]
+    },
+    "response": {
+     "type": "object",
+     "properties": {
+      "subtype": {
+       "enum": [
+        "success"
+       ]
+      },
+      "request_id": {
+       "type": "string"
+      },
+      "response": {
+       "type": "object",
+       "additionalProperties": true
+      }
+     },
+     "required": [
+      "subtype",
+      "request_id"
+     ]
+    }
+   },
+   "required": [
+    "type",
+    "response"
+   ]
+  },
+  "ApiRetry": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "enum": [
+      "system"
+     ]
+    },
+    "subtype": {
+     "enum": [
+      "api_retry"
+     ]
+    },
+    "attempt": {
+     "type": "integer"
+    },
+    "max_retries": {
+     "type": "integer"
+    },
+    "retry_delay_ms": {
+     "type": "integer"
+    },
+    "error_status": {
+     "type": "integer",
+     "nullable": true
+    },
+    "error": {
+     "type": "string"
+    },
+    "uuid": {
+     "type": "string"
+    },
+    "session_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "type",
+    "subtype",
+    "attempt",
+    "max_retries",
+    "retry_delay_ms",
+    "error_status",
+    "error",
+    "uuid",
+    "session_id"
+   ]
+  }
+ }
+}

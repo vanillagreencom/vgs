@@ -1,0 +1,241 @@
+#!/usr/bin/env node
+// Stand-in for Anthropic's `claude` program, authored 2026-10-02. Its wire is
+// the stream-json excerpt beside it (stream-json.schema.json, transcribed from
+// @anthropic-ai/claude-agent-sdk 0.3.287 sdk.d.ts); every line it reads or
+// writes is checked against that excerpt. Its flags follow the CLI reference
+// at code.claude.com/docs/en/cli-reference, fetched the same day. It starts
+// the MCP servers its --mcp-config names, as the real program does, so a
+// scripted tool call travels through the real mcp-shim to the tool bridge.
+//
+// The fixture lives in the account directory (CLAUDE_CONFIG_DIR): script.json
+// selects the behaviour, calls.jsonl records each invocation's argv,
+// environment and working directory, and events.jsonl records every input
+// line, tool result and refusal. No login, network or model is involved.
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const cp = require("node:child_process");
+
+const account = process.env.CLAUDE_CONFIG_DIR;
+const args = process.argv.slice(2);
+function record(file, value) { fs.appendFileSync(path.join(account, file), JSON.stringify(value) + "\n"); }
+// Built-ins the default tool set offers; --tools "" removes them all.
+const BUILT_INS = ["Bash", "Edit", "Read", "Skill", "WebFetch", "WebSearch"];
+
+if (!account) { process.stderr.write("fixture-claude: CLAUDE_CONFIG_DIR missing\n"); process.exit(9); }
+record("calls.jsonl", { args, env: process.env, cwd: process.cwd() });
+if (JSON.stringify(args) === JSON.stringify(["auth", "status"])) {
+    process.stdout.write(JSON.stringify({ loggedIn: true, email: "team@example.invalid", subscriptionType: "pro" }) + "\n");
+    process.exit(0);
+}
+const script = JSON.parse(fs.readFileSync(path.join(account, "script.json"), "utf8"));
+const Check = require(path.join(script.tree, "scripts/fixtures/schema-check.js"));
+const excerpt = require(path.join(script.tree, "scripts/fixtures/jarvis-claude/stream-json.schema.json"));
+
+function refuse(reason) {
+    record("events.jsonl", { kind: "refused", reason });
+    process.exit(3);
+}
+// Each flag the stand-in reads takes one value; the rest are switches.
+const VALUED = new Set(["--input-format", "--output-format", "--tools", "--mcp-config", "--allowedTools",
+    "--permission-mode", "--settings", "--system-prompt", "--model"]);
+const flags = new Map();
+for (let index = 0; index < args.length; index++) {
+    const name = args[index];
+    if (!name.startsWith("-")) refuse("argument=" + name);
+    if (VALUED.has(name)) { flags.set(name, args[++index]); continue; }
+    flags.set(name, true);
+}
+if (flags.get("--input-format") !== "stream-json" || flags.get("--output-format") !== "stream-json"
+    || flags.get("-p") !== true || flags.get("--verbose") !== true) refuse("stream-json-flags");
+
+const builtIns = flags.get("--tools") === "" ? [] : BUILT_INS;
+// The flag takes a JSON file or an inline JSON string.
+const configText = !flags.has("--mcp-config") ? '{"mcpServers":{}}' : flags.get("--mcp-config").startsWith("{")
+    ? flags.get("--mcp-config") : fs.readFileSync(flags.get("--mcp-config"), "utf8");
+const servers = JSON.parse(configText).mcpServers;
+// The audit store's newest record when the program starts, for the
+// verification row's record-before-transfer assertion.
+if (script.auditDirectory !== undefined) {
+    const files = fs.existsSync(script.auditDirectory) ? fs.readdirSync(script.auditDirectory).sort() : [];
+    const rows = files.flatMap(name => fs.readFileSync(path.join(script.auditDirectory, name), "utf8").trim().split("\n"));
+    record("events.jsonl", { kind: "audit", last: rows.length === 0 ? null : JSON.parse(rows.at(-1)) });
+}
+// Without --strict-mcp-config the user's own configuration adds its server.
+if (flags.get("--strict-mcp-config") !== true) servers["fixture-user-server"] = { type: "stdio", command: "false", args: [] };
+const session = "fixture-session";
+let uuid = 0;
+const id = () => "fixture-uuid-" + ++uuid;
+
+function write(schema, value) {
+    const errors = Check.errors(excerpt, schema, value);
+    if (errors.length !== 0) refuse("output=" + schema + " " + errors.join("; "));
+    process.stdout.write(JSON.stringify(value) + "\n");
+}
+
+// One MCP client per configured stdio server, as Claude Code connects them.
+const mcp = new Map();
+function connect(name, config) {
+    const child = cp.spawn(config.command, config.args, { env: { ...process.env, ...(config.env ?? {}) },
+        stdio: ["pipe", "pipe", "ignore"] });
+    const client = { child, tools: [], status: "pending", waiters: new Map(), next: 1, tail: "" };
+    child.on("error", () => { client.status = "failed"; });
+    child.stdin.on("error", () => {});
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", chunk => {
+        client.tail += chunk;
+        let end;
+        while ((end = client.tail.indexOf("\n")) >= 0) {
+            const message = JSON.parse(client.tail.slice(0, end));
+            client.tail = client.tail.slice(end + 1);
+            const waiter = client.waiters.get(message.id);
+            if (waiter) { client.waiters.delete(message.id); waiter(message); }
+        }
+    });
+    child.on("close", () => {
+        client.status = client.status === "connected" ? "closed" : "failed";
+        for (const waiter of client.waiters.values()) waiter({ error: { code: -1, message: "closed" } });
+        client.waiters.clear();
+    });
+    mcp.set(name, client);
+    return client;
+}
+function request(client, method, params) {
+    const requestId = client.next++;
+    return new Promise(resolve => {
+        if (client.status === "failed") { resolve({ error: { code: -1, message: "failed" } }); return; }
+        client.waiters.set(requestId, resolve);
+        client.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: requestId, method, params }) + "\n");
+    });
+}
+async function handshake(client) {
+    const answer = await request(client, "initialize", { protocolVersion: "2025-11-25", capabilities: {},
+        clientInfo: { name: "fixture-claude", version: "0" } });
+    if (answer.error) { client.status = "failed"; return; }
+    client.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
+    const listed = await request(client, "tools/list", {});
+    if (listed.error) { client.status = "failed"; return; }
+    client.tools = listed.result.tools.map(tool => tool.name);
+    client.status = "connected";
+}
+const ready = Promise.all(Object.entries(servers).map(([name, config]) => handshake(connect(name, config))));
+
+let initialized = false;
+let turn = null;
+let turnIndex = 0;
+const queue = [];
+async function init() {
+    await ready;
+    const tools = [...builtIns];
+    for (const [name, client] of mcp) for (const tool of client.tools) tools.push("mcp__" + name + "__" + tool);
+    if (script.endConversation && tools.length !== 0) tools.push("EndConversation");
+    tools.push(...(script.extraTools ?? []));
+    write("SystemInit", { type: "system", subtype: "init", apiKeySource: "none", claude_code_version: "2.1.287",
+        cwd: process.cwd(), tools, mcp_servers: [...mcp].map(([name, client]) => ({ name,
+            status: client.status === "connected" && !script.failServer ? "connected" : "failed" })),
+        model: flags.get("--model") ?? "claude-fixture", permissionMode: flags.get("--permission-mode") ?? "default",
+        slash_commands: [], output_style: "default", skills: [], plugins: [],
+        capabilities: ["interrupt_receipt_v1"], uuid: id(), session_id: session });
+}
+const message = content => ({ type: "assistant", message: { id: id(), type: "message", role: "assistant",
+    model: "claude-fixture", content, stop_reason: null, stop_sequence: null, usage: { output_tokens: 1 } },
+    parent_tool_use_id: null, uuid: id(), session_id: session });
+function result(subtype, text) {
+    const common = { duration_ms: 1, duration_api_ms: 1, num_turns: 1, stop_reason: null, total_cost_usd: 0,
+        usage: {}, modelUsage: {}, permission_denials: [], uuid: id(), session_id: session };
+    if (subtype === "success" || subtype === "api-error")
+        write("ResultSuccess", { type: "result", subtype: "success", is_error: subtype === "api-error",
+            ...(subtype === "api-error" ? { api_error_status: 429 } : {}), result: text, ...common });
+    else write("ResultError", { type: "result", subtype, is_error: true, errors: ["fixture"], ...common });
+}
+
+async function run(prompt) {
+    const steps = script.turns[Math.min(turnIndex++, script.turns.length - 1)];
+    const current = { interrupted: false };
+    turn = current;
+    if ((!initialized || script.initEachTurn) && !script.skipInit) { await init(); initialized = true; }
+    let text = "";
+    for (const step of steps) {
+        if (current.interrupted) return;
+        if (step.text !== undefined || step.echo) {
+            const value = step.echo ? "heard: " + prompt : step.text;
+            text += value;
+            write("Assistant", message([{ type: "text", text: value }]));
+        } else if (step.tool !== undefined) {
+            const callId = "toolu_" + id();
+            const name = step.server ?? "vgs-jarvis";
+            write("Assistant", message([{ type: "tool_use", id: callId, name: "mcp__" + name + "__" + step.tool, input: step.arguments }]));
+            const answer = await request(mcp.get(name), "tools/call", { name: step.tool, arguments: step.arguments });
+            record("events.jsonl", { kind: "tool-result", tool: step.tool, answer });
+            if (current.interrupted) return;
+            const resultText = answer.result ? answer.result.content.map(part => part.text).join("") : "error " + answer.error.code;
+            write("ToolResultEcho", { type: "user", message: { role: "user", content: [{ type: "tool_result",
+                tool_use_id: callId, content: resultText, is_error: answer.result ? answer.result.isError : true }] },
+                parent_tool_use_id: null, uuid: id(), session_id: session });
+        } else if (step.builtin !== undefined) {
+            write("Assistant", message([{ type: "tool_use", id: "toolu_" + id(), name: step.builtin, input: {} }]));
+        } else if (step.thinking) {
+            write("Assistant", message([{ type: "thinking", thinking: "fixture", signature: "fixture" }]));
+        } else if (step.retry) {
+            write("ApiRetry", { type: "system", subtype: "api_retry", attempt: 1, max_retries: 3, retry_delay_ms: 1,
+                error_status: 529, error: "overloaded", uuid: id(), session_id: session });
+        } else if (step.raw !== undefined) {
+            process.stdout.write(step.raw + "\n");
+        } else if (step.hang) {
+            // Only an answered interrupt ends the wait.
+            await new Promise(resolve => { current.wake = resolve; });
+        } else if (step.exit !== undefined) {
+            process.exit(step.exit);
+        } else if (step.result !== undefined) {
+            result(step.result, text);
+            turn = null;
+            return;
+        } else refuse("script-step");
+    }
+    if (current.interrupted) return;
+    result("success", text);
+    turn = null;
+}
+
+function interrupt(value) {
+    record("events.jsonl", { kind: "interrupt", id: value.request_id });
+    if (script.ignoreInterrupt) return;
+    write("ControlResponse", { type: "control_response", response: { subtype: "success", request_id: value.request_id,
+        response: { still_queued: [] } } });
+    if (turn !== null) {
+        turn.interrupted = true;
+        turn.wake?.();
+        turn = null;
+        result("error_during_execution", "");
+    }
+}
+
+let tail = "";
+let chain = Promise.resolve();
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+    tail += chunk;
+    let end;
+    while ((end = tail.indexOf("\n")) >= 0) {
+        const line = tail.slice(0, end);
+        tail = tail.slice(end + 1);
+        const value = JSON.parse(line);
+        record("events.jsonl", { kind: "input", value });
+        if (value.type === "control_request") {
+            if (Check.errors(excerpt, "InterruptRequest", value).length !== 0) refuse("input=control");
+            interrupt(value);
+            continue;
+        }
+        if (Check.errors(excerpt, "UserInput", value).length !== 0) refuse("input=user");
+        const prompt = value.message.content.map(part => part.type === "text" ? part.text : "[image]").join(" ");
+        queue.push(prompt);
+        chain = chain.then(() => run(queue.shift()));
+    }
+});
+process.stdin.on("end", () => {
+    void chain.then(() => {
+        for (const client of mcp.values()) client.child.stdin.end();
+        process.exitCode = 0;
+    });
+});
+process.on("SIGTERM", () => { record("events.jsonl", { kind: "signal", name: "SIGTERM" }); process.exit(143); });

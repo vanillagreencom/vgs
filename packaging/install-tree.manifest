@@ -254,6 +254,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Browser.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ChainedEngine.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Child.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/ClaudeCode.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ComputerHelp.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Desktop.js

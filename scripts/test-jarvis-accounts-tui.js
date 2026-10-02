@@ -22,7 +22,9 @@ world(async () => {
         assert.deepEqual(JSON.parse(fs.readFileSync(accountFile)), [{ provider: "claude", directory: hand, label: "my-account" }]);
         assert.deepEqual(JSON.parse(fs.readFileSync(keyFile)), [{ provider: "openai", account: "my-key", origin: "https://api.openai.com",
             attributes: { application: "other-tool", id: "api-key" } }]);
-        assert.match(result.stdout, /"reason":"subscription-handoff-unavailable"/);
+        // The first account is the absent default Claude directory: its
+        // harness Verify refuses before any vendor program starts.
+        assert.match(result.stdout, /"kind":"unavailable","reason":"account-directory"/);
         assert.match(result.stdout, /my-account/);
         assert.equal((result.stdout + result.stderr).includes("fixture-secret-private"), false);
         for (const file of ["cli-calls", "port-calls", "bus-calls", "gum-calls"]) {
@@ -43,6 +45,6 @@ world(async () => {
     queue(["Verify", "first", "", "no", "Close"]);
     const cancelled = run(plugin);
     assert.equal(cancelled.status, 0);
-    assert.doesNotMatch(cancelled.stdout, /subscription-handoff-unavailable/);
+    assert.doesNotMatch(cancelled.stdout, /"kind":"unavailable"/);
     console.log("test-jarvis-accounts-tui: ok controls=2");
 });

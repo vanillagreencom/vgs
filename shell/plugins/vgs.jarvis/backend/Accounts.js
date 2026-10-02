@@ -8,14 +8,21 @@ const { PROVIDERS, keyPresence, keyProvider } = require("../AccountProviders.js"
 const Net = require("./net.js");
 const Policy = require("./Policy.js");
 const Audit = require("./Audit.js");
+const ClaudeCode = require("./ClaudeCode.js");
 const MAX_ENTRIES = 200;
 const MAX_ROWS = 32; // The core's presenceList and choices ceiling.
 const MAX_BYTES = 64 * 1024;
 const PROBE_TEXT = "Reply OK.";
+// The harness probe's whole system prompt, so the probe stays one short turn.
+const HARNESS_INSTRUCTIONS = "Answer in one word.";
 
 function fail(reason) { throw new Error("jarvis-accounts: " + reason); }
 function printable(value, max) {
     return typeof value === "string" && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value);
+}
+function modelOf(value) {
+    if (typeof value !== "string" || value.length > 120 || /[\x00-\x1f\x7f]/.test(value)) fail("verify=model-invalid");
+    return value;
 }
 function provider(id) {
     const row = PROVIDERS.find(item => item.id === id);
@@ -385,8 +392,9 @@ class Accounts {
             const keyed = /^jarvis-accounts: verify=([a-z0-9-]+)$/.exec(error.message);
             const network = /^jarvis: net=([a-z0-9-]+)$/.exec(error.message);
             const secret = /^jarvis-keys: secret-tool=([a-z-]+)$/.exec(error.message);
+            const harness = /^jarvis: brain=(harness-[a-z0-9-]+)(?: |$)/.exec(error.message);
             state = { kind: "unavailable", reason: keyed ? keyed[1] : network ? "network-" + network[1] : secret ? "key-" + secret[1]
-                : typeof request === "function" ? "verification-failed" : "verification-request-unavailable" };
+                : harness ? harness[1] : typeof request === "function" ? "verification-failed" : "verification-request-unavailable" };
         }
         if (this.epoch !== epoch || account.state.kind !== "verifying" || account.state.operation !== operation)
             return { kind: "superseded" };
@@ -395,17 +403,28 @@ class Accounts {
     }
 
     /**
-     * One minimal, non-streaming inference request. CLI subscriptions require
-     * the separate mediated harness handoff, not an HTTP credential adapter.
+     * One minimal inference request, after the user's explicit Verify. An API
+     * or local route sends one non-streaming HTTP request through the outbound
+     * door. A subscription never takes that route: its vendor program owns the
+     * login, so the mediated harness handoff runs it, and only Claude Code has
+     * one. Both pass the same release and pre-transfer audit record.
      */
     async inference(account, requestedModel = "") {
         const row = provider(account.provider);
-        if (account.source.kind === "cli") fail("verify=subscription-handoff-unavailable");
+        if (account.source.kind === "cli") {
+            if (row.id !== "claude") fail("verify=subscription-handoff-unavailable");
+            // Checked again, link-free, before the vendor program starts.
+            if (directory(account.source.directory).kind !== "directory") fail("verify=account-directory");
+            if (!this.env.XDG_RUNTIME_DIR) fail("verify=runtime-directory");
+            return this.released(account, row.id, row.origin, PROBE_TEXT, release => ClaudeCode.verify({
+                directory: account.source.directory, model: modelOf(requestedModel), recipients: release.selected, item: release.item,
+                grants: release.grants, parent: path.join(this.env.XDG_RUNTIME_DIR, "vgs/jarvis"),
+                environment: this.env, instructions: HARNESS_INSTRUCTIONS, start: events => release.start(() => events.next())
+            }).then(text => text.trim() !== ""));
+        }
         if (account.source.kind === "variable") fail("verify=key-reference-required");
         if (!row.probe) fail("verify=speech-inference-unavailable");
-        if (typeof requestedModel !== "string" || requestedModel.length > 120
-            || /[\x00-\x1f\x7f]/.test(requestedModel)) fail("verify=model-invalid");
-        const model = requestedModel || row.probe.model;
+        const model = modelOf(requestedModel) || row.probe.model;
         if (row.probe.driver !== "llama" && !model) fail("verify=model-required");
         let body;
         switch (row.probe.driver) {
@@ -428,81 +447,103 @@ class Accounts {
         const ref = account.source.kind === "keyring" ? account.source.reference : null;
         const origin = ref === null ? account.source.origin : ref.origin;
         const target = Net.endpoint(origin + row.probe.path);
+        return this.released(account, row.id, target.origin, JSON.stringify(body), async ({ selected, item, grants, start }) => {
+            const door = Net.create(selected);
+            let keyBytes, response;
+            const signal = AbortSignal.timeout(30000); // Bound a stalled provider, not a latency budget.
+            try {
+                let key;
+                if (ref !== null) {
+                    keyBytes = this.secrets.lookup(ref);
+                    const value = keyBytes.toString("utf8").replace(/\n$/, "");
+                    key = { origin: ref.origin, value, header: row.probe.header, prefix: row.probe.prefix };
+                }
+                const headers = { "content-type": "application/json" };
+                if (row.probe.driver === "messages") headers["anthropic-version"] = "2023-06-01";
+                response = await start(() => door.request(item, { url: target.url, headers, key, signal }, grants));
+                if (response.kind !== "response") fail("verify=release-refused");
+                if (!response.response.ok) fail("verify=http-" + response.response.status);
+                const reader = response.response.body.getReader();
+                const chunks = [];
+                let size = 0;
+                try {
+                    for (;;) {
+                        const part = await reader.read();
+                        if (part.done) break;
+                        size += part.value.byteLength;
+                        if (size > MAX_BYTES) fail("verify=reply-limit");
+                        chunks.push(Buffer.from(part.value));
+                    }
+                } finally { reader.releaseLock(); }
+                let result;
+                try { result = JSON.parse(Buffer.concat(chunks)); } catch { fail("verify=reply-json"); }
+                let text, tokens;
+                switch (row.probe.driver) {
+                case "chat":
+                    if (!Array.isArray(result.choices) || result.choices.length !== 1
+                        || result.choices[0].message?.role !== "assistant") fail("verify=no-inference");
+                    text = result.choices[0].message.content;
+                    tokens = result.usage?.completion_tokens;
+                    break;
+                case "messages":
+                    if (result.type !== "message" || result.role !== "assistant" || !Array.isArray(result.content))
+                        fail("verify=no-inference");
+                    if (result.content.some(part => !part || (part.type === "text" && typeof part.text !== "string")))
+                        fail("verify=no-inference");
+                    text = result.content.filter(part => part.type === "text").map(part => part.text).join("");
+                    tokens = result.usage?.output_tokens;
+                    break;
+                case "ollama":
+                    if (result.done !== true) fail("verify=no-inference");
+                    text = result.response; tokens = result.eval_count;
+                    break;
+                case "llama":
+                    text = result.content; tokens = result.tokens_predicted;
+                    break;
+                default: fail("verify=driver-invariant");
+                }
+                return (typeof text === "string" && text.trim() !== "") || (Number.isSafeInteger(tokens) && tokens > 0);
+            } finally {
+                response?.close();
+                door.close();
+                keyBytes?.fill(0);
+            }
+        });
+    }
+
+    /**
+     * The one release and audit owner of a Verify probe. The fixed
+     * command-labelled content passes Policy.release for the account's
+     * recipient set under the user's Verify grant. transfer({selected, item,
+     * grants, start}) sends it, calling start(fn) to run its first transfer
+     * inside the pre-transfer audit record, and answers whether the reply
+     * proved inference. Every outcome is recorded before this returns.
+     */
+    async released(account, providerId, origin, content, transfer) {
         const selected = Policy.recipients({ conversation: "verify:" + account.id + ":" + account.state.operation,
             profile: "standard", cloudVision: "never",
-            brain: { kind: "network", provider: row.id, account: account.id, origin: target.origin },
+            brain: { kind: "network", provider: providerId, account: account.id, origin },
             speech: [{ kind: "local", provider: "verification-result", account: account.id }] });
-        const item = Policy.item(JSON.stringify(body), ["command"]);
+        const item = Policy.item(content, ["command"]);
         // This operation exists only after the user's explicit Verify consent.
         const grants = [{ recipients: selected, labels: ["command"] }];
         const decision = Policy.release(item, selected, grants);
-        const door = Net.create(selected);
         const audit = Audit.create({ state: this.directory });
         const event = { kind: "release", gen: this.epoch, op: account.state.operation, tool: "release",
             args: { labels: item.labels, recipients: selected }, effect: "external",
             decision: decision.kind, confirmed: "physical", outcome: "pending" };
-        let keyBytes, response;
-        const signal = AbortSignal.timeout(30000); // Bound a stalled provider, not a latency budget.
         try {
             if (decision.kind !== "send") {
                 const saved = audit.record({ ...event, outcome: "completed" });
                 if (saved.kind !== "recorded") fail("verify=audit-unavailable");
                 fail("verify=release-refused");
             }
-            let key;
-            if (ref !== null) {
-                keyBytes = this.secrets.lookup(ref);
-                const value = keyBytes.toString("utf8").replace(/\n$/, "");
-                key = { origin: ref.origin, value, header: row.probe.header, prefix: row.probe.prefix };
-            }
-            const headers = { "content-type": "application/json" };
-            if (row.probe.driver === "messages") headers["anthropic-version"] = "2023-06-01";
-            const started = audit.before(event, () => door.request(item, { url: target.url, headers, key, signal }, grants));
-            if (started.kind !== "started") fail("verify=audit-unavailable");
-            response = await started.value;
-            if (response.kind !== "response") fail("verify=release-refused");
-            if (!response.response.ok) fail("verify=http-" + response.response.status);
-            const reader = response.response.body.getReader();
-            const chunks = [];
-            let size = 0;
-            try {
-                for (;;) {
-                    const part = await reader.read();
-                    if (part.done) break;
-                    size += part.value.byteLength;
-                    if (size > MAX_BYTES) fail("verify=reply-limit");
-                    chunks.push(Buffer.from(part.value));
-                }
-            } finally { reader.releaseLock(); }
-            let result;
-            try { result = JSON.parse(Buffer.concat(chunks)); } catch { fail("verify=reply-json"); }
-            let text, tokens;
-            switch (row.probe.driver) {
-            case "chat":
-                if (!Array.isArray(result.choices) || result.choices.length !== 1
-                    || result.choices[0].message?.role !== "assistant") fail("verify=no-inference");
-                text = result.choices[0].message.content;
-                tokens = result.usage?.completion_tokens;
-                break;
-            case "messages":
-                if (result.type !== "message" || result.role !== "assistant" || !Array.isArray(result.content))
-                    fail("verify=no-inference");
-                if (result.content.some(part => !part || (part.type === "text" && typeof part.text !== "string")))
-                    fail("verify=no-inference");
-                text = result.content.filter(part => part.type === "text").map(part => part.text).join("");
-                tokens = result.usage?.output_tokens;
-                break;
-            case "ollama":
-                if (result.done !== true) fail("verify=no-inference");
-                text = result.response; tokens = result.eval_count;
-                break;
-            case "llama":
-                text = result.content; tokens = result.tokens_predicted;
-                break;
-            default: fail("verify=driver-invariant");
-            }
-            if (!(typeof text === "string" && text.trim() !== "") && !(Number.isSafeInteger(tokens) && tokens > 0))
-                fail("verify=no-inference");
+            const proven = await transfer({ selected, item, grants, start: send => {
+                const started = audit.before(event, send);
+                if (started.kind !== "started") fail("verify=audit-unavailable");
+                return started.value;
+            } });
+            if (proven !== true) fail("verify=no-inference");
             const saved = audit.record({ ...event, outcome: "completed" });
             if (saved.kind !== "recorded") fail("verify=audit-unavailable");
             return { kind: "inference", text: "Inference completed" };
@@ -510,12 +551,7 @@ class Accounts {
             const saved = audit.record({ ...event, outcome: "failed" });
             if (saved.kind !== "recorded") fail("verify=audit-unavailable");
             throw error;
-        } finally {
-            response?.close();
-            door.close();
-            audit.close();
-            keyBytes?.fill(0);
-        }
+        } finally { audit.close(); }
     }
 
     status() {

@@ -55,7 +55,7 @@
     { "command": "nvidia-smi", "packages": { "pacman": "nvidia-utils", "apt": "nvidia-smi" }, "optional": true, "purpose": "Verifies CUDA execution only when a CUDA local tier is selected" },
     { "command": "ss", "packages": { "pacman": "iproute2", "apt": "iproute2", "dnf": "iproute" }, "optional": true, "purpose": "Finds local model-server ports without making an inference request" },
     { "command": "gio", "packages": { "pacman": "glib2", "apt": "libglib2.0-bin", "dnf": "glib2" }, "optional": true, "purpose": "Opens a file or web link for Jarvis with its default application" },
-    { "command": "claude", "packages": {}, "optional": true, "purpose": "Checks Claude Code login hints in each account directory" },
+    { "command": "claude", "packages": {}, "optional": true, "purpose": "Checks Claude Code login hints and runs the Claude subscription brain and its Verify" },
     { "command": "codex", "packages": {}, "optional": true, "purpose": "Checks Codex login hints in each account directory" },
     { "command": "agent-browser", "packages": { "aur": "agent-browser-bin", "mise": "npm:agent-browser" }, "optional": true, "purpose": "Drives a private Jarvis browser; requires version 0.38.1 or later" },
     { "command": "chromium", "packages": { "pacman": "chromium", "apt": "chromium", "dnf": "chromium" }, "optional": true, "purpose": "Provides the browser Jarvis verifies during setup" },

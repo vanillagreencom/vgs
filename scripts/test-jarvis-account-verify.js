@@ -137,9 +137,9 @@ world(async () => {
             finally { net.create = create; }
         };
         await doorUse(plugin);
-        const requestLine = "const started = audit.before(event, () => door.request(item, { url: target.url, headers, key, signal }, grants));";
+        const requestLine = "response = await start(() => door.request(item, { url: target.url, headers, key, signal }, grants));";
         await mutant("backend/Accounts.js", "verify-door-bypass", requestLine,
-            'const started = audit.before(event, () => fetch(target.url, { method: "POST", headers: { ...headers, [key.header]: key.prefix + key.value }, body: item.content, redirect: "manual", signal }).then(response => ({ kind: "response", response, close() {} })));',
+            'response = await start(() => fetch(target.url, { method: "POST", headers: { ...headers, [key.header]: key.prefix + key.value }, body: item.content, redirect: "manual", signal }).then(response => ({ kind: "response", response, close() {} })));',
             doorUse);
         controls++;
 
@@ -158,9 +158,9 @@ world(async () => {
             }
         };
         await unavailableAudit(plugin);
-        const auditNeedle = "const started = audit.before(event, () => door.request(item, { url: target.url, headers, key, signal }, grants));";
+        const auditNeedle = "const started = audit.before(event, send);";
         await mutant("backend/Accounts.js", "verify-audit-bypass", auditNeedle,
-            "const started = { kind: \"started\", value: door.request(item, { url: target.url, headers, key, signal }, grants) };",
+            "const started = { kind: \"started\", value: send() };",
             unavailableAudit);
         controls++; cases++;
 

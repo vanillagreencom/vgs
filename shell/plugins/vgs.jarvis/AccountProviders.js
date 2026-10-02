@@ -1,7 +1,7 @@
 // Shared by the account judge and its environment-presence reader.
 // Login tokens belong to the vendor program, never to the key picker.
 var PROVIDERS = [
-    { id: "claude", label: "Claude Code", kind: "cli", variable: "CLAUDE_CONFIG_DIR",
+    { id: "claude", label: "Claude Code", kind: "cli", variable: "CLAUDE_CONFIG_DIR", origin: "https://api.anthropic.com",
         prefix: ".claude", marker: ".credentials.json", command: ["claude", "auth", "status"] },
     { id: "codex", label: "Codex", kind: "cli", variable: "CODEX_HOME",
         prefix: ".codex", marker: "auth.json", command: ["codex", "login", "status"] },
