@@ -119,4 +119,4 @@ Read [docs/architecture/plugins.md](docs/architecture/plugins.md). An agent load
 
 ## Licence
 
-VGS is under the MIT licence: [LICENSE](LICENSE). The bundled fonts, JetBrains Mono and Inter, are under the SIL Open Font License 1.1 (`shell/assets/fonts/*-OFL.txt`), and the Lucide icons under ISC ([shell/Ui/icons/LICENSE](shell/Ui/icons/LICENSE)). The package licence is `MIT AND OFL-1.1 AND ISC`.
+VGS is under the MIT licence: [LICENSE](LICENSE). The bundled fonts, JetBrains Mono and Inter, are under the SIL Open Font License 1.1 (`shell/assets/fonts/*-OFL.txt`), and the Lucide icons under ISC ([shell/Ui/icons/LICENSE](shell/Ui/icons/LICENSE)). The browser discovery stub is under Apache-2.0 ([licence](shell/plugins/vgs.jarvis/backend/skills/browser/LICENSE)). The package licence is `MIT AND OFL-1.1 AND ISC AND Apache-2.0`.
