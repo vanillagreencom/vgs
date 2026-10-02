@@ -41,6 +41,67 @@ gallery_drawn_planted() { gallery_drawn flat | py_reply 'import json,sys; print(
 geometry expect_poll "the gallery draws its form rows, device rows and level displays" '[]' gallery_drawn
 expect "control: a form row drawn flat is named" True gallery_drawn_planted
 
+# The list owns movement; only its selected device row takes a Tab stop.
+# The same focus reading checks the product and disposable Gallery copies
+# with movement swallowed or every row made a Tab stop.
+device_focus_is() {
+  ipc smoke focused window vgs.gallery | py_reply 'import json,sys
+row=json.load(sys.stdin)
+print(row[0]==sys.argv[1] and row[1]=="Device list "+sys.argv[2] and all(row[2:]))' "$1" "$2"
+}
+device_focus_start() {
+  if [[ -z $1 ]]; then ipc smoke focusExample window vgs.gallery "Device list $2"
+  else ipc smoke popupFocusExample "$1" "Device list $2"; fi
+}
+expect "the device list's first row takes focus" focused device_focus_start '' Headphones
+type_keys -k Down || fail "moving down the Gallery device list failed"
+expect_poll "the device list navigator moves focus and the cursor to Mouse" True device_focus_is DeviceRow Mouse
+type_keys -k End || fail "moving to the last Gallery device failed"
+expect_poll "the device list navigator reaches Speaker" True device_focus_is DeviceRow Speaker
+type_keys -k Home -k Down || fail "returning to the middle Gallery device failed"
+expect_poll "the device list navigator returns to Mouse" True device_focus_is DeviceRow Mouse
+type_keys -k Tab || fail "tabbing to the device overflow failed"
+expect_poll "Tab reaches the current device's overflow" True device_focus_is IconButton Mouse
+type_keys -k Tab || fail "tabbing past the device row failed"
+expect_poll "Tab skips an unselected device row and reaches its action" True device_focus_is Button Speaker
+mkdir -p "$repo/shell/Core/GalleryDeviceControl"
+python3 - "$repo/shell/plugins/vgs.gallery/Gallery.qml" "$repo/shell/Core/GalleryDeviceControl" <<'PY'
+from pathlib import Path
+import sys
+source, destination = Path(sys.argv[1]), Path(sys.argv[2])
+text = source.read_text()
+needle = '    id: root\n'
+assert text.count(needle) == 1, needle
+text = text.replace(needle, needle + '    anchors.fill: parent\n')
+needle = 'event.accepted = deviceNav.handle(event);'
+assert text.count(needle) == 1, needle
+changed = text.replace(needle, 'event.accepted = true;')
+assert changed != text
+(destination / 'NoMovement.qml').write_text(changed)
+needle = 'activeFocusOnTab: deviceList.current === '
+assert text.count(needle) == 3, needle
+changed = text
+for index in range(3):
+    changed = changed.replace(needle + str(index), 'activeFocusOnTab: true')
+assert changed != text
+(destination / 'AllTabStops.qml').write_text(changed)
+PY
+cp -- "$repo/shell/plugins/vgs.gallery/sample-emoji.png" "$repo/shell/Core/GalleryDeviceControl/sample-emoji.png"
+expect "the device movement control builds" ok ipc smoke popupLoad device-no-movement "$repo/shell/Core/GalleryDeviceControl/NoMovement.qml" window vgs.gallery '{}'
+expect "the device movement control takes focus" focused device_focus_start device-no-movement Headphones
+expect_poll "the device movement control starts on Headphones" True device_focus_is DeviceRow Headphones
+type_keys -k Down || fail "sending Down to the device movement control failed"
+expect "control: swallowing movement fails the selected-row focus reading" False device_focus_is DeviceRow Mouse
+expect "the device movement control is released" ok ipc smoke popupDrop device-no-movement
+expect "the device Tab control builds" ok ipc smoke popupLoad device-all-tab-stops "$repo/shell/Core/GalleryDeviceControl/AllTabStops.qml" window vgs.gallery '{}'
+expect "the device Tab control takes focus" focused device_focus_start device-all-tab-stops Mouse
+expect_poll "the device Tab control starts on Mouse" True device_focus_is DeviceRow Mouse
+type_keys -k Tab || fail "sending Tab to the device Tab control failed"
+expect_poll "the device Tab control reaches the overflow" True device_focus_is IconButton Mouse
+type_keys -k Tab || fail "sending the second Tab to the device Tab control failed"
+expect "control: an unselected row's Tab stop fails the action focus reading" False device_focus_is Button Speaker
+expect "the device Tab control is released" ok ipc smoke popupDrop device-all-tab-stops
+rm -r -- "${repo:?}/shell/Core/GalleryDeviceControl" || fail "removing the Gallery device controls failed"
 
 expect_poll "the gallery draws every focus example" '[]' ipc smoke galleryFocusMissing window vgs.gallery
 gallery_tab_tour() {

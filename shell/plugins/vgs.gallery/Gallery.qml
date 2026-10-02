@@ -829,13 +829,28 @@ Item {
                     property int current: 0
                     width: parent.width
                     height: deviceColumn.height
+                    Keys.onPressed: event => { event.accepted = deviceNav.handle(event); }
 
                     ListCursor { id: deviceCursor }
+                    KeyNav {
+                        id: deviceNav
+                        count: deviceColumn.children.length
+                        currentIndex: deviceList.current
+                        cursor: deviceCursor
+                        itemAt: index => deviceColumn.children[index]
+                        labelAt: index => deviceColumn.children[index].text
+                        onMoved: index => {
+                            deviceList.current = index;
+                            deviceColumn.children[index].forceActiveFocus(Qt.TabFocusReason);
+                        }
+                    }
                     Column {
                         id: deviceColumn
                         width: parent.width
                         DeviceRow {
+                            property string focusExample: "Device list Headphones"
                             width: parent.width
+                            activeFocusOnTab: deviceList.current === 0
                             cursor: deviceCursor
                             highlighted: deviceList.current === 0
                             onPointed: deviceList.current = 0
@@ -848,7 +863,9 @@ Item {
                             menuEntries: [ MenuItem { text: "Rename" }, MenuItem { text: "Trust" }, MenuItem { text: "Forget" } ]
                         }
                         DeviceRow {
+                            property string focusExample: "Device list Mouse"
                             width: parent.width
+                            activeFocusOnTab: deviceList.current === 1
                             cursor: deviceCursor
                             highlighted: deviceList.current === 1
                             onPointed: deviceList.current = 1
@@ -860,7 +877,9 @@ Item {
                             menuEntries: [ MenuItem { text: "Rename" }, MenuItem { text: "Forget" } ]
                         }
                         DeviceRow {
+                            property string focusExample: "Device list Speaker"
                             width: parent.width
+                            activeFocusOnTab: deviceList.current === 2
                             cursor: deviceCursor
                             highlighted: deviceList.current === 2
                             onPointed: deviceList.current = 2
