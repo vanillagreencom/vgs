@@ -23,3 +23,5 @@ The [Jarvis account suites](jarvis-accounts.md#evidence) select from the account
 The [router](jarvis-approval.md#evidence-and-comparison) shares inputs with the audio daemon; `scripts/test-validate.sh` controls its edges.
 
 The [local setup contract](jarvis-setup.md#evidence) adds installer controls in `tools` and a nested Settings/TUI row. The installer doubles run inside J09 and never download or install a real runtime.
+
+The [private browser suites](jarvis-browser.md#evidence-and-comparison) select from the driver owner, typed call and effect judges, stub, setup flow and their isolated fixtures. The nested browser row reads readiness and TUI completion with process doubles.
