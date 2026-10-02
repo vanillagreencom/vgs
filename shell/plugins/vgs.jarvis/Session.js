@@ -486,7 +486,12 @@ function reduce(state, e) {
         s.speech.reply = { kind: "waiting" };
         break;
     case "transcript":
-        if (!live(s, e, "speech", ["open"])) { stale(s); break; }
+        // The duplex session captions both speakers; a chained thinking turn
+        // captions only the words it released for speech.
+        if (!live(s, e, "speech", ["open"]) && !(e.role === "assistant" && live(s, e, "turn", ["thinking"]))) {
+            stale(s);
+            break;
+        }
         effect(s, effects, "transcript", { role: e.role, text: e.text, stage: e.stage, rev: e.rev });
         break;
     case "speech-idle":

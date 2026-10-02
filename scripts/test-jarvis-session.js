@@ -721,6 +721,21 @@ table.push(["duplex-open", logic => {
     const s = duplexListening(logic);
     const r = step(logic, s, callback("transcript", s.speech, 40, { role: "assistant", text: "Hi", stage: "final", rev: 3 }));
     assert.deepEqual(r.effects.map(e => [e.kind, e.gen, e.role, e.text, e.stage, e.rev]), [["transcript", s.gen, "assistant", "Hi", "final", 3]]);
+}], ["chained-transcript", logic => {
+    const s = thinking(logic);
+    const caption = { role: "assistant", text: "Hi", stage: "partial", rev: 1 };
+    const r = step(logic, s, callback("transcript", s.turn, 40, caption));
+    assert.deepEqual([r.state.stale, r.effects.map(e => [e.kind, e.gen, e.role, e.text, e.stage, e.rev])],
+        [s.stale, [["transcript", s.gen, "assistant", "Hi", "partial", 1]]], "the thinking turn's caption reaches the wire");
+    const rows = [
+        ["a user caption from the turn", s, s.turn, { ...caption, role: "user" }],
+        ["an ended turn's caption", step(logic, s, callback("brain-done", s.turn, 41)).state, s.turn, caption],
+        ["a cancelling turn's caption", step(logic, s, event("interrupt", 41)).state, s.turn, caption]
+    ];
+    for (const [label, before, owner, values] of rows) {
+        const late = step(logic, before, callback("transcript", owner, 42, values));
+        assert.deepEqual([late.state.stale, late.effects], [before.stale + 1, []], label + " is dropped and counted");
+    }
 }], ["duplex-engine", logic => {
     const s = duplexListening(logic);
     const r = step(logic, s, snapshot({ at: 40 }));
@@ -909,6 +924,8 @@ const createdCallbacks = [
     { effect: "speech-open", type: "speak", check: (s, r, e) => assert.ok(r.state.speech.reply.kind === "waiting"
         || (r.state.playback.kind === "playing" && r.state.playback.source === e.op)) },
     { effect: "speech-open", type: "transcript", check: (s, r) => assert.equal(r.effects.find(e => e.kind === "transcript").text, "fixture") },
+    { effect: "brain-send", type: "transcript", extra: { role: "assistant" },
+        check: (s, r) => assert.equal(r.effects.find(e => e.kind === "transcript").role, "assistant") },
     { effect: "speech-open", type: "speech-idle", check: (s, r, e) => {
         assert.equal(r.state.conversation.kind, "ended");
         assert.equal(r.effects.find(e => e.kind === "speech-close").target, e.op);
@@ -958,7 +975,7 @@ function createdPairMatrix(logic) {
             if (effect.kind === "brain-cancel" && firstResult.state.turn.kind !== "cancelling") continue;
             for (const pair of createdCallbacks.filter(row => row.effect === effect.kind)) {
                 const before = firstResult.state;
-                const second = fixtureEvent(pair.type, before, 201);
+                const second = { ...fixtureEvent(pair.type, before, 201), ...pair.extra };
                 second.gen = effect.gen;
                 second.op = pair.target ? effect.target : effect.op;
                 if (pair.deadline) {
@@ -980,7 +997,7 @@ function createdPairMatrix(logic) {
     assert.deepEqual([...seen].sort(), [
         "capture-open:capture-opened", "capture-open:capture-failed", "capture-close:capture-closed",
         "collect:partial", "collect:final", "collect:collect-failed", "brain-send:brain-ended",
-        "brain-send:brain-done", "brain-send:brain-failed", "brain-send:play",
+        "brain-send:brain-done", "brain-send:brain-failed", "brain-send:play", "brain-send:transcript",
         "brain-send:tool", "brain-send:approval", "brain-send:deadline",
         "brain-cancel:cancelled", "brain-cancel:deadline",
         "playback-start:played", "playback-start:playback-failed", "playback-flush:flushed",
@@ -1126,6 +1143,10 @@ try {
             'end(s, effects, e.at, "speech-failed", false);', "duplex-failed"],
         ["speech-stale", 'if (!live(s, e, "speech", ["open"])) { stale(s); break; }\n        // New output', "// New output", "duplex-stale"],
         ["transcript-effect", 'effect(s, effects, "transcript", { role: e.role, text: e.text, stage: e.stage, rev: e.rev });', "", "duplex-transcript"],
+        ["turn-transcript", '!(e.role === "assistant" && live(s, e, "turn", ["thinking"]))', "true", "chained-transcript"],
+        ["turn-transcript-role", 'e.role === "assistant" && live(s, e, "turn", ["thinking"])', 'live(s, e, "turn", ["thinking"])', "chained-transcript"],
+        ["turn-transcript-phase", 'e.role === "assistant" && live(s, e, "turn", ["thinking"])',
+            'e.role === "assistant" && live(s, e, "turn", ["thinking", "cancelling"])', "chained-transcript"],
         ["engine-change", " || s.engine.kind !== e.engine;", ";", "duplex-engine"],
         ["engine-required", 'if (e.engine !== "chained" && e.engine !== "duplex") throw new Error("jarvis: session=engine");', "", "duplex-engine"]
     ];

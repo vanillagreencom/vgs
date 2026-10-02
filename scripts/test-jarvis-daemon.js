@@ -1052,10 +1052,12 @@ exit "$failures"
     // disposable copy adds the scripted row, a model for the local brain row
     // and the indicator, then drives phases through the real engine.
     const Engine = require("./fixtures/jarvis/engine.js");
-    function engineCopy(name) {
+    // extra plants one defect each in the copy's engine.
+    function engineCopy(name, extra = []) {
         const file = daemonCopy(name);
         const directory = path.dirname(path.dirname(file));
-        for (const [relative, needle, replacement] of [
+        for (const [relative, needle, replacement] of [...extra.map(([needle, replacement]) =>
+            ["backend/ChainedEngine.js", needle, replacement]),
             ["backend/ChainedEngine.js", "const SPEECH = Object.freeze({});",
                 "const SPEECH = Object.freeze({ scripted: (fixture => (fixture.reset({ utterances: [fixture.utterance(\"What time is it?\")] }), fixture.row))(require(" + JSON.stringify(require.resolve("./fixtures/jarvis/engine.js")) + ")) });"],
             ["AccountProviders.js", 'probe: { driver: "ollama", path: "/api/generate", model: "" }',
@@ -1080,12 +1082,15 @@ exit "$failures"
         const child = cp.spawn("node", [file, "--tree", tree], { env: {
             PATH: process.env.PATH, HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR
         }, stdio: ["pipe", "pipe", "pipe"] });
-        const states = [];
+        const states = [], captions = [];
         let tail = "", err = "";
         child.stdout.on("data", data => {
             const lines = (tail + data).split("\n");
             tail = lines.pop();
-            for (const message of lines.map(line => JSON.parse(line))) if (message.type === "state") states.push(message);
+            for (const message of lines.map(line => JSON.parse(line))) {
+                if (message.type === "state") states.push(message);
+                if (message.type === "transcript") captions.push(message);
+            }
         });
         child.stderr.on("data", data => { err += data; });
         child.stdin.on("error", error => { if (error.code !== "EPIPE") throw error; });
@@ -1101,7 +1106,7 @@ exit "$failures"
         };
         try {
             const before = loopback.requests.length;
-            loopback.replies.push(Engine.text("It is noon."));
+            loopback.replies.push(Engine.text("It is noon. ", "The sun is high."));
             send({ ...hello, settings: { ...hello.settings, brain: brainId } });
             await wait(m => m.state.gate.kind === "up", "the engine raises the gate");
             send(intent("talk-down"));
@@ -1115,6 +1120,11 @@ exit "$failures"
             assert.equal(loopback.requests.length, before + 1);
             assert.deepEqual(loopback.requests.at(-1).body.messages.filter(message => message.role === "user")
                 .map(message => message.content), ["What time is it?"], "the final reaches the loopback brain");
+            const gen = states.at(-1).state.gen;
+            assert.deepEqual(captions.map(m => [m.gen, m.role, m.stage, m.rev, m.text]), [
+                [gen, "assistant", "partial", 1, "It is noon."],
+                [gen, "assistant", "partial", 2, "It is noon. The sun is high."],
+                [gen, "assistant", "final", 3, "It is noon. The sun is high."]], "the chained reply's words reach the wire in order, final last");
             child.stdin.end();
             const [code] = await closed;
             assert.equal(code, 0, err);
@@ -1123,6 +1133,12 @@ exit "$failures"
     }
     try {
         await engineConversation(engineCopy("engine"));
+        await assert.rejects(() => engineConversation(engineCopy("engine-no-caption",
+            [["        caption(c, turn, sentence);\n", ""]])),
+        error => error instanceof assert.AssertionError && error.message.startsWith("the chained reply's words reach the wire"),
+        "a dropped caption producer must turn the caption assertion red");
+        controls++;
+        console.log("test-jarvis-daemon: control=chained-caption killed");
         const unconfigured = engineCopy("engine-stock-speech");
         const stockEngine = path.join(path.dirname(unconfigured), "ChainedEngine.js");
         fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/backend/ChainedEngine.js"), stockEngine);

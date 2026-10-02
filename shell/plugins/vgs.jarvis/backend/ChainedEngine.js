@@ -87,16 +87,18 @@ function select(settings, accounts) {
 }
 
 /**
- * create({session, state, audit, router, accounts, policy, fault, harness})
+ * create({session, state, audit, router, accounts, policy, fault, captionLimit, harness})
  * owns the daemon's chained conversations. session is the Session judge and state
  * returns its current record; audit is the daemon's writer; router supplies
  * offer, route, observe and interrupted; accounts returns an Accounts judge;
  * policy returns {profile, cloudVision}; fault reports a speech failure that
- * no capture or turn remains to carry. harness is {bridge, gate, env, runtime}
- * for a harness brain: the tool bridge, the HarnessGate, the environment its
- * program is started from and a function answering the runtime directory.
+ * no capture or turn remains to carry. captionLimit is the wire's transcript
+ * bound. harness is {bridge, gate, env, runtime} for a harness brain: the
+ * tool bridge, the HarnessGate, the environment its program is started from
+ * and a function answering the runtime directory.
  */
-function create({ session, state, audit, router, accounts, policy, fault, harness = null }) {
+function create({ session, state, audit, router, accounts, policy, fault, captionLimit, harness = null }) {
+    if (!Number.isSafeInteger(captionLimit) || captionLimit < 1) fail("caption-limit");
     let plan = unconfigured("engine=starting");
     let conversation = null;
     let retired = null;
@@ -130,7 +132,7 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
         catch (error) { net.close(); throw error; }
         // late holds at most one call: the router runs one action at a time.
         return { gen, plan, recipients, net, speech, brain: null, owner: null, grants: [], heard: null,
-            late: new Map(), results: [], turn: null, last: null, collection: null, unbound: null };
+            late: new Map(), results: [], turn: null, last: null, collection: null, unbound: null, rev: 0 };
     }
     // observe() ends a conversation before any effect of a newer generation.
     function current(gen) {
@@ -313,6 +315,36 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
             }
             turn.speech.queue(item);
         });
+        caption(c, turn, sentence);
+    }
+
+    // Jarvis's words are the sentences released for speech. Each one grows
+    // the turn's caption segment under the conversation's rising revision; a
+    // segment at the wire's bound closes and the rest starts the next one.
+    function caption(c, turn, sentence) {
+        let text = sentence.replace(/[\x00-\x1f\x7f]/g, " ");
+        // A segment with no room for the separator and one character closes.
+        if (turn.caption.length + 1 >= captionLimit) concluded(c, turn);
+        if (turn.caption !== "") text = " " + text;
+        while (text !== "") {
+            if (turn.caption.length === captionLimit) {
+                concluded(c, turn);
+                text = text.trimStart();
+                continue;
+            }
+            const room = captionLimit - turn.caption.length;
+            turn.caption += text.slice(0, room);
+            text = text.slice(room);
+            captioned(c, turn, "partial");
+        }
+    }
+    function captioned(c, turn, stage) {
+        turn.done("transcript", { role: "assistant", text: turn.caption, stage, rev: ++c.rev });
+    }
+    // A reply's end, or a full segment, closes the open segment.
+    function concluded(c, turn) {
+        if (turn.caption !== "") captioned(c, turn, "final");
+        turn.caption = "";
     }
 
     function stop(turn) {
@@ -323,6 +355,7 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
         if (turn.stopped) return;
         stop(turn);
         if (c.turn === turn) c.turn = null;
+        concluded(c, turn);
         const reason = keyed(error);
         // The history bound ends the conversation cleanly; any other failure
         // is a fault.
@@ -365,6 +398,7 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
                         turn.phase = "done";
                         c.turn = null;
                         turn.speech?.end();
+                        concluded(c, turn);
                         turn.done("brain-done");
                     }
                     return;
@@ -418,7 +452,7 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
             } else if (c.owner !== e.owner) fail("brain-owner");
             if (c.turn !== null) fail("brain-busy");
             const turn = { gen: e.gen, op: e.op, done, labels: new Set(), speech: null, stopped: false,
-                phase: "streaming", calls: [], answers: new Map(), routing: null };
+                phase: "streaming", calls: [], answers: new Map(), routing: null, caption: "" };
             if (e.text.trim() === "") {
                 done("brain-done");
                 return;

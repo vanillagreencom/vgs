@@ -27,6 +27,7 @@ function gate() {
 function rig(kit, server, options = {}) {
     const backend = name => require(path.join(kit.folder, "backend", name));
     const Session = load(path.join(kit.folder, "Session.js"));
+    const Protocol = load(path.join(kit.folder, "JarvisProtocol.js"));
     const { SessionRunner, unavailable } = backend("session-runner.js");
     const { Audio } = backend("Audio.js");
     const Audit = backend("Audit.js");
@@ -43,12 +44,13 @@ function rig(kit, server, options = {}) {
     };
     const state = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "state-"));
     const audit = Audit.create({ state, now: () => Date.UTC(2026, 9, 1) });
-    const faults = [], executions = [], held = [], partials = [];
+    const faults = [], executions = [], held = [], partials = [], captions = [];
     const audio = new Audio({ session: Session, environment: { PATH: process.env.PATH, HOME: process.env.HOME,
         XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR }, clock: audioClock, offers: () => {}, level: () => {},
     fault: reason => faults.push(reason), captureSink: null, playbackSource: null });
     const ports = { ...unavailable(), mute: { store() {} } };
     ports.capture = { ...ports.capture, ...audio.capturePort };
+    ports.transcript = e => captions.push([e.gen, e.role, e.stage, e.rev, e.text]);
     let engine = null;
     const runner = new SessionRunner(Session, ports, runnerClock, s => {
         audio.observe(s);
@@ -79,7 +81,8 @@ function rig(kit, server, options = {}) {
     const accounts = () => ({ secrets: null, resolve: id => ({ id, provider: "ollama", label: "local",
         source: { kind: "local", origin: "http://127.0.0.1:" + PORT }, model: "fixture-model" }) });
     engine = kit.Engine.create({ session: Session, state: () => runner.state, audit, router, accounts,
-        policy: () => ({ profile: "standard", cloudVision: "ask" }), fault: reason => faults.push(reason) });
+        policy: () => ({ profile: "standard", cloudVision: "ask" }), fault: reason => faults.push(reason),
+        captionLimit: options.captionLimit ?? Protocol.TRANSCRIPT_CHARS });
     ports.brain = engine.brain;
     ports.capture.collect = engine.collect;
     ports.playback = engine.playback(audio.playbackPort);
@@ -97,7 +100,7 @@ function rig(kit, server, options = {}) {
         const file = path.join(state, "audit/2026-10-01.jsonl");
         return fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim().split("\n").map(line => JSON.parse(line)) : [];
     };
-    return { runner, audio, audioClock, engine, faults, executions, held, partials, rows, configure, state, server, advanceRunner,
+    return { runner, audio, audioClock, engine, faults, executions, held, partials, captions, rows, configure, state, server, advanceRunner,
         s: () => runner.state,
         async close() {
             runner.close();
@@ -180,6 +183,10 @@ async function cases(kit, server, only = null) {
             ["user", "What time is it?"], ["assistant", "It is **noon**. Anything else?"], ["user", "Thanks."]],
         "a fully played reply adds no heard context");
         await until(() => w.s().turn.kind === "none", "the empty reply completes");
+        const gen = w.s().gen;
+        assert.deepEqual(w.captions, [[gen, "assistant", "partial", 1, "It is noon."],
+            [gen, "assistant", "partial", 2, "It is noon. Anything else?"], [gen, "assistant", "final", 3, "It is noon. Anything else?"]],
+        "each released sentence grows the reply's caption, final at its end; an empty reply adds none");
         const releases = w.rows().filter(row => row.kind === "release");
         assert.ok(releases.length >= 5 && releases.every(row => row.decision === "send" && row.outcome === "pending"
             && row.effect === "external"), "each utterance, request and sentence is audited before transfer");
@@ -269,8 +276,26 @@ async function cases(kit, server, only = null) {
         await until(() => w.s().playback.kind === "playing", "the final reply speaks");
         await playOut(w);
         assert.deepEqual(control.spoken, ["Focused it."]);
+        assert.deepEqual(w.captions.map(row => row.slice(2)), [["partial", 1, "Focused it."], ["final", 2, "Focused it."]],
+            "a tool round's reply is captioned once, at its end");
         assert.deepEqual(w.faults, []);
     });
+
+    // A segment closes at the wire's bound; a failed reply closes its words.
+    await run("caption-segments", async w => {
+        const first = await say(w, utterance("What time is it?"));
+        await requested(w, first + 1, "first request");
+        server.replies.push(text("It is noon. ", "Anything else?"));
+        await until(() => w.s().turn.kind === "none", "the reply completes");
+        const second = await say(w, utterance("And tomorrow?"));
+        await requested(w, second + 1, "second request");
+        server.replies.push(text("Bye now. More").slice(0, 2));
+        await until(() => w.s().fault.kind === "error", "the cut reply fails");
+        assert.deepEqual(w.captions.map(row => row.slice(2)), [
+            ["partial", 1, "It is noon."], ["final", 2, "It is noon."], ["partial", 3, "Anything els"],
+            ["final", 4, "Anything els"], ["partial", 5, "e?"], ["final", 6, "e?"],
+            ["partial", 7, "Bye now."], ["final", 8, "Bye now."]], "segments split at the bound");
+    }, { captionLimit: 12 });
 
     // An interrupted call that runs on is answered "running" and its real
     // outcome reaches the next user turn, never the turn it interrupted; a
@@ -455,6 +480,7 @@ async function cases(kit, server, only = null) {
         await until(() => w.s().fault.kind === "error", "the turn fails");
         assert.equal(w.s().fault.reason, "engine=audit-write");
         assert.deepEqual(control.spoken, [], "no text reaches speech without its audit record");
+        assert.deepEqual(w.captions, [], "no text is captioned without its release");
     });
 
     // The plan's context bound: the fortieth turn is sent, the next fails.
@@ -526,7 +552,7 @@ function selection(Engine) {
         Fixture.reset({ ready });
         let answer;
         assert.doesNotThrow(() => {
-            answer = Engine.create({ accounts: () => ({ secrets: null, resolve }) }).configure({ brain: "a", ...settings });
+            answer = Engine.create({ accounts: () => ({ secrets: null, resolve }), captionLimit: 1 }).configure({ brain: "a", ...settings });
         }, "selection answers with a cause");
         return answer;
     };
@@ -540,7 +566,7 @@ function selection(Engine) {
         { kind: "unconfigured", cause: "brain=accounts-unreadable", detail: "jarvis-keys: references=json" },
         "a reader's keyed failure keeps its cause");
     Fixture.reset();
-    assert.throws(() => Engine.create({ accounts: () => ({ resolve: () => { throw new TypeError("defect"); } }) })
+    assert.throws(() => Engine.create({ accounts: () => ({ resolve: () => { throw new TypeError("defect"); } }), captionLimit: 1 })
         .configure({ brain: "a" }), TypeError, "a defect is not a configuration cause");
     assert.deepEqual(configure({}, () => resolved, true), { kind: "ready" });
     // A subscription's program chooses its own model; its account names its directory.
@@ -550,7 +576,7 @@ function selection(Engine) {
 
 world(async () => {
     const stock = require(path.join(tree, "shell/plugins/vgs.jarvis/backend/ChainedEngine.js"));
-    assert.deepEqual(stock.create({ accounts: () => assert.fail("no account is read without a speech row") })
+    assert.deepEqual(stock.create({ accounts: () => assert.fail("no account is read without a speech row"), captionLimit: 1 })
         .configure({ brain: "a" }), { kind: "unconfigured", cause: "speech=no-adapter" }, "the stock daemon stays unconfigured");
     const server = Fixture.brain(PORT);
     await server.ready;
@@ -598,8 +624,8 @@ world(async () => {
                 "c.unbound", "toggle-turns"],
             ["collect-failure", "else if (collecting(c, utterance.collection)) utterance.collection.failed(keyed(error));",
                 "else if (false) utterance.collection.failed(keyed(error));", "transcribe-failure"],
-            ["speech-gates-brain", 'turn.speech?.end();\n                        turn.done("brain-done");',
-                'turn.speech?.end();\n                        await new Promise(resolve => turn.speech.readable.once("close", resolve));\n                        turn.done("brain-done");', "long-speech"],
+            ["speech-gates-brain", 'turn.speech?.end();\n                        concluded(c, turn);',
+                'turn.speech?.end();\n                        await new Promise(resolve => turn.speech.readable.once("close", resolve));\n                        concluded(c, turn);', "long-speech"],
             ["net-not-closed", "        c.net.close();\n", "", "conversation-end"],
             ["observe-teardown", "observe(s) { if (conversation !== null && s.gen !== conversation.gen) end(); },", "observe(s) {},", "settings-change"],
             ["audit-skipped", '"pending"), start);\n        if (result.kind !== "started") fail("audit-write");\n        return result.value;',
@@ -609,7 +635,15 @@ world(async () => {
                 'turn.done("brain-failed", { reason });', "context-bound"],
             ["readable-backpressure", "if (!readable.push(step.value)) await wanted.wait();", "readable.push(step.value);", "backpressure"],
             ["partial-revision", "event.rev <= rev", "false", "partial-revision"],
-            ["end-aborts-transcription", "            if (utterance) utterance.abort();", "            void utterance;", "mute-capture"]
+            ["end-aborts-transcription", "            if (utterance) utterance.abort();", "            void utterance;", "mute-capture"],
+            ["caption-dropped", "        caption(c, turn, sentence);\n", "", "turn-loop"],
+            ["caption-final", 'concluded(c, turn);\n                        turn.done("brain-done");', 'turn.done("brain-done");', "turn-loop"],
+            ["caption-revision", "rev: ++c.rev", "rev: 1", "turn-loop"],
+            ["caption-before-release", "        transfer(c, turn, item, () => {\n            if (turn.speech === null) {",
+                "        caption(c, turn, sentence);\n        transfer(c, turn, item, () => {\n            if (turn.speech === null) {", "audit-refusal-speech"],
+            ["caption-separator", "        if (turn.caption.length + 1 >= captionLimit) concluded(c, turn);\n", "", "caption-segments"],
+            ["caption-bound", "const room = captionLimit - turn.caption.length;", "const room = Infinity;", "caption-segments"],
+            ["caption-failure-final", "        concluded(c, turn);\n        const reason = keyed(error);", "        const reason = keyed(error);", "caption-segments"]
         ];
         for (const [name, needle, replacement, scenario] of plants) {
             // The copy asserts its match outside the measured run.

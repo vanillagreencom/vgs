@@ -349,7 +349,7 @@ world(async () => {
                 accounts: () => ({ secrets: null, resolve: id => ({ id, provider: "codex", label: "default",
                     source: { kind: "cli", directory: account }, model: "" }) }),
                 policy: () => ({ profile: "standard", cloudVision: "ask" }), fault: reason => assert.fail("fault " + reason),
-                harness: { bridge: w.bridge, gate: w.gate, env, runtime: () => w.runtime } });
+                captionLimit: 4096, harness: { bridge: w.bridge, gate: w.gate, env, runtime: () => w.runtime } });
             owners.unshift(() => engine.close());
             assert.deepEqual(engine.configure({ brain: "codex-fixture" }), { kind: "ready" });
             const { gen, turn: { op } } = w.runner.state;

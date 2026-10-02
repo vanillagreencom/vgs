@@ -367,6 +367,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     engine = ChainedEngine.create({ session: Session, state: () => runner.state, audit, router,
                         accounts: () => new Accounts(state, process.env),
                         policy: () => ({ profile: profile(), cloudVision: "ask" }), fault,
+                        captionLimit: Protocol.TRANSCRIPT_CHARS,
                         harness: { bridge, gate, env: process.env, runtime: () => context.directories.runtime } });
                     runner.ports.brain = engine.brain;
                     runner.ports.capture = { ...runner.ports.capture, collect: engine.collect };
