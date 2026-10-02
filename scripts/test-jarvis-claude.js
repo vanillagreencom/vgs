@@ -412,7 +412,10 @@ world(async () => {
         for (const [script, reason] of [
             [{ turns: [[{ result: "success" }]] }, "no-inference"],
             [{ extraTools: ["Bash"], turns: [[...say("OK")]] }, "harness-tool"],
-            [{ turns: [[{ result: "error_during_execution" }]] }, "harness-error-during-execution"]
+            [{ turns: [[{ result: "error_during_execution" }]] }, "harness-error-during-execution"],
+            // Text proves nothing until the turn succeeds.
+            [{ turns: [[...say("OK"), { result: "error_during_execution" }]] }, "harness-error-during-execution"],
+            [{ turns: [[...say("OK"), { exit: 5 }]] }, "harness-exit"]
         ]) assert.deepEqual((await verify(folder, script)).result, { kind: "unavailable", reason }, reason);
         // Another vendor's subscription keeps its refusal; no program starts.
         const codex = { id: "codex-fixture", provider: "codex", label: "default", source: { kind: "cli", directory: verifyAccount.directory },
@@ -481,7 +484,8 @@ world(async () => {
             ["tools-bound", "const TOOLS = 64;", "const TOOLS = 65;", "bounds"],
             ["close-bridge", "        launch?.close();\n        let exited", "        let exited", "close"],
             ["close-late-session", "if (closed) { launch?.close(); fail(\"closed\"); }", "if (closed) fail(\"closed\");", "close"],
-            ["close-workdir", "if (workdir !== null) fs.rmSync(workdir, { recursive: true, force: true });", "", "close"]
+            ["close-workdir", "if (workdir !== null) fs.rmSync(workdir, { recursive: true, force: true });", "", "close"],
+            ["verify-result", 'if (step.value.kind === "text") text += step.value.text;', 'if (step.value.kind === "text") return step.value.text;', "verify"]
         ]) await control(harnessFile, name, needle, replacement, row);
         for (const [name, needle, replacement] of [
             ["verify-route", 'if (row.id !== "claude") fail("verify=subscription-handoff-unavailable");', ""],
