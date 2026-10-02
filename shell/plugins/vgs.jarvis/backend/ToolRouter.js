@@ -138,9 +138,10 @@ function create({ session, state, dispatch, context, audit, result }) {
             || (refined.alternatives || []).some(command => executor.commands.includes(command))) ? executor : null;
     }
 
+    // A harness program proposes its own actions; no brain is offered them.
     function offer() {
         if (closed) return [];
-        return Object.entries(Tools.TABLE).filter(([, row]) => available(row) !== null)
+        return Object.entries(Tools.TABLE).filter(([, row]) => row.proposer === undefined && available(row) !== null)
             .map(([id, row]) => {
                 const parameters = structuredClone(row.schema);
                 if (id === "help" && registry.get("guidance").topics !== undefined)
@@ -149,11 +150,16 @@ function create({ session, state, dispatch, context, audit, result }) {
             });
     }
 
-    /** Route only brain tool calls. There is deliberately no confirmation API. */
+    /**
+     * Route a brain's tool call, kind "tool-call", or a harness program's
+     * approval request, kind "approval". Each reaches only its own rows.
+     * There is deliberately no confirmation API.
+     */
     function route(request, turn) {
         const value = { request: request.id, call: { id: request.tool, args: request.arguments }, turn };
         if (!Number.isSafeInteger(turn.gen) || turn.gen < 0 || !Number.isSafeInteger(turn.op) || turn.op < 1)
             throw new Error("jarvis: router=turn");
+        if (request.kind !== "tool-call" && request.kind !== "approval") throw new Error("jarvis: router=request-kind");
         if (closed) return refuse(value, "router-closed");
         // Arriving calls cannot outrun Session's monotonic deadline judge.
         dispatch({ type: "deadline", gen: turn.gen, op: turn.op });
@@ -162,6 +168,9 @@ function create({ session, state, dispatch, context, audit, result }) {
             return refuse(value, "stale-turn");
         // pending reserves a proposal queued by a synchronous runner callback.
         if (!session.canPropose(s) || pending !== null) return refuse(value, "busy");
+        const row = typeof request.tool === "string" && Object.hasOwn(Tools.TABLE, request.tool) ? Tools.TABLE[request.tool] : null;
+        if ((request.kind === "approval") !== (row !== null && row.proposer === "harness"))
+            return refuse(value, "unknown-tool");
         const refined = Tools.refine(value.call);
         if (refined.kind === "refuse") return refuse(value, refined.reason);
         value.call = refined.call;

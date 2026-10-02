@@ -37,8 +37,10 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const Browser = require("./Browser.js");
     const TaskRunner = require("./TaskRunner.js");
     const ToolBridge = require("./ToolBridge.js");
+    const HarnessGate = require("./HarnessGate.js");
     const ChainedEngine = require("./ChainedEngine.js");
     const { Accounts } = require("./Accounts.js");
+    const Denied = require("./Denied.js");
     const { load } = require(path.join(process.argv[3], "bin/lib/qml-library.js"));
     const { commandFile, onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
     const Protocol = load(path.join(__dirname, "../JarvisProtocol.js"));
@@ -61,10 +63,12 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
+    let gate = null;
 
     function teardown() {
         // The bridge ends its connections while the router can still drop their results.
         if (bridge !== null) bridge.close();
+        if (gate !== null) gate.close();
         runner.close();
         if (engine !== null) engine.close();
         if (executors !== null) executors.close();
@@ -101,6 +105,25 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                 }
             });
         });
+    }
+
+    // Policy's protected-root snapshot for path calls: the daemon's own XDG
+    // roots, the plugin directory it runs from and every account directory
+    // Accounts finds. Denied is rebuilt for each judgement, since roots and
+    // links can change between calls. A snapshot that cannot be built is
+    // null, which Policy refuses as path-context.
+    function protectedRoots() {
+        const env = process.env;
+        try {
+            const accounts = new Accounts(context.directories.state, env);
+            return Denied.create({ home: accounts.home, config: accounts.config, data: accounts.data,
+                state: env.XDG_STATE_HOME || path.join(accounts.home, ".local/state"), runtime: env.XDG_RUNTIME_DIR,
+                install: path.dirname(__dirname), accountRoots: accounts.candidates().map(item => item.directory) });
+        } catch (error) {
+            const cause = /^jarvis(?:-[a-z]+)?: ([a-z-]+=[a-z0-9-]+)/.exec(error.message)?.[1] ?? error.code ?? "unknown";
+            process.stderr.write("jarvis: denied=unavailable cause=" + cause + "\n");
+            return null;
+        }
     }
 
     // hyprctl finds this session's socket from these alone.
@@ -295,11 +318,14 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     const profile = () => runner.state.settings.policy ?? "standard";
                     const router = ToolRouter.create({ session: Session, state: () => runner.state,
                         dispatch: event => runner.dispatch(event), audit,
-                        context: () => ({ profile: profile(), locked: context.locked, denied: null }),
-                        result: value => bridge.deliver(value) || runner.ports.brain.outcome(value) });
-                    // No harness brain exists yet, so no bridge session opens and no socket exists.
+                        context: () => ({ profile: profile(), locked: context.locked, denied: protectedRoots() }),
+                        result: value => gate.deliver(value) || bridge.deliver(value) || runner.ports.brain.outcome(value) });
+                    // A harness brain opens the bridge's session for its conversation;
+                    // until one is selected no socket exists.
                     bridge = ToolBridge.create({ router, state: () => runner.state, audit,
                         directory: context.directories.runtime });
+                    gate = HarnessGate.create({ router, state: () => runner.state });
+                    router.register("harness", gate.executor);
                     // Executor owners register only after their real probes.
                     Object.assign(runner.ports, router.ports);
                     requests = ShellRequests.create({ Protocol, clock, write: fields =>
@@ -340,7 +366,8 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     // cloudVision has no setting yet; "ask" is the plan's default.
                     engine = ChainedEngine.create({ session: Session, state: () => runner.state, audit, router,
                         accounts: () => new Accounts(state, process.env),
-                        policy: () => ({ profile: profile(), cloudVision: "ask" }), fault });
+                        policy: () => ({ profile: profile(), cloudVision: "ask" }), fault,
+                        harness: { bridge, gate, env: process.env, runtime: () => context.directories.runtime } });
                     runner.ports.brain = engine.brain;
                     runner.ports.capture = { ...runner.ports.capture, collect: engine.collect };
                     runner.ports.playback = engine.playback(audio.playbackPort);

@@ -12,9 +12,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 /**
- * ROOT/call.json holds {id, tool, arguments}; the driver consumes it.
- * ROOT/results.jsonl gets {id, route} when the router answers the call and
- * {id, outcome, content} when its result reaches the brain port.
+ * ROOT/call.json holds {id, tool, arguments, kind?}; the driver consumes it.
+ * kind "approval" routes a harness program's request, which no brain is
+ * offered; the default is a brain's "tool-call". ROOT/results.jsonl gets
+ * {id, route, reason?} when the router answers the call, reason naming a
+ * refusal, and {id, outcome, content} when its result reaches the brain port.
  */
 function drive(root, runner, router) {
     fs.mkdirSync(root, { recursive: true });
@@ -33,7 +35,8 @@ function drive(root, runner, router) {
         let turnRequest = "new";
         const attempt = () => {
             // Executors register after their own Hyprland probe.
-            if (!router.offer().some(tool => tool.id === call.tool)) {
+            const kind = call.kind ?? "tool-call";
+            if (kind === "tool-call" && !router.offer().some(tool => tool.id === call.tool)) {
                 if (Date.now() - started < 5000) { setTimeout(attempt, 20); return; }
                 record({ id: call.id, outcome: "not-offered", content: "" });
                 busy = false;
@@ -55,8 +58,11 @@ function drive(root, runner, router) {
             }
             const turn = runner.state.turn;
             if (turn.kind !== "thinking") record({ id: call.id, outcome: "no-turn", content: JSON.stringify(turn) });
-            else record({ id: call.id, route: router.route({ kind: "tool-call", id: call.id, tool: call.tool,
-                arguments: call.arguments }, { gen: turn.gen, op: turn.op }).kind });
+            else {
+                const answer = router.route({ kind, id: call.id, tool: call.tool, arguments: call.arguments },
+                    { gen: turn.gen, op: turn.op });
+                record({ id: call.id, route: answer.kind, ...(answer.kind === "refuse" ? { reason: answer.reason } : {}) });
+            }
             busy = false;
         };
         attempt();

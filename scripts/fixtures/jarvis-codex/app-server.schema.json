@@ -1,0 +1,2163 @@
+{
+ "source": {
+  "program": "codex-cli 0.160.0",
+  "package": "@openai/codex@0.160.0-linux-x64",
+  "packageSha256": "37a41d61c3399182b8c727b77090cc7a1566bd849d0f09070a0bbc6fec4c58dc",
+  "command": "codex app-server generate-json-schema --out DIR",
+  "path": "codex_app_server_protocol.schemas.json",
+  "sha256": "8683f6fd9fbb994fa2bfb704ab5b02c9890238fa507a4c0ff33ff45884cd0a2e",
+  "experimentalPath": "codex_app_server_protocol.schemas.json, generated with --experimental",
+  "experimentalSha256": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
+  "generated": "2026-10-02"
+ },
+ "rule": [
+  "Schemas are copied from definitions and definitions.v2 with $ref rewritten to #/schemas/<name>.",
+  "Annotation keywords are removed: description, title, format, default, examples, minimum, maximum and $schema. A property named title stays.",
+  "allOf with one member is replaced by that member; const is rewritten as a one-member enum.",
+  "A property the adapter neither writes nor reads keeps its name with the empty schema {}, so its graph stays out.",
+  "ThreadItem keeps the userMessage, agentMessage, fileChange, commandExecution and mcpToolCall variants; UserInput keeps its text variant.",
+  "Config keeps its open object and pins only mcp_servers, the one field the adapter reads.",
+  "ThreadStartResponse also names activePermissionProfile, multiAgentMode and runtimeWorkspaceRoots with {}: only the --experimental bundle declares them, and 0.160.0 sends them to a client that did not opt in.",
+  "JSONRPCNotification also names emittedAtMs, an integer only the --experimental ServerNotification union declares; 0.160.0 stamps every notification with it.",
+  "McpServerElicitationRequestParams copies its shared serverName, threadId and turnId into each mode branch, since the checker closes each object it checks.",
+  "The checker closes every object; Codex's own JSON-RPC envelopes carry no jsonrpc member."
+ ],
+ "omitted": [
+  "ThreadItem.collabAgentToolCall",
+  "ThreadItem.contextCompaction",
+  "ThreadItem.dynamicToolCall",
+  "ThreadItem.enteredReviewMode",
+  "ThreadItem.exitedReviewMode",
+  "ThreadItem.functionCallOutput",
+  "ThreadItem.hookPrompt",
+  "ThreadItem.imageGeneration",
+  "ThreadItem.imageView",
+  "ThreadItem.plan",
+  "ThreadItem.reasoning",
+  "ThreadItem.sleep",
+  "ThreadItem.subAgentActivity",
+  "ThreadItem.webSearch",
+  "UserInput.audio",
+  "UserInput.image",
+  "UserInput.localAudio",
+  "UserInput.localImage",
+  "UserInput.mention",
+  "UserInput.skill"
+ ],
+ "schemas": {
+  "AbsolutePathBuf": {
+   "type": "string"
+  },
+  "AdditionalFileSystemPermissions": {
+   "properties": {
+    "entries": {
+     "items": {
+      "$ref": "#/schemas/FileSystemSandboxEntry"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "globScanMaxDepth": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "read": {
+     "items": {
+      "$ref": "#/schemas/LegacyAppPathString"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "write": {
+     "items": {
+      "$ref": "#/schemas/LegacyAppPathString"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "AdditionalNetworkPermissions": {
+   "properties": {
+    "enabled": {
+     "type": [
+      "boolean",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "AgentMessageDeltaNotification": {
+   "properties": {
+    "delta": {
+     "type": "string"
+    },
+    "itemId": {
+     "type": "string"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "delta",
+    "itemId",
+    "threadId",
+    "turnId"
+   ],
+   "type": "object"
+  },
+  "ApprovalsReviewer": {
+   "enum": [
+    "user",
+    "auto_review",
+    "guardian_subagent"
+   ],
+   "type": "string"
+  },
+  "AskForApproval": {
+   "oneOf": [
+    {
+     "enum": [
+      "untrusted",
+      "on-request",
+      "never"
+     ],
+     "type": "string"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "granular": {
+       "properties": {
+        "mcp_elicitations": {
+         "type": "boolean"
+        },
+        "request_permissions": {
+         "type": "boolean"
+        },
+        "rules": {
+         "type": "boolean"
+        },
+        "sandbox_approval": {
+         "type": "boolean"
+        },
+        "skill_approval": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "mcp_elicitations",
+        "rules",
+        "sandbox_approval"
+       ],
+       "type": "object"
+      }
+     },
+     "required": [
+      "granular"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "ByteRange": {
+   "properties": {
+    "end": {
+     "type": "integer"
+    },
+    "start": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "end",
+    "start"
+   ],
+   "type": "object"
+  },
+  "ClientInfo": {
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "title": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "version": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "name",
+    "version"
+   ],
+   "type": "object"
+  },
+  "CommandExecutionApprovalDecision": {
+   "oneOf": [
+    {
+     "enum": [
+      "accept"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "acceptForSession"
+     ],
+     "type": "string"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "acceptWithExecpolicyAmendment": {
+       "properties": {
+        "execpolicy_amendment": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        }
+       },
+       "required": [
+        "execpolicy_amendment"
+       ],
+       "type": "object"
+      }
+     },
+     "required": [
+      "acceptWithExecpolicyAmendment"
+     ],
+     "type": "object"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "applyNetworkPolicyAmendment": {
+       "properties": {
+        "network_policy_amendment": {
+         "$ref": "#/schemas/NetworkPolicyAmendment"
+        }
+       },
+       "required": [
+        "network_policy_amendment"
+       ],
+       "type": "object"
+      }
+     },
+     "required": [
+      "applyNetworkPolicyAmendment"
+     ],
+     "type": "object"
+    },
+    {
+     "enum": [
+      "decline"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "cancel"
+     ],
+     "type": "string"
+    }
+   ]
+  },
+  "CommandExecutionApprovalKind": {
+   "enum": [
+    "command",
+    "writeStdin"
+   ],
+   "type": "string"
+  },
+  "CommandExecutionRequestApprovalParams": {
+   "properties": {
+    "approvalId": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "command": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "commandActions": {},
+    "cwd": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/LegacyAppPathString"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "environmentId": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "itemId": {
+     "type": "string"
+    },
+    "kind": {
+     "$ref": "#/schemas/CommandExecutionApprovalKind"
+    },
+    "networkApprovalContext": {},
+    "proposedExecpolicyAmendment": {},
+    "proposedNetworkPolicyAmendments": {},
+    "reason": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "startedAtMs": {
+     "type": "integer"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "itemId",
+    "startedAtMs",
+    "threadId",
+    "turnId"
+   ],
+   "type": "object"
+  },
+  "CommandExecutionRequestApprovalResponse": {
+   "properties": {
+    "decision": {
+     "$ref": "#/schemas/CommandExecutionApprovalDecision"
+    }
+   },
+   "required": [
+    "decision"
+   ],
+   "type": "object"
+  },
+  "CommandExecutionStatus": {
+   "enum": [
+    "inProgress",
+    "completed",
+    "failed",
+    "declined"
+   ],
+   "type": "string"
+  },
+  "Config": {
+   "type": "object",
+   "properties": {
+    "mcp_servers": {
+     "type": "object",
+     "additionalProperties": true
+    }
+   },
+   "additionalProperties": true
+  },
+  "ConfigReadParams": {
+   "properties": {
+    "cwd": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "includeLayers": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "ConfigReadResponse": {
+   "properties": {
+    "config": {
+     "$ref": "#/schemas/Config"
+    },
+    "layers": {},
+    "origins": {}
+   },
+   "required": [
+    "config",
+    "origins"
+   ],
+   "type": "object"
+  },
+  "ErrorNotification": {
+   "properties": {
+    "error": {
+     "$ref": "#/schemas/TurnError"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    },
+    "willRetry": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "error",
+    "threadId",
+    "turnId",
+    "willRetry"
+   ],
+   "type": "object"
+  },
+  "ExperimentalFeature": {
+   "properties": {
+    "announcement": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "defaultEnabled": {
+     "type": "boolean"
+    },
+    "description": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "displayName": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "name": {
+     "type": "string"
+    },
+    "stage": {
+     "$ref": "#/schemas/ExperimentalFeatureStage"
+    }
+   },
+   "required": [
+    "defaultEnabled",
+    "enabled",
+    "name",
+    "stage"
+   ],
+   "type": "object"
+  },
+  "ExperimentalFeatureListParams": {
+   "properties": {
+    "cursor": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "limit": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "threadId": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "ExperimentalFeatureListResponse": {
+   "properties": {
+    "data": {
+     "items": {
+      "$ref": "#/schemas/ExperimentalFeature"
+     },
+     "type": "array"
+    },
+    "nextCursor": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "data"
+   ],
+   "type": "object"
+  },
+  "ExperimentalFeatureStage": {
+   "oneOf": [
+    {
+     "enum": [
+      "beta"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "underDevelopment"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "stable"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "deprecated"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "removed"
+     ],
+     "type": "string"
+    }
+   ]
+  },
+  "FileChangeApprovalDecision": {
+   "oneOf": [
+    {
+     "enum": [
+      "accept"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "acceptForSession"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "decline"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "cancel"
+     ],
+     "type": "string"
+    }
+   ]
+  },
+  "FileChangeRequestApprovalParams": {
+   "properties": {
+    "grantRoot": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "itemId": {
+     "type": "string"
+    },
+    "reason": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "startedAtMs": {
+     "type": "integer"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "itemId",
+    "startedAtMs",
+    "threadId",
+    "turnId"
+   ],
+   "type": "object"
+  },
+  "FileChangeRequestApprovalResponse": {
+   "properties": {
+    "decision": {
+     "$ref": "#/schemas/FileChangeApprovalDecision"
+    }
+   },
+   "required": [
+    "decision"
+   ],
+   "type": "object"
+  },
+  "FileSystemAccessMode": {
+   "enum": [
+    "read",
+    "write",
+    "deny"
+   ],
+   "type": "string"
+  },
+  "FileSystemPath": {
+   "oneOf": [
+    {
+     "properties": {
+      "path": {
+       "$ref": "#/schemas/LegacyAppPathString"
+      },
+      "type": {
+       "enum": [
+        "path"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "path",
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "pattern": {
+       "type": "string"
+      },
+      "type": {
+       "enum": [
+        "glob_pattern"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "pattern",
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "enum": [
+        "special"
+       ],
+       "type": "string"
+      },
+      "value": {
+       "$ref": "#/schemas/FileSystemSpecialPath"
+      }
+     },
+     "required": [
+      "type",
+      "value"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "FileSystemSandboxEntry": {
+   "properties": {
+    "access": {
+     "$ref": "#/schemas/FileSystemAccessMode"
+    },
+    "path": {
+     "$ref": "#/schemas/FileSystemPath"
+    }
+   },
+   "required": [
+    "access",
+    "path"
+   ],
+   "type": "object"
+  },
+  "FileSystemSpecialPath": {
+   "oneOf": [
+    {
+     "properties": {
+      "kind": {
+       "enum": [
+        "root"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "kind"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "kind": {
+       "enum": [
+        "minimal"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "kind"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "kind": {
+       "enum": [
+        "project_roots"
+       ],
+       "type": "string"
+      },
+      "subpath": {
+       "anyOf": [
+        {
+         "$ref": "#/schemas/LegacyAppPathString"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      }
+     },
+     "required": [
+      "kind"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "kind": {
+       "enum": [
+        "tmpdir"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "kind"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "kind": {
+       "enum": [
+        "slash_tmp"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "kind"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "kind": {
+       "enum": [
+        "unknown"
+       ],
+       "type": "string"
+      },
+      "path": {
+       "type": "string"
+      },
+      "subpath": {
+       "anyOf": [
+        {
+         "$ref": "#/schemas/LegacyAppPathString"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      }
+     },
+     "required": [
+      "kind",
+      "path"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "FileUpdateChange": {
+   "properties": {
+    "diff": {
+     "type": "string"
+    },
+    "kind": {
+     "$ref": "#/schemas/PatchChangeKind"
+    },
+    "path": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "diff",
+    "kind",
+    "path"
+   ],
+   "type": "object"
+  },
+  "GrantedPermissionProfile": {
+   "properties": {
+    "fileSystem": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/AdditionalFileSystemPermissions"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "network": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/AdditionalNetworkPermissions"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "InitializeCapabilities": {
+   "properties": {
+    "experimentalApi": {
+     "type": "boolean"
+    },
+    "explicitGatewayOauth": {
+     "type": "boolean"
+    },
+    "extensions": {
+     "additionalProperties": true,
+     "type": [
+      "object",
+      "null"
+     ]
+    },
+    "mcpServerOpenaiFormElicitation": {
+     "type": "boolean"
+    },
+    "optOutNotificationMethods": {
+     "items": {
+      "type": "string"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "requestAttestation": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "InitializeParams": {
+   "properties": {
+    "capabilities": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/InitializeCapabilities"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "clientInfo": {
+     "$ref": "#/schemas/ClientInfo"
+    }
+   },
+   "required": [
+    "clientInfo"
+   ],
+   "type": "object"
+  },
+  "InitializeResponse": {
+   "properties": {
+    "codexHome": {
+     "$ref": "#/schemas/AbsolutePathBuf"
+    },
+    "platformFamily": {
+     "type": "string"
+    },
+    "platformOs": {
+     "type": "string"
+    },
+    "userAgent": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "codexHome",
+    "platformFamily",
+    "platformOs",
+    "userAgent"
+   ],
+   "type": "object"
+  },
+  "ItemCompletedNotification": {
+   "properties": {
+    "completedAtMs": {
+     "type": "integer"
+    },
+    "item": {
+     "$ref": "#/schemas/ThreadItem"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "completedAtMs",
+    "item",
+    "threadId",
+    "turnId"
+   ],
+   "type": "object"
+  },
+  "ItemStartedNotification": {
+   "properties": {
+    "item": {
+     "$ref": "#/schemas/ThreadItem"
+    },
+    "startedAtMs": {
+     "type": "integer"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "item",
+    "startedAtMs",
+    "threadId",
+    "turnId"
+   ],
+   "type": "object"
+  },
+  "JSONRPCError": {
+   "properties": {
+    "error": {
+     "$ref": "#/schemas/JSONRPCErrorError"
+    },
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    }
+   },
+   "required": [
+    "error",
+    "id"
+   ],
+   "type": "object"
+  },
+  "JSONRPCErrorError": {
+   "properties": {
+    "code": {
+     "type": "integer"
+    },
+    "data": {},
+    "message": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "code",
+    "message"
+   ],
+   "type": "object"
+  },
+  "JSONRPCNotification": {
+   "properties": {
+    "method": {
+     "type": "string"
+    },
+    "params": {},
+    "emittedAtMs": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "method"
+   ],
+   "type": "object"
+  },
+  "JSONRPCRequest": {
+   "properties": {
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    },
+    "method": {
+     "type": "string"
+    },
+    "params": {},
+    "trace": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/W3cTraceContext"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "required": [
+    "id",
+    "method"
+   ],
+   "type": "object"
+  },
+  "JSONRPCResponse": {
+   "properties": {
+    "id": {
+     "$ref": "#/schemas/RequestId"
+    },
+    "result": {}
+   },
+   "required": [
+    "id",
+    "result"
+   ],
+   "type": "object"
+  },
+  "LegacyAppPathString": {
+   "type": "string"
+  },
+  "McpServerElicitationAction": {
+   "enum": [
+    "accept",
+    "decline",
+    "cancel"
+   ],
+   "type": "string"
+  },
+  "McpServerElicitationRequestParams": {
+   "oneOf": [
+    {
+     "properties": {
+      "serverName": {
+       "type": "string"
+      },
+      "threadId": {
+       "type": "string"
+      },
+      "turnId": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "_meta": {},
+      "message": {
+       "type": "string"
+      },
+      "mode": {
+       "enum": [
+        "form"
+       ],
+       "type": "string"
+      },
+      "requestedSchema": {}
+     },
+     "required": [
+      "message",
+      "mode",
+      "requestedSchema",
+      "serverName",
+      "threadId"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "serverName": {
+       "type": "string"
+      },
+      "threadId": {
+       "type": "string"
+      },
+      "turnId": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "_meta": {},
+      "message": {
+       "type": "string"
+      },
+      "mode": {
+       "enum": [
+        "openai/form"
+       ],
+       "type": "string"
+      },
+      "requestedSchema": {}
+     },
+     "required": [
+      "message",
+      "mode",
+      "requestedSchema",
+      "serverName",
+      "threadId"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "serverName": {
+       "type": "string"
+      },
+      "threadId": {
+       "type": "string"
+      },
+      "turnId": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "_meta": {},
+      "message": {
+       "type": "string"
+      },
+      "mode": {
+       "enum": [
+        "openaiForm"
+       ],
+       "type": "string"
+      },
+      "requestedSchema": {}
+     },
+     "required": [
+      "message",
+      "mode",
+      "requestedSchema",
+      "serverName",
+      "threadId"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "serverName": {
+       "type": "string"
+      },
+      "threadId": {
+       "type": "string"
+      },
+      "turnId": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "_meta": {},
+      "elicitationId": {
+       "type": "string"
+      },
+      "message": {
+       "type": "string"
+      },
+      "mode": {
+       "enum": [
+        "url"
+       ],
+       "type": "string"
+      },
+      "url": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "elicitationId",
+      "message",
+      "mode",
+      "serverName",
+      "threadId",
+      "url"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "McpServerElicitationRequestResponse": {
+   "properties": {
+    "_meta": {},
+    "action": {
+     "$ref": "#/schemas/McpServerElicitationAction"
+    },
+    "content": {}
+   },
+   "required": [
+    "action"
+   ],
+   "type": "object"
+  },
+  "McpToolCallStatus": {
+   "enum": [
+    "inProgress",
+    "completed",
+    "failed"
+   ],
+   "type": "string"
+  },
+  "NetworkAccess": {
+   "enum": [
+    "restricted",
+    "enabled"
+   ],
+   "type": "string"
+  },
+  "NetworkPolicyAmendment": {
+   "properties": {
+    "action": {
+     "$ref": "#/schemas/NetworkPolicyRuleAction"
+    },
+    "host": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "action",
+    "host"
+   ],
+   "type": "object"
+  },
+  "NetworkPolicyRuleAction": {
+   "enum": [
+    "allow",
+    "deny"
+   ],
+   "type": "string"
+  },
+  "PatchApplyStatus": {
+   "enum": [
+    "inProgress",
+    "completed",
+    "failed",
+    "declined"
+   ],
+   "type": "string"
+  },
+  "PatchChangeKind": {
+   "oneOf": [
+    {
+     "properties": {
+      "type": {
+       "enum": [
+        "add"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "type": {
+       "enum": [
+        "delete"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "move_path": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "type": {
+       "enum": [
+        "update"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "PermissionGrantScope": {
+   "enum": [
+    "turn",
+    "session"
+   ],
+   "type": "string"
+  },
+  "PermissionsRequestApprovalParams": {
+   "properties": {
+    "cwd": {
+     "$ref": "#/schemas/LegacyAppPathString"
+    },
+    "environmentId": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "itemId": {
+     "type": "string"
+    },
+    "permissions": {},
+    "reason": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "startedAtMs": {
+     "type": "integer"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "cwd",
+    "itemId",
+    "permissions",
+    "startedAtMs",
+    "threadId",
+    "turnId"
+   ],
+   "type": "object"
+  },
+  "PermissionsRequestApprovalResponse": {
+   "properties": {
+    "permissions": {
+     "$ref": "#/schemas/GrantedPermissionProfile"
+    },
+    "scope": {
+     "$ref": "#/schemas/PermissionGrantScope"
+    },
+    "strictAutoReview": {
+     "type": [
+      "boolean",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "permissions"
+   ],
+   "type": "object"
+  },
+  "RequestId": {
+   "anyOf": [
+    {
+     "type": "string"
+    },
+    {
+     "type": "integer"
+    }
+   ]
+  },
+  "SandboxMode": {
+   "enum": [
+    "read-only",
+    "workspace-write",
+    "danger-full-access"
+   ],
+   "type": "string"
+  },
+  "SandboxPolicy": {
+   "oneOf": [
+    {
+     "properties": {
+      "type": {
+       "enum": [
+        "dangerFullAccess"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "networkAccess": {
+       "type": "boolean"
+      },
+      "type": {
+       "enum": [
+        "readOnly"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "networkAccess": {
+       "$ref": "#/schemas/NetworkAccess"
+      },
+      "type": {
+       "enum": [
+        "externalSandbox"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "excludeSlashTmp": {
+       "type": "boolean"
+      },
+      "excludeTmpdirEnvVar": {
+       "type": "boolean"
+      },
+      "networkAccess": {
+       "type": "boolean"
+      },
+      "type": {
+       "enum": [
+        "workspaceWrite"
+       ],
+       "type": "string"
+      },
+      "writableRoots": {
+       "items": {
+        "$ref": "#/schemas/AbsolutePathBuf"
+       },
+       "type": "array"
+      }
+     },
+     "required": [
+      "type"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "TextElement": {
+   "properties": {
+    "byteRange": {
+     "$ref": "#/schemas/ByteRange"
+    },
+    "placeholder": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "byteRange"
+   ],
+   "type": "object"
+  },
+  "ThreadItem": {
+   "oneOf": [
+    {
+     "properties": {
+      "clientId": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "content": {},
+      "id": {
+       "type": "string"
+      },
+      "type": {
+       "enum": [
+        "userMessage"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "content",
+      "id",
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "delivery": {},
+      "id": {
+       "type": "string"
+      },
+      "memoryCitation": {},
+      "phase": {},
+      "questions": {},
+      "text": {
+       "type": "string"
+      },
+      "type": {
+       "enum": [
+        "agentMessage"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "id",
+      "text",
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "aggregatedOutput": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "command": {
+       "type": "string"
+      },
+      "commandActions": {},
+      "cwd": {
+       "$ref": "#/schemas/LegacyAppPathString"
+      },
+      "durationMs": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "exitCode": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "id": {
+       "type": "string"
+      },
+      "pluginId": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "processId": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "scriptPath": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "source": {},
+      "status": {
+       "$ref": "#/schemas/CommandExecutionStatus"
+      },
+      "type": {
+       "enum": [
+        "commandExecution"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "command",
+      "commandActions",
+      "cwd",
+      "id",
+      "status",
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "changes": {
+       "items": {
+        "$ref": "#/schemas/FileUpdateChange"
+       },
+       "type": "array"
+      },
+      "id": {
+       "type": "string"
+      },
+      "status": {
+       "$ref": "#/schemas/PatchApplyStatus"
+      },
+      "type": {
+       "enum": [
+        "fileChange"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "changes",
+      "id",
+      "status",
+      "type"
+     ],
+     "type": "object"
+    },
+    {
+     "properties": {
+      "appContext": {},
+      "arguments": {},
+      "durationMs": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "error": {},
+      "id": {
+       "type": "string"
+      },
+      "mcpAppResourceUri": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "mcpAppUi": {},
+      "pluginId": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "readOnlyHint": {
+       "type": [
+        "boolean",
+        "null"
+       ]
+      },
+      "result": {},
+      "server": {
+       "type": "string"
+      },
+      "status": {
+       "$ref": "#/schemas/McpToolCallStatus"
+      },
+      "tool": {
+       "type": "string"
+      },
+      "type": {
+       "enum": [
+        "mcpToolCall"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "arguments",
+      "id",
+      "server",
+      "status",
+      "tool",
+      "type"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "ThreadStartParams": {
+   "properties": {
+    "approvalPolicy": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/AskForApproval"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "approvalsReviewer": {},
+    "baseInstructions": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "config": {
+     "additionalProperties": true,
+     "type": [
+      "object",
+      "null"
+     ]
+    },
+    "cwd": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "developerInstructions": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "ephemeral": {
+     "type": [
+      "boolean",
+      "null"
+     ]
+    },
+    "model": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "modelProvider": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "personality": {},
+    "sandbox": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/SandboxMode"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "serviceName": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "serviceTier": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "sessionStartSource": {},
+    "threadSource": {}
+   },
+   "type": "object"
+  },
+  "ThreadStartResponse": {
+   "properties": {
+    "approvalPolicy": {
+     "$ref": "#/schemas/AskForApproval"
+    },
+    "approvalsReviewer": {
+     "$ref": "#/schemas/ApprovalsReviewer"
+    },
+    "cwd": {},
+    "disabledPluginIds": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "instructionSources": {},
+    "model": {
+     "type": "string"
+    },
+    "modelProvider": {
+     "type": "string"
+    },
+    "reasoningEffort": {},
+    "sandbox": {
+     "$ref": "#/schemas/SandboxPolicy"
+    },
+    "serviceTier": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "thread": {},
+    "activePermissionProfile": {},
+    "multiAgentMode": {},
+    "runtimeWorkspaceRoots": {}
+   },
+   "required": [
+    "approvalPolicy",
+    "approvalsReviewer",
+    "cwd",
+    "model",
+    "modelProvider",
+    "sandbox",
+    "thread"
+   ],
+   "type": "object"
+  },
+  "Turn": {
+   "properties": {
+    "completedAt": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "durationMs": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "error": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/TurnError"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "id": {
+     "type": "string"
+    },
+    "items": {
+     "items": {
+      "$ref": "#/schemas/ThreadItem"
+     },
+     "type": "array"
+    },
+    "itemsView": {
+     "$ref": "#/schemas/TurnItemsView"
+    },
+    "startedAt": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "status": {
+     "$ref": "#/schemas/TurnStatus"
+    }
+   },
+   "required": [
+    "id",
+    "items",
+    "status"
+   ],
+   "type": "object"
+  },
+  "TurnCompletedNotification": {
+   "properties": {
+    "threadId": {
+     "type": "string"
+    },
+    "turn": {
+     "$ref": "#/schemas/Turn"
+    }
+   },
+   "required": [
+    "threadId",
+    "turn"
+   ],
+   "type": "object"
+  },
+  "TurnError": {
+   "properties": {
+    "additionalDetails": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "codexErrorInfo": {},
+    "message": {
+     "type": "string"
+    },
+    "misalignment": {}
+   },
+   "required": [
+    "message"
+   ],
+   "type": "object"
+  },
+  "TurnInterruptParams": {
+   "properties": {
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "threadId",
+    "turnId"
+   ],
+   "type": "object"
+  },
+  "TurnInterruptResponse": {
+   "type": "object"
+  },
+  "TurnItemsView": {
+   "oneOf": [
+    {
+     "enum": [
+      "notLoaded"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "summary"
+     ],
+     "type": "string"
+    },
+    {
+     "enum": [
+      "full"
+     ],
+     "type": "string"
+    }
+   ]
+  },
+  "TurnStartParams": {
+   "properties": {
+    "approvalPolicy": {
+     "anyOf": [
+      {
+       "$ref": "#/schemas/AskForApproval"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "approvalsReviewer": {},
+    "clientUserMessageId": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "cwd": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "disabledPluginIds": {
+     "items": {
+      "type": "string"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "effort": {},
+    "input": {
+     "items": {
+      "$ref": "#/schemas/UserInput"
+     },
+     "type": "array"
+    },
+    "model": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "outputSchema": {},
+    "personality": {},
+    "sandboxPolicy": {},
+    "serviceTier": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "serviceTierForTurn": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "summary": {},
+    "threadId": {
+     "type": "string"
+    },
+    "toolOutput": {},
+    "turnTrigger": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "input",
+    "threadId"
+   ],
+   "type": "object"
+  },
+  "TurnStartResponse": {
+   "properties": {
+    "turn": {
+     "$ref": "#/schemas/Turn"
+    }
+   },
+   "required": [
+    "turn"
+   ],
+   "type": "object"
+  },
+  "TurnStartedNotification": {
+   "properties": {
+    "threadId": {
+     "type": "string"
+    },
+    "turn": {
+     "$ref": "#/schemas/Turn"
+    }
+   },
+   "required": [
+    "threadId",
+    "turn"
+   ],
+   "type": "object"
+  },
+  "TurnStatus": {
+   "enum": [
+    "completed",
+    "interrupted",
+    "failed",
+    "inProgress"
+   ],
+   "type": "string"
+  },
+  "UserInput": {
+   "oneOf": [
+    {
+     "properties": {
+      "text": {
+       "type": "string"
+      },
+      "text_elements": {
+       "items": {
+        "$ref": "#/schemas/TextElement"
+       },
+       "type": "array"
+      },
+      "type": {
+       "enum": [
+        "text"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "text",
+      "type"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "W3cTraceContext": {
+   "properties": {
+    "traceparent": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "tracestate": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  }
+ }
+}

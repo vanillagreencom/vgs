@@ -1,7 +1,8 @@
 // Private scripted ports for the v1 Session effect contract, 2026-09-30.
 // No audio, provider, socket or tool runs. File gates advance callbacks only.
 // The duplex speech port, 2026-10-01, emits one caption per transcript gate
-// through the callbacks of the session it opened, live or closed.
+// through the callbacks of the session it opened, live or closed. A
+// hold-flush file holds the flush acknowledgement until the flush gate.
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
@@ -72,7 +73,8 @@ function ports(root) {
                 const late = waiting.get("played");
                 waiting.delete("played");
                 if (late !== undefined) wait("late-played", late);
-                done();
+                if (fs.existsSync(path.join(root, "hold-flush"))) wait("flush", done);
+                else done();
             }
         },
         tools: {

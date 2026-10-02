@@ -282,10 +282,6 @@ world(async () => {
     // The Claude route starts the harness; this stand-in answers only auth status.
     assert.deepEqual(await store.verify(chosen, "user"), { kind: "unavailable", reason: "harness-exit" });
     assert.ok(calls("cli-calls").some(call => call.args[0] === "-p" && call.env.CLAUDE_CONFIG_DIR === nestedClaude));
-    const codexId = rows.find(row => row.source.directory === nestedCodex).id;
-    const harnessCalls = calls("cli-calls").length;
-    assert.deepEqual(await store.verify(codexId, "user"), { kind: "unavailable", reason: "subscription-handoff-unavailable" });
-    assert.equal(calls("cli-calls").length, harnessCalls, "the refused subscription starts no program");
     assert.equal(inferenceCalls, 0);
     assert.deepEqual(await store.verify(chosen, "user", request), { kind: "verified" });
     assert.equal(inferenceCalls, 1);
@@ -494,9 +490,6 @@ world(async () => {
         'const reason = helperFailure(error.message) || "jarvis-accounts: operation=failed";',
         "const reason = error.message;", normalizedError);
     controls++;
-    const refused = cli(plugin, ["verify", codexId, "user"]);
-    assert.equal(refused.status, 69);
-    assert.deepEqual(JSON.parse(refused.stdout), { kind: "unavailable", reason: "subscription-handoff-unavailable" });
     const automatic = cli(plugin, ["verify", chosen]);
     assert.equal(automatic.status, 1);
     await mutant("backend/accounts.js", "cli-discovery", "value = judge.discover();", "value = [];",

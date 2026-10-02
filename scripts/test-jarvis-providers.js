@@ -41,6 +41,10 @@ function pinned(logic) {
         ["openai-live", "openai-live", "wss://api.openai.com/v1/live/sessions", "required", false, { store: false }]);
     assert.equal(live.retention.source, "https://developers.openai.com/api/docs/guides/your-data");
     assert.ok(Object.isFrozen(live) && Object.isFrozen(live.noStore));
+    // The harness row: the program owns its login; base names the release recipient.
+    const codex = logic.select("codex");
+    assert.deepEqual([codex.id, codex.driver, codex.base, codex.key, codex.images, codex.noStore, codex.retention.source],
+        ["codex", "codex-app-server", "https://chatgpt.com", "none", false, null, null]);
 }
 pinned(Providers);
 
@@ -99,6 +103,7 @@ world("providers", root => {
         ["no-store", "images: true,\n        noStore: { store: false }", "images: true,\n        noStore: null", pinned],
         ["live-no-store", "images: false,\n        noStore: { store: false }", "images: false,\n        noStore: null", pinned],
         ["live-base", '"wss://api.openai.com/v1/live/sessions"', '"wss://api.openai.com/v1/realtime"', pinned],
+        ["codex-key", 'base: "https://chatgpt.com", key: "none"', 'base: "https://chatgpt.com", key: "optional"', pinned],
         ["freeze", "Object.freeze(value);", "", logic => {
             const row = logic.select("openai");
             assert.throws(() => { row.noStore.store = true; }, TypeError);

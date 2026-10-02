@@ -86,7 +86,7 @@ Each user item passes `Policy.release` against the conversation's recipient set 
 
 ## Account Verify
 
-A Claude subscription account verifies through `ClaudeCode.verify`: the same argv with no MCP server, the system prompt "Answer in one word." and the fixed prompt "Reply OK." `Accounts::released` judges the command-labelled prompt for the account's recipient set under the user's Verify grant and records it with `Audit.before` before the program starts. Verify is `{kind: "inference"}` only after a successful result with non-empty text. Past the Verify bound the conversation closes, so its process group dies and its directory goes, and Verify fails `harness-timeout`. Another subscription keeps `subscription-handoff-unavailable`. The account directory is rechecked without following a link first.
+A Claude subscription account verifies through `ClaudeCode.verify`: the same argv with no MCP server, the system prompt "Answer in one word." and the fixed prompt "Reply OK." `Accounts::released` judges the command-labelled prompt for the account's recipient set under the user's Verify grant and records it with `Audit.before` before the program starts. Verify is `{kind: "inference"}` only after a successful result with non-empty text. Past the Verify bound the conversation closes, so its process group dies and its directory goes, and Verify fails `harness-timeout`. A Codex account verifies through the [Codex harness](jarvis-codex.md#verify) under the same owner; any other subscription keeps `subscription-handoff-unavailable`. The account directory is rechecked without following a link first.
 
 ## Residual risk
 

@@ -5,6 +5,7 @@ import Quickshell.Hyprland
 import qs.Commons
 import "." as Jarvis
 import "JarvisProtocol.js" as Protocol
+import "AccountProviders.js" as Providers
 import "Session.js" as Session
 
 Item {
@@ -134,7 +135,7 @@ Item {
             directories: {
                 state: Paths.stateDir + "/jarvis",
                 data: (Quickshell.env("XDG_DATA_HOME") || home + "/.local/share") + "/vgs/jarvis",
-                runtime: Quickshell.env("XDG_RUNTIME_DIR") + "/vgs/jarvis"
+                runtime: Providers.runtimeDirectory(Quickshell.env("XDG_RUNTIME_DIR"))
             },
             revision: shell.manifest.__revision,
             locked: lockObservation(),

@@ -52,7 +52,9 @@ world(() => {
         ["browser", { command: "read", args: {} }, "read", "web"],
         ["browser", { command: "click", args: { ref: "@e1" } }, "input", "web", "browser"],
         ["browser", { command: "fill", args: { ref: "@e1", text: "literal" } }, "input", "web", "browser"],
-        ["browser", { command: "submit", args: { ref: "@e1" } }, "external", "web", "browser"]
+        ["browser", { command: "submit", args: { ref: "@e1" } }, "external", "web", "browser"],
+        ["harness.files", { write: [target], move: [], remove: [], diff: "" }, "persistent"],
+        ["harness.command", { command: "ls -la", cwd: project }, "exec"]
     ];
     const check = (logic, [id, args, effect, source = null, input = null]) => {
         const result = logic.refine({ id, args });
@@ -112,6 +114,16 @@ world(() => {
         ["shell.argv", { argv: ["pwd"], cwd: project, network: true }, "external", "command"],
         ["shell.line", { line: "pwd", cwd: project, network: true }, "external", "command"]
     ]) check(Tools, row);
+    // Only a command a harness program runs itself is outside the kernel sandbox.
+    const unconfined = logic => {
+        for (const [id, args] of [["harness.command", { command: "ls", cwd: project }],
+            ["harness.files", { write: [], move: [], remove: [target], diff: "" }],
+            ["shell.line", { line: "ls", cwd: project, network: false }]])
+            assert.equal(logic.refine({ id, args }).unconfined, id === "harness.command", "unconfined " + id);
+    };
+    unconfined(Tools);
+    bad(Tools, { id: "harness.files", args: { write: ["relative"], move: [], remove: [], diff: "" } }, "argument-shape");
+    bad(Tools, { id: "harness.files", args: { write: [target], move: [], diff: "" } }, "argument-shape");
     const original = { id: "files.write", args: { path: target, text: "old" } };
     const narrowed = Tools.refine(original);
     original.args.text = "changed";
@@ -247,6 +259,8 @@ world(() => {
     control("wire-name-bound-low", "{1,64}", "{1,63}", names);
     control("wire-name-bound-high", "{1,64}", "{1,65}", names);
     control("wire-name-spelling", 'id.replaceAll(".", "_")', "id", names);
+    control("unconfined-row", "proposer: \"harness\", unconfined: true,", "proposer: \"harness\",", unconfined);
+    control("unconfined-flag", "unconfined: row.unconfined === true", "unconfined: false", unconfined);
     control("immutable-call", "call: freeze(structuredClone(call))", "call: structuredClone(call)", frozen);
     console.log("test-jarvis-tools: ok calls=" + cases.length + " controls=" + controls);
 });

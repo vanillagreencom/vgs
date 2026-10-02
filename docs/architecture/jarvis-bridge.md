@@ -12,7 +12,7 @@ Covers: shell/plugins/vgs.jarvis/backend/ToolBridge.js, shell/plugins/vgs.jarvis
 - `mcp-shim` authenticates and relays bytes. It parses no MCP.
 - `Private.directory` owns the private-directory rule for the bridge's runtime directory and the [audit store](jarvis-audit.md#privacy-and-storage).
 - `Tools.wireNames` owns the model-facing tool name. The [wire brains](jarvis-brain.md#driver-contract) and the bridge use the same spelling.
-- The daemon opens no session. The [Claude Code harness](jarvis-claude.md) opens one per conversation, writes the launch contract into a private MCP configuration file and closes the session with the conversation. J30 and J31 do the same for their harnesses.
+- The daemon opens no session itself. A harness brain opens one per conversation, writes the launch contract into the harness's MCP configuration and closes it when the conversation ends: the [Claude Code harness](jarvis-claude.md) through a private MCP configuration file, [the Codex harness](jarvis-codex.md#the-program) through its thread's configuration. J30 owns the other.
 
 ## Launch contract
 

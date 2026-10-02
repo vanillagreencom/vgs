@@ -24,6 +24,8 @@ const workspaceId = { type: "integer", minimum: 1, maximum: 2147483647 };
 const specialName = { type: "string", pattern: "^[A-Za-z0-9_-]+$(?![\\s\\S])" };
 const reference = { type: "string", pattern: "^@e[1-9][0-9]*$(?![\\s\\S])" };
 const objectValue = { type: "object" };
+const absolutes = { type: "array", minItems: 0, items: absolute };
+const anyText = { type: "string", minLength: 0, pattern: "^[^\\u0000]*$" };
 
 // Each row owns its argument shape, effect, executor, requirement and output
 // source. Executors may add a row only with a test and a real consumer.
@@ -74,7 +76,12 @@ const TABLE = {
     "vision.window": { sentence: "Read window {window}", effect: "read", executor: "vision", command: "grim", schema: { window: windowId }, source: "screen" },
     "vision.region": { sentence: "Read screen region {x}, {y}, {width} by {height}", effect: "read", executor: "vision", command: "grim", schema: { x: integer, y: integer, width: positive, height: positive }, source: "screen" },
     "task.start": { sentence: "Start task {goal} in {cwd}, agent {agent}, account {account}", effect: "exec", executor: "task", command: null, schema: { goal: text, cwd: absolute, agent: text, account: text }, optional: ["agent", "account"], paths: [["cwd", "workspace"]], source: "agent" },
-    "browser": { sentence: "Browser {command} with {args}", executor: "browser", command: "agent-browser", schema: { command: text, args: objectValue } }
+    "browser": { sentence: "Browser {command} with {args}", executor: "browser", command: "agent-browser", schema: { command: text, args: objectValue } },
+    // Proposed by a harness brain's own program through its approval
+    // requests, never offered as a tool. The program performs the action
+    // after the gate admits it, so a command it runs is outside Sandbox.js.
+    "harness.files": { sentence: "Let the brain's program change files. Write {write}, move {move}, remove {remove}:\n{diff}", effect: "persistent", executor: "harness", command: null, proposer: "harness", schema: { write: absolutes, move: absolutes, remove: absolutes, diff: anyText }, paths: [["write", "write"], ["move", "move"], ["remove", "remove"]] },
+    "harness.command": { sentence: "Let the brain's program run outside the sandbox: {command}\nin {cwd}", effect: "exec", executor: "harness", command: null, proposer: "harness", unconfined: true, schema: { command: text, cwd: absolute }, paths: [["cwd", "workspace"]] }
 };
 
 // No raw vendor flags or arbitrary arguments cross this boundary. The browser
@@ -164,7 +171,8 @@ function refine(call) {
         if (call.args.network) effect = "external";
     }
     return { kind: "call", call: freeze(structuredClone(call)), effect, executor: row.executor,
-        command: row.command, alternatives: row.alternatives || [], paths: row.paths || [], input: refined.input || null, source: refined.source || null };
+        command: row.command, alternatives: row.alternatives || [], paths: row.paths || [], input: refined.input || null, source: refined.source || null,
+        unconfined: row.unconfined === true };
 }
 
 // The one model-facing spelling of a tool id, shared by the wire brains and

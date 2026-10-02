@@ -75,6 +75,7 @@ The OpenAI-compatible rows below use the pinned schema's bearer `ApiKeyAuth`. Th
 
 - Local servers use the numeric loopback address that `net.endpoint` pins for `localhost`.
 - A custom base URL is HTTP or HTTPS without credentials, a query or a fragment. No documentation states a custom server's image input, so its images take J50's OCR route. A key on a plaintext non-loopback base is refused by net.
+- The table also holds the `codex` row of [the Codex harness](jarvis-codex.md): driver `codex-app-server`, key `none`, no images, no no-store fields and no cited retention source. Its base names the release recipient; no wire driver serves it.
 - xAI marks Chat Completions deprecated ([plan research § 2.4](../plans/v2-jarvis-plan-research.md#24-inference-what-may-run-on-a-subscription)), so it has no row.
 - The retention text in each row is what a future Settings page shows. OpenAI's API data is not used for training, and abuse logs stay up to 30 days. OpenRouter stores no prompts unless the account opts in. Groq retains none by default and logs up to 30 days for reliability or abuse. Cerebras retains no inference inputs or outputs. Mistral keeps 30 rolling days for abuse monitoring. Gemini's paid tier logs for a limited period for abuse; its unpaid quota is used to improve products.
 

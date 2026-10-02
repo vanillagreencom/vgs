@@ -144,7 +144,7 @@ async function mutant(relative, name, needle, replacement, check) {
     fs.mkdirSync(path.join(folder, "tui"));
     for (const file of ["AccountProviders.js", "backend/Accounts.js", "backend/Secrets.js", "backend/accounts.js", "tui/accounts.sh",
         "backend/net.js", "backend/Policy.js", "backend/Audit.js", "backend/Private.js", "backend/Redact.js", "backend/Tools.js",
-        "backend/ClaudeCode.js"])
+        "backend/ClaudeCode.js", "backend/Providers.js", "backend/CodexHarness.js", "backend/CodexAppServer.js"])
         fs.copyFileSync(path.join(plugin, file), path.join(folder, file));
     fs.writeFileSync(path.join(folder, relative), changed);
     try { await assert.rejects(async () => check(folder), assert.AssertionError, name + " must turn red"); }

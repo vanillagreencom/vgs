@@ -8,7 +8,8 @@ const Net = require("./net.js");
 const LOCAL = Object.freeze({ text: "A loopback server: nothing leaves the machine.", source: null });
 
 // key: "required" for a cloud account, "optional" where the server's operator
-// may switch authentication on. noStore: request fields that keep the
+// may switch authentication on, "none" for a harness program that owns its
+// login. noStore: request fields that keep the
 // provider from storing the exchange, merged into every request body.
 // images: the endpoint documents image content parts with base64 data.
 const ROWS = Object.freeze({
@@ -52,6 +53,11 @@ const ROWS = Object.freeze({
         noStore: null, retention: LOCAL },
     "lm-studio": { driver: "openai-chat", base: "http://127.0.0.1:1234/v1", key: "optional", images: true,
         noStore: null, retention: LOCAL },
+    // The Codex harness: the vendor's program owns its login and sockets.
+    // base is the release recipient's origin, chatgpt_base_url's host in
+    // codex-cli 0.160.0; Jarvis opens no socket to it.
+    codex: { driver: "codex-app-server", base: "https://chatgpt.com", key: "none", images: false,
+        noStore: null, retention: { text: "Set by the OpenAI account Codex signs in with; Jarvis cannot read its data controls.", source: null } },
     // A user's own server: no documentation states its image support or
     // retention, so images go to OCR text and the operator owns retention.
     custom: { driver: "openai-chat", base: null, key: "optional", images: false,

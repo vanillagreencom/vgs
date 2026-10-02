@@ -18,11 +18,13 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 
 ## Call contract
 
-`Tools.refine({ id, args })` returns `{ kind: "call", call, effect, executor, command, paths, input, source }` or `{ kind: "refuse", reason }`. `call` is a copied snapshot. Extra or missing required keys and invalid argument types refuse. Optional task account and agent selections do not grant authority.
+`Tools.refine({ id, args })` returns `{ kind: "call", call, effect, executor, command, paths, input, source, unconfined }` or `{ kind: "refuse", reason }`. `call` is a copied snapshot. Extra or missing required keys and invalid argument types refuse. Optional task account and agent selections do not grant authority.
 
 `Tools.TABLE` holds closed JSON Schema object descriptors, typed sentence templates, effects, executor ids and required commands. `Tools.BROWSER` holds the browser subcommands. They are frozen data. Refined call snapshots are frozen too. The table supports the schema types it declares, not an arbitrary schema supplied by a model. The [tool bridge](jarvis-bridge.md#calls-and-results) offers these same descriptors as each tool's `inputSchema` instead of writing a second schema.
 
 Browser arguments are named fields, not vendor argv. Unknown commands and extra flags refuse. Action references use snapshot element ids, not flags or arbitrary selectors. URLs admit HTTP and HTTPS without userinfo. This prevents a caller from selecting a host browser profile or passing browser security overrides. [The browser owner](jarvis-browser.md) supplies the private session and vendor action policy.
+
+Two rows are proposed by a harness program through its approval requests, never by a model: `harness.files` lists the written, moved and removed paths and the diff, and `harness.command` holds a command the program runs itself. Policy judges every path in a listed field through Denied. `harness.command` is `unconfined`: it runs outside Sandbox.js, so it refuses as `unconfined-command` unless the profile is trusted, where it is destructive and needs physical confirmation, as text typed at a terminal does. The [Codex harness](jarvis-codex.md#approvals) routes them.
 
 The exact read-only argv table belongs to `Tools.js`. Extra options, an absolute executable path, wrappers and shell lines do not inherit that classification. Requested command networking makes the effect `external`. J49 must use fixed system implementations, never a caller-controlled PATH substitute, for those read-only argv. J23 must confine even a read-only command.
 

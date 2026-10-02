@@ -251,12 +251,12 @@ async function pointerAuthority(makeInput, refined) {
             runner.dispatch({ type: "talk-down" }); transcript("final", "fixture");
             const [id, args] = action;
             assert.equal(refined(id, args).id, id);
-            const proposed = router.route({ id: "pointer", tool: id, arguments: args }, { gen: runner.state.gen, op: runner.state.turn.op });
+            const proposed = router.route({ kind: "tool-call", id: "pointer", tool: id, arguments: args }, { gen: runner.state.gen, op: runner.state.turn.op });
             assert.equal((await proposed).kind, "proposed");
             if (!finalOnly) {
                 await input.held;
                 assert.equal(runner.state.action.kind, "running", "preparation retains its serial action");
-                assert.equal(router.route({ id: "other", tool: id, arguments: args }, { gen: runner.state.gen, op: runner.state.turn.op }).reason, "busy");
+                assert.equal(router.route({ kind: "tool-call", id: "other", tool: id, arguments: args }, { gen: runner.state.gen, op: runner.state.turn.op }).reason, "busy");
                 changeState(); input.release();
             }
             await completed;
@@ -302,7 +302,7 @@ async function routerEvidence() {
             observe: () => new Promise(resolve => { answer = resolve; }), start: (call, done) => { starts.push(call); done({ outcome: "completed", content: "fixture" }); } });
         runner.dispatch({ type: "snapshot", engine: "chained", locked: false, configured: true, settings: {} }); runner.dispatch({ type: "indicator", shown: true });
         runner.dispatch({ type: "talk-down" }); transcript("final", "fixture user");
-        const route = () => router.route({ id: "input-call", tool: "input.text", arguments: { text: "literal" } }, { gen: runner.state.gen, op: runner.state.turn.op });
+        const route = () => router.route({ kind: "tool-call", id: "input-call", tool: "input.text", arguments: { text: "literal" } }, { gen: runner.state.gen, op: runner.state.turn.op });
         return { runner, router, starts, route, resolve: () => answer({ target: { kind: "application", id: "editor" }, text: { effective: [] } }), advance: n => { at += n; } };
     }
     const h = make(); const observed = h.route(); assert.equal(h.route().reason, "busy");

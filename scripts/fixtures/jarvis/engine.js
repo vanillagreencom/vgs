@@ -111,12 +111,13 @@ function adapter(net, recipients) {
 }
 
 // A disposable plugin copy whose speech table holds the scripted row. Extra
-// edits plant one defect each; every edit asserts its single match.
-function copy(root, edits = []) {
+// edits plant one defect each; every edit asserts its single match. from
+// is the plugin folder copied: the tracked plugin, or a suite's own copy.
+function copy(root, edits = [], from = plugin) {
     const folder = fs.mkdtempSync(path.join(root, "engine-"));
-    fs.cpSync(path.join(plugin, "backend"), path.join(folder, "backend"), { recursive: true });
+    fs.cpSync(path.join(from, "backend"), path.join(folder, "backend"), { recursive: true });
     for (const name of ["AccountProviders.js", "Session.js", "JarvisProtocol.js"])
-        fs.copyFileSync(path.join(plugin, name), path.join(folder, name));
+        fs.copyFileSync(path.join(from, name), path.join(folder, name));
     const file = path.join(folder, "backend/ChainedEngine.js");
     const source = fs.readFileSync(file, "utf8");
     let changed = source;

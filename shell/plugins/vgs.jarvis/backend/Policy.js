@@ -164,10 +164,18 @@ function decide(call, context) {
     for (const [field, role] of refined.paths) {
         if (!context.denied || typeof context.denied.inspect !== "function")
             return { kind: "refuse", reason: "path-context" };
-        const target = context.denied.inspect(refined.call.args[field], role);
-        if (target.kind === "refuse") return target;
-        if (target.execution || role === "remove" || (role === "write" && target.exists))
-            effect = "destructive";
+        // A field holds one path, or a list a harness program proposes at once.
+        for (const file of [refined.call.args[field]].flat()) {
+            const target = context.denied.inspect(file, role);
+            if (target.kind === "refuse") return target;
+            if (target.execution || role === "remove" || (role === "write" && target.exists))
+                effect = "destructive";
+        }
+    }
+    // A program's own command escapes Sandbox.js, as text typed at a terminal does.
+    if (refined.unconfined) {
+        if (context.profile === "trusted") effect = "destructive";
+        else return { kind: "refuse", reason: "unconfined-command" };
     }
     let scope = null;
     if (refined.input !== null) {

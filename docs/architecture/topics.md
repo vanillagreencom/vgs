@@ -17,6 +17,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [jarvis.md](jarvis.md): read before implementing a Jarvis plan consumer of a landed core contract.
 - [jarvis-local.md](jarvis-local.md): read before changing local speech artifacts, model input bounds, fixture outcomes or the measurement instrument.
 - [jarvis-policy.md](jarvis-policy.md): read before touching the Jarvis action judge, tool schemas, protected paths or turn taint.
+- [jarvis-codex.md](jarvis-codex.md): read before touching the Codex harness brain, its app-server judge, a harness program's approvals or Codex Verify.
 - [notification-actions.md](notification-actions.md): read before touching what a click on a notification does, which window it raises, or which notifications the service keeps holding for the inbox.
 - [notification-senders.md](notification-senders.md): read before touching a notification rule's senders, a browser's site address, the copies of one message, or the Slack photo cache and its tokens.
 - [notification-slack-cache.md](notification-slack-cache.md): read before touching how Slack's disk cache is read, the workspace icon copy or the Slack custom emoji.

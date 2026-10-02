@@ -178,6 +178,24 @@ world(() => {
     // A dangling link is refused, not classified as an absent write.
     refuse(Policy, call("files.write", { path: linkedProfile, text: "" }), context, "path-resolution");
 
+    // A harness program's proposal names each path; every entry is judged.
+    const harnessFiles = (write, move = [], remove = []) => call("harness.files", { write, move, remove, diff: "" });
+    const harnessCommand = call("harness.command", { command: "ls -la", cwd: project });
+    const harnessCases = logic => {
+        for (const [profile] of profiles) {
+            assert.deepEqual(logic.decide(harnessFiles([newFile]), { ...context, profile }),
+                expected("persistent", profile === "cautious" ? "confirm" : "allow"));
+            for (const action of [harnessFiles([newFile, existing]), harnessFiles([], [], [newFile]),
+                harnessFiles([newFile, path.join(home, ".bashrc")])])
+                assert.deepEqual(logic.decide(action, { ...context, profile }), expected("destructive", "physical"));
+            refuse(logic, harnessFiles([newFile, path.join(home, ".ssh", "absent")]), { ...context, profile }, "protected-path");
+            if (profile === "trusted")
+                assert.deepEqual(logic.decide(harnessCommand, { ...context, profile }), expected("destructive", "physical"));
+            else refuse(logic, harnessCommand, { ...context, profile }, "unconfined-command");
+        }
+    };
+    harnessCases(Policy);
+
     let controls = 0;
     function control(name, needle, replacement, assertion) {
         mutant(file, name, needle, replacement, assertion);
@@ -290,8 +308,14 @@ world(() => {
                 refuse(logic, action, { ...context, profile: "trusted",
                     input: { ...terminal, key }, grants: ["terminal:org.example.Terminal"] }, "terminal-input");
         });
-    control("terminal-physical", 'effect = "destructive";\n        }', 'effect = "input";\n        }',
+    control("terminal-physical", 'effect = "destructive";\n        }\n        if (refined.input === "text") {',
+        'effect = "input";\n        }\n        if (refined.input === "text") {',
         logic => assert.deepEqual(logic.decide(effects.input, { ...context, profile: "trusted", input: terminal }), expected("destructive", "physical")));
+    control("path-list", "[refined.call.args[field]].flat()", "[[refined.call.args[field]].flat()[0]]", harnessCases);
+    control("unconfined-refusal", 'if (context.profile === "trusted") effect = "destructive";',
+        'if (true) effect = "destructive";', harnessCases);
+    control("unconfined-physical", 'if (context.profile === "trusted") effect = "destructive";',
+        'if (context.profile === "trusted") effect = effect;', harnessCases);
     control("grant-context", 'return { kind: "refuse", reason: "input-grants" };',
         'return { kind: "allow", effect: "input" };',
         logic => refuse(logic, effects.input, { ...context, grants: null }, "input-grants"));
@@ -360,11 +384,15 @@ world(() => {
         ["files.move", { from: existing, to: path.join(home, ".ssh", "absent") }, "to", "write"],
         ["shell.argv", { argv: ["pwd"], cwd: path.join(home, ".ssh"), network: false }, "cwd", "workspace"],
         ["shell.line", { line: "pwd", cwd: path.join(home, ".ssh"), network: false }, "cwd", "workspace"],
-        ["task.start", { goal: "synthetic", cwd: path.join(home, ".ssh") }, "cwd", "workspace"]
+        ["task.start", { goal: "synthetic", cwd: path.join(home, ".ssh") }, "cwd", "workspace"],
+        ["harness.files", { write: [newFile, path.join(home, ".ssh", "absent")], move: [], remove: [], diff: "" }, "write", "write"],
+        ["harness.files", { write: [], move: [path.join(home, ".ssh")], remove: [], diff: "" }, "move", "move"],
+        ["harness.files", { write: [], move: [], remove: [path.join(home, ".ssh")], diff: "" }, "remove", "remove"],
+        ["harness.command", { command: "ls", cwd: path.join(home, ".ssh") }, "cwd", "workspace"]
     ]) {
         const line = toolsSource.split("\n").find(line => line.trim().startsWith(`"${id}": {`));
         const needle = `["${field}", "${role}"]`;
-        const replacement = id === "files.move" ? line.replace(needle, "").replace("[,", "[").replace(", ]", "]") : line.replace(needle, "");
+        const replacement = line.replace(needle, "").replace(", , ", ", ").replace("[, ", "[").replace(", ]", "]");
         mutant(toolsFile, "path-role-" + id + "-" + field, line, replacement,
             logic => refuse(logic, call(id, args), context, "protected-path"), "Policy.js");
         controls++;

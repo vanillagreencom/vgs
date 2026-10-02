@@ -4,11 +4,13 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const cp = require("node:child_process");
 const { Secrets, childEnvironment } = require("./Secrets.js");
-const { PROVIDERS, keyPresence, keyProvider } = require("../AccountProviders.js");
+const { PROVIDERS, keyPresence, keyProvider, runtimeDirectory } = require("../AccountProviders.js");
 const Net = require("./net.js");
 const Policy = require("./Policy.js");
 const Audit = require("./Audit.js");
 const ClaudeCode = require("./ClaudeCode.js");
+const Providers = require("./Providers.js");
+const CodexHarness = require("./CodexHarness.js");
 const MAX_ENTRIES = 200;
 const MAX_ROWS = 32; // The core's presenceList and choices ceiling.
 const MAX_BYTES = 64 * 1024;
@@ -17,6 +19,8 @@ const PROBE_TEXT = "Reply OK.";
 const PROBE_MS = 30000;
 // The harness probe's whole system prompt, so the probe stays one short turn.
 const HARNESS_INSTRUCTIONS = "Answer in one word.";
+// Subscriptions whose vendor program the chained engine can run as the brain.
+const HARNESS_BRAINS = Object.freeze(["codex"]);
 
 function fail(reason) { throw new Error("jarvis-accounts: " + reason); }
 function printable(value, max) {
@@ -113,11 +117,14 @@ function login(row, result) {
  * One account judge. discovery holds metadata only; Verify never runs from
  * discovery and is not persisted. A future network-door consumer supplies
  * request(account), which must return an actual inference result.
+ * runtimeDirectory is the daemon's, from AccountProviders.runtimeDirectory;
+ * a subscription's Verify runs its program there and refuses without one.
  */
 class Accounts {
-    constructor(stateDirectory, env, presence = keyPresence(name => env[name])) {
+    constructor(stateDirectory, env, presence = keyPresence(name => env[name]), runtime = runtimeDirectory(env.XDG_RUNTIME_DIR)) {
         directory(stateDirectory);
         this.directory = stateDirectory;
+        this.runtime = runtime;
         this.file = path.join(stateDirectory, "accounts.json");
         this.env = childEnvironment(env);
         this.home = env.HOME;
@@ -352,16 +359,24 @@ class Accounts {
 
     /**
      * The daemon's brain selection: a saved Brain account id among keyring
-     * references and local servers, with the declaration's Verify probe
-     * model. It runs no vendor command and reads no port, so it proves
-     * neither login nor a listening server. A subscription, a speech-only
-     * key, an unsupported label or an unknown id is null.
+     * references, local servers and subscription directories with a harness
+     * handoff, with the declaration's Verify probe model; a subscription's
+     * model is "", its program's own default. It runs no vendor command and
+     * reads no port, so it proves neither login nor a listening server. A
+     * subscription without a handoff, a speech-only key, an unsupported label
+     * or an unknown id is null.
      */
     resolve(id) {
         for (const { row, label, source } of [...this.keyringRows(), ...this.localRows()]) {
             if (this.account(row, label, { kind: "found" }, source).id !== id) continue;
             if ((source.kind === "keyring" && !keyProvider(row)) || !brainRow(row)) return null;
             return { id, provider: row.id, label, source, model: row.probe.model };
+        }
+        for (const candidate of this.candidates()) {
+            if (identity("cli", [candidate.provider, candidate.directory]) !== id) continue;
+            if (!HARNESS_BRAINS.includes(candidate.provider)) return null;
+            return { id, provider: candidate.provider, label: candidate.label.slice(0, 60),
+                source: { kind: "cli", directory: candidate.directory }, model: "" };
         }
         return null;
     }
@@ -394,7 +409,7 @@ class Accounts {
             const keyed = /^jarvis-accounts: verify=([a-z0-9-]+)$/.exec(error.message);
             const network = /^jarvis: net=([a-z0-9-]+)$/.exec(error.message);
             const secret = /^jarvis-keys: secret-tool=([a-z-]+)$/.exec(error.message);
-            const harness = /^jarvis: brain=(harness-[a-z0-9-]+)(?: |$)/.exec(error.message);
+            const harness = /^jarvis: brain=((?:harness|codex)-[a-z0-9-]+)(?: |$)/.exec(error.message);
             state = { kind: "unavailable", reason: keyed ? keyed[1] : network ? "network-" + network[1] : secret ? "key-" + secret[1]
                 : harness ? harness[1] : typeof request === "function" ? "verification-failed" : "verification-request-unavailable" };
         }
@@ -408,23 +423,32 @@ class Accounts {
      * One minimal inference request, after the user's explicit Verify. An API
      * or local route sends one non-streaming HTTP request through the outbound
      * door. A subscription never takes that route: its vendor program owns the
-     * login, so the mediated harness handoff runs it, and only Claude Code has
-     * one. Both pass the same release and pre-transfer audit record.
+     * login, so the mediated harness handoff runs it, and Claude Code and Codex each have
+     * one. Every route passes the same pass the same release and pre-transfer audit record.
      */
     async inference(account, requestedModel = "") {
         const row = provider(account.provider);
         if (account.source.kind === "cli") {
-            if (row.id !== "claude") fail("verify=subscription-handoff-unavailable");
             const model = modelOf(requestedModel); // Refused before any audit record.
             // Checked again, link-free, before the vendor program starts.
             if (directory(account.source.directory).kind !== "directory") fail("verify=account-directory");
-            if (!this.env.XDG_RUNTIME_DIR) fail("verify=runtime-directory");
-            return this.released(account, row.id, row.origin, PROBE_TEXT, release => ClaudeCode.verify({
-                directory: account.source.directory, model, recipients: release.selected, item: release.item,
-                grants: release.grants, parent: path.join(this.env.XDG_RUNTIME_DIR, "vgs/jarvis"),
-                environment: this.env, instructions: HARNESS_INSTRUCTIONS, deadline: PROBE_MS,
-                start: events => release.start(() => events.next())
-            }).then(text => text.trim() !== ""));
+            if (this.runtime === "") fail("verify=runtime-directory");
+            switch (row.id) {
+            case "claude":
+                return this.released(account, row.id, row.origin, PROBE_TEXT, release => ClaudeCode.verify({
+                    directory: account.source.directory, model, recipients: release.selected, item: release.item,
+                    grants: release.grants, parent: this.runtime,
+                    environment: this.env, instructions: HARNESS_INSTRUCTIONS, deadline: PROBE_MS,
+                    start: events => release.start(() => events.next())
+                }).then(text => text.trim() !== ""));
+            case "codex":
+                // The probe resolves only with the program's nonempty reply.
+                return this.released(account, row.id, Providers.select(row.id).base, PROBE_TEXT, release =>
+                    release.start(() => CodexHarness.probe({ directory: account.source.directory, env: this.env,
+                        runtime: this.runtime, model, text: release.item.content })).then(() => true));
+            default:
+                fail("verify=subscription-handoff-unavailable");
+            }
         }
         if (account.source.kind === "variable") fail("verify=key-reference-required");
         if (!row.probe) fail("verify=speech-inference-unavailable");

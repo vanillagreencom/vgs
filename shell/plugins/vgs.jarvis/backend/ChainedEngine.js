@@ -12,12 +12,14 @@ const Guidance = require("./Guidance.js");
 const Speakable = require("./Speakable.js");
 const OpenAIChat = require("./OpenAIChat.js");
 const AnthropicMessages = require("./AnthropicMessages.js");
+const CodexHarness = require("./CodexHarness.js");
 
 // Speech adapter rows in selection order. A row is {select({settings,
 // accounts})} answering {kind:"ready", recipients, open({net, recipients})}
 // or {kind:"unconfigured", cause}. The local and ElevenLabs rows add theirs.
 const SPEECH = Object.freeze({});
-const DRIVERS = Object.freeze({ "openai-chat": OpenAIChat, "anthropic-messages": AnthropicMessages });
+const DRIVERS = Object.freeze({ "openai-chat": OpenAIChat, "anthropic-messages": AnthropicMessages,
+    "codex-app-server": CodexHarness });
 // The hello carries no language setting; empty selects English.
 const LANGUAGE = "";
 // Object-mode chunks queued toward Audio, below its playback allowance.
@@ -73,25 +75,28 @@ function select(settings, accounts) {
         return unconfigured("brain=accounts-unreadable", error.message);
     }
     if (account === null) return unconfigured("brain=account-unavailable");
-    if (account.model === "") return unconfigured("brain=model-required");
+    // A subscription's program chooses its own default model.
+    if (account.model === "" && account.source.kind !== "cli") return unconfigured("brain=model-required");
     const provider = Providers.select(account.provider);
     if (!Object.hasOwn(DRIVERS, provider.driver)) fail("driver");
     const target = Net.endpoint(provider.base);
-    return { kind: "ready", speech, brain: { provider, model: account.model,
+    return { kind: "ready", speech, brain: { provider, model: account.model, account: account.source,
         key: account.source.kind === "keyring" ? { secrets: judge.secrets, reference: account.source.reference } : null,
         recipient: { kind: "network", provider: provider.id, account: account.id, origin: target.origin },
         guidance: Guidance.compose("chained", target.loopback ? "local" : "text", LANGUAGE) } };
 }
 
 /**
- * create({session, state, audit, router, accounts, policy, fault}) owns the
- * daemon's chained conversations. session is the Session judge and state
+ * create({session, state, audit, router, accounts, policy, fault, harness})
+ * owns the daemon's chained conversations. session is the Session judge and state
  * returns its current record; audit is the daemon's writer; router supplies
  * offer, route, observe and interrupted; accounts returns an Accounts judge;
  * policy returns {profile, cloudVision}; fault reports a speech failure that
- * no capture or turn remains to carry.
+ * no capture or turn remains to carry. harness is {bridge, gate, env, runtime}
+ * for a harness brain: the tool bridge, the HarnessGate, the environment its
+ * program is started from and a function answering the runtime directory.
  */
-function create({ session, state, audit, router, accounts, policy, fault }) {
+function create({ session, state, audit, router, accounts, policy, fault, harness = null }) {
     let plan = unconfigured("engine=starting");
     let conversation = null;
     let retired = null;
@@ -406,7 +411,8 @@ function create({ session, state, audit, router, accounts, policy, fault }) {
             const c = current(e.gen);
             if (c.brain === null) {
                 c.brain = DRIVERS[c.plan.brain.provider.driver].create({ provider: c.plan.brain.provider,
-                    model: c.plan.brain.model, net: c.net, recipients: c.recipients, key: c.plan.brain.key });
+                    model: c.plan.brain.model, net: c.net, recipients: c.recipients, key: c.plan.brain.key,
+                    account: c.plan.brain.account, gen: c.gen, harness });
                 c.brain.start({ instructions: c.plan.brain.guidance.instructions, tools: router.offer() });
                 c.owner = e.owner;
             } else if (c.owner !== e.owner) fail("brain-owner");

@@ -28,6 +28,13 @@ var PROVIDERS = [
         probe: { driver: "chat", path: "/v1/chat/completions", model: "", limit: "max_tokens" } }
 ];
 
+// The daemon's runtime directory under the session's XDG_RUNTIME_DIR, empty
+// without one. The service hands it to the daemon in hello and the account
+// helper to Verify's harness handoff, so both place Codex in one directory.
+function runtimeDirectory(base) {
+    return base ? base + "/vgs/jarvis" : "";
+}
+
 // Only booleans cross into the helper. No key value enters its environment.
 function keyProvider(row) {
     return row.kind === "key" || row.kind === "speech-key";
@@ -98,5 +105,5 @@ function probeFailure(completion, diagnostic) {
     }
 }
 
-if (typeof module !== "undefined") module.exports = { PROVIDERS: PROVIDERS, keyPresence: keyPresence,
-    keyProvider: keyProvider, feedDiagnostic: feedDiagnostic, helperFailure: helperFailure, probeFailure: probeFailure };
+if (typeof module !== "undefined") module.exports = { PROVIDERS: PROVIDERS, runtimeDirectory: runtimeDirectory,
+    keyPresence: keyPresence, keyProvider: keyProvider, feedDiagnostic: feedDiagnostic, helperFailure: helperFailure, probeFailure: probeFailure };

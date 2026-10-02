@@ -480,6 +480,60 @@ async function inside() {
     await assert.rejects(() => desktopDriver(desktopDriverFile, driverRoot), assert.AssertionError,
         "an engine port replacement must not discard the driver's result sink");
     controls++;
+    // The shipped daemon judges a Codex file change's paths through Denied: a
+    // protected root refuses and a workspace path reaches its proposal. A
+    // snapshot that cannot be built refuses as path-context with one keyed line.
+    const deniedResults = path.join(root, "denied-results");
+    const deniedCheck = async (file, expected, error = "") => {
+        fs.mkdirSync(deniedResults, { recursive: true });
+        fs.rmSync(path.join(deniedResults, "results.jsonl"), { force: true });
+        const routed = id => fs.existsSync(path.join(deniedResults, "results.jsonl"))
+            ? fs.readFileSync(path.join(deniedResults, "results.jsonl"), "utf8").trim().split("\n").map(JSON.parse)
+                .find(row => row.id === id && row.route !== undefined) : undefined;
+        await conversation(file, async w => {
+            for (const [id, target] of [["protected", path.join(process.env.HOME, ".ssh/id_fixture")],
+                ["workspace", path.join(process.env.HOME, "project/new")]]) {
+                fs.writeFileSync(path.join(deniedResults, "call.json"), JSON.stringify({ id, kind: "approval",
+                    tool: "harness.files", arguments: { write: [target], move: [], remove: [], diff: "+fixture\n" } }));
+                await w.wait(() => routed(id) !== undefined);
+            }
+            assert.deepEqual(["protected", "workspace"].map(routed), expected);
+        }, "hold", 0, error);
+    };
+    const deniedDaemon = daemonCopy("denied-driver");
+    instrument(deniedDaemon, path.join(root, "denied-gates"));
+    instrumentDesktop(deniedDaemon, deniedResults);
+    await deniedCheck(deniedDaemon, [{ id: "protected", route: "refuse", reason: "protected-path" },
+        { id: "workspace", route: "proposed" }]);
+    const unbuilt = [{ id: "protected", route: "refuse", reason: "path-context" },
+        { id: "workspace", route: "refuse", reason: "path-context" }];
+    // A linked configuration root fails the account scan that feeds Denied;
+    // each of the two judgements logs its keyed line.
+    const configRoot = path.join(process.env.HOME, ".config");
+    assert.equal(fs.existsSync(configRoot), false, "the scratch home has no configuration root");
+    const unbuiltCheck = async file => {
+        fs.symlinkSync(path.join(process.env.HOME, "absent-config"), configRoot);
+        try {
+            await deniedCheck(file, unbuilt, Array(2).fill("jarvis: denied=unavailable cause=directory=link").join("\n"));
+        } finally { fs.rmSync(configRoot); }
+    };
+    await unbuiltCheck(deniedDaemon);
+    for (const [name, needle, replacement, check] of [
+        ["denied-wired", "denied: protectedRoots() }),", "denied: null }),", file => deniedCheck(file,
+            [{ id: "protected", route: "refuse", reason: "protected-path" }, { id: "workspace", route: "proposed" }])],
+        ["denied-refuses", "            return null;\n        }\n    }\n\n    // hyprctl",
+            "            throw error;\n        }\n    }\n\n    // hyprctl", unbuiltCheck]
+    ]) {
+        const file = daemonCopy("denied-" + name);
+        const before = fs.readFileSync(file, "utf8");
+        assert.equal(before.split(needle).length - 1, 1, name + " match");
+        fs.writeFileSync(file, before.replace(needle, replacement));
+        instrument(file, path.join(root, "denied-gates"));
+        instrumentDesktop(file, deniedResults);
+        await assert.rejects(() => check(file), assert.AssertionError, name + " must turn red");
+        controls++;
+        console.log("test-jarvis-daemon: control=" + name + " detected");
+    }
     const count = kind => fs.readFileSync(path.join(gates, "effects.jsonl"), "utf8").trim().split("\n")
         .filter(line => JSON.parse(line).kind === kind).length;
     const gate = name => fs.writeFileSync(path.join(gates, name), "");
@@ -511,7 +565,12 @@ async function inside() {
         await assert.rejects(() => mappedCheck(copy), assert.AssertionError, name + " must turn red");
         controls++;
     }
-    const activeStop = async (file, phase) => conversation(file, async w => {
+    // Stop's settled frame: the flush acknowledgement publishes the idle
+    // playback after the flushing frame, so a reader waits for it.
+    const stopSettled = m => m.state.conversation.kind === "ended" && m.phase === "idle"
+        && m.state.playback.kind === "idle";
+    const stopGates = ["brain", "played", "late-brain", "late-played", "hold-flush", "flush"];
+    const activeStop = async (file, phase, settled = stopSettled) => conversation(file, async w => {
         w.send("talk-down");
         await w.wait(m => m.phase === "listening");
         w.send("talk-up");
@@ -524,8 +583,18 @@ async function inside() {
         const effect = phase === "thinking" ? "brain-cancel" : "playback-flush";
         const before = count(effect);
         const playback = count("playback-start");
+        // A speaking Stop holds its flush acknowledgement until the reader
+        // has seen the flushing frame, so that frame is always read first.
+        const hold = phase === "speaking";
+        if (hold) gate("hold-flush");
+        let released = false;
         w.send("stop");
-        const ended = await w.wait(m => m.state.conversation.kind === "ended" && m.phase === "idle");
+        const ended = await w.wait(m => {
+            if (hold && !released && m.state.playback.kind === "flushing") { released = true; gate("flush"); }
+            return settled(m);
+        });
+        fs.rmSync(path.join(gates, "hold-flush"), { force: true });
+        assert.equal(released, hold, "a speaking Stop publishes its flushing frame first");
         // The daemon publishes a state before it consumes that state's
         // effects, so the effect record can trail the frame read above.
         for (let attempts = 0; attempts < 200 && count(effect) === before; attempts++)
@@ -544,6 +613,13 @@ async function inside() {
         assert.equal(count("playback-start"), playback);
     });
     for (const phase of ["thinking", "speaking"]) await activeStop(scripted, phase);
+    // The first ended frame alone reads the held flushing frame.
+    await assert.rejects(() => activeStop(scripted, "speaking", m => m.state.conversation.kind === "ended" && m.phase === "idle"),
+        { name: "AssertionError", message: /'flushing' !== 'idle'/ }, "a Stop read before its flush settles must turn red");
+    for (const name of stopGates)
+        fs.rmSync(path.join(gates, name), { force: true });
+    controls++;
+    console.log("test-jarvis-daemon: control=stop-settled detected");
     const stopControl = daemonCopy("stop-routing");
     instrument(stopControl, gates);
     const dispatch = 'runner.dispatch({ type: message.intent === "mute" ? "mute-toggle" : message.intent });';
@@ -555,7 +631,7 @@ async function inside() {
     for (const phase of ["thinking", "speaking"]) {
         await assert.rejects(() => activeStop(stopControl, phase), assert.AssertionError,
             "Stop-to-talk-up must fail the same " + phase + " assertion");
-        for (const name of ["brain", "played", "late-brain", "late-played"])
+        for (const name of stopGates)
             fs.rmSync(path.join(gates, name), { force: true });
         controls++;
         console.log("test-jarvis-daemon: control=stop-to-talk-up phase=" + phase + " killed");

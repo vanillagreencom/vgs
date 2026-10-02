@@ -543,6 +543,9 @@ function selection(Engine) {
     assert.throws(() => Engine.create({ accounts: () => ({ resolve: () => { throw new TypeError("defect"); } }) })
         .configure({ brain: "a" }), TypeError, "a defect is not a configuration cause");
     assert.deepEqual(configure({}, () => resolved, true), { kind: "ready" });
+    // A subscription's program chooses its own model; its account names its directory.
+    assert.deepEqual(configure({}, () => ({ id: "c", provider: "codex", label: "default",
+        source: { kind: "cli", directory: "/home/fixture/.codex" }, model: "" }), true), { kind: "ready" });
 }
 
 world(async () => {
@@ -555,14 +558,17 @@ world(async () => {
     let controls = 0;
     try {
         selection(Fixture.copy(root).Engine);
-        for (const [name, needle] of [
+        for (const [name, needle, replacement = ""] of [
             ["speech-not-ready", 'if (speech.kind !== "ready") return speech;'],
             ["first-speech-cause", 'if (speech.cause === "speech=no-adapter") speech = answer;'],
             ["accounts-unreadable", 'return unconfigured("brain=accounts-unreadable", error.message);'],
             ["unselected", 'if (settings.brain === "") return unconfigured("brain=unselected");'],
             ["account-unavailable", 'if (account === null) return unconfigured("brain=account-unavailable");'],
-            ["model-required", 'if (account.model === "") return unconfigured("brain=model-required");']]) {
-            const { Engine } = Fixture.copy(root, [[needle, ""]]);
+            ["model-required", 'if (account.model === "" && account.source.kind !== "cli") return unconfigured("brain=model-required");'],
+            ["subscription-model", ' && account.source.kind !== "cli") return unconfigured("brain=model-required");',
+                ') return unconfigured("brain=model-required");'],
+            ["harness-driver", '    "codex-app-server": CodexHarness });', "    });"]]) {
+            const { Engine } = Fixture.copy(root, [[needle, replacement]]);
             assert.throws(() => selection(Engine), assert.AssertionError, name + " must turn red");
             console.log("control=" + name + " detected");
             controls++;

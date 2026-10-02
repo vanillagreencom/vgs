@@ -45,7 +45,7 @@ world(() => {
                 profile: options.profile ?? "standard", locked, denied: denied() }),
             audit, result: value => results.push(value) });
         Object.assign(ports, router.ports);
-        for (const executor of ["windows", "compositor", "files", "input", "sandbox", "browser"]) {
+        for (const executor of ["windows", "compositor", "files", "input", "sandbox", "browser", "harness"]) {
             if (executor === "browser" && options.browser) continue;
             router.register(executor, { commands: ["hyprctl", "wtype", "wlrctl", "bwrap", "agent-browser"],
                 timeoutMs: 1000, cancellable: true,
@@ -66,8 +66,8 @@ world(() => {
         function newTurn() { runner.dispatch({ type: "talk-down" }); transcript("final", "fixture user"); }
         newTurn();
         const dispatch = e => runner.dispatch(e);
-        const call = (tool, args = {}, identity = runner.state.turn) =>
-            router.route({ kind: "tool-call", id: "model-" + tool, tool, arguments: args }, { gen: identity.gen, op: identity.op });
+        const call = (tool, args = {}, identity = runner.state.turn, kind = "tool-call") =>
+            router.route({ kind, id: "model-" + tool, tool, arguments: args }, { gen: identity.gen, op: identity.op });
         const show = () => dispatch({ type: "shown", gen: runner.state.gen,
             op: runner.state.approval.op, id: runner.state.approval.id });
         const confirm = (extra = {}) => dispatch({ type: "confirm", gen: runner.state.gen,
@@ -507,13 +507,46 @@ world(() => {
             noExecutors.register("input", { commands: [], timeoutMs: 10, cancellable: false, start() {} });
             assert.deepEqual(noExecutors.offer(), [], "missing commands remove their tools");
         }],
+        ["harness-approval", implementation => {
+            const w = make(implementation);
+            const files = write => ({ write, move: [], remove: [], diff: "+fixture\n" });
+            const turn = w.runner.state.turn;
+            assert.equal(w.call("harness.files", files([path.join(fixtures.project, "new")]), turn, "approval").kind, "proposed");
+            assert.equal(w.starts.length, 1);
+            assert.equal(w.records[0].tool, "harness.files");
+            w.answers[0]({ outcome: "completed", content: "fixture applied" });
+            assert.equal(w.results.at(-1).outcome, "completed");
+            const existing = path.join(fixtures.project, "existing");
+            assert.equal(w.call("harness.files", files([existing]), turn, "approval").kind, "held");
+            assert.equal(w.runner.state.approval.physical, true, "an overwrite is destructive");
+            assert.match(w.runner.state.approval.text, /^Let the brain's program change files/);
+        }],
+        ["harness-kind", implementation => {
+            const w = make(implementation);
+            const files = { write: [path.join(fixtures.project, "new")], move: [], remove: [], diff: "" };
+            assert.equal(w.call("harness.files", files).reason, "unknown-tool", "a brain cannot propose a harness row");
+            assert.equal(w.call("files.write", { path: path.join(fixtures.project, "new"), text: "" },
+                w.runner.state.turn, "approval").reason, "unknown-tool", "an approval reaches only harness rows");
+            assert.equal(w.call("harness.permissions", {}, w.runner.state.turn, "approval").reason, "unknown-tool");
+            assert.equal(w.starts.length, 0);
+            assert.deepEqual(w.rows().slice(-3).map(row => [row.decision, row.outcome]),
+                [["refuse", "cancelled"], ["refuse", "cancelled"], ["refuse", "cancelled"]]);
+            assert.throws(() => w.router.route({ id: "x", tool: "windows.list", arguments: {} },
+                { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op }), /router=request-kind/);
+        }],
+        ["harness-offer", implementation => {
+            const w = make(implementation);
+            const ids = w.router.offer().map(row => row.id);
+            assert.ok(ids.includes("files.write"));
+            assert.deepEqual(ids.filter(id => id.startsWith("harness.")), []);
+        }],
         ["input-observer", implementation => {
             const w = make(implementation);
             const router = implementation.create({ session: Session, state: () => w.runner.state,
                 dispatch: () => {}, context: () => ({ profile: "standard", locked: false }),
                 audit: w.audit, result: value => w.results.push(value) });
             router.register("input", { commands: ["wtype"], timeoutMs: 10, cancellable: false, start() {} });
-            assert.equal(router.route({ id: "model", tool: "input.text", arguments: text },
+            assert.equal(router.route({ kind: "tool-call", id: "model", tool: "input.text", arguments: text },
                 { gen: w.runner.state.turn.gen, op: w.runner.state.turn.op }).reason, "input-target");
         }]
     ];
@@ -546,7 +579,11 @@ world(() => {
             ["unavailable-executor", 'if (value.executor === null) return refuse(value, "executor-unavailable");',
                 'if (false) return refuse(value, "executor-unavailable");', "unavailable-executor"],
             ["command-offer", "refined.command === null || executor.commands.includes(refined.command)",
-                "true", "offer"]
+                "true", "offer"],
+            ["harness-offer", "row.proposer === undefined && available(row) !== null", "available(row) !== null", "harness-offer"],
+            ["harness-kind", '(request.kind === "approval") !== (row !== null && row.proposer === "harness")', "false", "harness-kind"],
+            ["approval-proposer", 'row !== null && row.proposer === "harness"', "row !== null", "harness-kind"],
+            ["request-kind", 'throw new Error("jarvis: router=request-kind");', "void request;", "harness-kind"]
         ];
         for (const [name, needle, replacement, row] of controlsTable) {
             mutant(routerFile, name, needle, replacement, byName(row));

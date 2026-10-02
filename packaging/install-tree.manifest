@@ -255,6 +255,8 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Browser.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ChainedEngine.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Child.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ClaudeCode.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/CodexAppServer.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/CodexHarness.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ComputerHelp.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Desktop.js
@@ -262,6 +264,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/DesktopSession.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Executors.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/GptLive.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/HarnessGate.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Input.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Mcp.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/OpenAIChat.js

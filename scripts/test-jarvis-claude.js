@@ -455,11 +455,11 @@ world(async () => {
         assert.equal(await bounded(stalling, "verify deadline"), "jarvis: brain=harness-timeout");
         // Close removes the directory only once the process is gone.
         assert.equal(fs.existsSync(path.dirname(stalled.calls()[0].cwd)), false, "the probe's working directory is removed");
-        // Another vendor's subscription keeps its refusal; no program starts.
-        const codex = { id: "codex-fixture", provider: "codex", label: "default", source: { kind: "cli", directory: verifyAccount.directory },
+        // A subscription with no harness handoff keeps its refusal; no program starts.
+        const other = { id: "other-fixture", provider: "other", label: "default", source: { kind: "cli", directory: verifyAccount.directory },
             state: { kind: "verifying", operation: 1 } };
         const calls = verifyAccount.calls().length;
-        await assert.rejects(() => judge.inference(codex), /verify=subscription-handoff-unavailable/);
+        await assert.rejects(() => judge.inference(other), /verify=subscription-handoff-unavailable/);
         assert.equal(verifyAccount.calls().length, calls);
     }]);
 
@@ -532,7 +532,7 @@ world(async () => {
                 "const timer = clock.set(() => { expired = true; }, deadline);", "verify"]
         ]) await control(harnessFile, name, needle, replacement, row);
         for (const [name, needle, replacement] of [
-            ["verify-route", 'if (row.id !== "claude") fail("verify=subscription-handoff-unavailable");', ""],
+            ["verify-route", 'case "claude":', 'case "claude-removed":'],
             ["verify-audit", "start: events => release.start(() => events.next())", "start: events => events.next()"],
             ["verify-text", '}).then(text => text.trim() !== ""));', "}).then(() => true));"],
             ["verify-reason", "harness ? harness[1] : ", ""],
