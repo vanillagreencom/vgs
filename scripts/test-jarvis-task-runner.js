@@ -15,6 +15,20 @@ const tree = path.resolve(__dirname, "..");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+function spawnFixture(file, args, { env, input }) {
+    return new Promise((resolve, reject) => {
+        const child = cp.spawn(file, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+        let stdout = "", stderr = "";
+        child.stdout.on("data", chunk => { stdout += chunk; });
+        child.stderr.on("data", chunk => { stderr += chunk; });
+        // A refused terminal can exit without reading. Its status remains the answer.
+        child.stdin.on("error", error => { if (error.code !== "EPIPE") reject(error); });
+        child.on("error", reject);
+        child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+        child.stdin.end(input);
+    });
+}
+
 async function inside() {
     const root = process.env.JARVIS_TEST_ROOT;
     const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8" };
@@ -99,18 +113,12 @@ async function inside() {
                 if (options.onKill) options.onKill(target, signal);
                 return Runner.PROCESSES.kill(target, signal);
             } },
-            spawn: (file, args, { env: childEnv, input }) => new Promise((resolve, reject) => {
+            spawn: (file, args, spawnOptions) => {
                 seen.writes.push(args.slice(3));
                 if (options.beforeWrite) options.beforeWrite(args.slice(3));
                 if (args[4] === "stopped") seen.atStopped.push(groupState(readTask(args[3], args[2]).identity.pgid));
-                const child = cp.spawn(file, args, { env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
-                let stdout = "", stderr = "";
-                child.stdout.on("data", chunk => { stdout += chunk; });
-                child.stderr.on("data", chunk => { stderr += chunk; });
-                child.on("error", reject);
-                child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
-                child.stdin.end(input);
-            }) });
+                return spawnFixture(file, args, spawnOptions);
+            } });
         runners.push(runner);
         if (options.tui !== "unknown") runner.tuiState(false);
         function start(args, mode = "children", release = () => "send") {
@@ -138,6 +146,67 @@ async function inside() {
         return { runner, seen, start, started, profiles };
     }
     const current = { Runner: require(path.join(backend, "TaskRunner.js")), Profiles: require(path.join(backend, "AgentProfiles.js")) };
+
+    // A write larger than the pipe forces EPIPE when this child exits without reading.
+    {
+        const source = fs.readFileSync(__filename, "utf8");
+        const start = "function " + "spawnFixture(";
+        const end = "\nasync function inside()";
+        assert.equal(source.split(start).length - 1, 1);
+        assert.equal(source.split(end).length - 1, 1);
+        const fixture = source.slice(source.indexOf(start), source.indexOf(end));
+        const script = path.join(root, "spawn-fixture.cjs");
+        const harness = `
+const assert = require("node:assert/strict");
+const cp = require("node:child_process");
+${fixture}
+const injected = process.argv[2] === "EIO";
+if (injected) {
+    const spawn = cp.spawn;
+    cp.spawn = (...args) => {
+        const child = spawn(...args);
+        process.nextTick(() => child.stdin.destroy(Object.assign(new Error("fixture stdin"), { code: "EIO" })));
+        return child;
+    };
+}
+const answer = spawnFixture("python3", ["-I", "-c", "import os; os._exit(23)"],
+    { env: { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8" }, input: Buffer.alloc(1024 * 1024) });
+(async () => {
+    if (injected) await assert.rejects(answer, { code: "EIO" });
+    else assert.deepEqual(await answer, { code: 23, signal: null, stdout: "", stderr: "" });
+})().catch(error => { console.error(error); process.exitCode = 1; });
+`;
+        const run = (text, kind) => {
+            fs.writeFileSync(script, text);
+            const result = cp.spawnSync(process.execPath, [script, kind], { env, encoding: "utf8", timeout: 10000 });
+            assert.equal(result.error, undefined, result.stderr);
+            assert.equal(result.signal, null, result.stderr);
+            return result;
+        };
+        for (const kind of ["EPIPE", "EIO"]) {
+            const good = run(harness, kind);
+            assert.equal(good.status, 0, good.stderr);
+            assert.equal(good.stdout, "");
+            assert.equal(good.stderr, "");
+            cases++;
+        }
+        const handler = 'child.stdin.on("error", error => { if (error.code !== "EPIPE") reject(error); });';
+        const guard = 'if (error.code !== "EPIPE")';
+        for (const [name, kind, needle, replacement, expected] of [
+            ["stdin-early-exit", "EPIPE", handler, "", /code: 'EPIPE'/],
+            ["stdin-other-error", "EIO", guard, 'if (false && error.code !== "EPIPE")', /ERR_ASSERTION/]
+        ]) {
+            assert.equal(harness.split(needle).length - 1, 1, name + " match");
+            const mutant = harness.replace(needle, replacement);
+            assert.notEqual(mutant, harness);
+            const bad = run(mutant, kind);
+            assert.equal(bad.status, 1, bad.stderr);
+            assert.match(bad.stderr, expected);
+            console.log("test-jarvis-task-runner: control=" + name + " killed");
+            controls++;
+        }
+        fs.rmSync(script);
+    }
 
     // Each control loads a private backend copy with one planted defect.
     async function control(name, file, needle, replacement, check) {
