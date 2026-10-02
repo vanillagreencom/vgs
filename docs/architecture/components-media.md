@@ -1,4 +1,4 @@
-# Components: images and cards
+# Components: images, cards and the voice ring
 
 Covers: shell/Ui/foundation/ImageText.qml, shell/Ui/foundation/ImageTextLogic.js, shell/Ui/foundation/ImagePool.qml, shell/Ui/layout/AngledCard.qml, shell/Ui/layout/CardCarousel.qml, shell/Ui/feedback/AvatarGroup.qml, shell/Ui/feedback/AvatarFace.qml, scripts/test-image-text-logic.js, scripts/qml-tests/tst_imagetext.qml, scripts/qml-tests/tst_angledcard.qml, scripts/qml-tests/tst_carousel.qml, scripts/qml-tests/tst_avatargroup.qml, shell/Ui/feedback/VoiceOrb.qml, shell/Ui/feedback/shaders/**, scripts/qml-tests/tst_voiceorb.qml
 

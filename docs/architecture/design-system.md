@@ -58,19 +58,13 @@ A component group may hold a share a component judges by, as `deviceRow.battery.
 
 `Theme.voiceBubble` supplies the [passive voice composition](jarvis-bubble.md)'s dimensions and text ceiling. It composes the existing surface, inset and control tokens.
 
-## Setup steps
-
-Consumer text follows [copy.md](copy.md).
-
-A step a user must take to set something up is automatic, or one click: a button on a Settings row, a notice or a dialog. A step that asks a question or needs a privilege opens in a floating TUI or the requirement notice from that button. A secret is typed into a `TextField` with `password` set and VGS stores it. A command a user could run by hand shows only in a `CommandDisclosure` beside that button, never as the instruction itself. The Settings page draws a manifest's status actions and secrets this way ([status.md § Shown](status.md#shown)), and `scripts/check-user-commands.py` fails text that tells the user to run a command: [D061](../decisions/D061-no-manual-commands.md).
-
 ## Text stack
 
 Reading text draws in `font.family.sans`, the bundled Inter; chrome draws in `font.family.mono`, the bundled JetBrains Mono, at 12 and 13 px. The base `font.size` is the reference's body size, and every role's size is a factor of it. A role's `lineHeight` is a multiple of its font size, as the reference stylesheet states it. `Label` rounds that product into a line box and floors it at the font's own line height, rounded up to a whole pixel, so every line box is a whole number of pixels. A single-line chrome role takes line height 1, so its line box is the font's own height. One line of text inside a fixed box, such as a badge, a key cap, a code line or an inline row, is placed by `Label`'s capital centre, so the centre of its capitals sits on the box centre on a whole-pixel baseline. `text.item`, `text.itemHint` and `text.itemCode` are `body`, `hint` and `code` at line height 1, for one line of text in a control's row: a menu entry, a list item's two lines. `text.label` and `text.value` are the key/value pair: a label and the read-only value beside it, their capitals within a pixel of one height ([design-quality.md § Type](design-quality.md#type)). `scripts/qml-tests/tst_label.qml` restates every role's family and metrics and reads them back from a drawn `Label`; it fails when the table gains a role it does not restate. The reference rule each role is read from is [design-values.md § Text roles](../reference/design-values.md#text-roles).
 
 ## Layout
 
-The container layout contract, the component spacing rules, the corner-clearing rule and the notification media tiers are in [design-layout.md](design-layout.md).
+The container layout contract, the component spacing rules and the corner-clearing rule are in [design-layout.md](design-layout.md).
 
 ## Standard
 

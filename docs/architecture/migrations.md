@@ -9,7 +9,7 @@ A migration is a change VGS makes once to a user's own files when a new version 
 - One bash script per migration under `bin/migrations/`, named `<unix time, 10 digits>-<slug>.sh`, the slug lower-case letters, digits and single hyphens. The names sort in the order the migrations run, so a new migration takes the time it was written. A name outside the pattern refuses the whole run before any migration runs.
 - A migration runs once per user. It is idempotent: it reads the state it would change and changes nothing when there is nothing to change, so it is safe on a fresh profile and after a partial run.
 - A migration uses no network and asks for no privilege. It edits the user's own files, never `/etc`, and asks nothing: no prompt, no terminal. It writes a setting through `vgsh-plugin-judge seed-setting`, which keeps a symlinked file a link and leaves a key the user already set.
-- A migration that reads a credential store reads presence alone, never a secret, and unlocks nothing, as the plugin's own probe does ([status.md § The Slack token rows](status.md#the-slack-token-rows)).
+- A migration that reads a credential store reads presence alone, never a secret, and unlocks nothing, as the plugin's own probe does ([notification-senders.md § The Slack token rows](notification-senders.md#the-slack-token-rows)).
 
 ## The runner
 

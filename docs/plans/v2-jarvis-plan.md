@@ -25,7 +25,7 @@ Principles, each a rule an issue is checked against:
 
 ## 2. Research findings
 
-Moved unchanged to [v2-jarvis-plan-research.md](v2-jarvis-plan-research.md): §§ 2.1–2.7 (Hyprland keys, speech providers, the local speech stack, subscription rules, omarchy-voice, Omarchy, sources).
+The research the plan rests on, with its sources: [v2-jarvis-plan-research.md](v2-jarvis-plan-research.md), Hyprland keys (§ 2.1), speech providers (§ 2.2), the local speech stack (§ 2.3), subscription rules (§ 2.4), omarchy-voice (§ 2.5), Omarchy (§ 2.6) and sources (§ 2.7).
 
 ## 3. Architecture
 
@@ -503,4 +503,4 @@ A first usable Jarvis is J01 to J04, J06, J07, J09 to J14, J16, J18 to J22, J24,
 
 ## 13. Review dispositions
 
-Moved unchanged to [v2-jarvis-plan-review.md](v2-jarvis-plan-review.md).
+The review findings and what each changed: [v2-jarvis-plan-review.md](v2-jarvis-plan-review.md).

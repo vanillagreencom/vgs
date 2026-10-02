@@ -1,6 +1,6 @@
 # Jarvis plan: research findings (§ 2)
 
-Companion to [v2-jarvis-plan.md](v2-jarvis-plan.md), split out under the document ceiling. Section numbers are unchanged, so "§ 2.3" and "§ 13" in the plan and the Linear issues still resolve here.
+The evidence behind [v2-jarvis-plan.md](v2-jarvis-plan.md), each claim with its primary source. Section numbers follow the plan's, so "§ 2.3" in the plan, the decision records and the Linear issues resolves here.
 
 ## 2. Research findings
 

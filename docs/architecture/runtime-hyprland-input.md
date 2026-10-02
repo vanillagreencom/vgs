@@ -13,7 +13,7 @@ The Hyprland v0.56.2 facts the input options of the Hyprland layer and the `hypr
 - The types and ranges the layer's option table holds are those of `src/config/values/ConfigValues.cpp`: `repeat_rate` is an int from 0 to 200, `repeat_delay` an int from 0 to 2000, `sensitivity` a float from -1 to 1, both `scroll_factor`s floats from 0 to 2, `accel_profile` a string Hyprland takes as `adaptive`, `flat` or `custom`, and the layouts, variants and options strings.
 - A later line wins: with the layer's `repeat_rate = 40` and a user line `repeat_rate = 30` after the loading line, `getoption` read 30.
 - `hyprctl --batch "j/getoption A;j/getoption B"` answers each request in order, joined by `\n\n\n`, as other batches do ([runtime-hyprland.md](runtime-hyprland.md)).
-- The reload resets every option and clears every `hl.device` setting before it runs `hyprland.lua` again (`CConfigManager::reload`, `m_deviceConfigs.clear()`), so an option or a device setting the layer stops writing returns to Hyprland's default.
+- The reload also clears every `hl.device` setting (`m_deviceConfigs.clear()` in `CConfigManager::reload`), so a device setting the layer stops writing returns to Hyprland's default; options reset the same way ([runtime-hyprland.md](runtime-hyprland.md)).
 
 ## Devices
 

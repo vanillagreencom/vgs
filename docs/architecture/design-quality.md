@@ -93,4 +93,4 @@ The heights, paddings and gaps are Radix Themes 3.3.0 button sizes 1, 2 and 3. `
 ## Evidence
 
 - `scripts/sandbox-shots.sh` captures every surface class in dark, light and rounded, at scale 1 and 2, on the default monitor and on a 480 × 720 one; the theme and wallpaper browsers only when named. A hover shot waits until its item reports the pointer. A change to a surface lands with before and after shots of it.
-- A defect class that can be measured has a geometry row under `scripts/smoke/rows/` or a `qs.Ui` unit test under `scripts/qml-tests/`, each with a must-fail control ([validation.md](validation.md)). A geometry row checks containment and minimums, so a theme with a larger font still passes.
+- A defect class that can be measured has a geometry row under `scripts/smoke/rows/` or a `qs.Ui` unit test under `scripts/qml-tests/`, each with a must-fail control ([validation-smoke.md](validation-smoke.md), [validation-qml-unit.md](validation-qml-unit.md)). A geometry row checks containment and minimums, so a theme with a larger font still passes.

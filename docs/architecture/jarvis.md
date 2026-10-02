@@ -1,6 +1,6 @@
 # Jarvis
 
-Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, scripts/smoke/rows/jarvis-keys.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
+Covers: shell/Core/SessionLock.qml, shell/plugins/vgs.jarvis/, scripts/test-jarvis-protocol.js, scripts/test-jarvis-daemon.js, scripts/fixtures/jarvis/, scripts/smoke/fixtures/plugins/acme.session/, scripts/smoke/rows/session.sh, scripts/smoke/rows/jarvis.sh, scripts/smoke/rows/jarvis-keys.sh, scripts/smoke/rows/read-only-prefix.sh, docs/plans/v2-jarvis-plan.md, shell/Hosts/LayerHost.qml
 
 [Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
 
@@ -83,8 +83,18 @@ The wire contract is in [jarvis-controls.md § Wire](jarvis-controls.md#wire).
 - `scripts/smoke/rows/read-only-prefix.sh` adds the shared observer to its disposable installed tree. It requires zero-retry hello from the non-writable prefix and checks that startup changes no installed file. `scripts/smoke/rows/start-order.sh` uses the same fresh-start read for the default set.
 - Smoke instruments only disposable service copies to launch the child through the real J09 helper. `scripts/fixtures/jarvis/prepare.js` keeps that instrumentation in one place. Its `--task-requests` option gives the [task row](jarvis-task-control.md#evidence) a gated daemon copy that sends task TUI requests. The helper itself owns worktree-local scratch allocation. A fixture launcher carries the stdin pipe through a descriptor, because Bash replaces stdin with `/dev/null` for the helper's asynchronous namespace supervisor. It restores stdin inside the namespace before executing the real daemon.
 
-[Jarvis validation](jarvis-validation.md#evidence) also records the shared service checks. [Audio evidence](jarvis-audio.md#evidence) holds the child-lifetime and buffer checks.
+The Jarvis row reads the service's `transcript` status from a daemon copy that writes captions for the current and another generation. Removing the generation filter or the status write each breaks the same caption assertion.
+
+The Jarvis row also reads stable microphone and speaker offers from the service's status. Removing the service's offer publication fails that real consumer assertion. The installed-prefix row reads the same offers before it compares its tree snapshots. Both run the production audio discovery owner against stand-ins.
+
+[Audio evidence](jarvis-audio.md#evidence) holds the child-lifetime and buffer checks.
 
 ## Omarchy comparison
 
-[The service comparison](jarvis-validation.md#omarchy-comparison) and [the audio comparison](jarvis-audio.md#omarchy-comparison) name the adopted interfaces and different lifetimes.
+The read-only Omarchy shell reference's `plugins/agents/Main.qml` separates display from external collectors. VGS keeps that separation, with the daemon as the worker and the service as its health publisher. Omarchy's collectors do not own a continuously leased child.
+
+The read-only omarchy-voice reference's `share/omarchy-voice.service` uses a graphical-session systemd unit with restart limiting. VGS keeps bounded restart but ties the daemon to the enabled service's stdin instead. A unit can outlive the shell and its future capture indicator. The audio owner enforces child lifetime. The mapped-indicator owner must still land before production capture can start.
+
+omarchy-voice's `session.py` forwards local control commands through a socket; its `playback.py` owns the playback queue. VGS keeps effect ownership separate from state transitions. One pure reducer must judge overlapping capture, playback, tools and approvals without sharing mutable flags between adapter callbacks.
+
+[The audio comparison](jarvis-audio.md#omarchy-comparison) names the adopted interfaces and different lifetimes.

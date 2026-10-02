@@ -1,6 +1,6 @@
 # Jarvis plan: review dispositions (§ 13)
 
-Companion to [v2-jarvis-plan.md](v2-jarvis-plan.md), split out under the document ceiling. Section numbers are unchanged, so "§ 2.3" and "§ 13" in the plan and the Linear issues still resolve here.
+The review of [v2-jarvis-plan.md](v2-jarvis-plan.md) and what each finding changed, as [v2-system-plan-review.md](v2-system-plan-review.md) is for the System plan. Finding numbers follow the plan's § 13.
 
 ## 13. Review dispositions
 

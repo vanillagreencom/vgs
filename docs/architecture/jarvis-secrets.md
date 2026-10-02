@@ -44,7 +44,7 @@ The [Quickshell Process reference](https://quickshell.org/docs/v0.3.1/types/Quic
 ## Evidence
 
 - `scripts/test-jarvis-secrets.js` runs the actual module, CLI and Add key script in the [Jarvis test world](validation-jarvis.md). Every secret, bus and presentation helper is a stand-in. A private terminal fixture waits for the masked prompt before it supplies synthetic key bytes.
-- [Release validation](jarvis-release-validation.md) runs that same producer against a loopback transport and removes producer normalization in its integration control.
+- [Release evidence](jarvis-release.md#evidence) runs that same producer against a loopback transport and removes producer normalization in its integration control.
 - The suite checks attributes, origin storage, external references, deferred lookup, presence states, malformed replies, missing helpers, failed storage, metadata-only files and scrubbed environments. Invalid or full metadata must fail before any secret-tool call. It checks generated state, HOME and runtime files for the synthetic key. Lookup returns directly to the test's in-process consumer.
 - Controls remove reference rules, secret-free diagnosis, the correct lookup/probe operation and the storage-output suppression. The owning assertions must fail.
 - `scripts/smoke/rows/jarvis.sh` reads the real service's presence through a J09 probe. It opens only a disposable no-auth Add key script and checks recorded terminal argv. A failed whole probe must replace present rows with Unavailable. Controls retain stale rows or remove TUI-end refresh and must break those assertions. No real keyring, account or unlock is used.

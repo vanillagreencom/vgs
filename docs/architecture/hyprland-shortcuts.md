@@ -1,8 +1,8 @@
 # Hyprland shortcuts
 
-Covers: shell/Core/ShortcutRegistry.qml, shell/Core/KeyCapture.qml, shell/Core/PluginLogic.js, shell/Core/HyprlandLayer.js, scripts/test-hyprland-layer.js, scripts/test-key-capture.js, scripts/qml-tests/tst_shortcutregistry.qml, scripts/qml-tests/tst_keycapture.qml
+Covers: shell/Core/ShortcutRegistry.qml, shell/Core/KeyCapture.qml, shell/Core/PluginLogic.js, shell/Core/HyprlandLayer.js, scripts/test-hyprland-layer.js, scripts/test-key-capture.js, scripts/qml-tests/tst_shortcutregistry.qml, scripts/qml-tests/tst_keycapture.qml, scripts/smoke/rows/key-passthrough.sh
 
-Key normalization and effective key reads share the generated [Hyprland layer](hyprland.md). [D059](../decisions/D059-keycodes-and-effective-shortcut-keys.md) records this boundary.
+How a plugin's shortcut keys are written, read, held and captured: the key syntax and its overrides, the effective key map, hold shortcuts, the shell's one key capture and the layer's pass-through submap that serves it. [hyprland.md](hyprland.md) renders the binds; [D059](../decisions/D059-keycodes-and-effective-shortcut-keys.md) records the key syntax and the effective key reads.
 
 ## Key syntax
 
@@ -36,7 +36,7 @@ The release bind ignores the live modifier mask but does not consume client inpu
 
 ## Key capture
 
-[D086](../decisions/D086-key-capture-passthrough-submap.md) records the choice; [hyprland.md](hyprland.md) holds the pass-through section the layer writes.
+[D086](../decisions/D086-key-capture-passthrough-submap.md) records the choice; [§ Key capture pass-through](#key-capture-pass-through) holds the section the layer writes, and [hyprland.md § The file](hyprland.md#the-file) its place.
 
 `shell.shortcut.capture` is the one key capture, owned by `KeyCapture.qml` for every instance. `begin(item)` makes ITEM the holder, ending an earlier holder's capture, and sends the pass-through `enter`; `end(item, reason)` ends the holder's capture and sends `leave`. The owner also ends it when the holder is destroyed and when the instance that began it is torn down. A begin while an earlier leave is unanswered waits to send its enter until that leave was answered, so the earlier capture's submap events never end the new one. The owner reads Hyprland's `submap` event: `passthrough` turns true once Hyprland reports the submap, and a change away from it ends the capture without a request, since Hyprland left it itself, as `timeout` once `timeoutMs` passed and as `compositor` before, with the submap name and the time held in the log. `failed` is true while the holder's enter was refused or answered with an error. `holder`, `passthrough`, `failed` and `ended`, the last capture's `{ item, reason }`, are bindable.
 

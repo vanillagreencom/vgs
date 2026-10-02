@@ -2,7 +2,13 @@
 
 Covers: shell/Core/SecretWriter.qml
 
-The one-click setup steps a plugin's status entries offer on its Settings page, and the libsecret items the core stores and clears for it. The entries, their values and their rows are [status.md](status.md)'s; the rule that a setup step is automatic or one click is [design-system.md § Setup steps](design-system.md#setup-steps).
+The one-click setup steps a plugin's status entries offer on its Settings page, and the libsecret items the core stores and clears for it. The entries, their values and their rows are [status.md](status.md)'s.
+
+## Setup steps
+
+Consumer text follows [copy.md](copy.md).
+
+A step a user must take to set something up is automatic, or one click: a button on a Settings row, a notice or a dialog. A step that asks a question or needs a privilege opens in a floating TUI or the requirement notice from that button. A secret is typed into a `TextField` with `password` set and VGS stores it. A command a user could run by hand shows only in a `CommandDisclosure` beside that button, never as the instruction itself. The Settings page draws a manifest's status actions and secrets this way ([status.md § Shown](status.md#shown)), and `scripts/check-user-commands.py` fails text that tells the user to run a command: [D061](../decisions/D061-no-manual-commands.md).
 
 ## Actions and secrets
 

@@ -1,6 +1,6 @@
 # Distribution
 
-Covers: LICENSE, VERSION, README.md, packaging/install-system.sh, packaging/install-tree.manifest, packaging/runtime-libraries.json, scripts/check-install-tree.sh, scripts/test-install-tree.sh, scripts/smoke/rows/read-only-prefix.sh, scripts/check-packaging.js, scripts/test-check-packaging.js, scripts/release, scripts/lib/release-tarball.sh, scripts/test-release.sh
+Covers: LICENSE, VERSION, packaging/install-system.sh, packaging/install-tree.manifest, packaging/runtime-libraries.json, scripts/check-install-tree.sh, scripts/test-install-tree.sh, scripts/smoke/rows/read-only-prefix.sh, scripts/check-packaging.js, scripts/test-check-packaging.js, scripts/release, scripts/lib/release-tarball.sh, scripts/test-release.sh
 
 This file holds how VGS is licensed and versioned, the install tree every channel shares, the release tarball every channel builds from and the check every package recipe passes. Each channel and the install-method judge have their own file:
 

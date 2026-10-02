@@ -2,7 +2,7 @@
 
 Covers: shell/Ui/foundation/PointerCursor.qml, shell/Hosts/SummonPopup.qml, shell/Hosts/SummonLayer.qml
 
-The Quickshell 0.3.1, Qt and Wayland facts the shell's pointer handling, cursors and popups rest on, each with the source that establishes it. The other QML facts are in [runtime-qml.md](runtime-qml.md).
+The Quickshell 0.3.1, Qt, Wayland and Hyprland 0.56.2 facts the shell's pointer handling, cursors and popups rest on, each with the source that establishes it. The other QML facts are in [runtime-qml.md](runtime-qml.md).
 
 - A Qt popup with `popupType: Popup.Window` is placed once on Wayland and never moved: Qt leaves repositioning to the server and sends no reposition, and its position is what the parent window's bounds allow, so a popup taller than a bar is pushed into the bar. A Quickshell `PopupWindow` anchored to the item places below the bar and moves on `anchor.updateAnchor()`; the overlays use it, with a negative bottom anchor margin as the gap.
 - A pointer handler declared with a `parent` binding crashes the engine while the parent is still null; make it with `createObject` once the parent is known. A popup of a fresh bar surface opens only after the surface has drawn and taken one pointer event, so a row clicks the widget before it opens a popup.

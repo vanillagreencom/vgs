@@ -12,7 +12,7 @@
 
 **Context**: A physical key must remain bindable when its keysym changes with the keyboard layout. A plugin must show the user's rebound key, not its manifest default.
 
-**Decision**: `PluginLogic.hyprlandKey` accepts decimal keycodes in Hyprland's unsigned 32-bit range and normalizes them to lower-case `code:<n>` without leading zeros. `shell.shortcut.keys` reads the calling plugin's effective keys through the same configuration and conflict judges as the generated layer. [hyprland.md § Shortcut key reads](../architecture/hyprland.md#shortcut-key-reads) defines the API.
+**Decision**: `PluginLogic.hyprlandKey` accepts decimal keycodes in Hyprland's unsigned 32-bit range and normalizes them to lower-case `code:<n>` without leading zeros. `shell.shortcut.keys` reads the calling plugin's effective keys through the same configuration and conflict judges as the generated layer. [hyprland-shortcuts.md § Shortcut key reads](../architecture/hyprland-shortcuts.md#shortcut-key-reads) defines the API.
 
 **Rationale**:
 - Hyprland's Lua parser requires the lower-case `code:` prefix. One normalizer keeps manifest defaults, Settings writes and hand-edited rebounds equal.

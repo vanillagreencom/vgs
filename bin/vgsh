@@ -510,8 +510,9 @@ scratch_open() { # COUNT
 # The floor `run` checks before it changes anything, one row per tool: the
 # name a refusal carries, the version it needs, the extended regex whose
 # first group reads the version from the probe's output, and the probe.
-# `present` needs only a version the regex reads. The floor and where each
-# figure was measured: docs/architecture/runtime.md § Process.
+# `present` needs only a version the regex reads. The floor:
+# docs/architecture/runtime.md § Process; where the node floor was measured:
+# docs/decisions/D009-one-manifest-judge-under-node.md § Revisit Outcome (2026-09-28).
 # scripts/check-packaging.js reads the first two columns, so a raised floor
 # fails that check until the package recipes' constraints follow.
 preflight_floor='
