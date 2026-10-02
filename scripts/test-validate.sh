@@ -440,7 +440,7 @@ cases=(
   "jarvis-live-schema|scripts/fixtures/jarvis-live/gpt-live.schema.json|offline|$jarvis_live_plan"
   "jarvis-live-input|shell/plugins/vgs.jarvis/backend/GptLive.js|cli|node scripts/test-jarvis-live.js"$'\nnode scripts/test-jarvis-daemon.js\nscripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "jarvis-websocket-fixture|scripts/fixtures/jarvis/websocket.js|offline|node scripts/test-jarvis-net.js"$'\nnode scripts/test-jarvis-live.js\n'"$jarvis_daemon_plan"
-  "jarvis-session-cli|shell/plugins/vgs.jarvis/Session.js|cli|node scripts/test-jarvis-live.js"$'\nnode scripts/test-jarvis-router.js\nnode scripts/test-jarvis-desktop.js\nnode scripts/test-jarvis-bridge.js\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'scripts/test-install-tree.sh\n'"$readme_rows_trimmed"
+  "jarvis-session-cli|shell/plugins/vgs.jarvis/Session.js|cli|node scripts/test-jarvis-live.js"$'\nnode scripts/test-jarvis-router.js\nnode scripts/test-jarvis-desktop.js\nnode scripts/test-jarvis-bridge.js\nnode scripts/test-jarvis-desktop-tools.js\nnode scripts/test-jarvis-daemon.js\n'"$jarvis_audio_rows"$'scripts/test-install-tree.sh\n'"$readme_rows_trimmed"
   "schema-check-suite|scripts/test-schema-check.js|offline|node scripts/test-schema-check.js"$'\n'"$repo_plan"
   "schema-check|scripts/fixtures/schema-check.js|offline|node scripts/test-jarvis-brain-openai.js"$'\nnode scripts/test-jarvis-brain-anthropic.js\nnode scripts/test-jarvis-live.js\nnode scripts/test-jarvis-mcp.js\nnode scripts/test-jarvis-bridge.js\nnode scripts/test-jarvis-daemon.js\nnode scripts/test-jarvis-engine.js\nnode scripts/test-schema-check.js\n'"$repo_plan"
   "jarvis-sse-input|shell/plugins/vgs.jarvis/backend/Sse.js|logic|node scripts/test-jarvis-sse.js"

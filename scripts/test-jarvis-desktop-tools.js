@@ -94,7 +94,7 @@ async function main() {
                     clock: { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) },
                     environment: { PATH: process.env.PATH, LANG: "C.UTF-8", XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR },
                     commands: [] } });
-        runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} });
+        runner.dispatch({ type: "snapshot", locked: false, engine: "chained", configured: true, settings: {} });
         runner.dispatch({ type: "indicator", shown: true });
         runner.dispatch({ type: "talk-down" });
         transcript("final", "fixture user");
