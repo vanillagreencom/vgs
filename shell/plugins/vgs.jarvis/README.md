@@ -50,7 +50,7 @@ The service sends its current configuration and lock observation to the child. T
 
 ## Coding tasks
 
-No coding agent is connected yet, so Jarvis starts no coding task. It still watches task records on your computer. A task's agent runs in its own process group, inside a private tmux session or the floating terminal. Jarvis checks that the processes are still the task's own before it signals them, and never touches your own tmux sessions. A stop that cannot end every process is reported as a notice and leaves the task running. The Stop key does not stop coding tasks.
+Jarvis can run Claude Code as a coding agent, signed in with an account it found, and bring the agent's permission requests and questions to you. Nothing starts a coding task yet. Jarvis still watches task records on your computer. A task's agent runs in its own process group, inside a private tmux session or the floating terminal. Jarvis checks that the processes are still the task's own before it signals them, and never touches your own tmux sessions. A stop that cannot end every process is reported as a notice and leaves the task running. The Stop key does not stop coding tasks.
 
 ## Settings
 
