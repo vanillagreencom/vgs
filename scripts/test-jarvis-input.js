@@ -233,9 +233,9 @@ async function pointerAuthority(makeInput, refined) {
         Object.assign(ports, router.ports);
         const changeState = () => {
             switch (change) {
-            case "lock": locked = true; runner.dispatch({ type: "snapshot", locked: true, configured: true, settings: {} }); break;
+            case "lock": locked = true; runner.dispatch({ type: "snapshot", engine: "chained", locked: true, configured: true, settings: {} }); break;
             case "stop": runner.dispatch({ type: "stop" }); break;
-            case "generation": runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: { mode: "toggle" } }); break;
+            case "generation": runner.dispatch({ type: "snapshot", engine: "chained", locked: false, configured: true, settings: { mode: "toggle" } }); break;
             case "expiry": at += 1001; break;
             case "policy": locked = true; break;
             default: throw new Error("fixture-change");
@@ -247,7 +247,7 @@ async function pointerAuthority(makeInput, refined) {
             const record = await input.owner.ready();
             router.register("input", { ...record, timeoutMs: 1000,
                 start(call, done, authority) { record.start(call, answer => { done(answer); finish(); }, authority); } });
-            runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} }); runner.dispatch({ type: "indicator", shown: true });
+            runner.dispatch({ type: "snapshot", engine: "chained", locked: false, configured: true, settings: {} }); runner.dispatch({ type: "indicator", shown: true });
             runner.dispatch({ type: "talk-down" }); transcript("final", "fixture");
             const [id, args] = action;
             assert.equal(refined(id, args).id, id);
@@ -300,7 +300,7 @@ async function routerEvidence() {
         Object.assign(ports, router.ports);
         router.register("input", { commands: ["wtype"], timeoutMs: 1000, cancellable: false,
             observe: () => new Promise(resolve => { answer = resolve; }), start: (call, done) => { starts.push(call); done({ outcome: "completed", content: "fixture" }); } });
-        runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} }); runner.dispatch({ type: "indicator", shown: true });
+        runner.dispatch({ type: "snapshot", engine: "chained", locked: false, configured: true, settings: {} }); runner.dispatch({ type: "indicator", shown: true });
         runner.dispatch({ type: "talk-down" }); transcript("final", "fixture user");
         const route = () => router.route({ id: "input-call", tool: "input.text", arguments: { text: "literal" } }, { gen: runner.state.gen, op: runner.state.turn.op });
         return { runner, router, starts, route, resolve: () => answer({ target: { kind: "application", id: "editor" }, text: { effective: [] } }), advance: n => { at += n; } };
