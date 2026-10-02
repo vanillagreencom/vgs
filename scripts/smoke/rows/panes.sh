@@ -46,6 +46,7 @@ expect "own-pane summon is refused while no panes holder is enabled" "refused: p
 expect "enabling the pane host is allowed" ok ipc shell setPluginEnabled acme.panehost true
 pane_bar_key="$(bar_key)" || fail "the bar key is unreadable for pane rows"
 pane_widget_placed() { bar_widget_ids | py_reply 'import json,sys; print(any("acme.pane" in ids for ids in json.load(sys.stdin)))'; }
+tick_widget_placed() { bar_widget_ids | py_reply 'import json,sys; print(any("acme.tick" in ids for ids in json.load(sys.stdin)))'; }
 expect_poll "the pane widget is placed" True pane_widget_placed
 
 expect "summoning the pane host window is allowed" ok ipc shell summon window acme.panehost '{}'
@@ -115,8 +116,8 @@ expect_poll "the pane widget leaves the bar after panes.setPlaced" False pane_wi
 expect "the holder panes.setPlaced can place it again" ok ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":true}'
 expect_poll "the holder list follows placement" true host_list_placed
 expect_poll "the pane widget returns to the bar" True pane_widget_placed
-expect "panes.setPlaced refuses a non-pane widget as unknown" "unknown: acme.probe" ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.probe","placed":false}'
-expect_poll "the non-pane widget remains placed after refused panes.setPlaced" '[true]' placement_in_bars
+expect "panes.setPlaced refuses a non-pane widget as unknown" "unknown: acme.tick" ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.tick","placed":false}'
+expect_poll "the non-pane widget remains placed after refused panes.setPlaced" True tick_widget_placed
 expect "panes.setPlaced refuses a non-boolean placement" "refused: placed=1 want=boolean" ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":1}'
 
 expect "hiding the host window is allowed" ok ipc shell hide window acme.panehost
@@ -126,6 +127,24 @@ expect_poll "the host window is closed before own-pane summon" false ipc smoke a
 expect "own-pane summon opens the holder window" ok ipc smoke invokeInstance service acme.pane summonPane ''
 expect_poll "own-pane summon mounted the caller pane" '["acme.pane"]' window_panes
 expect "the holder saw the own-pane payload" '"{\"from\":\"service\",\"pane\":\"acme.pane\"}"' ipc smoke readInstance window acme.panehost openedPayload
+expect "own-pane summon overwrites a spoofed pane id" ok ipc smoke invokeInstance service acme.pane summonPaneWith '{"pane":"acme.pane-alt","from":"spoof"}'
+expect_poll "own-pane summon with a spoofed id still mounts the caller pane" '["acme.pane"]' window_panes
+expect "the holder saw the caller pane after a spoofed payload" '"{\"pane\":\"acme.pane\",\"from\":\"spoof\"}"' ipc smoke readInstance window acme.panehost openedPayload
+expect "own-pane summon refuses an array payload" "refused: pane-payload=object" ipc smoke invokeInstance service acme.pane summonPaneWith '[1]'
+expect "own-pane summon refuses non-json text" "refused: pane-payload=json" ipc smoke invokeInstance service acme.pane summonPaneWith 'not json'
+expect "mounting the alternate pane before hide guard checks is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane-alt'
+expect "hide by a different pane caller answers ok" ok ipc smoke invokeInstance service acme.pane hidePane ''
+expect_poll "hide by a different pane caller keeps the holder window open" true ipc smoke activeFocusIn window acme.panehost
+expect_poll "hide by a different pane caller keeps the mounted alternate pane" '["acme.pane-alt"]' window_panes
+expect "mounting the caller pane before its hide check is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+expect "hide by the current pane caller answers ok" ok ipc smoke invokeInstance service acme.pane hidePane ''
+expect_poll "hide by the current pane caller closes the holder window" false ipc smoke activeFocusIn window acme.panehost
+expect_poll "hide by the current pane caller drops the pane" '[]' window_panes
+expect "toggle while the holder is closed opens the caller pane" ok ipc smoke invokeInstance service acme.pane togglePane '{"from":"toggle-open"}'
+expect_poll "toggle while closed mounts the caller pane" '["acme.pane"]' window_panes
+expect "toggle while the holder shows the caller pane closes it" ok ipc smoke invokeInstance service acme.pane togglePane '{"from":"toggle-close"}'
+expect_poll "toggle while showing the caller pane closes the holder" false ipc smoke activeFocusIn window acme.panehost
+expect_poll "toggle while showing the caller pane drops the pane" '[]' window_panes
 
 
 
@@ -187,6 +206,28 @@ expect "hide-teardown restore: hiding the holder is accepted" ok ipc shell hide 
 expect_poll "hide-teardown restore: hiding drops the pane" '[]' window_panes
 expect "hide-teardown restore: host summons for later controls" ok ipc shell summon window acme.panehost '{}'
 expect "hide-teardown restore: mount succeeds for later controls" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+
+if restart_control_shell pane-payload-order shell/Core/Capabilities.qml $'const out = {};\n        for (const key of Object.keys(payload)) out[key] = payload[key];\n        out.pane = ctx.id;' $'const out = { pane: ctx.id };\n        for (const key of Object.keys(payload)) out[key] = payload[key];'; then
+  expect "control: payload-order shell summons" ok ipc shell summon window acme.panehost '{}'
+  expect "control: spoofed payload is accepted by the mutant" ok ipc smoke invokeInstance service acme.pane summonPaneWith '{"pane":"acme.pane-alt","from":"spoof"}'
+  expect_poll "control: copying the caller pane before payload keys lets spoofed payload win" '["acme.pane-alt"]' window_panes
+fi
+restore_product_shell restored-payload-order || fail "restoring after the payload-order control failed"
+expect "payload-order restore: host summons" ok ipc shell summon window acme.panehost '{}'
+expect "payload-order restore: spoofed payload is accepted" ok ipc smoke invokeInstance service acme.pane summonPaneWith '{"pane":"acme.pane-alt","from":"spoof"}'
+expect_poll "payload-order restore: caller pane wins after spoofed payload" '["acme.pane"]' window_panes
+
+if restart_control_shell pane-hide-current shell/Core/Capabilities.qml 'if (verb === "hide") return Plugins.currentPaneId() === ctx.id ? Plugins.route("hide", "window", holder, "", null) : "ok";' 'if (verb === "hide") return Plugins.route("hide", "window", holder, "", null);'; then
+  expect "control: hide-current shell summons" ok ipc shell summon window acme.panehost '{}'
+  expect "control: hide-current mounts the alternate pane" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane-alt'
+  expect "control: hide-current hide from another pane answers ok" ok ipc smoke invokeInstance service acme.pane hidePane ''
+  expect_poll "control: dropping the current-pane guard lets another pane close the holder" false ipc smoke activeFocusIn window acme.panehost
+fi
+restore_product_shell restored-hide-current || fail "restoring after the hide-current control failed"
+expect "hide-current restore: host summons" ok ipc shell summon window acme.panehost '{}'
+expect "hide-current restore: alternate pane mounts" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane-alt'
+expect "hide-current restore: hide from another pane answers ok" ok ipc smoke invokeInstance service acme.pane hidePane ''
+expect_poll "hide-current restore: another pane cannot close the holder" true ipc smoke activeFocusIn window acme.panehost
 
 restart_control_shell pane-host-shell shell/Hosts/PaneHost.qml 'mounted.sawInstance = true;' 'mounted.sawInstance = true; instance.shell = { manifest: Registry.manifests["acme.panehost"], settings: {}, panes: {}, idle: { watch: (seconds, onChange) => () => {} } };'
 expect "control: host-shell provider starts" ok ipc shell summon window acme.panehost '{}'

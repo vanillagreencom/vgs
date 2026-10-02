@@ -187,7 +187,6 @@ smoke_row manager
 smoke_row updates
 smoke_row settings
 smoke_row placement
-smoke_row panes
 smoke_row windows
 smoke_row compositor-dispatchers
 smoke_row compositor-reveal
@@ -243,6 +242,8 @@ smoke_row overlay-capture
 # capture rows append their own binds and restore it again.
 smoke_row key-capture
 smoke_row key-passthrough
+# This row restarts the shell for its controls, so it runs with the tail rows that do the same.
+smoke_row panes
 # After every row that opens a TUI: the stand-in terminal ran no plugin
 # script but a fixture's.
 smoke_row tui-guard
