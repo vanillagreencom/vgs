@@ -23,6 +23,11 @@ const ARGV = ["-p", "--input-format", "stream-json", "--output-format", "stream-
     "--settings", "{\"disableAllHooks\":true}", "--disable-slash-commands", "--no-session-persistence"];
 const ENVIRONMENT = ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CONFIG_DIR", "HOME", "LANG", "PATH",
     "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_STATE_HOME"];
+// Keys, tokens and a runner pid planted in the environment handed to the
+// adapter and to Verify; none may reach the vendor program.
+const PLANTED = { ANTHROPIC_API_KEY: "planted-anthropic-key", CLAUDE_CODE_OAUTH_TOKEN: "planted-oauth-token",
+    VGS_JARVIS_TOOLS_TOKEN: "planted-tools-token", VGSH_RUNNER_PID: "424242" };
+const leaked = call => Object.values(call.env).filter(value => Object.values(PLANTED).includes(value));
 
 world(async () => {
     const Session = load(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"));
@@ -98,7 +103,7 @@ world(async () => {
         }, clear: timer => { timer.cleared = true; clearTimeout(timer.handle); } };
         const harness = ClaudeCode.create({ directory: a.directory, model: options.model ?? "", recipients,
             bridge: { open: async () => { opened = await bridge.open({ gen: runner.state.gen, recipients }); return opened; } },
-            parent: runtime, environment: process.env, clock });
+            parent: runtime, environment: { ...process.env, ...PLANTED }, clock });
         owners.push(async () => { await harness.close(); bridge.close(); audit.close(); for (const timer of timers) clearTimeout(timer.handle); });
         harness.start({ instructions: "Fixture guidance.", tools: options.tools ?? router.offer() });
         const w = { runner, router, bridge, rows, starts, answers, brain, timers, harness, Policy, recipients, runtime, account: a,
@@ -158,6 +163,7 @@ world(async () => {
             assert.deepEqual(Object.keys(call.env).filter(name => !["PWD", "SHLVL", "_"].includes(name)).sort(), ENVIRONMENT);
             assert.equal(call.env.CLAUDE_CONFIG_DIR, w.account.directory);
             assert.equal(call.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
+            assert.deepEqual(leaked(call), [], "no planted key, token or pid reaches the program");
             const token = w.opened().env.VGS_JARVIS_TOOLS_TOKEN;
             assert.equal(call.args.some(arg => arg.includes(token)), false, "the session token stays out of argv");
             assert.equal(path.dirname(config), path.dirname(call.cwd), "the config sits beside the private working directory");
@@ -377,7 +383,7 @@ world(async () => {
 
     // Account Verify through the real judge: the harness handoff for a Claude
     // subscription, and the refusal every other subscription keeps.
-    const env = {};
+    const env = { ...PLANTED };
     for (const name of ["PATH", "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"]) env[name] = process.env[name];
     const state = path.join(process.env.XDG_STATE_HOME, "vgs/jarvis");
     const verifyAccount = account({ turns: [[...say("OK")]] }, path.join(process.env.HOME, ".claude-team"));
@@ -401,6 +407,8 @@ world(async () => {
         const call = verifyAccount.calls().slice(before).find(value => value.args[0] === "-p");
         const config = call.args[ARGV.indexOf("CONFIG")];
         assert.deepEqual(call.args, [...ARGV.map(arg => arg === "CONFIG" ? config : arg), "--system-prompt", "Answer in one word."]);
+        assert.deepEqual(Object.keys(call.env).filter(name => !["PWD", "SHLVL", "_", ...ENVIRONMENT].includes(name)), []);
+        assert.deepEqual(leaked(call), [], "no planted key, token or pid reaches the Verify program");
         const audit = verifyAccount.events().find(event => event.kind === "audit").last;
         assert.notEqual(audit, null, "an audit record exists when the vendor program starts");
         assert.deepEqual([audit.kind, audit.tool, audit.effect, audit.decision, audit.outcome],
@@ -452,6 +460,7 @@ world(async () => {
             ["no-session-files", ', "--no-session-persistence"', "", "replay"],
             ["token-file", '"--mcp-config", config,', '"--mcp-config", fs.readFileSync(config, "utf8"),', "replay"],
             ["environment", "for (const name of ENVIRONMENT)", "for (const name of Object.keys(environment))", "replay"],
+            ["environment-key", '"XDG_CACHE_HOME", "XDG_RUNTIME_DIR"];', '"XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "ANTHROPIC_API_KEY"];', "replay"],
             ["one-process", 'record = process_.kind === "running" ? process_ : await spawn();', "record = await spawn();", "replay"],
             ["init-tools", 'for (const name of init.tools) if (!allowed(name)) fail("harness-tool name=" + named(name));', "", "built-ins"],
             ["tool-use", 'if (block.kind === "tool" && !allowed(block.name)) fail("harness-tool name=" + named(block.name));', "", "built-ins"],
