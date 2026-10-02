@@ -52,6 +52,8 @@ What each component of `qs.Ui` guarantees is in [components.md](components.md).
 
 Keyboard support is a component guarantee, not a per-surface exception: [keyboard.md](keyboard.md).
 
+A component group may hold a share a component judges by, as `deviceRow.battery.warning` and `deviceRow.battery.danger` are the charges at or below which `DeviceRow`'s battery badge turns to the `warning` and `danger` tones, so a theme moves the judgment with the tone. `osd` holds `LevelOsd`'s padding, gap, icon size, bar length, label limit and card colours.
+
 `VoiceOrb` publishes its palette-derived visual values through `Theme.voiceOrb`. Its timing tokens follow `motion.scale`, and its driver also checks that scale before ticking: [components-media.md § VoiceOrb](components-media.md#voiceorb).
 
 ## Setup steps

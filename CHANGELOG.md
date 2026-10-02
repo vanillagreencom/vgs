@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `qs.Ui` adds `FormRow`, the one key/value row that `Field` and the Settings page now draw with, with an optional warning badge; `DeviceRow`, a list row for any device with a battery or level badge, actions and an overflow menu; and `LevelOsd`, the card of a volume or brightness display. New `osd` and `deviceRow` theme tokens size the display and set the battery thresholds.
 - Slack sender photos are now an owner-only extra, off by default. An install that had them keeps them: a one-time migration sets `"slackPhotos": true` in the `vgs.notifications` row of `plugins` in `~/.config/vgs/shell.json` when a Slack token is stored. New one-time migrations run once per user from `vgsh run` and `vgsh self update`. With it off, Settings shows no Slack token rows and the plugin reads no token and calls no Slack API. Workspace icons, custom emoji from Slack's cache, initials faces and one card per message need no setup. A manifest's new `extras` key declares such a switch.
 - Jarvis adds Talk, Mute and Stop keys, hold or toggle mode, and persistent privacy mute. Key tests use a private scripted engine. The installed daemon remains unconfigured and captures no audio.
 - Menus and select lists fill their rows to the border: a hover or selected row meets the list's top and side edges, the row insets its own text, and the scroll bar draws over a strip each row keeps clear. The `menu.padding` token is removed, and a theme that sets it is refused; `menu.item.radius` now follows `menu.radius`.
