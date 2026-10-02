@@ -67,12 +67,20 @@ async function input(event) {
     return value;
 }
 
+function dropped(stdout) {
+    try { return JSON.parse(stdout).reason === "event-count"; }
+    catch { return false; }
+}
+
 function record(hook, kind, data = {}) {
     const result = cp.spawnSync(process.execPath, [path.join(__dirname, "task-event"), "--state", hook.state, hook.task, kind], {
         input: JSON.stringify(data), encoding: "utf8", maxBuffer: 8192, timeout: 30000,
         env: { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" }
     });
     if (result.error) fail("record kind=" + kind + " cause=" + (result.error.code || result.error.message));
+    // Past the event ceiling the producer drops the event and marks the task
+    // noisy, its own overflow rule; the relay still serves the user.
+    if (result.status === 75 && dropped(result.stdout)) return;
     if (result.status !== 0)
         fail("record kind=" + kind + " status=" + result.status + " cause=" + (result.stderr.trim().split("\n")[0] || "none"));
 }

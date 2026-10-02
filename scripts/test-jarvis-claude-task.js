@@ -12,6 +12,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const cp = require("node:child_process");
 const { once } = require("node:events");
+const { seedTaskEvents } = require("./fixtures/jarvis/prepare.js");
 const tree = path.resolve(__dirname, "..");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -325,6 +326,24 @@ async function inside() {
         w.close();
     }
 
+    // Past the event ceiling the producer drops the hook's events and marks
+    // the task noisy; the relay still holds and answers.
+    async function ceiling(modules) {
+        const w = world(modules);
+        create(w, "capped");
+        seedTaskEvents(path.join(w.directories.state, "tasks", "capped", "events"), 2000);
+        const running = hookAsync(w.engine, hookArgs(w, "capped", "PermissionRequest", "5000"),
+            input("PermissionRequest", { tool_name: "Bash" }));
+        const held = await w.prompt("capped", "permission");
+        assert.equal(w.runner.answer("capped", held.id, { v: 1, kind: "allow" }), "answered");
+        const result = await running;
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(JSON.parse(result.stdout).hookSpecificOutput.decision.behavior, "allow");
+        assert.deepEqual([w.read("capped").noisy, w.read("capped").dropped], [true, 2]);
+        w.close();
+        cases++;
+    }
+
     // The answer judge, through the daemon's port.
     function answers(modules) {
         const w = world(modules);
@@ -376,6 +395,7 @@ async function inside() {
     await expiry(current);
     await full(current);
     failures(current);
+    await ceiling(current);
     answers(current);
     await account(current);
 
@@ -415,6 +435,8 @@ async function inside() {
     await control("notification-map", "claude-hook", 'idle_prompt: "idle"', 'idle_prompt: "question"', relay);
     await control("expiry-silent", "claude-hook", "if (Date.now() >= prompt.deadline) return null;",
         'if (Date.now() >= prompt.deadline) return { v: 1, kind: "deny" };', expiry);
+    await control("event-ceiling", "claude-hook", "if (result.status === 75 && dropped(result.stdout)) return;",
+        "if (false && dropped(result.stdout)) return;", ceiling);
     await control("exit-code", "claude-hook", "    process.exitCode = 1;\n", "    process.exitCode = 2;\n", failures);
     await control("engine-copy", "Tasks.js", '"TaskRelay.js", "claude-hook"];', '"TaskRelay.js"];', relay);
     await control("answer-once", "TaskRelay.js", "fs.linkSync(temporary, answerFile(directory, task, id));",

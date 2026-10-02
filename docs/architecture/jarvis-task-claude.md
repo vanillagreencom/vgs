@@ -46,7 +46,7 @@ The user's own hooks still run: settings levels merge hooks. The account is a di
 
 `Stop` is a turn end, never a finished task. A turn that ends before the agent ran the brief's outcome command waits on the user; one after it holds nothing. An allow prints `hookSpecificOutput.decision.behavior: "allow"`; a deny prints `"deny"` with a fixed message. A reply prints `reason: "The user answered: <text>"`, which Claude Code hands to the agent as the reason to continue.
 
-A hook that fails writes one keyed `jarvis: claude-hook=` line, prints nothing and exits 1. It never exits 2, which Claude Code reads as a block on `Stop` and `UserPromptSubmit`. A permission request without a decision falls back to the agent's own prompt in its terminal.
+An event the producer drops past the task's event ceiling counts as written, so a noisy task still relays. A hook that fails writes one keyed `jarvis: claude-hook=` line, prints nothing and exits 1. It never exits 2, which Claude Code reads as a block on `Stop` and `UserPromptSubmit`. A permission request without a decision falls back to the agent's own prompt in its terminal.
 
 ## Relay
 
@@ -84,9 +84,9 @@ A held hook publishes one prompt file in `$XDG_RUNTIME_DIR/vgs/jarvis/prompts/` 
 - the permission and question relay end to end, with the agent's environment and the hooks' engine-copy path;
 - a denied permission, failed turns and the notification map;
 - expiry for both held events, a full relay and the sweep of expired prompts;
-- every hook failure row and its exit 1, the answer judge's refusal table, and an unknown account.
+- every hook failure row and its exit 1, a task past its event ceiling, the answer judge's refusal table, and an unknown account.
 
-Its controls remove the exec form, the `--` before the brief, the silent `UserPromptSubmit`, the hold, the deny, the outcome check, the resumed turn, the failure and notification maps, the silent expiry, the exit code, the engine copy, the one answer, the answer kind, the expiry refusal, the answered filter, the ceiling, the sweep and the account check. `scripts/test-jarvis-accounts.js` covers `cliDirectory`, with controls for the provider and the absent directory.
+Its controls remove the exec form, the `--` before the brief, the silent `UserPromptSubmit`, the hold, the deny, the outcome check, the resumed turn, the failure and notification maps, the silent expiry, the event ceiling, the exit code, the engine copy, the one answer, the answer kind, the expiry refusal, the answered filter, the ceiling, the sweep and the account check. `scripts/test-jarvis-accounts.js` covers `cliDirectory`, with controls for the provider and the absent directory.
 
 ## Omarchy comparison
 
