@@ -4,7 +4,7 @@ pkgbase = vgs
 	pkgrel = 1
 	url = https://github.com/vanillagreencom/vgs
 	arch = any
-	license = MIT AND OFL-1.1 AND ISC
+	license = MIT AND OFL-1.1 AND ISC AND Apache-2.0
 	depends = quickshell>=0.3.1
 	depends = hyprland>=0.56
 	depends = bash
@@ -20,6 +20,8 @@ pkgbase = vgs
 	optdepends = wtype: Jarvis text and key input
 	optdepends = wlrctl: Jarvis pointer input without an input service
 	optdepends = ydotool: Jarvis pointer fallback with an already running input service
+	optdepends = agent-browser-bin: private Jarvis browser driver
+	optdepends = chromium: browser for Jarvis setup
 	optdepends = pipewire: Jarvis half-duplex audio capture, playback and discovery
 	optdepends = fd: launcher file and folder search
 	optdepends = fzf: launcher file search matching and the package pickers in floating TUIs
