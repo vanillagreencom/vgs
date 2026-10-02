@@ -310,10 +310,19 @@ expect "a wheel notch on the page scrolls it" moved view_pointer window:Settings
 expect "control: the probe gives the page Qt's left-button drag" 0 ipc smoke setViewButtons window vgs.settings Layout 1
 expect "control: the same drag then scrolls the page" moved view_pointer window:Settings window vgs.settings Layout drag
 expect "the page takes no mouse button again" 1 ipc smoke setViewButtons window vgs.settings Layout 0
-# Tab until the page scrolls, each focused item read in view.
+# Tab until the page scrolls, each focused item read in view. The control's
+# drag can leave a flick running, so the page first holds one position for
+# two readings 0.1 s apart, for up to 3 s.
 settings_tab_reveal() {
-  local before focus now
+  local before last focus now
   before="$(settings_view_y)" || return 1
+  for _ in $(seq 1 30); do
+    sleep 0.1
+    last="$before"
+    before="$(settings_view_y)" || return 1
+    [[ $before == "$last" ]] && break
+  done
+  [[ $before == "$last" ]] || { printf 'unsettled contentY=%s\n' "$before"; return 0; }
   for _ in $(seq 1 40); do
     type_keys -k Tab || return 1
     focus="$(ipc smoke focused window vgs.settings)" || return 1
