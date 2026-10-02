@@ -11,6 +11,7 @@ FocusScope {
     readonly property string shellKeys: shell === null ? "" : Object.keys(shell).sort().join(",")
     readonly property Item initialFocus: editButton
     property var idleDisposer: null
+    property int closes: 0
 
     function open(payloadJson) {
         payload = payloadJson || "";
@@ -19,10 +20,7 @@ FocusScope {
 
     function close() {
         payload = "closed";
-        if (idleDisposer !== null) {
-            idleDisposer();
-            idleDisposer = null;
-        }
+        closes += 1;
     }
     function setLabel(value) { return shell.configure.set("label", value); }
 

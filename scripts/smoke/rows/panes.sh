@@ -28,7 +28,7 @@ os.replace(path + ".tmp", path)
 PY
 }
 
-host_list() { ipc smoke invokeInstance window acme.panehost listJson ''; }
+host_list() { ipc smoke readInstance window acme.panehost paneRows | py_reply 'import json,sys; print(json.dumps(json.loads(json.load(sys.stdin)), separators=(",", ":")))'; }
 host_list_ids() { host_list | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin)], separators=(",", ":")))'; }
 host_list_placed() { host_list | py_reply 'import json,sys; print(json.dumps([r["placed"] for r in json.load(sys.stdin) if r["id"] == "acme.pane"][0]))'; }
 window_panes() { ipc shell built | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin).get("window", []) if r["kind"] == "pane"], separators=(",", ":")))'; }
@@ -51,7 +51,8 @@ expect_poll "the pane widget is placed" True pane_widget_placed
 expect "summoning the pane host window is allowed" ok ipc shell summon window acme.panehost '{}'
 expect_poll "the pane host window is built" true ipc smoke activeFocusIn window acme.panehost
 expect_poll "the holder lists the pane with its manifest metadata and placement" '[{"id":"acme.pane","name":"Pane","icon":"panel-right-open","group":"Fixtures","order":10,"placed":true,"hasWidget":true}]' host_list
-expect "the pane host shell has panes and not the pane's capabilities" '"manifest,panes,settings"' ipc smoke readInstance window acme.panehost shellKeys
+expect "the pane host shell has panes and not the pane's capabilities" '"manifest,panes,settings,surfaces"' ipc smoke readInstance window acme.panehost shellKeys
+expect "a non-pane holder cannot use own-pane summon" "refused: kind=pane id=acme.panehost" ipc smoke invokeInstance window acme.panehost summonPaneAsNonPane '{}'
 
 expect_poll "the holder's Open pane button starts with keyboard focus" '["Button","Open pane",true,true,true]' ipc smoke focused window acme.panehost
 type_keys -k Return || fail "keyboard Return on the holder's Open pane button failed"
@@ -101,6 +102,12 @@ expect_poll "the service reads the Settings edit" '"pane-service"' ipc smoke rea
 expect_poll "the widget reads the Settings edit" '"pane-service"' ipc smoke readInstance "$pane_bar_key" acme.pane label
 expect_poll "the pane reads the Settings edit" '"pane-service"' ipc smoke readInstance window acme.pane label
 expect_poll "the Settings page reads the shared setting" '"pane-service"' settings_pane_label
+expect "disabling the mounted pane plugin is allowed" ok ipc shell setPluginEnabled acme.pane false
+expect_poll "disabling the mounted pane drops its build record" '[]' window_panes
+expect_poll "disabling the mounted pane releases its idle watch" '[]' pane_idle_watches
+expect "re-enabling the pane plugin is allowed" ok ipc shell setPluginEnabled acme.pane true
+expect_poll "re-enabling the pane plugin leaves it unmounted" '[]' window_panes
+expect "mounting the pane after re-enable is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
 
 expect "the holder panes.setPlaced can unplace a listed pane plugin" ok ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":false}'
 expect_poll "the holder list follows unplacement" false host_list_placed
@@ -108,8 +115,13 @@ expect_poll "the pane widget leaves the bar after panes.setPlaced" False pane_wi
 expect "the holder panes.setPlaced can place it again" ok ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":true}'
 expect_poll "the holder list follows placement" true host_list_placed
 expect_poll "the pane widget returns to the bar" True pane_widget_placed
+expect "panes.setPlaced refuses a non-pane widget as unknown" "unknown: acme.probe" ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.probe","placed":false}'
+expect_poll "the non-pane widget remains placed after refused panes.setPlaced" '[true]' placement_in_bars
+expect "panes.setPlaced refuses a non-boolean placement" "refused: placed=1 want=boolean" ipc smoke invokeInstance window acme.panehost placeRequest '{"id":"acme.pane","placed":1}'
 
 expect "hiding the host window is allowed" ok ipc shell hide window acme.panehost
+expect_poll "hiding the host destroys the mounted pane" '[]' window_panes
+expect_poll "hiding the host releases the pane idle watch" '[]' pane_idle_watches
 expect_poll "the host window is closed before own-pane summon" false ipc smoke activeFocusIn window acme.panehost
 expect "own-pane summon opens the holder window" ok ipc smoke invokeInstance service acme.pane summonPane ''
 expect_poll "own-pane summon mounted the caller pane" '["acme.pane"]' window_panes
@@ -148,12 +160,40 @@ restore_product_shell() { # LABEL
   expect_poll "the $1 shell knows the pane host" True plugin_enabled acme.panehost
 }
 
-restart_control_shell pane-host-shell shell/Core/Capabilities.qml 'mount = { id: id, wrapper: wrapper, instance: result.instance };' 'result.instance.shell = { manifest: ctx.manifest, settings: {}, panes: root.panesProvider(ctx) }; mount = { id: id, wrapper: wrapper, instance: result.instance };'
+
+restart_control_shell pane-key-unload shell/Hosts/PluginSlot.qml 'function unload() {' 'function unload() { return;'
+expect "control: key-unload host summons" ok ipc shell summon window acme.panehost '{}'
+expect "control: key-unload mounts the pane" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+expect "control: disabling the mounted pane is accepted" ok ipc shell setPluginEnabled acme.pane false
+expect_poll "control: removing key-driven unload keeps the disabled pane mounted" '["acme.pane"]' window_panes
+restore_product_shell restored-key-unload || fail "restoring after the key-unload control failed"
+expect "key-unload restore: re-enabling after the control is allowed" ok ipc shell setPluginEnabled acme.pane true
+expect "key-unload restore: host summons" ok ipc shell summon window acme.panehost '{}'
+expect "key-unload restore: mount succeeds" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+expect "key-unload restore: disabling the mounted pane is accepted" ok ipc shell setPluginEnabled acme.pane false
+expect_poll "key-unload restore: disabling drops the pane" '[]' window_panes
+expect "key-unload restore: re-enabling the pane is allowed" ok ipc shell setPluginEnabled acme.pane true
+expect "key-unload restore: mounting the pane is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+
+restart_control_shell pane-hide-teardown shell/Hosts/PluginSlot.qml 'Component.onDestruction: unload()' 'Component.onDestruction: {}'
+expect "control: hide-teardown host summons" ok ipc shell summon window acme.panehost '{}'
+expect "control: hide-teardown mounts the pane" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+expect "control: hide-teardown hides the holder" ok ipc shell hide window acme.panehost
+expect_poll "control: removing PluginSlot destruction keeps the hidden pane in the ledger" '["acme.pane"]' window_panes
+restore_product_shell restored-hide-teardown || fail "restoring after the hide-teardown control failed"
+expect "hide-teardown restore: host summons" ok ipc shell summon window acme.panehost '{}'
+expect "hide-teardown restore: mount succeeds" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+expect "hide-teardown restore: hiding the holder is accepted" ok ipc shell hide window acme.panehost
+expect_poll "hide-teardown restore: hiding drops the pane" '[]' window_panes
+expect "hide-teardown restore: host summons for later controls" ok ipc shell summon window acme.panehost '{}'
+expect "hide-teardown restore: mount succeeds for later controls" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
+
+restart_control_shell pane-host-shell shell/Hosts/PaneHost.qml 'mounted.sawInstance = true;' 'mounted.sawInstance = true; instance.shell = { manifest: Registry.manifests["acme.panehost"], settings: {}, panes: {}, idle: { watch: (seconds, onChange) => () => {} } };'
 expect "control: host-shell provider starts" ok ipc shell summon window acme.panehost '{}'
 expect "control: host-shell provider mounts the pane" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'
 control_manifest="$(ipc smoke readInstance window acme.pane manifestId)" || fail "control: host-shell manifest read failed"
 control_keys="$(ipc smoke readInstance window acme.pane shellKeys)" || fail "control: host-shell shell keys read failed"
-expect "control: handing the host shell to the pane breaks pane identity and capability readback" '["acme.panehost","manifest,panes,settings"]' pane_identity_shell "$control_manifest" "$control_keys"
+expect "control: handing the host shell to the pane breaks pane identity and capability readback" '["acme.panehost","idle,manifest,panes,settings"]' pane_identity_shell "$control_manifest" "$control_keys"
 restore_product_shell restored-provider
 expect "provider restore: the host summons again" ok ipc shell summon window acme.panehost '{}'
 expect "provider restore: mounting the pane is allowed" ok ipc smoke invokeInstance window acme.panehost mountPane 'acme.pane'

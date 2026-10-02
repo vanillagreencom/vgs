@@ -59,6 +59,7 @@ ShellRoot {
             SummonHost { kind: "overlay" }
             SummonHost { kind: "menu" }
             SummonHost { kind: "window" }
+            PaneHost {}
         }
     }
 

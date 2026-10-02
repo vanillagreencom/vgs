@@ -189,63 +189,20 @@ Singleton {
     })
 
 
-    Component {
-        id: paneMountComponent
-        Item {
-            property var destroyPane: null
-            Component.onDestruction: if (destroyPane !== null) destroyPane(false)
-        }
-    }
-
     function panesProvider(ctx) {
-        let mount = null;
-        function disposeCurrent(destroyWrapper) {
-            if (mount === null) return;
-            const current = mount;
-            mount = null;
-            if (current.instance !== null) {
-                try {
-                    current.instance.close();
-                } catch (e) {
-                    console.error("panes: " + current.id + " close() failed: " + e.message);
-                }
-                Plugins.destroyInstance(current.instance, ctx.hostKey);
+        let disposer = null;
+        ctx.onDispose(() => {
+            if (disposer !== null) {
+                disposer();
+                disposer = null;
             }
-            current.wrapper.destroyPane = null;
-            if (destroyWrapper) current.wrapper.destroy();
-        }
-        ctx.onDispose(() => disposeCurrent(true));
+        });
         return {
             get list() { return Registry.paneRows; },
             mount: (id, container, payloadJson) => {
-                const listed = Registry.paneRows.some(row => row.id === id);
-                if (!listed) return "unknown: " + id;
-                if (container === null || container === undefined || typeof container !== "object") return "refused: pane-container=missing";
-                disposeCurrent(true);
-                const wrapper = paneMountComponent.createObject(container);
-                if (wrapper === null) return "refused: pane-container=create-failed";
-                wrapper.anchors.fill = container;
-                const result = Plugins.createInstance(id, "pane", wrapper, ctx.hostKey, null, {}, ctx.screen, null);
-                if (result.state !== "built") {
-                    wrapper.destroy();
-                    return "refused: pane=" + id + " reason=" + result.state;
-                }
-                result.instance.anchors.fill = wrapper;
-                try {
-                    result.instance.open(payloadJson || "");
-                } catch (e) {
-                    console.error("panes: " + id + " open() failed: " + e.message);
-                    Plugins.destroyInstance(result.instance, ctx.hostKey);
-                    wrapper.destroy();
-                    return "refused: open-failed=" + id;
-                }
-                const focusTarget = result.instance.initialFocus !== undefined && result.instance.initialFocus !== null ? result.instance.initialFocus : result.instance;
-                if (typeof focusTarget.forceActiveFocus === "function") focusTarget.forceActiveFocus(Qt.ShortcutFocusReason);
-                mount = { id: id, wrapper: wrapper, instance: result.instance };
-                wrapper.destroyPane = disposeCurrent;
-                return () => {
-                    if (mount !== null && mount.wrapper === wrapper) disposeCurrent(true);
-                };
+                const result = Plugins.mountPane(ctx, id, container, payloadJson || "");
+                if (typeof result === "function") disposer = result;
+                return result;
             },
             setPlaced: (id, placed) => {
                 if (typeof placed !== "boolean") return "refused: placed=" + JSON.stringify(placed) + " want=boolean";
@@ -279,20 +236,21 @@ Singleton {
     }
 
     function panesHolderId() {
-        const held = holderIds("panes");
-        if (held.length > 0) return held[0];
         return Registry.panesHolderId();
     }
 
     function surfaceRoute(ctx, verb, kind, payloadJson, anchor) {
         if (kind !== "pane")
             return Plugins.route(verb, kind, ctx.id, payloadJson || "", root.origin(ctx, anchor));
+        if (ctx.manifest.kinds.indexOf("pane") === -1)
+            return "refused: kind=pane id=" + ctx.id;
         const holder = root.panesHolderId();
         if (holder === "") return "refused: panes=no-holder";
-        if (verb === "hide") return Plugins.route("hide", "window", holder, "", null);
+        if (verb === "hide") return Plugins.currentPaneId() === ctx.id ? Plugins.route("hide", "window", holder, "", null) : "ok";
+        if (verb === "toggle" && Plugins.currentPaneId() === ctx.id) return Plugins.route("hide", "window", holder, "", null);
         const payload = panePayload(ctx, payloadJson);
         if (!payload.ok) return payload.answer;
-        return Plugins.route(verb, "window", holder, payload.payloadJson, root.origin(ctx, anchor));
+        return Plugins.route("summon", "window", holder, payload.payloadJson, root.origin(ctx, anchor));
     }
 
     // Every `manager` TUI member opens a core TUI in a floating terminal,

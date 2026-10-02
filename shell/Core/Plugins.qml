@@ -16,6 +16,7 @@ Singleton {
 
     // Hosts by kind, registered on completion. summon/hide/toggle route here.
     property var hosts: Object.create(null)
+    property var paneHost: null
 
     // Every instance on a surface, keyed by a host-supplied key, for the
     // IPC introspection the smoke reads. A row is { id, kind, origin,
@@ -401,6 +402,23 @@ Singleton {
         const next = Object.assign(Object.create(null), hosts);
         next[kind] = host;
         hosts = next;
+    }
+
+    function registerPaneHost(host) {
+        paneHost = host;
+    }
+
+    function mountPane(ctx, id, container, payloadJson) {
+        if (paneHost === null) return "refused: panes=host-missing";
+        if (!Registry.has(id)) return "unknown: " + id;
+        const refusal = Registry.buildRefusal(id);
+        if (refusal !== "") return refusal;
+        if (!Registry.paneRows.some(row => row.id === id)) return "unknown: " + id;
+        return paneHost.mount(ctx, id, container, payloadJson);
+    }
+
+    function currentPaneId() {
+        return paneHost === null ? "" : paneHost.currentId;
     }
 
     function route(verb, kind, id, payloadJson, origin) {

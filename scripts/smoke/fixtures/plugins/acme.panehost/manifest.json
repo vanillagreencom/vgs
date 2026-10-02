@@ -1,3 +1,3 @@
 { "schemaVersion": 1, "id": "acme.panehost", "name": "Pane Host", "version": "0.1.0", "author": "acme", "description": "smoke pane host fixture",
   "icon": "panel-right", "kinds": ["window"], "entryPoints": { "window": "Window.qml" },
-  "capabilities": ["panes"] }
+  "capabilities": ["panes", "surfaces"] }

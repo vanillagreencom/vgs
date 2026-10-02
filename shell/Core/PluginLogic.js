@@ -2574,6 +2574,8 @@ function validateManifest(raw, sourceDir) {
         if (CAPABILITIES.indexOf(capabilities[c]) === -1)
             return { ok: false, error: "unknown capability " + JSON.stringify(capabilities[c]) };
     }
+    if (capabilities.indexOf("panes") !== -1 && raw.kinds.indexOf("window") === -1)
+        return { ok: false, error: "capability panes needs kind window" };
     var settings = raw.settings === undefined ? {} : raw.settings;
     if (!isPlainObject(settings))
         return { ok: false, error: "settings must be an object" };
@@ -3181,7 +3183,7 @@ function paneRows(config, manifests, defaultBarId) {
 function panesHolderId(config, manifests, defaultBarId) {
     var ids = Object.keys(manifests).filter(function (id) {
         var manifest = manifests[id];
-        return manifest.capabilities.indexOf("panes") !== -1 && manifest.kinds.indexOf("window") !== -1 && isEnabled(config, manifest, defaultBarId);
+        return manifest.capabilities.indexOf("panes") !== -1 && isEnabled(config, manifest, defaultBarId);
     }).sort();
     return ids.length === 0 ? "" : ids[0];
 }

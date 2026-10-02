@@ -26,9 +26,9 @@ FocusScope {
         }
     }
 
-    function close() {
-        closePane();
-    }
+    function close() {}
+
+    function summonPaneAsNonPane() { return shell.surfaces.summon("pane", "{}"); }
 
     function mountPane(id, payloadJson) {
         const result = shell.panes.mount(id, paneContainer, payloadJson || "{}");
