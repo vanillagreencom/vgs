@@ -1733,13 +1733,15 @@ click_in() {
 # when it holds for 1 s: a drag steals the press within its moves, and a
 # wheel notch starts the view's flick in the frame that takes it. A view
 # that cannot scroll down, or that does not lie whole inside its window,
-# answers `no-room` or `outside` with the reading, and a missing view the
-# probe's answer, before any input.
+# answers `no-room` or `outside` with the reading, a missing view the
+# probe's answer, and a SURFACE that names no one window SURFACE with
+# surface_box's count, before any input.
 view_pointer() { # SURFACE HOST_KEY ID TEXT drag|wheel
   local view surface plan x y y2 now
   view="$(ipc smoke viewHolding "$2" "$3" "$4")" || return 1
   [[ $view == \{* ]] || { echo "$view"; return 0; }
   surface="$(surface_box "$1")" || return 1
+  [[ $surface == \[* ]] || { echo "$1 $surface"; return 0; }
   plan="$(python3 -c '
 import json, sys
 v = json.loads(sys.argv[1]); s = json.loads(sys.argv[2])

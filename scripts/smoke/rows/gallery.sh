@@ -113,10 +113,10 @@ slim_kind() { ipc smoke viewHolding window vgs.gallery "Slim 1" | py_reply 'impo
 expect "the slim list is brought into the gallery's view" revealed slim_revealed
 # A plain Flickable reads as its C++ class name.
 expect "the slim list is a Flickable at its top that takes no mouse button" '["QQuickFlickable", 0, 0]' slim_kind
-expect "a mouse drag on the slim list leaves it where it was" still view_pointer window:Gallery window vgs.gallery "Slim 1" drag
-expect "a wheel notch on the slim list scrolls it" moved view_pointer window:Gallery window vgs.gallery "Slim 1" wheel
+expect "a mouse drag on the slim list leaves it where it was" still view_pointer "window:VGS Components" window vgs.gallery "Slim 1" drag
+expect "a wheel notch on the slim list scrolls it" moved view_pointer "window:VGS Components" window vgs.gallery "Slim 1" wheel
 expect "control: the probe gives the slim list Qt's left-button drag" 0 ipc smoke setViewButtons window vgs.gallery "Slim 1" 1
-expect "control: the same drag then scrolls the slim list" moved view_pointer window:Gallery window vgs.gallery "Slim 1" drag
+expect "control: the same drag then scrolls the slim list" moved view_pointer "window:VGS Components" window vgs.gallery "Slim 1" drag
 expect "the slim list takes no mouse button again" 1 ipc smoke setViewButtons window vgs.gallery "Slim 1" 0
 
 expect_poll "the gallery draws every focus example" '[]' ipc smoke galleryFocusMissing window vgs.gallery
