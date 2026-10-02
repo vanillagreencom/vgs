@@ -306,6 +306,22 @@ world(async () => {
             for (let index = 0; index < 40; index++) await long.read(long.say("turn " + index));
             assert.throws(() => long.say("one more"), /brain=context-limit/);
             assert.throws(() => long.harness.start({ instructions: "", tools: [] }), /brain=started/);
+            // A user turn's line at 20 MiB is accepted; one byte more refuses before anything is sent.
+            const request = await make(folder, { turns: [[...say("ok")]] });
+            const empty = JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: "" }] }, parent_tool_use_id: null });
+            const sized = bytes => request.Policy.item("x".repeat(bytes - Buffer.byteLength(empty)), ["speech"]);
+            assert.throws(() => request.harness.send({ kind: "user", items: [sized(20 * 1024 * 1024 + 1)] }), /brain=request-limit/);
+            let fitting;
+            assert.doesNotThrow(() => { fitting = request.harness.send({ kind: "user", items: [sized(20 * 1024 * 1024)] }); });
+            await bounded(fitting.events.return(), "unsent turn cancel");
+            assert.deepEqual(request.account.calls(), [], "neither request started the program");
+            // Sixty-four offered tools are accepted; sixty-five refuse.
+            const ClaudeCode = require(path.join(folder, "ClaudeCode.js"));
+            const offer = count => Array.from({ length: count }, (_, index) => ({ id: "fixture.t" + index }));
+            const fresh = () => ClaudeCode.create({ directory: request.account.directory, recipients: request.recipients,
+                bridge: { open: async () => assert.fail("no session opens") }, parent: request.runtime, environment: process.env });
+            assert.doesNotThrow(() => fresh().start({ instructions: "", tools: offer(64) }));
+            assert.throws(() => fresh().start({ instructions: "", tools: offer(65) }), /brain=tools/);
         }],
         ["close", async folder => {
             const w = await make(folder, { turns: [[...say("one")]] });
@@ -425,6 +441,8 @@ world(async () => {
             ["line-lowered", "const LINE_BYTES = 1024 * 1024;", "const LINE_BYTES = 1024 * 1024 - 1;", "bounds"],
             ["turn-bound", "const TURN_BYTES = 8 * 1024 * 1024;", "const TURN_BYTES = 16 * 1024 * 1024;", "bounds"],
             ["context-bound", "const TURNS = 40;", "const TURNS = 41;", "bounds"],
+            ["request-bound", "const REQUEST_BYTES = 20 * 1024 * 1024;", "const REQUEST_BYTES = 20 * 1024 * 1024 - 1;", "bounds"],
+            ["tools-bound", "const TOOLS = 64;", "const TOOLS = 65;", "bounds"],
             ["close-bridge", "        launch?.close();\n        let exited", "        let exited", "close"],
             ["close-late-session", "if (closed) { launch?.close(); fail(\"closed\"); }", "if (closed) fail(\"closed\");", "close"],
             ["close-workdir", "if (workdir !== null) fs.rmSync(workdir, { recursive: true, force: true });", "", "close"]
