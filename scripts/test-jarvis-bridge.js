@@ -98,7 +98,7 @@ world(async () => {
             router.register(executor, { commands: ["hyprctl", "bwrap"], timeoutMs: 1000, cancellable: true,
                 start: (call, done) => { starts.push({ call, audit: rows().at(-1) }); answers.push(done); },
                 cancel: () => {} });
-        runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} });
+        runner.dispatch({ type: "snapshot", locked: false, engine: "chained", configured: true, settings: {} });
         runner.dispatch({ type: "indicator", shown: true });
         const newTurn = () => { runner.dispatch({ type: "talk-down" }); transcript("final", "fixture user"); };
         newTurn();
