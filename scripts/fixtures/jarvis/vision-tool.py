@@ -16,11 +16,14 @@ pixels for `-s`. vision-fixture/scene.json names each output's layout box
 and each window's colour by address. A pixel takes the colour of the
 rectangle holding its centre. Its mode may set code and stderr; hold, which
 marks grim.held and never exits; size, a wrong [width, height]; corrupt,
-image data no decoder reads; pad, bytes of an extra chunk; states, the state
-file each call writes after its image, by call count; lock, a call count
-after which it creates vision-fixture/locked. It records its image's SHA-256.
-slurp prints its mode's stdout, stderr and code. tesseract records its
-input file's SHA-256 and prints its mode's stdout.
+image data no decoder reads; pad, bytes of an extra chunk; nofile, an exit 0
+that writes no file; states, the state file each call writes after its
+image, by call count; lock, a call count after which it creates
+vision-fixture/locked. It records its image's SHA-256. slurp prints its
+mode's stdout, stderr and code. tesseract records its input file's SHA-256
+and prints its mode's stdout. magick holds, or exits with its mode's code
+and stderr, or with garbage writes bytes no decoder reads to its PNG32:
+output; with no mode it runs the host's ImageMagick.
 """
 import ctypes
 import hashlib
@@ -148,18 +151,22 @@ def main():
         record["input"] = sha(argv[0])
     with open(calls, "a") as out:
         out.write(json.dumps(record) + "\n")
-    if NAME == "magick":
+    with open(os.path.join(ROOT, "modes.json")) as source:
+        mode = json.load(source).get(NAME, {})
+    if NAME == "magick" and mode.get("garbage"):
+        with open(argv[-1][len("PNG32:"):], "wb") as out:
+            out.write(b"not a png")
+        return 0
+    if NAME == "magick" and not mode:
         real = next((path for path in MAGICK if os.path.exists(path)), None)
         if real is None:
             raise SystemExit("magick stand-in: no host ImageMagick")
         os.execv(real, [real] + argv)
-    with open(os.path.join(ROOT, "modes.json")) as source:
-        mode = json.load(source).get(NAME, {})
     if mode.get("hold"):
         mark(NAME + ".held", {"pid": os.getpid()})
         while True:
             signal.pause()
-    if mode.get("code", 0) == 0 and NAME == "grim":
+    if mode.get("code", 0) == 0 and NAME == "grim" and not mode.get("nofile"):
         grim(argv, mode, count)
     sys.stdout.write(mode.get("stdout", ""))
     sys.stderr.write(mode.get("stderr", ""))

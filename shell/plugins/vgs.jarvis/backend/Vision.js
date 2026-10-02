@@ -17,9 +17,15 @@ const Tools = require("./Tools.js");
 const COMMANDS = ["grim", "magick", "slurp", "tesseract"];
 // The plan's screenshot bound (§ 3.11): captures one turn may take.
 const TURN_LIMIT = 4;
-// Four images of one turn, base64-encoded, stay under the wire brain's
-// 20 MiB request bound.
+// One image on the image route. A wire brain renders only the current
+// turn's images, so the turn's four, base64-encoded, stay under its 20 MiB
+// request bound.
 const IMAGE_BYTES = 3 * 1024 * 1024;
+// The wait before a retry, for the animation the change started: Hyprland
+// 0.56.2's default global speed, 8 (src/config/shared/animation/AnimationTree.cpp),
+// at hyprutils' 100 ms per unit (CBaseAnimatedVariable::getPercent). hyprctl
+// reports animation goals, so a reading cannot see the animation end.
+const SETTLE_MS = 800;
 // Recovery bounds for a command that never answers, not measured latency
 // budgets. slurp waits for the user to draw. The executor's whole bound
 // stays under Session's 60 s thinking deadline.
@@ -62,12 +68,26 @@ function image(file) {
     } finally { fs.closeSync(fd); }
 }
 
+// The byte count and SHA-256 of a file of any size.
+function digest(file) {
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+        if (!fs.fstatSync(fd).isFile()) throw new Error("jarvis: vision=image-type");
+        const hash = crypto.createHash("sha256");
+        const chunk = Buffer.alloc(64 * 1024);
+        let bytes = 0;
+        for (let read; (read = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0; bytes += read)
+            hash.update(chunk.subarray(0, read));
+        return { bytes, sha256: hash.digest("hex") };
+    } finally { fs.closeSync(fd); }
+}
+
 function remove(file) {
     try { fs.unlinkSync(file); }
     catch (error) { if (error.code !== "ENOENT") throw error; }
 }
 
-function described(call, plan) {
+function described(call, plan, masks) {
     const what = call.id === "vision.screen" ? "the whole screen"
         : call.id === "vision.monitor" ? "monitor " + call.args.monitor
         : call.id === "vision.window" ? "window " + call.args.window.toLowerCase()
@@ -76,8 +96,7 @@ function described(call, plan) {
     return "Screen " + what + ": " + size.width + " by " + size.height + " pixels of layout " + box.x + "," + box.y
         + " " + box.w + "x" + box.h + " at scale " + scale + ". Image pixel (px, py) is layout point ("
         + box.x + " + px / " + scale + ", " + box.y + " + py / " + scale + ")."
-        + (plan.masks.length === 0 ? "" : " " + plan.masks.length + " private window area"
-            + (plan.masks.length === 1 ? " is" : "s are") + " painted black.");
+        + (masks === 0 ? "" : " " + masks + " private window area" + (masks === 1 ? " is" : "s are") + " painted black.");
 }
 
 /**
@@ -117,17 +136,32 @@ function create({ commands, environment, read, readMs, directory, state, route, 
         return verdict.kind === "allow" ? null : refuse(verdict.reason);
     }
 
-    async function reading(call) {
+    // seen maps each private window to the bounding box of every rectangle
+    // a reading of this call reported for it.
+    async function reading(call, seen) {
         const value = await read();
         if (value.kind !== "state") return { kind: "unread", answer: answer("failed", { kind: "failed", reason: "hyprland-read", detail: value.content }) };
         const plan = Screen.plan(call, value.state, privateWindows(), onScreen);
-        return plan.kind === "refuse" ? { kind: "refused", answer: refuse(plan.reason) } : plan;
+        if (plan.kind === "refuse") return { kind: "refused", answer: refuse(plan.reason) };
+        for (const { address, rect } of plan.hidden)
+            seen.set(address, seen.has(address) ? Screen.cover(seen.get(address), rect) : rect);
+        return plan;
+    }
+
+    // The wait before a retry; false when the call was cancelled meanwhile.
+    function settle(signal) {
+        return new Promise(resolve => {
+            if (signal.aborted) { resolve(false); return; }
+            const stop = () => { clock.clear(timer); resolve(false); };
+            const timer = clock.set(() => { signal.removeEventListener("abort", stop); resolve(true); }, SETTLE_MS);
+            signal.addEventListener("abort", stop, { once: true });
+        });
     }
 
     // One capture between two readings. Its masks hold only while both
     // readings share their key; otherwise the image is deleted.
-    async function shoot(call, authorize, signal, files) {
-        const before = await reading(call);
+    async function shoot(call, authorize, signal, files, seen) {
+        const before = await reading(call, seen);
         if (before.kind !== "capture") return { kind: "failed", answer: before.answer };
         const early = halted(authorize);
         if (early !== null) return { kind: "failed", answer: early };
@@ -136,7 +170,7 @@ function create({ commands, environment, read, readMs, directory, state, route, 
         files.push(file);
         const shot = await run("grim", [...before.grim, file], signal);
         if (shot.kind !== "exited" || shot.code !== 0) return { kind: "failed", answer: Desktop.failure(call, "grim", shot) };
-        const after = await reading(call);
+        const after = await reading(call, seen);
         // An image taken across a lock, or after the action ended, is deleted.
         const late = halted(authorize);
         if (late !== null) { remove(file); return { kind: "failed", answer: late }; }
@@ -145,39 +179,46 @@ function create({ commands, environment, read, readMs, directory, state, route, 
         return { kind: "captured", plan: before, file };
     }
 
-    async function finish(call, plan, file, signal, files) {
+    // rects are the private windows' rectangles every reading of the call saw.
+    async function finish(call, plan, file, signal, files, way, rects) {
         const size = pngSize(file);
         if (size === null || size.width !== plan.image.width || size.height !== plan.image.height) return refuse("image-size");
+        const masks = Screen.masks(plan, rects);
         let out = file;
-        if (plan.masks.length !== 0) {
+        if (masks.length !== 0) {
             out = path.join(directory, crypto.randomUUID() + ".png");
             files.push(out);
-            const draws = plan.masks.flatMap(mask => ["-draw",
+            const draws = masks.flatMap(mask => ["-draw",
                 "rectangle " + mask.x0 + "," + mask.y0 + " " + (mask.x1 - 1) + "," + (mask.y1 - 1)]);
             // Coders are named, so neither file is read or written as another format.
             const painted = await run("magick", ["png:" + file, "+antialias", "-fill", "black", ...draws, "PNG32:" + out],
                 signal, { MAGICK_TEMPORARY_PATH: directory });
-            if (painted.kind !== "exited" || painted.code !== 0) return refuse("mask-failed");
+            if (painted.kind !== "exited" || painted.code !== 0) return Desktop.failure(call, "magick", painted);
             const masked = pngSize(out);
             if (masked === null || masked.width !== size.width || masked.height !== size.height) return refuse("mask-failed");
             remove(file);
         }
-        const bytes = image(out);
-        if (bytes === null) return refuse("image-bytes");
-        const capture = { box: [plan.box.x, plan.box.y, plan.box.w, plan.box.h], scale: plan.scale,
-            width: size.width, height: size.height, bytes: bytes.length,
-            sha256: crypto.createHash("sha256").update(bytes).digest("hex"), masks: plan.masks.length };
-        const text = described(call, plan);
-        const way = route();
+        const text = described(call, plan, masks.length);
+        const capture = facts => ({ box: [plan.box.x, plan.box.y, plan.box.w, plan.box.h], scale: plan.scale,
+            width: size.width, height: size.height, ...facts, masks: masks.length });
         switch (way) {
-        case "image": return { outcome: "completed", content: text, image: { type: "image/png", bytes }, capture };
+        case "image": {
+            const bytes = image(out);
+            if (bytes === null) return refuse("image-bytes");
+            return { outcome: "completed", content: text, image: { type: "image/png", bytes },
+                capture: capture({ bytes: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") }) };
+        }
         case "text": {
-            if (!commands.has("tesseract")) return refuse("ocr-unavailable");
+            // No image leaves on this route, so no image bound applies.
+            const facts = digest(out);
             // OCR reads the painted file, never the capture.
             const ocr = await run("tesseract", [out, "stdout", ...OCR], signal);
-            if (ocr.kind !== "exited" || ocr.code !== 0) return Desktop.failure(call, "tesseract", ocr);
+            // Like clipboard.read, text past the output bound is answered cut;
+            // the router marks its own cut.
+            const cut = ocr.kind === "stopped" && ocr.reason === "output-limit";
+            if (!cut && (ocr.kind !== "exited" || ocr.code !== 0)) return Desktop.failure(call, "tesseract", ocr);
             const found = ocr.stdout.trim();
-            return { outcome: "completed", capture, content: text + " The brain takes no image, so this is its OCR text.\n"
+            return { outcome: "completed", capture: capture(facts), content: text + " The brain takes no image, so this is its OCR text.\n"
                 + (found === "" ? "[no text recognized]" : found) };
         }
         default: throw new Error("jarvis: vision=route " + way);
@@ -187,6 +228,11 @@ function create({ commands, environment, read, readMs, directory, state, route, 
     async function perform(call, authorize, signal, files) {
         const turn = turnOf(state());
         if (turn === null) return refuse("outside-turn");
+        // Known before any effect: no capture is taken for a brain that
+        // could not read it.
+        const way = route();
+        if (way !== "image" && way !== "text") throw new Error("jarvis: vision=route " + way);
+        if (way === "text" && !commands.has("tesseract")) return refuse("ocr-unavailable");
         if (taken.turn !== turn) taken = { turn, count: 0 };
         if (taken.count >= TURN_LIMIT) return refuse("screenshot-limit");
         taken.count += 1;
@@ -202,12 +248,16 @@ function create({ commands, environment, read, readMs, directory, state, route, 
             if (area === null || Number(area[3]) < 1 || Number(area[4]) < 1) return refuse("area-shape");
             target = { id: "vision.region", args: { x: Number(area[1]), y: Number(area[2]), width: Number(area[3]), height: Number(area[4]) } };
         }
-        let shot = await shoot(target, authorize, signal, files);
-        // A private window that moved or a window set that changed retries once.
-        if (shot.kind === "changed") shot = await shoot(target, authorize, signal, files);
+        const seen = new Map();
+        let shot = await shoot(target, authorize, signal, files, seen);
+        // A change between the readings retries once, after its animation.
+        if (shot.kind === "changed") {
+            if (!await settle(signal)) return answer("failed", { kind: "stopped", reason: "cancelled" });
+            shot = await shoot(target, authorize, signal, files, seen);
+        }
         if (shot.kind === "changed") return refuse("screen-changed");
         if (shot.kind === "failed") return shot.answer;
-        return finish(call, shot.plan, shot.file, signal, files);
+        return finish(call, shot.plan, shot.file, signal, files, way, [...seen.values()]);
     }
 
     function start(call, done, authorize) {
@@ -218,8 +268,11 @@ function create({ commands, environment, read, readMs, directory, state, route, 
         running.set(call, abort);
         const files = [];
         // Like the router's own start, an internal error becomes a failed
-        // outcome without its text.
-        perform(call, authorize, abort.signal, files).catch(() => answer("failed", "executor-failed")).then(value => {
+        // outcome without its text; the daemon's stderr names its cause.
+        perform(call, authorize, abort.signal, files).catch(error => {
+            process.stderr.write("jarvis: vision=internal cause=" + (error?.code ?? error?.message ?? "unknown") + "\n");
+            return answer("failed", "executor-failed");
+        }).then(value => {
             running.delete(call);
             let result = value;
             try { for (const file of files) remove(file); }
@@ -229,7 +282,7 @@ function create({ commands, environment, read, readMs, directory, state, route, 
     }
 
     const record = { commands: [...commands.keys()], cancellable: true, start,
-        timeoutMs: DEADLINES.slurp + 2 * (2 * readMs + DEADLINES.grim) + DEADLINES.magick + DEADLINES.tesseract + SLACK_MS,
+        timeoutMs: DEADLINES.slurp + 2 * (2 * readMs + DEADLINES.grim) + SETTLE_MS + DEADLINES.magick + DEADLINES.tesseract + SLACK_MS,
         cancel: call => { running.get(call)?.abort(); } };
 
     return { record, close() {

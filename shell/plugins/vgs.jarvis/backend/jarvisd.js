@@ -339,7 +339,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     Object.assign(runner.ports, router.ports);
                     requests = ShellRequests.create({ Protocol, clock, write: fields =>
                         write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
-                    executors = Executors.register(router, { find: commandFile, environment: process.env,
+                    executors = Executors.register(router, { find: commandFile, environment: process.env, clock,
                         desktop: { Dispatch, Launch, request: requests.send, clock,
                             environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) },
                         // The engine exists before the first turn that could route a capture.

@@ -154,8 +154,6 @@ async function main() {
     const RUNNING = { turn: { kind: "thinking", gen: 1, op: 5 }, action: { kind: "running", gen: 1, op: 6, brain: 5 } };
     const allow = () => screen.locked() ? { kind: "refuse", reason: "session-locked" } : { kind: "allow" };
     const calls = name => screen.calls().filter(call => call.name === name);
-    const hyprctlReads = () => fs.existsSync(path.join(runtime, "hyprctl.log"))
-        ? fs.readFileSync(path.join(runtime, "hyprctl.log"), "utf8").split("\n").filter(Boolean).length : 0;
     const left = () => fs.existsSync(directory) ? fs.readdirSync(directory) : [];
     const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -183,17 +181,18 @@ async function main() {
         Object.assign(ports, router.ports);
         const registered = new Map();
         const facts = { route, privateWindows };
-        const reads = hyprctlReads();
         const executors = Executors.register({ register(id, executor) { registered.set(id, executor); router.register(id, executor); } },
             { find: commandFile, environment: ENVIRONMENT, clock,
                 desktop: { Dispatch, Launch, request: () => assert.fail("no desktop request"), clock: CLOCK, environment: HYPRLAND, commands: [] },
                 vision: { directory, state: state ?? (() => runner.state), route: () => facts.route, privateWindows: () => facts.privateWindows } });
-        // Registration follows the session's probe read; polls its log, not a latency.
-        for (let wait = 0; registers ? !registered.has("vision") : hyprctlReads() === reads; wait++) {
+        // Vision registers in the same microtask chain that registers the
+        // Hyprland executors after the session's probe, so once "windows"
+        // is seen from a later timer, vision has registered or never will.
+        // Polls the registrations, not a latency.
+        for (let wait = 0; !registered.has(registers ? "vision" : "windows"); wait++) {
             assert.ok(wait < 500, "vision registration");
             await pause(10);
         }
-        await pause(registers ? 0 : 50);
         function turn() {
             runner.dispatch({ type: "snapshot", locked: false, engine: "chained", configured: true, settings: {} });
             runner.dispatch({ type: "indicator", shown: true });
@@ -265,7 +264,8 @@ async function main() {
                     const plan = Screen.plan({ id: "vision.monitor", args: { monitor: "FIX-1" } }, reading, SHIPPED, Dispatch.onScreen);
                     const label = name + " transform " + transform;
                     assert.equal(plan.kind, "capture", label + ": " + plan.reason);
-                    assert.deepEqual([plan.box, plan.image, plan.masks], [{ x, y, w, h }, { width, height }, [mask]], label);
+                    const masks = Screen.masks(plan, plan.hidden.map(entry => entry.rect));
+                    assert.deepEqual([plan.box, plan.image, masks], [{ x, y, w, h }, { width, height }, [mask]], label);
                     assert.deepEqual(plan.grim, ["-s", String(output.scale), "-o", "FIX-1"], label);
                 }
             }
@@ -343,6 +343,7 @@ async function main() {
                 await within(folder, { route: "text" }, async w => {
                     const value = await w.send("vision.screen");
                     assert.deepEqual([value.outcome, value.item.content], ["failed", refusal("ocr-unavailable")]);
+                    assert.deepEqual(screen.calls(), [], "no capture for a brain that could not read it");
                 });
             } finally { process.env.PATH = saved; }
         }],
@@ -369,10 +370,23 @@ async function main() {
                     });
                 }
                 process.env.PATH = saved;
-                // No Hyprland answer, no vision tools: registration waits for the probe.
+                // No Hyprland answer, no vision tools: registration waits for
+                // the probe. Vision's handler on ready was attached first, so
+                // it has run once this await resumes.
                 screen.set(scene(flat, []));
                 fs.writeFileSync(path.join(runtime, "hyprctl.fail"), "");
-                await within(folder, { registers: false }, async w => assert.equal(w.registered.has("vision"), false));
+                const DesktopSession = require(path.join(folder, "DesktopSession.js"));
+                const Vision = require(path.join(folder, "Vision.js"));
+                const ids = [];
+                const router = { register: id => ids.push(id) };
+                const session = DesktopSession.install({ router, Dispatch, Launch, request: () => assert.fail("no desktop request"),
+                    clock: CLOCK, environment: HYPRLAND, commands: [] });
+                const vision = Vision.install({ router, session, find: commandFile, environment: ENVIRONMENT, clock: CLOCK,
+                    onScreen: Dispatch.onScreen, directory, state: () => RUNNING, route: () => "image", privateWindows: () => SHIPPED });
+                try {
+                    assert.equal(await session.ready, false, "the probe failed");
+                    assert.deepEqual(ids, ["wire"], "no Hyprland answer registers no vision");
+                } finally { vision.close(); session.close(); }
             } finally { process.env.PATH = saved; }
         }],
         ["release", async folder => {
@@ -428,24 +442,40 @@ async function main() {
                 assert.deepEqual(left(), []);
             });
         }],
-        ["races", async folder => {
+        ["races", async (folder, bound) => {
             const start = [plain("0xb2", [150, 40], [100, 80]), secret("0xa1", [20, 30], [100, 50])];
             const moved = [start[0], secret("0xa1", [200, 100], [100, 50])];
             const after = clients => screen.state(flat.monitors, clients);
-            // [name, call, states each grim writes, outcome, content, grim runs, pixel probes]
-            for (const [name, call, states, outcome, content, runs, probes] of [
-                ["moved-once", ["vision.screen", {}], [after(moved)], "completed", null, 2, [[200, 100, BLACK], [299, 149, BLACK], [20, 30, BG]]],
-                ["moving", ["vision.screen", {}], [after(moved), after(start)], "failed", refusal("screen-changed"), 2, null],
-                ["window-set", ["vision.screen", {}], [after([...start, plain("0xc3", [0, 150], [50, 40])])], "completed", null, 2, [[20, 30, BLACK], [10, 160, [...BLUE, 255]]]],
-                ["public-moved", ["vision.screen", {}], [after([plain("0xb2", [160, 50], [100, 80]), start[1]])], "completed", null, 1, null],
-                ["target-closed", ["vision.window", { window: "0xb2" }], [after([start[1]])], "failed", refusal("window-absent"), 1, null]
+            // Workspace 2 slides in on FIX-1; no window rectangle changes.
+            const switched = screen.state([monitor(0, "FIX-1", { width: 320, height: 200, scale: 1,
+                activeWorkspace: { id: 2, name: "2" } })], start);
+            // [name, call, states each grim writes, outcome, content, grim runs,
+            // whether a retry was attempted, pixel probes]
+            for (const [name, call, states, outcome, content, runs, retried, probes] of [
+                // The moved window is painted over both rectangles: (280, 60)
+                // lies in their bounding box and in neither rectangle.
+                ["moved-once", ["vision.screen", {}], [after(moved)], "completed", null, 2, true,
+                    [[200, 100, BLACK], [299, 149, BLACK], [20, 30, BLACK], [280, 60, BLACK], [310, 160, BG], [10, 160, BG]]],
+                ["moving", ["vision.screen", {}], [after(moved), after(start)], "failed", refusal("screen-changed"), 2, true, null],
+                ["window-set", ["vision.screen", {}], [after([...start, plain("0xc3", [0, 150], [50, 40])])], "completed", null, 2, true, [[20, 30, BLACK], [10, 160, [...BLUE, 255]]]],
+                ["workspace-switch", ["vision.screen", {}], [switched], "completed", null, 2, true, [[20, 30, BLACK], [160, 50, [...GREEN, 255]]]],
+                ["public-moved", ["vision.screen", {}], [after([plain("0xb2", [160, 50], [100, 80]), start[1]])], "completed", null, 1, false, null],
+                ["target-closed", ["vision.window", { window: "0xb2" }], [after([start[1]])], "failed", refusal("window-absent"), 1, true, null]
             ]) {
                 screen.set(scene(flat, start), { grim: { states } });
-                await within(folder, {}, async w => {
+                // The settle wait fires at once; it records how many captures preceded it.
+                const settles = [];
+                const clock = { set: (fn, ms) => {
+                    if (ms !== 800) return (bound ?? CLOCK).set(fn, ms);
+                    settles.push(calls("grim").length);
+                    return setTimeout(fn, 0);
+                }, clear: timer => clearTimeout(timer) };
+                await within(folder, { clock }, async w => {
                     const value = await w.send(...call);
                     assert.equal(value.outcome, outcome, name + ": " + value.item.content);
                     if (content !== null) assert.equal(value.item.content, content, name);
                     assert.equal(calls("grim").length, runs, name + " captures");
+                    assert.deepEqual(settles, retried ? [1] : [], name + ": a retry waits out the animation first");
                     for (const [x, y, rgba] of probes ?? []) assert.deepEqual(decode(picture(value, name)).pixel(x, y), rgba, name + " " + x + "," + y);
                     assert.deepEqual(left(), [], name);
                 });
@@ -499,7 +529,9 @@ async function main() {
                 ["grim-exit", clients, { grim: { code: 1, stderr: "failed to create display\n" } },
                     JSON.stringify({ kind: "failed", command: "grim", code: 1, detail: "failed to create display" })],
                 ["image-size", clients, { grim: { size: [100, 100] } }, refusal("image-size")],
-                ["mask-failed", clients, { grim: { corrupt: true } }, refusal("mask-failed")],
+                ["magick-exit", clients, { magick: { code: 1, stderr: "magick: fixture failure\n" } },
+                    JSON.stringify({ kind: "failed", command: "magick", code: 1, detail: "magick: fixture failure" })],
+                ["mask-failed", clients, { magick: { garbage: true } }, refusal("mask-failed")],
                 ["image-bytes", [clients[0]], { grim: { pad: 4 * 1024 * 1024 } }, refusal("image-bytes")]
             ]) {
                 screen.set(scene(flat, people), modes);
@@ -509,6 +541,34 @@ async function main() {
                     assert.deepEqual(left(), [], name);
                 });
             }
+            // The text route sends no image, so the image bound does not apply.
+            screen.set(scene(flat, [clients[0]]), { grim: { pad: 4 * 1024 * 1024 }, tesseract: { stdout: "BIG SCREEN\n" } });
+            await within(folder, { route: "text" }, async w => {
+                const value = await w.send("vision.screen");
+                assert.equal(value.outcome, "completed", value.item.content);
+                assert.ok(value.item.content.endsWith("BIG SCREEN"), value.item.content);
+                assert.ok(w.audited().records.at(-1).capture.bytes > 4 * 1024 * 1024);
+            });
+            // OCR text past the output bound is answered cut, as a clipboard read is.
+            screen.set(scene(flat, [clients[0]]), { tesseract: { stdout: "FIXTURE ".repeat(10000) } });
+            await within(folder, { route: "text" }, async w => {
+                const value = await w.send("vision.screen");
+                assert.equal(value.outcome, "completed", value.item.content.slice(0, 200));
+                assert.ok(value.item.content.includes("this is its OCR text.\nFIXTURE FIXTURE"));
+            });
+            // An internal error answers without its text and names its cause on stderr.
+            screen.set(scene(flat, clients), { grim: { nofile: true } });
+            const written = [];
+            const write = process.stderr.write;
+            process.stderr.write = chunk => { written.push(String(chunk)); return true; };
+            try {
+                await within(folder, {}, async w => {
+                    const value = await w.send("vision.screen");
+                    assert.deepEqual([value.outcome, value.item.content], ["failed", "executor-failed"]);
+                });
+            } finally { process.stderr.write = write; }
+            assert.deepEqual(written, ["jarvis: vision=internal cause=ENOENT\n"], "the daemon log names the cause");
+            assert.deepEqual(left(), []);
             screen.set(scene(flat, clients));
             await within(folder, {}, async w => {
                 fs.writeFileSync(path.join(runtime, "hyprctl.fail"), "");
@@ -533,6 +593,27 @@ async function main() {
             await within(folder, { clock: clock ?? onHeld("grim", 5000) }, async w => {
                 const value = await w.send("vision.screen");
                 assert.equal(value.item.content, JSON.stringify({ kind: "stopped", command: "grim", reason: "timeout" }));
+                assert.deepEqual(left(), []);
+            });
+            screen.set(scene(flat, [plain("0xb2", [150, 40], [100, 80]), secret("0xa1", [20, 30], [100, 50])]), { magick: { hold: true } });
+            await within(folder, { clock: clock ?? onHeld("magick", 5000) }, async w => {
+                const value = await w.send("vision.screen");
+                assert.equal(value.item.content, JSON.stringify({ kind: "stopped", command: "magick", reason: "timeout" }));
+                assert.deepEqual(left(), []);
+            });
+            // A cancel during the wait before a retry ends the call there.
+            const start = [plain("0xb2", [150, 40], [100, 80]), secret("0xa1", [20, 30], [100, 50])];
+            screen.set(scene(flat, start), { grim: { states: [screen.state(flat.monitors, [start[0], secret("0xa1", [200, 100], [100, 50])])] } });
+            let waiting = null;
+            const holding = { set: (fn, ms) => ms === 800 ? (waiting = "settle") : setTimeout(fn, ms), clear: timer => { if (timer !== "settle") clearTimeout(timer); } };
+            await within(folder, { state: () => RUNNING, clock: holding }, async w => {
+                const call = Object.freeze({ id: "vision.screen", args: {} });
+                const answer = new Promise(resolve => w.registered.get("vision").start(call, resolve, allow));
+                for (let i = 0; i < 1000 && waiting === null; i++) await pause(5);
+                assert.equal(waiting, "settle", "the retry waits");
+                w.registered.get("vision").cancel(call);
+                assert.deepEqual(await answer, { outcome: "failed", content: JSON.stringify({ kind: "stopped", reason: "cancelled" }) });
+                assert.equal(calls("grim").length, 1, "no capture after the cancel");
                 assert.deepEqual(left(), []);
             });
         }],
@@ -574,12 +655,19 @@ async function main() {
         ["Screen.js", "private-target", 'if (isPrivate(client, list)) return refuse("private-window");', "", "refusals"],
         ["Screen.js", "region-bounds", "\n                || box.x + box.w > screen.x + screen.w || box.y + box.h > screen.y + screen.h)", ")", "refusals"],
         ["Screen.js", "region-shown", "if (shown.length === 0 || box.x < screen.x", "if (box.x < screen.x", "refusals"],
-        ["Screen.js", "window-set-ignored", "key: JSON.stringify({ box, scale, windows, hidden })", "key: JSON.stringify({ box, scale, hidden })", "races"],
-        ["Vision.js", "retry-dropped", "if (shot.kind === \"changed\") shot = await shoot(target, authorize, signal, files);", "", "races"],
+        ["Screen.js", "window-set-ignored", "key: JSON.stringify({ box, scale, workspaces, windows, hidden })", "key: JSON.stringify({ box, scale, workspaces, hidden })", "races"],
+        ["Screen.js", "workspace-ignored", "key: JSON.stringify({ box, scale, workspaces, windows, hidden })", "key: JSON.stringify({ box, scale, windows, hidden })", "races"],
+        ["Vision.js", "retry-dropped", "            shot = await shoot(target, authorize, signal, files, seen);\n", "", "races"],
+        ["Vision.js", "settle-dropped", "if (!await settle(signal)) return answer(\"failed\", { kind: \"stopped\", reason: \"cancelled\" });", "", "races"],
+        ["Vision.js", "union-dropped", "seen.set(address, seen.has(address) ? Screen.cover(seen.get(address), rect) : rect);", "seen.set(address, rect);", "races"],
         ["Vision.js", "move-unchecked", "after.key !== before.key", "false", "races"],
         ["Vision.js", "lock-check-dropped", "const early = halted(authorize);\n        if (early !== null) return { kind: \"failed\", answer: early };", "", "locked"],
         ["Vision.js", "image-kept-across-lock", "if (late !== null) { remove(file); return { kind: \"failed\", answer: late }; }", "", "lock-across"],
-        ["Vision.js", "audit-bytes", "masks: plan.masks.length };", "masks: plan.masks.length, image: bytes.toString(\"base64\") };", "masks"],
+        ["Vision.js", "audit-bytes", "capture: capture({ bytes: bytes.length,", "capture: capture({ image: bytes.toString(\"base64\"), bytes: bytes.length,", "masks"],
+        ["Vision.js", "ocr-late", "if (way === \"text\" && !commands.has(\"tesseract\")) return refuse(\"ocr-unavailable\");", "", "commands"],
+        ["Vision.js", "ocr-cut-failed", "const cut = ocr.kind === \"stopped\" && ocr.reason === \"output-limit\";", "const cut = false;", "failures"],
+        ["Vision.js", "text-bounded", "const facts = digest(out);", "const facts = image(out) === null ? null : digest(out);\n            if (facts === null) return refuse(\"image-bytes\");", "failures"],
+        ["Vision.js", "internal-silent", "process.stderr.write(\"jarvis: vision=internal cause=\" + (error?.code ?? error?.message ?? \"unknown\") + \"\\n\");", "void error;", "failures"],
         ["Vision.js", "ocr-skipped", "const way = route();", "const way = \"image\";", "commands"],
         ["Vision.js", "ocr-unpainted", "run(\"tesseract\", [out,", "run(\"tesseract\", [file,", "commands"],
         ["Vision.js", "outside-turn", "if (turn === null) return refuse(\"outside-turn\");", "if (turn === null) taken = { turn: null, count: 0 };", "turns"],
@@ -587,7 +675,9 @@ async function main() {
         ["Vision.js", "files-kept", "try { for (const file of files) remove(file); }", "try { void files; }", "masks"],
         ["Vision.js", "size-unchecked", "if (size === null || size.width !== plan.image.width || size.height !== plan.image.height) return refuse(\"image-size\");",
             "if (size === null) return refuse(\"image-size\");", "failures"],
-        ["Vision.js", "paint-unchecked", "if (painted.kind !== \"exited\" || painted.code !== 0) return refuse(\"mask-failed\");", "", "failures"],
+        ["Vision.js", "paint-unchecked", "if (painted.kind !== \"exited\" || painted.code !== 0) return Desktop.failure(call, \"magick\", painted);", "", "failures"],
+        ["Vision.js", "magick-cause", "return Desktop.failure(call, \"magick\", painted);", "return refuse(\"mask-failed\");", "failures"],
+        ["Vision.js", "paint-size-unchecked", "if (masked === null || masked.width !== size.width || masked.height !== size.height) return refuse(\"mask-failed\");", "", "failures"],
         ["Vision.js", "image-unbounded", "if (stat.size > IMAGE_BYTES) return null;", "", "failures"],
         ["Vision.js", "temporary-path", "{ MAGICK_TEMPORARY_PATH: directory }", "{}", "commands"],
         ["Vision.js", "magick-optional", "if (!commands.has(\"grim\") || !commands.has(\"magick\"))", "if (!commands.has(\"grim\"))", "probe"],

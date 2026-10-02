@@ -15,7 +15,8 @@ const integer = value => Number.isSafeInteger(value);
  * rounded (CMonitor::applyMonitorRule, src/output/Monitor.cpp).
  */
 function layoutBox(monitor) {
-    if (!monitor || ![monitor.x, monitor.y, monitor.width, monitor.height].every(integer)
+    if (!monitor || ![monitor.x, monitor.y, monitor.width, monitor.height,
+        monitor.activeWorkspace?.id, monitor.specialWorkspace?.id].every(integer)
             || monitor.width < 1 || monitor.height < 1 || typeof monitor.scale !== "number"
             || !Number.isFinite(monitor.scale) || monitor.scale <= 0
             || !Number.isInteger(monitor.transform) || monitor.transform < 0 || monitor.transform > 7)
@@ -110,13 +111,13 @@ function target(call, monitors, clients, onScreen, list) {
 
 /**
  * plan(call, reading, privateWindows, onScreen) answers
- *   {kind:"capture", box, scale, grim, image:{width,height}, masks, key}
+ *   {kind:"capture", box, scale, grim, image:{width,height}, hidden, key}
  * or {kind:"refuse", reason}. reading is a Dispatch.revealState value;
- * onScreen is Dispatch.onScreen. masks are image pixel rectangles
- * {x0, y0, x1, y1}, end exclusive, rounded outward, one per mapped private
- * window the box meets, on any workspace: a workspace switch during the
- * capture moves no rectangle. key is the part of the reading two plans of
- * one call must share for an image to match its masks: the box, the scale,
+ * onScreen is Dispatch.onScreen. hidden lists every mapped private window,
+ * on any workspace, as {address, rect} in layout coordinates: Hyprland's
+ * animation goal, not the rectangle drawn while it animates. key is the part
+ * of the reading two plans of one call must share for an image to match its
+ * masks: the box, the scale, each monitor's active and special workspace,
  * the set of mapped windows and every private window's rectangle.
  */
 function plan(call, reading, privateWindows, onScreen) {
@@ -135,19 +136,35 @@ function plan(call, reading, privateWindows, onScreen) {
         hidden.push({ address: String(client.address).toLowerCase(), rect });
     }
     hidden.sort((a, b) => a.address < b.address ? -1 : a.address > b.address ? 1 : 0);
-    const masks = [];
-    for (const { rect } of hidden) {
+    const windows = clients.map(client => String(client.address).toLowerCase()).sort();
+    const workspaces = reading.monitors.map(monitor => [monitor.name, monitor.activeWorkspace.id, monitor.specialWorkspace.id]);
+    return { kind: "capture", box, scale, grim: ["-s", String(scale), ...chosen.grim], image, hidden,
+        key: JSON.stringify({ box, scale, workspaces, windows, hidden }) };
+}
+
+/**
+ * masks(plan, rects) answers the image pixel rectangles {x0, y0, x1, y1},
+ * end exclusive, that cover each layout rectangle of rects inside the plan's
+ * box: clipped to the box and rounded outward.
+ */
+function masks(plan, rects) {
+    const { box, scale, image } = plan;
+    const out = [];
+    for (const rect of rects) {
         const part = intersect(rect, box);
         if (part === null) continue;
-        masks.push({ x0: Math.max(0, Math.floor((part.x - box.x) * scale)),
+        out.push({ x0: Math.max(0, Math.floor((part.x - box.x) * scale)),
             y0: Math.max(0, Math.floor((part.y - box.y) * scale)),
             x1: Math.min(image.width, Math.ceil((part.x + part.w - box.x) * scale)),
             y1: Math.min(image.height, Math.ceil((part.y + part.h - box.y) * scale)) });
     }
-    const windows = clients.map(client => String(client.address).toLowerCase()).sort();
-    return { kind: "capture", box, scale, grim: ["-s", String(scale), ...chosen.grim], image,
-        masks: masks.filter(mask => mask.x1 > mask.x0 && mask.y1 > mask.y0),
-        key: JSON.stringify({ box, scale, windows, hidden }) };
+    return out.filter(mask => mask.x1 > mask.x0 && mask.y1 > mask.y0);
 }
 
-module.exports = { plan };
+/** The bounding box of two layout rectangles. */
+function cover(a, b) {
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+    return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
+module.exports = { plan, masks, cover };
