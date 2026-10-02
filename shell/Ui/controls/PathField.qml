@@ -129,6 +129,7 @@ Item {
                     showHidden: false
                 }
                 clip: true
+                acceptedButtons: Qt.NoButton
                 focus: true
                 delegate: ListItem {
                     required property int index

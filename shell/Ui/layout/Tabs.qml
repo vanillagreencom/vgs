@@ -34,6 +34,7 @@ T.TabBar {
         orientation: ListView.Horizontal
         spacing: root.spacing
         boundsBehavior: Flickable.StopAtBounds
+        acceptedButtons: Qt.NoButton
         flickableDirection: Flickable.AutoFlickIfNeeded
         snapMode: ListView.SnapToItem
         highlightMoveDuration: Theme.motion.duration.fast

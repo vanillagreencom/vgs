@@ -15,8 +15,11 @@ import "../foundation/KeyNavLogic.js" as KeyNavLogic
 // content spans the area and the bar draws over its right strip: for rows
 // whose fills reach the area's edge and whose own end padding keeps that
 // strip clear while the content overflows, as a menu's entries do. The area
-// takes a press, a drag and the wheel only while its content overflows, so
-// a press on an area that fits reaches what lies under it, such as a scrim
+// scrolls by the wheel, the keys, its bar and a touch drag, never by a
+// mouse drag: it takes no mouse button, so a mouse press and drag reaches
+// the item under the pointer, which selects text where text is selectable.
+// It takes the wheel and a touch only while its content overflows, so a
+// touch on an area that fits reaches what lies under it, such as a scrim
 // that closes a full-screen view.
 Flickable {
     id: root
@@ -35,6 +38,7 @@ Flickable {
     contentHeight: measuredContentHeight
     boundsBehavior: Flickable.StopAtBounds
     interactive: overflowing
+    acceptedButtons: Qt.NoButton
 
     function measureContentHeight() {
         let bottom = 0;

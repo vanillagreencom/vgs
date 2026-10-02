@@ -176,6 +176,7 @@ T.AbstractButton {
             keyNavigationEnabled: true
             keyNavigationWraps: false
             boundsBehavior: Flickable.StopAtBounds
+            acceptedButtons: Qt.NoButton
             // The bar's own test, so an entry keeps the bar's strip exactly
             // while the bar shows.
             readonly property bool overflowing: listBar.needed

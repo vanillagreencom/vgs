@@ -1024,6 +1024,7 @@ Item {
                     clip: true
                     spacing: root.look.row.spacing
                     boundsBehavior: Flickable.StopAtBounds
+                    acceptedButtons: Qt.NoButton
 
                     // One plate glides between rows: the list motion of
                     // qs.Ui at the launcher's own timings, drawn as its own

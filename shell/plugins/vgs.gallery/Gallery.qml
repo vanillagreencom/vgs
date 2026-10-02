@@ -779,6 +779,7 @@ Item {
                         height: parent.height
                         contentHeight: slimRows.height
                         clip: true
+                        acceptedButtons: Qt.NoButton
                         Column {
                             id: slimRows
                             width: slimList.width

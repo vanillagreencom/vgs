@@ -30,6 +30,7 @@ Item {
         contentHeight: cards.implicitHeight + root.look.stack.tail
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
+        acceptedButtons: Qt.NoButton
         clip: true
 
         ColumnLayout {
