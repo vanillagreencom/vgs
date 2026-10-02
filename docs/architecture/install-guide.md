@@ -1,6 +1,6 @@
 # Install guide
 
-Covers: README.md § Install, § Shipped plugins and § Licence, scripts/check-readme.js, scripts/test-check-readme.js, scripts/preflight-floor.js, scripts/readme-install.sh, scripts/test-readme-install.sh
+Covers: README.md, scripts/check-readme.js, scripts/test-check-readme.js, scripts/preflight-floor.js, scripts/readme-install.sh, scripts/test-readme-install.sh
 
 `README.md` § Install is the install guide users read. This file states what the section must say, where each fact comes from, and the two scripts that hold it to those sources.
 
