@@ -72,6 +72,7 @@ ROWS = [
     ("a ListView set as a property value", body("    property Item c: ListView { }\n"), "mouse-drag", 5),
     ("a GridView that takes the left button", body("    GridView { acceptedButtons: Qt.LeftButton }\n"), "mouse-drag", 5),
     ("a TableView without the setting", body("    TableView { }\n"), "mouse-drag", 5),
+    ("a view named through an aliased import", "import QtQuick as Q\nQ.Item {\n    Q.ListView { }\n}\n", "mouse-drag", 3),
     ("a NoButton inside a child object does not excuse the view", body("    Flickable {\n        Item { property int acceptedButtons: Qt.NoButton }\n    }\n"), "mouse-drag", 5),
     ("a NoButton in a comment does not excuse the view", body("    ListView {\n        // acceptedButtons: Qt.NoButton\n    }\n"), "mouse-drag", 5),
     ("the cursor marker exempts no view", body("    // pointer-cursor-exempt: a list\n    Flickable { }\n"), "mouse-drag", 6),
