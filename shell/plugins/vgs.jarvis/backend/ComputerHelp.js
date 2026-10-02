@@ -1,5 +1,5 @@
 // One on-demand owner for installed computer-family help. Families add one
-// regular Markdown file; no topic or content is advertised before it ships.
+// regular Markdown file. Browser readiness adds its provider to this same owner.
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
@@ -12,6 +12,7 @@ function create(root = ROOT, browser = null) {
         catch (error) { if (error.code === "ENOENT") return false; throw error; }
     });
     return { commands: [], topics, timeoutMs: browser === null ? 2000 : browser.timeoutMs, cancellable: false,
+        // The router retains this list; verified readiness extends its offer once.
         enableBrowser() {
             if (browser === null) throw new Error("help-browser-unavailable");
             if (!topics.includes("browser")) topics.push("browser");

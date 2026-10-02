@@ -115,6 +115,13 @@ world(() => {
             browserHelp(implementation);
         });
     controls++;
+    mutant(path.join(backend, "ComputerHelp.js"), "browser-help-provider",
+        'if (topic === "browser" && browser !== null) { browser.start(call, done); return; }', ';',
+        (implementation, folder) => {
+            fs.cpSync(path.join(backend, "skills"), path.join(folder, "skills"), { recursive: true });
+            browserHelp(implementation);
+        }, "Browser.js");
+    controls++;
     const shell = { argv: ["fixture"], cwd: fixtures.project, network: false };
     const text = { text: "fixture text" };
     const held = w => { assert.equal(w.call("shell.argv", shell).kind, "held"); w.show(); w.time(700); };

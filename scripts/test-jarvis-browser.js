@@ -139,8 +139,7 @@ world(async () => {
     assert.equal(skill.guidance(), skill.guidance());
     assert.equal(calls().filter(row => row.args[0] === "skills").length, 1, "one cache per version-owned session");
     skill.close();
-    function versionCache(implementation, folder) {
-        if (folder !== undefined) fs.cpSync(path.join(backend, "skills"), path.join(folder, "skills"), { recursive: true });
+    function versionCache(implementation) {
         mode({ version: "0.38.2" });
         const first = implementation.create({ environment });
         first.guidance(); first.close();
@@ -229,12 +228,24 @@ world(async () => {
     function setupAfterStart(implementation) {
         mode({}); fs.rmSync(marker, { force: true });
         const records = {};
-        const lease = implementation.install({ environment, router: { register(id, record) { records[id] = record; } } });
+        const registrations = [];
+        const lease = implementation.install({ environment, router: { register(id, record) {
+            registrations.push(id); records[id] = record;
+        } } });
         assert.equal(records.browser, undefined, "unverified browser is not offered");
+        const guidance = records.guidance;
+        assert.deepEqual(guidance.topics, ["input"], "input help is available before browser setup");
+        let answer;
+        guidance.start({ id: "help", args: { topic: "input" } }, value => { answer = value; });
+        assert.deepEqual(answer, { outcome: "completed",
+            content: fs.readFileSync(path.join(backend, "skills/computer/input.md"), "utf8").trim() });
         lease.sync({ gen: 1, conversation: { kind: "ended" } });
         fs.writeFileSync(marker, JSON.stringify({ version: "0.38.1" }));
         lease.sync({ gen: 2, conversation: { kind: "started" } });
         assert.equal(typeof records.browser?.start, "function", "setup becomes available to the next conversation");
+        assert.equal(records.guidance, guidance, "browser setup retains the shared help owner");
+        assert.deepEqual(registrations, ["guidance", "browser"], "each executor registers once");
+        assert.deepEqual(guidance.topics, ["input", "browser"], "ready browser help joins input help");
         fs.rmSync(marker, { force: true });
         let target;
         assert.doesNotThrow(() => { target = records.browser.observe(call("fill", { ref: "@e1", text: "fixture" })); },
@@ -252,9 +263,16 @@ world(async () => {
             "removing daemon teardown must fail its " + ending + " browser lifetime assertion");
         controls++;
     }
-    async function control(name, needle, replacement, check) { await mutant(file, name, needle, replacement, check); controls++; }
+    async function control(name, needle, replacement, check) {
+        await mutant(file, name, needle, replacement, (implementation, folder) => {
+            fs.cpSync(path.join(backend, "skills"), path.join(folder, "skills"), { recursive: true });
+            return check(implementation);
+        });
+        controls++;
+    }
     const one = name => implementation => check(implementation, ...cases.find(row => row[0] === name));
     await control("setup-after-start", 'if (changed && !ended) prepare();', 'void changed;', setupAfterStart);
+    await control("browser-topic-readiness", 'guidance.enableBrowser();', ';', setupAfterStart);
     await control("live-verification", 'if (status(environment).tone !== "ok") throw new Error("jarvis: browser=unverified");',
         'if (false) throw new Error("jarvis: browser=unverified");', setupAfterStart);
     await control("unverified-observation", 'try { return owner().record.observe(call); } catch { return undefined; }',

@@ -21,6 +21,7 @@ Covers: shell/plugins/vgs.jarvis/backend/ToolRouter.js, shell/plugins/vgs.jarvis
 |---|---|
 | `register(id, executor)` | An executor owner registers its Tools executor id once after its confinement and command probes pass. The record supplies `commands`, `timeoutMs`, `cancellable`, `start(call, done, authorize)`, optional `cancel(call)` and optional `observe(call)`. Cancellable executors require cancel. |
 | `commands` | Commands the registrant has proved present. A table row with a missing command has no offer and refuses execution. Node-native rows need no command. Registration alone does not establish confinement. |
+| `topics` | The guidance owner's installed topic list. `ComputerHelp` extends that same list with `browser` only after the Browser readiness probe succeeds. The router reads the list when offering help; the guidance executor registers once. |
 | `observe(call)` | Input executors provide fresh target and layout-resolved key facts. A missing observer leaves input facts absent; Policy refuses them. Denied facts come from the trusted context producer, not this observer. |
 | `offer()` | Returns `{id, description, parameters}` only for registered, command-ready rows. Tools owns descriptions and schemas. Closing the owner removes all offers. |
 | `route(call, turn)` | Brain call `{kind:"tool-call", id, tool, arguments}` plus Session's `{gen, op}`. Tools narrows the tool and arguments. A stale turn refuses before proposal. Session checks deadlines first, including when its timer has not fired. |
