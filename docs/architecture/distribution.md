@@ -31,6 +31,7 @@ This file holds how VGS is licensed and versioned, the install tree every channe
 
 - `packaging/install-system.sh` is the one installer for system packages, the flake and the curl installer. Call it with `DESTDIR` and `PREFIX`. Package recipes use `PREFIX=/usr`, and a user-local installer can use `PREFIX=$HOME/.local`.
 - The runtime tree is `$PREFIX/share/vgs/`. It contains `bin/`, `shell/`, `config/`, `themes/` and `VERSION`.
+- The installed `qs.Ui` module includes the public components its `qmldir` exports. Their contracts are in [components.md](components.md); the install manifest check catches a missing component file.
 - `$PREFIX/bin/vgsh` is a symlink to `../share/vgs/bin/vgsh`. `vgsh` resolves its root from the real script path, so the symlink starts the installed tree and reads that tree's `VERSION`.
 - The installer copies `README.md` to `$PREFIX/share/doc/vgs/README.md` and `LICENSE` to `$PREFIX/share/licenses/vgs/LICENSE`.
 - The installer drops developer markdown under `shell/`: `AGENTS.md`, `CLAUDE.md` and `README.md`. The runtime never reads those files. It preserves the [Jarvis voice assets](jarvis-voice.md) under `backend/skills/voice/` because the guidance composer reads them at runtime. The root `README.md` still installs as documentation.
