@@ -35,6 +35,32 @@ function runtimeDirectory(base) {
     return base ? base + "/vgs/jarvis" : "";
 }
 
+/**
+ * The account directory name rule, shared by discovery and the protected
+ * path judge. An entry `depth` levels below HOME, the XDG config home or the
+ * XDG data home is an account directory when its name starts with a CLI
+ * provider's prefix and depth is 1 to ACCOUNT_DEPTH. Returns that provider's
+ * row, else null. The caller supplies the three bases and the depth.
+ */
+var ACCOUNT_DEPTH = 2;
+function accountDirectory(name, depth) {
+    if (depth < 1 || depth > ACCOUNT_DEPTH) return null;
+    for (var i = 0; i < PROVIDERS.length; i++) {
+        var row = PROVIDERS[i];
+        if (row.kind === "cli" && name.indexOf(row.prefix) === 0) return row;
+    }
+    return null;
+}
+
+// The CLI providers' explicit root variables, read through read(name), so
+// a child sees the same explicit account roots discovery does.
+function accountVariables(read) {
+    var result = {};
+    for (var i = 0; i < PROVIDERS.length; i++)
+        if (PROVIDERS[i].kind === "cli") result[PROVIDERS[i].variable] = read(PROVIDERS[i].variable);
+    return result;
+}
+
 // Only booleans cross into the helper. No key value enters its environment.
 function keyProvider(row) {
     return row.kind === "key" || row.kind === "speech-key";
@@ -106,4 +132,5 @@ function probeFailure(completion, diagnostic) {
 }
 
 if (typeof module !== "undefined") module.exports = { PROVIDERS: PROVIDERS, runtimeDirectory: runtimeDirectory,
+    ACCOUNT_DEPTH: ACCOUNT_DEPTH, accountDirectory: accountDirectory, accountVariables: accountVariables,
     keyPresence: keyPresence, keyProvider: keyProvider, feedDiagnostic: feedDiagnostic, helperFailure: helperFailure, probeFailure: probeFailure };

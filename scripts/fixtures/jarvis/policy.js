@@ -54,13 +54,18 @@ function mutant(file, name, needle, replacement, check, consumer = path.basename
         changed = changed.replace(match, value);
     }
     assert.notEqual(changed, source);
-    const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "mutant-"));
-    const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
+    // The copy keeps the plugin layout: backend modules load ../AccountProviders.js.
+    const plugin = path.join(tree, "shell/plugins/vgs.jarvis");
+    const outer = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "mutant-"));
+    const folder = path.join(outer, "backend");
+    fs.mkdirSync(folder);
+    const backend = path.join(plugin, "backend");
     for (const sibling of fs.readdirSync(backend).filter(name => name.endsWith(".js")))
         fs.copyFileSync(path.join(backend, sibling), path.join(folder, sibling));
-    const copy = path.join(folder, path.basename(file));
-    fs.writeFileSync(copy, changed);
-    const cleanup = () => fs.rmSync(folder, { recursive: true, force: true });
+    fs.copyFileSync(path.join(plugin, "AccountProviders.js"), path.join(outer, "AccountProviders.js"));
+    // The mutated file keeps its place in the copy, wherever its plugin lives.
+    fs.writeFileSync(path.join(path.basename(path.dirname(file)) === "backend" ? folder : outer, path.basename(file)), changed);
+    const cleanup = () => fs.rmSync(outer, { recursive: true, force: true });
     let result;
     try { result = check(require(path.join(folder, consumer)), folder); }
     catch (error) {
@@ -108,12 +113,15 @@ async function moduleCopy(file, edits, check) {
         assert.notEqual(changed, source);
         source = changed;
     }
-    const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "sb-mutant-"));
+    const outer = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "sb-mutant-"));
+    const folder = path.join(outer, "backend");
+    fs.mkdirSync(folder);
     for (const sibling of ["Child.js", "Denied.js", "Tools.js"])
         fs.copyFileSync(path.join(path.dirname(file), sibling), path.join(folder, sibling));
+    fs.copyFileSync(path.join(path.dirname(file), "../AccountProviders.js"), path.join(outer, "AccountProviders.js"));
     fs.writeFileSync(path.join(folder, path.basename(file)), source);
     try { return await check(require(path.join(folder, path.basename(file)))); }
-    finally { fs.rmSync(folder, { recursive: true, force: true }); }
+    finally { fs.rmSync(outer, { recursive: true, force: true }); }
 }
 
 function asyncControl(file) {

@@ -35,11 +35,12 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const Executors = require("./Executors.js");
     const Input = require("./Input.js");
     const Browser = require("./Browser.js");
+    const Files = require("./Files.js");
     const TaskRunner = require("./TaskRunner.js");
     const ToolBridge = require("./ToolBridge.js");
     const HarnessGate = require("./HarnessGate.js");
     const ChainedEngine = require("./ChainedEngine.js");
-    const { Accounts } = require("./Accounts.js");
+    const { Accounts, accountRoots } = require("./Accounts.js");
     const Denied = require("./Denied.js");
     const { load } = require(path.join(process.argv[3], "bin/lib/qml-library.js"));
     const { commandFile, onPath } = require(path.join(process.argv[3], "bin/lib/judge-files.js"));
@@ -60,6 +61,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let executors = null;
     let input = null;
     let browser = null;
+    let files = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
@@ -73,6 +75,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         if (engine !== null) engine.close();
         if (executors !== null) executors.close();
         if (input !== null) input.close();
+        if (files !== null) files.close();
         if (browser !== null) {
             try { browser.close(); }
             catch (error) { process.stderr.write(error.message + "\n"); process.exitCode = 74; }
@@ -107,25 +110,30 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         });
     }
 
-    // Policy's protected-root snapshot for path calls: the daemon's own XDG
-    // roots, the plugin directory it runs from and every account directory
-    // Accounts finds. Denied is rebuilt for each judgement, since roots and
-    // links can change between calls. A snapshot that cannot be built is
-    // null, which Policy refuses as path-context.
-    function protectedRoots() {
-        const env = process.env;
-        try {
-            const accounts = new Accounts(context.directories.state, env);
-            return Denied.create({ home: accounts.home, config: accounts.config, data: accounts.data,
-                state: env.XDG_STATE_HOME || path.join(accounts.home, ".local/state"), runtime: env.XDG_RUNTIME_DIR,
-                install: path.dirname(__dirname), accountRoots: accounts.candidates().map(item => item.directory) });
-        } catch (error) {
+    // The one producer of the protected path snapshot, rebuilt for every
+    // judge from trusted roots: the daemon's XDG roots, the plugin directory
+    // it runs from and the account roots, since roots and links can change
+    // between calls. A failed build throws; no default stands in.
+    function denied() {
+        const home = process.env.HOME;
+        if (typeof home !== "string" || home === "") throw new Error("jarvis: paths=home");
+        return Denied.create({ home,
+            config: process.env.XDG_CONFIG_HOME || path.join(home, ".config"),
+            data: process.env.XDG_DATA_HOME || path.join(home, ".local/share"),
+            state: process.env.XDG_STATE_HOME || path.join(home, ".local/state"),
+            runtime: process.env.XDG_RUNTIME_DIR, install: path.dirname(__dirname),
+            accountRoots: accountRoots(context.directories.state, process.env) });
+    }
+
+    // Policy refuses every path-bearing call as path-context without it, and
+    // the daemon logs the cause as one keyed line.
+    function deniedOrNull() {
+        try { return denied(); } catch (error) {
             const cause = /^jarvis(?:-[a-z]+)?: ([a-z-]+=[a-z0-9-]+)/.exec(error.message)?.[1] ?? error.code ?? "unknown";
             process.stderr.write("jarvis: denied=unavailable cause=" + cause + "\n");
             return null;
         }
     }
-
     // hyprctl finds this session's socket from these alone.
     function hyprctlEnvironment() {
         const environment = { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" };
@@ -318,7 +326,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     const profile = () => runner.state.settings.policy ?? "standard";
                     const router = ToolRouter.create({ session: Session, state: () => runner.state,
                         dispatch: event => runner.dispatch(event), audit,
-                        context: () => ({ profile: profile(), locked: context.locked, denied: protectedRoots() }),
+                        context: () => ({ profile: profile(), locked: context.locked, denied: deniedOrNull() }),
                         result: value => gate.deliver(value) || bridge.deliver(value) || runner.ports.brain.outcome(value) });
                     // A harness brain opens the bridge's session for its conversation;
                     // until one is selected no socket exists.
@@ -345,6 +353,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                             write({ v: 1, type: "input-ready", gen: runner.state.gen, revision: context.revision, commands: record.commands });
                     });
                     browser = Browser.install({ router, environment: process.env });
+                    files = Files.install({ router, denied, clock });
                     const routerSync = runner.ports.tools.sync;
                     runner.ports.tools.sync = state => {
                         routerSync(state);

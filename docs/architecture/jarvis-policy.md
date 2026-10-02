@@ -4,7 +4,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 
 [Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
 
-[D070](../decisions/D070-jarvis-action-policy.md) records the action boundary. The [Jarvis plan § Policy](../plans/v2-jarvis-plan.md#37-policy-authority-effects-approval-audit) defines its authority. This code judges calls but executes none. The daemon registers the [desktop executors](jarvis-desktop-tools.md) and setup-verified [browser executor](jarvis-browser.md), and no brain calls them yet. It exposes no account, capture or network connection.
+[D070](../decisions/D070-jarvis-action-policy.md) records the action boundary. The [Jarvis plan § Policy](../plans/v2-jarvis-plan.md#37-policy-authority-effects-approval-audit) defines its authority. This code judges calls but executes none. The daemon registers the [desktop executors](jarvis-desktop-tools.md), the setup-verified [browser executor](jarvis-browser.md) and the [file tools](jarvis-files.md), and no brain calls them yet. It exposes no account, capture or network connection.
 
 ## Owners
 
@@ -14,7 +14,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 - [The audit writer](jarvis-audit.md) owns redaction and persistence before execution. The router consumes its fail-closed boundary. A policy answer alone does not satisfy that requirement.
 - `Policy.release` owns outbound consent separately from the action decision. [Jarvis release](jarvis-release.md) defines its immutable recipient set and the network door. An `external` action still needs both decisions.
 - [Kernel confinement](jarvis-sandbox.md) consumes the protected snapshot. A shell line is a program, not a string the policy can prove safe. Shell argv wrappers remain `exec`. Direct elevation argv is refused, but that check cannot confine a program that starts another program.
-- J27 supplies all discovered and hand-added account roots. The filesystem judge protects those roots in addition to its built-in credential roots. It opens no credential, marker or profile content.
+- `Accounts.js::accountRoots` supplies the explicit and hand-added account roots. The account name rule in `AccountProviders.js::accountDirectory` covers every discovered root. The filesystem judge protects both in addition to its built-in credential roots. It opens no credential, marker or profile content.
 
 ## Call contract
 
@@ -53,32 +53,35 @@ Terminal keys, clicks and scrolling refuse as `terminal-input` in every profile,
 
 ## Real paths
 
-`Denied.create({ home, config, data, state, runtime, install, accountRoots })` takes absolute trusted roots. HOME must exist as a directory. `accountRoots` must be a list, including an empty list before account discovery exists. Failed root resolution fails construction.
+`Denied.create({ home, config, data, state, runtime, install, accountRoots })` takes absolute trusted roots. HOME must exist as a directory. `accountRoots` must be a list: the explicit `CLAUDE_CONFIG_DIR` and `CODEX_HOME` roots and the hand-added roots from `Accounts.js::accountRoots`. Failed root resolution or an unreadable base fails construction. The daemon's one producer is described in [Jarvis file tools](jarvis-files.md#owners).
 
 Its `inspect(path, role)` returns `{ kind: "path", path, exists, execution }` or `{ kind: "refuse", reason, error? }`. The tool table owns path roles. Callers do not select them. Resolution uses filesystem metadata only.
 
-Its frozen `masks` list contains the configured and resolved protected roots. J23 consumes that list for its filesystem masks, including roots that do not yet exist. It must not maintain another credential inventory.
+Its frozen `masks` list contains the configured and resolved protected roots. J23 consumes that list for its filesystem masks, including roots that do not yet exist. It must not maintain another credential inventory. Rule-named account entries enter the masks as the ones present when the snapshot is built, found by reading entry names only and never entering a link. The masks are a launch-time snapshot; the sandbox rebuilds `Denied` before each launch.
+
+The account name rule protects without a scan or a bound. `inspect` refuses a resolved path, or any physical component on the way to it, whose component one or two levels below HOME, the config home or the data home is rule-named (`.claude*`, `.codex*`). Depth counts per base, and the config home is a base of its own. A changing or recursive role also refuses a folder one level below a base that holds a rule-named entry; that judgment reads the folder's entry names at inspection, so an entry created after the snapshot still counts. A base itself already holds static credential roots. Deeper paths are not account directories.
 
 - Existing links resolve before an absent write suffix is appended. A dangling link, loop, unreadable component or non-directory parent refuses as `path-resolution`. Only `ENOENT` means absence.
 - Resolution processes `..` after the preceding link. It refuses `..` after an absent component rather than guessing what a future directory means.
 - Containment checks path components, not string prefixes. A sibling whose name starts with a protected root's name is not that root.
 - Credential, browser, VGS and supplied account roots protect both their configured paths and their resolved aliases. Reads and writes inside them refuse as `protected-path`.
-- A move, removal, writable workspace or recursive search that contains a protected root also refuses. A one-level directory list may return names. J48 must judge each child before opening it and must not turn a list into an unchecked recursive read.
+- A move, removal, writable workspace or recursive search that contains a protected root also refuses. A one-level directory list may return names. [Jarvis file tools](jarvis-files.md) judge each child before opening it and enforce containment while opening.
+- A move source and a removal are the named entry. A final link is judged as the link itself, never its target, and a dangling final link exists as that link.
 - Other file paths must remain inside the physical HOME. Link escapes refuse as `outside-home`.
 - Writes, moves, removals and writable workspaces that intersect an execution root are destructive. Reads alone are not. The execution-root declaration lives in `Denied.js`.
 - A file write or move destination that already exists is destructive. An absent ordinary write stays persistent. A move to an absent ordinary destination stays persistent.
 
-The answer describes a filesystem snapshot. It is not a file descriptor or race-proof permission. J19 and the executor must rejudge paths and targets immediately before execution. J48 must enforce containment while opening children. J23 must mask the same protected roots inside its kernel sandbox.
+The answer describes a filesystem snapshot. It is not a file descriptor or race-proof permission. J19 and each executor rejudge paths and targets immediately before execution; the [file tools](jarvis-files.md#rejudge-and-the-anchored-walk) then open through held descriptors. J23 masks the same protected roots inside its kernel sandbox.
 
 ## Taint
 
-`Policy.observe(taint, source)` returns the next tagged taint value. Unknown sources refuse with a keyed error. Tool output source labels come from the tool table, not model prose. File, web, screen and agent content taint the turn.
+`Policy.observe(taint, source)` returns the next tagged taint value. Unknown sources refuse with a keyed error. Tool output source labels come from the tool table, not model prose. File, web, screen and agent content taint the turn. `files.list` carries `file` too: an outside party can choose a file name.
 
 Taint raises persistent, exec, input and external actions to confirmation. It leaves read and reversible decisions unchanged. Physical destructive holds apply before that upgrade. Taint never weakens them.
 
 ## Evidence
 
 - `scripts/test-jarvis-tools.js` exercises every declared call and browser subcommand. It pins independent input-routing contracts and checks schema refusals, exact argv refinement and networking. Mutations break tool effects, input routing and independent schema rules.
-- `scripts/test-jarvis-denied.js` uses real scratch paths, links, absent targets and account aliases. It removes each protected-root and execution-root entry separately. It also breaks resolution, component containment and ancestor protection.
+- `scripts/test-jarvis-denied.js` uses real scratch paths, links, absent targets and account aliases. It removes each protected-root and execution-root entry separately. It also breaks resolution, component containment and ancestor protection. The name rule's cases cover each depth below each base, a depth beyond the rule, an entry created after the snapshot, a configured alias and a rule-named link, the ancestor read, the present matches in the masks, a scan that never enters a link and the entry judgment of a removal. Each has its own control, and the shared rule's depth is broken in `AccountProviders.js`.
 - `scripts/test-jarvis-policy.js` checks the complete profile matrix, matching and nonmatching grants, protected targets, own chords, terminal input and taint. Browser click, fill and submit cases refuse protected and password targets in every profile. Routing-removal mutants retain each call's schema and effect but skip those refusals. Each profile cell and independent guard has a planted behavior defect.
 - The suites run inside the [J09 world](validation-jarvis.md). No real credential, authentication, desktop, audio device or network enters them. `scripts/validate` owns their input selection.

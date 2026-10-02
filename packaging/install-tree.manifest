@@ -248,6 +248,7 @@ f share/vgs/shell/plugins/vgs.jarvis/WidgetView.js
 f share/vgs/shell/plugins/vgs.jarvis/artifacts.json
 f share/vgs/shell/plugins/vgs.jarvis/backend/Accounts.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/AgentProfiles.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Anchored.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/AnthropicMessages.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audio.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Audit.js
@@ -262,6 +263,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Denied.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Desktop.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/DesktopSession.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Executors.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Files.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/GptLive.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Guidance.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/HarnessGate.js

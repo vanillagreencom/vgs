@@ -455,8 +455,11 @@ async function main() {
     const missing = js('process.exit(77)');
     exited(await run(missing), 77);
     // Unavailable bootstrap never executes the requested fixture.
-    const empty = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "missing-bwrap-"));
+    const emptyPlugin = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "missing-bwrap-"));
+    const empty = path.join(emptyPlugin, "backend");
+    fs.mkdirSync(empty);
     for (const sibling of ["Child.js", "Denied.js", "Tools.js"]) fs.copyFileSync(path.join(path.dirname(sourceFile), sibling), path.join(empty, sibling));
+    fs.copyFileSync(path.join(path.dirname(sourceFile), "../AccountProviders.js"), path.join(emptyPlugin, "AccountProviders.js"));
     const original = fs.readFileSync(sourceFile, "utf8");
     const needle = 'for (const file of ["/usr/bin/bwrap", "/bin/bwrap"])';
     assert.equal(original.split(needle).length - 1, 1);
@@ -464,7 +467,7 @@ async function main() {
     const absent = require(path.join(empty, "Sandbox.js"));
     assert.deepEqual(await absent.available(), { kind: "unavailable", reason: "bwrap-missing" });
     assert.deepEqual(await absent.run(request(["/usr/bin/true"], w.project), w.roots), { kind: "unavailable", reason: "bwrap-missing" });
-    fs.rmSync(empty, { recursive: true });
+    fs.rmSync(emptyPlugin, { recursive: true });
     await control("status-required",
         'if (records.length !== 2 || !Number.isSafeInteger(records[0]["child-pid"])\n'
         + '        || records[0]["child-pid"] <= 0 || !Number.isInteger(records[1]["exit-code"])\n'

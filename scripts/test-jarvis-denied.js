@@ -122,6 +122,83 @@ world(() => {
     assert.throws(() => Denied.create({ ...options, accountRoots: null }), { message: "jarvis: paths=account-roots" });
     assert.throws(() => Denied.create({ ...options, accountRoots: [dangling] }), /ENOENT/);
 
+    // The account name rule: a .claude* or .codex* entry one or two levels
+    // below HOME, the config home or the data home, judged by name alone.
+    // J09's config and data homes lie outside HOME, where the rule still
+    // answers protected-path before outside-home.
+    const ruleBases = { home, config: roots.config, data: roots.data };
+    const ruleCases = Object.entries(ruleBases).flatMap(([base, root]) => [
+        [base + "-depth-1", path.join(root, ".claude-" + base, "file"), "protected-path"],
+        [base + "-depth-2", path.join(root, "group-" + base, ".codex-" + base, "file"), "protected-path"],
+        [base + "-depth-3", path.join(root, "deep-" + base, "inner", ".claude-" + base, "file"),
+            base === "home" ? null : "outside-home"]
+    ]);
+    const ruleJudge = Denied.create(options);
+    for (const [, target, reason] of ruleCases) {
+        if (reason === null) allowed(ruleJudge, target, "read", target, false);
+        else refused(ruleJudge, target, "read", reason);
+    }
+    // Created after the snapshot, and so absent from its masks, still refused.
+    const late = path.join(home, "late", ".claude-late");
+    fs.mkdirSync(late, { recursive: true });
+    refused(ruleJudge, path.join(late, "file"), "read", "protected-path");
+    assert.equal(ruleJudge.masks.includes(late), false);
+    // So is a path through a rule-named link created after it.
+    const lateTarget = path.join(project, "late-target");
+    fs.mkdirSync(lateTarget);
+    const lateLink = path.join(home, ".claude-late-link");
+    fs.symlinkSync(lateTarget, lateLink);
+    refused(ruleJudge, path.join(lateLink, "file"), "read", "protected-path");
+    // A configured alias of a rule-named directory, and a rule-named link.
+    const namedAccount = path.join(home, ".claude-work");
+    fs.mkdirSync(namedAccount);
+    const namedAlias = path.join(project, "work-alias");
+    fs.symlinkSync(namedAccount, namedAlias);
+    const linkTarget = path.join(project, "link-target");
+    fs.mkdirSync(linkTarget);
+    const namedLink = path.join(home, ".codex-linked");
+    fs.symlinkSync(linkTarget, namedLink);
+    const nestedNamed = path.join(home, "holder", ".codex-nested");
+    fs.mkdirSync(nestedNamed, { recursive: true });
+    const linkJudge = Denied.create(options);
+    refused(linkJudge, path.join(namedAlias, "file"), "read", "protected-path");
+    refused(linkJudge, path.join(namedLink, "file"), "read", "protected-path");
+    // Masks hold the present matches, configured and resolved, never deeper.
+    for (const present of [namedAccount, namedLink, linkTarget, nestedNamed, late])
+        assert.equal(linkJudge.masks.includes(present), true, present + " masked");
+    // The scan for masks reads names only and never enters a link.
+    const outsideNamed = path.join(process.env.JARVIS_TEST_ROOT, "outside-accounts", ".claude-outside");
+    fs.mkdirSync(outsideNamed, { recursive: true });
+    const scanLink = path.join(home, "scan-link");
+    fs.symlinkSync(path.dirname(outsideNamed), scanLink);
+    assert.equal(linkJudge.masks.some(root => root.startsWith(scanLink + "/")), false);
+    const tooDeep = path.join(home, "deep-home", "inner", ".claude-home");
+    fs.mkdirSync(tooDeep, { recursive: true });
+    assert.equal(Denied.create(options).masks.includes(tooDeep), false);
+    // A changing or recursive role refuses a folder one level below a base
+    // that holds a rule-named entry; a plain read may still list it.
+    const holder = path.join(home, "holder");
+    for (const role of ["tree-read", "write", "move", "remove", "workspace"])
+        refused(linkJudge, holder, role, "protected-path");
+    allowed(linkJudge, holder, "read");
+    // That read happens at judgment, so a match made after the snapshot counts.
+    const laterHolder = path.join(home, "later-holder");
+    fs.mkdirSync(path.join(laterHolder, ".claude-later"), { recursive: true });
+    refused(linkJudge, laterHolder, "remove", "protected-path");
+    assert.equal(linkJudge.masks.includes(path.join(laterHolder, ".claude-later")), false);
+    const plain = path.join(home, "plain");
+    fs.mkdirSync(path.join(plain, "inner"), { recursive: true });
+    allowed(linkJudge, plain, "remove");
+    // A removal or a move source is the named entry: a link to a protected
+    // root is removed as the link, and a dangling link exists as one.
+    const credentialLink = path.join(project, "ssh-link");
+    fs.symlinkSync(ssh, credentialLink);
+    for (const role of ["remove", "move"]) {
+        allowed(linkJudge, credentialLink, role);
+        allowed(linkJudge, dangling, role);
+    }
+    refused(linkJudge, credentialLink, "read", "protected-path");
+
     let controls = 0;
     function control(name, needle, replacement, check) {
         mutant(file, name, needle, replacement, check);
@@ -129,8 +206,8 @@ world(() => {
     }
     control("descendants", 'within(target.path, root)\n', 'false\n',
         logic => refused(logic.create(options), path.join(ssh, "sentinel"), "read", "protected-path"));
-    control("ancestors", '((changes || role === "tree-read") && within(root, target.path))',
-        '(false && (changes || role === "tree-read") && within(root, target.path))',
+    control("ancestors", '(ancestor && within(root, target.path))',
+        '(false && ancestor && within(root, target.path))',
         logic => refused(logic.create(options), home, "remove", "protected-path"));
     control("recursive-read", 'changes || role === "tree-read"', 'changes',
         logic => refused(logic.create(options), home, "tree-read", "protected-path"));
@@ -138,7 +215,7 @@ world(() => {
         logic => refused(logic.create(options), path.join(escape, "missing"), "write", "outside-home"));
     control("component", 'file.startsWith(root === "/" ? "/" : root + "/")', 'file.startsWith(root)',
         logic => allowed(logic.create(options), boundary, "read"));
-    control("link-resolution", 'stat.isSymbolicLink() ? fs.realpathSync.native(next) : next', 'next',
+    control("link-resolution", 'stat.isSymbolicLink() && (follow || !last) ? fs.realpathSync.native(next) : next', 'next',
         logic => refused(logic.create(options), path.join(alias, "sentinel"), "read", "protected-path"));
     control("root-alias", '[file, resolve(file).path]', '[file]',
         logic => refused(logic.create({ ...roots, accountRoots: [accountAlias] }), path.join(realAccount, "absent"), "read", "protected-path"));
@@ -156,8 +233,8 @@ world(() => {
     control("missing-parent", 'if (!exists) throw new Error("jarvis: path=absent-parent");',
         'if (false && !exists) throw new Error("jarvis: path=absent-parent");',
         logic => refused(logic.create(options), path.join(project, "absent") + "/../existing", "write", "path-resolution"));
-    control("directory-parent", 'if (i < parts.length - 1 && !fs.statSync(real).isDirectory())',
-        'if (false && i < parts.length - 1 && !fs.statSync(real).isDirectory())',
+    control("directory-parent", 'if (!last && !fs.statSync(real).isDirectory())',
+        'if (false && !last && !fs.statSync(real).isDirectory())',
         logic => refused(logic.create(options), path.join(project, "existing") + "/../existing", "read", "path-resolution"));
     control("absolute-root", 'if (typeof file !== "string" || !path.isAbsolute(file) || /[\\x00-\\x1f\\x7f]/.test(file))',
         'if (false && (typeof file !== "string" || !path.isAbsolute(file) || /[\\x00-\\x1f\\x7f]/.test(file)))',
@@ -170,6 +247,44 @@ world(() => {
     control("home-required", 'if (!realHome.exists || !fs.statSync(realHome.path).isDirectory())',
         'if (false && (!realHome.exists || !fs.statSync(realHome.path).isDirectory()))',
         logic => assert.throws(() => logic.create({ ...options, home: path.join(home, "missing-home") }), { message: "jarvis: paths=home" }));
+    const ruleCase = name => ruleCases.find(row => row[0] === name);
+    const ruleRefused = (logic, name) => refused(logic.create(options), ruleCase(name)[1], "read", "protected-path");
+    control("account-rule", "if (target.trail.concat(target.path).some(named) || protectedRoots",
+        "if (false || protectedRoots", logic => ruleRefused(logic, "home-depth-1"));
+    control("account-trail", "target.trail.concat(target.path).some(named)", "[target.path].some(named)", logic => {
+        const judge = logic.create(options);
+        const after = path.join(home, ".claude-after");
+        fs.symlinkSync(plain, after);
+        try { refused(judge, path.join(after, "file"), "read", "protected-path"); }
+        finally { fs.unlinkSync(after); }
+    });
+    // The shared rule's depth, read by this judge.
+    const providers = path.join(tree, "shell/plugins/vgs.jarvis/AccountProviders.js");
+    for (const [name, replacement, check] of [
+        ["account-depth", "if (depth < 1 || depth > 1) return null;", logic => ruleRefused(logic, "home-depth-2")],
+        ["account-depth-limit", "if (depth < 1) return null;",
+            logic => allowed(logic.create(options), ruleCase("home-depth-3")[1], "read", ruleCase("home-depth-3")[1], false)]
+    ]) {
+        mutant(providers, name, "if (depth < 1 || depth > ACCOUNT_DEPTH) return null;", replacement, check, "Denied.js");
+        controls++;
+    }
+    for (const base of ["config", "data"])
+        control("account-base-" + base, `resolve(${base}).path`, "realHome.path", logic => ruleRefused(logic, base + "-depth-2"));
+    control("account-ancestor", "if (ancestor && target.exists && holdsNamed(target.path))",
+        "if (false && ancestor && target.exists && holdsNamed(target.path))", logic => {
+            const judge = logic.create(options);
+            const fresh = path.join(home, "fresh-holder");
+            fs.mkdirSync(path.join(fresh, ".codex-fresh"), { recursive: true });
+            try { refused(judge, fresh, "remove", "protected-path"); }
+            finally { fs.rmSync(fresh, { recursive: true }); }
+        });
+    control("account-masks", "credential.concat(accounts, [", "credential.concat([], [",
+        logic => assert.equal(logic.create(options).masks.includes(namedAccount), true));
+    control("account-mask-links", "else if (depth < ACCOUNT_DEPTH && entry.isDirectory())",
+        "else if (depth < ACCOUNT_DEPTH && (entry.isDirectory() || (entry.isSymbolicLink() && fs.statSync(file).isDirectory())))",
+        logic => assert.equal(logic.create(options).masks.some(root => root.startsWith(scanLink + "/")), false));
+    control("entry", 'resolve(file, role !== "move" && role !== "remove")', "resolve(file)",
+        logic => allowed(logic.create(options), credentialLink, "remove"));
     // Every inventory entry has its own planted missing protection. This also
     // proves the built-in credential/VGS table, not only dynamic account roots.
     const inventory = [

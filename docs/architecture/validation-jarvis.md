@@ -18,6 +18,8 @@ The [desktop executor suite](jarvis-desktop-tools.md#evidence) uses this world w
 
 The [chained engine suite](jarvis-engine.md#evidence) uses this world with the synthetic PipeWire commands, an injected playback clock and an OpenAI-compatible loopback brain on the Ollama row's default port. No host server can answer that port inside the private network.
 
+The [file tools suite](jarvis-files.md#evidence) uses this world with real scratch files, links and a fifo under the private HOME. It injects swaps between a judge and an act through its snapshot producer and through `fs` fault stand-ins, never through production code. Its daemon case runs a disposable daemon from a minimal VGS tree copy beside HOME, because the checkout holding the world is the daemon's install root. Its `cli` row selects on the whole plugin, the core files the daemon loads and its fixtures.
+
 The [action router suite](jarvis-approval.md#evidence-and-comparison) uses this world with real scratch audit files and stand-in executors. Its injected clock exercises confirmation timing without a wait. Reducer copies and backend copies carry the independent defects; shipped APIs contain no fixture or confirmation backdoor.
 
 The [task control suite](jarvis-task-control.md#evidence) runs the real launcher, a stand-in agent and real signals in this world. Production names its tmux socket with `-S`, which the PATH wrapper refuses, so the suite runs the bootstrap tmux with `-S` on a socket under the world's runtime directory. Every signal it sends targets a group it recorded.

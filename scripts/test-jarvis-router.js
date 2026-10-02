@@ -344,17 +344,20 @@ world(() => {
             assert.equal(w.starts.length, 0);
             assert.equal(w.refusal().reason, "session-locked");
             assert.equal(w.runner.state.action.kind, "none");
-            const file = path.join(fixtures.project, "moved");
+            // A removal judges the named entry, so the swap is its folder.
+            const folder = path.join(fixtures.project, "swapped");
+            fs.mkdirSync(folder);
+            const file = path.join(folder, "moved");
             fs.writeFileSync(file, "fixture");
             const changed = make(implementation);
             changed.call("files.delete", { path: file }); changed.show(); changed.time(700);
-            fs.unlinkSync(file);
+            fs.rmSync(folder, { recursive: true });
             fs.mkdirSync(path.join(fixtures.home, ".ssh"), { recursive: true });
-            fs.symlinkSync(path.join(fixtures.home, ".ssh"), file);
+            fs.symlinkSync(path.join(fixtures.home, ".ssh"), folder);
             changed.confirm();
             assert.equal(changed.starts.length, 0);
             assert.equal(changed.refusal().reason, "protected-path");
-            fs.unlinkSync(file);
+            fs.unlinkSync(folder);
         }],
         ["target-rejudge", implementation => {
             const w = make(implementation);

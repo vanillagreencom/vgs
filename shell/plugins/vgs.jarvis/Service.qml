@@ -447,7 +447,8 @@ Item {
         command: ["node", root.daemon, "--tree", Quickshell.shellDir + "/.."]
         stdinEnabled: true
         clearEnvironment: true
-        environment: ({
+        // The explicit account roots reach the daemon's protected path judge.
+        environment: Object.assign({
             PATH: Quickshell.env("PATH"), HOME: Quickshell.env("HOME"),
             XDG_CONFIG_HOME: Quickshell.env("XDG_CONFIG_HOME"), XDG_STATE_HOME: Quickshell.env("XDG_STATE_HOME"),
             XDG_DATA_HOME: Quickshell.env("XDG_DATA_HOME"), XDG_RUNTIME_DIR: Quickshell.env("XDG_RUNTIME_DIR"),
@@ -457,7 +458,7 @@ Item {
             DBUS_SESSION_BUS_ADDRESS: Quickshell.env("DBUS_SESSION_BUS_ADDRESS"),
             YDOTOOL_SOCKET: Quickshell.env("YDOTOOL_SOCKET"),
             LANG: "C.UTF-8"
-        })
+        }, Providers.accountVariables(name => Quickshell.env(name)))
         stdout: SplitParser { splitMarker: ""; onRead: data => root.receive(data) }
         stderr: SplitParser {
             splitMarker: ""

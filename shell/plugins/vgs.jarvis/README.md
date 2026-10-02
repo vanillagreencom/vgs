@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API, local or Claude Code account when you request it. The installed daemon has no speech or conversation engine, so nothing calls its desktop tools yet.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API, local or Claude Code account when you request it. The installed daemon has no speech or conversation engine, so nothing calls its desktop and file tools yet.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -20,6 +20,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - Window, workspace and application tools read each change back from Hyprland before they report it done.
 - The listening bubble needs no bar widget. Its orb and text let clicks reach the application below.
 - Labelled Mute and Stop buttons use the same actions as their keys.
+- File tools list, read, search, write, move and delete files in your home folder. They refuse credential stores, account folders and VGS's own files, and never follow a link out of your home folder.
 - Settings opens Add key in a floating terminal with hidden key input.
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
 - Settings and the launcher open local voice setup in a floating terminal.

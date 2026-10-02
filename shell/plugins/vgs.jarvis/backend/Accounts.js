@@ -4,7 +4,8 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const cp = require("node:child_process");
 const { Secrets, childEnvironment } = require("./Secrets.js");
-const { PROVIDERS, keyPresence, keyProvider, runtimeDirectory } = require("../AccountProviders.js");
+const { PROVIDERS, ACCOUNT_DEPTH, accountDirectory, keyPresence, keyProvider, runtimeDirectory } = require("../AccountProviders.js");
+const Anchored = require("./Anchored.js");
 const Net = require("./net.js");
 const Policy = require("./Policy.js");
 const Audit = require("./Audit.js");
@@ -44,36 +45,22 @@ function identity(kind, values) {
     return kind + ":" + crypto.createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
 
-// lstat each component, including explicit and hand-added paths. An absent
-// default is normal; a linked or unreadable input is not a different account.
+// The anchored walk checks each component, including explicit and hand-added
+// paths. An absent default is normal; a linked or unreadable input is not a
+// different account.
 function directory(value, hold = false) {
     if (!printable(value, 4096) || Buffer.byteLength(value) > 4096
         || !path.isAbsolute(value) || path.normalize(value) !== value)
         fail("directory=absolute-normal-path-required");
-    let fd = fs.openSync("/", fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
-    try {
-        for (const part of value.split("/").filter(Boolean)) {
-            // Linux descriptor paths anchor the parent inode. The only link
-            // followed is our own /proc descriptor, never an account link.
-            const child = "/proc/self/fd/" + fd + "/" + part;
-            let stat;
-            try { stat = fs.lstatSync(child); }
-            catch (error) {
-                if (error.code === "ENOENT") return { kind: "absent" };
-                fail("directory=unreadable");
-            }
-            if (stat.isSymbolicLink()) fail("directory=link");
-            if (!stat.isDirectory()) fail("directory=not-directory");
-            let next;
-            try { next = fs.openSync(child, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW); }
-            catch { fail("directory=unreadable-or-changed"); }
-            fs.closeSync(fd);
-            fd = next;
-        }
-        const result = { kind: "directory", path: value };
-        if (hold) { result.fd = fd; fd = undefined; }
-        return result;
-    } finally { if (fd !== undefined) fs.closeSync(fd); }
+    const opened = Anchored.directory(value);
+    switch (opened.kind) {
+    case "absent": return { kind: "absent" };
+    case "directory":
+        if (hold) return { kind: "directory", path: value, fd: opened.fd };
+        fs.closeSync(opened.fd);
+        return { kind: "directory", path: value };
+    default: fail("directory=" + opened.kind);
+    }
 }
 
 function added(value) {
@@ -83,6 +70,46 @@ function added(value) {
         fail("added=shape");
     directory(value.directory);
     return { provider: value.provider, directory: value.directory, label: value.label };
+}
+
+// Hand-added rows from accounts.json. A malformed or unreadable file fails
+// rather than discarding user additions; an absent file holds none.
+function addedRows(file) {
+    let fd;
+    try {
+        fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile() || stat.size > MAX_BYTES) fail("added=size");
+        let values;
+        try { values = JSON.parse(fs.readFileSync(fd)); } catch { fail("added=json"); }
+        if (!Array.isArray(values) || values.length > MAX_ROWS) fail("added=limit");
+        const result = values.map(added);
+        if (new Set(result.map(item => item.provider + "\0" + item.directory)).size !== result.length)
+            fail("added=duplicate");
+        return result;
+    } catch (error) {
+        if (error.code === "ENOENT") return [];
+        if (error.message.startsWith("jarvis-accounts:")) throw error;
+        fail("added=read-failed");
+    } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+
+// Each CLI provider's explicit root from its variable in env, by provider id.
+function explicitRoots(env) {
+    const result = {};
+    for (const row of PROVIDERS) if (row.kind === "cli" && env[row.variable]) result[row.id] = env[row.variable];
+    return result;
+}
+
+/**
+ * The account roots named without the discovery scan: the explicit roots,
+ * then the hand-added directories in stateDirectory's accounts.json. Denied
+ * protects these beside its name rule. A malformed accounts.json or
+ * hand-added directory throws its added= or directory= key.
+ */
+function accountRoots(stateDirectory, env) {
+    return [...new Set(Object.values(explicitRoots(env))
+        .concat(addedRows(path.join(stateDirectory, "accounts.json")).map(item => item.directory)))];
 }
 
 // The provider CLI alone opens its own login store. These bounded replies
@@ -130,9 +157,7 @@ class Accounts {
         this.home = env.HOME;
         this.config = env.XDG_CONFIG_HOME || path.join(this.home, ".config");
         this.data = env.XDG_DATA_HOME || path.join(this.home, ".local/share");
-        this.explicit = {};
-        for (const row of PROVIDERS) if (row.kind === "cli" && env[row.variable])
-            this.explicit[row.id] = env[row.variable];
+        this.explicit = explicitRoots(env);
         const expected = PROVIDERS.filter(keyProvider).map(row => row.variable).sort();
         if (!presence || Object.keys(presence).sort().join(",") !== expected.join(",")
             || Object.values(presence).some(value => typeof value !== "boolean")) fail("key-presence=shape");
@@ -144,23 +169,7 @@ class Accounts {
     }
 
     added() {
-        let fd;
-        try {
-            fd = fs.openSync(this.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-            const stat = fs.fstatSync(fd);
-            if (!stat.isFile() || stat.size > MAX_BYTES) fail("added=size");
-            let values;
-            try { values = JSON.parse(fs.readFileSync(fd)); } catch { fail("added=json"); }
-            if (!Array.isArray(values) || values.length > MAX_ROWS) fail("added=limit");
-            const result = values.map(added);
-            if (new Set(result.map(item => item.provider + "\0" + item.directory)).size !== result.length)
-                fail("added=duplicate");
-            return result;
-        } catch (error) {
-            if (error.code === "ENOENT") return [];
-            if (error.message.startsWith("jarvis-accounts:")) throw error;
-            fail("added=read-failed");
-        } finally { if (fd !== undefined) fs.closeSync(fd); }
+        return addedRows(this.file);
     }
 
     add(value) {
@@ -221,9 +230,9 @@ class Accounts {
                     if (visited.size > MAX_ENTRIES) fail("discovery=entry-limit");
                     if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
                     const dir = path.join(root, entry.name);
-                    const row = cli.find(item => entry.name.startsWith(item.prefix));
+                    const row = accountDirectory(entry.name, depth);
                     if (row) insert(row, dir, entry.name.slice(row.prefix.length).replace(/^[-_.]+/, "") || "default");
-                    else if (depth < 2) scan(dir, depth + 1);
+                    else if (depth < ACCOUNT_DEPTH) scan(dir, depth + 1);
                 }
             } catch (error) {
                 if (error.message.startsWith("jarvis-accounts:")) throw error;
@@ -603,4 +612,4 @@ class Accounts {
     }
 }
 
-module.exports = { Accounts };
+module.exports = { Accounts, accountRoots };

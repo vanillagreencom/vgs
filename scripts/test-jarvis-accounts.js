@@ -411,12 +411,9 @@ world(async () => {
         ["marker-first", "const result = this.run(row.command[0], row.command.slice(1), { [row.variable]: candidate.directory });",
             "fs.lstatSync(path.join(candidate.directory, row.marker));\n        const result = this.run(row.command[0], row.command.slice(1), { [row.variable]: candidate.directory });",
             Judge => discovery(new Judge(directory, { ...env, CODEX_HOME: explicit, OPENAI_API_KEY: privateValue }))],
-        ["depth", "else if (depth < 2)", "else if (depth < 3)",
-            Judge => discovery(new Judge(directory, { ...env, CODEX_HOME: explicit, OPENAI_API_KEY: privateValue }))],
+
         ["manual", "for (const item of this.added())", "for (const item of [])",
             Judge => discovery(new Judge(directory, { ...env, CODEX_HOME: explicit, OPENAI_API_KEY: privateValue }))],
-        ["no-follow", 'if (stat.isSymbolicLink()) fail("directory=link");', 'if (stat.isSymbolicLink()) return { kind: "absent" };',
-            Judge => assert.throws(() => new Judge(directory, { ...env, CLAUDE_CONFIG_DIR: path.join(env.HOME, ".claude-link") }).discover(), /directory=link/)],
         ["explicit-user", 'if (initiation !== "user")', "if (false)",
             async Judge => { const judge = new Judge(directory, env); const id = judge.discover()[0].id;
                 await assert.rejects(() => judge.verify(id, "automatic", async () => ({ kind: "inference", text: "OK" })), /explicit-user-required/); }],
@@ -442,6 +439,43 @@ world(async () => {
     await mutant("backend/Secrets.js", "metadata-only", '"get-property",', '"call",', folder =>
         assert.doesNotThrow(() => new (require(path.join(folder, "backend/Secrets.js")).Secrets)(directory, env).items()));
     controls++;
+
+    // Discovery finds its candidates through the shared name rule and the
+    // shared anchored walk, each with its own control in its own file.
+    const judgeIn = folder => require(path.join(folder, "backend/Accounts.js")).Accounts;
+    const sharedRule = folder => discovery(new (judgeIn(folder))(directory, { ...env, CODEX_HOME: explicit, OPENAI_API_KEY: privateValue }));
+    for (const [name, needle, replacement] of [
+        ["depth", "var ACCOUNT_DEPTH = 2;", "var ACCOUNT_DEPTH = 3;"],
+        ["prefix", 'if (row.kind === "cli" && name.indexOf(row.prefix) === 0) return row;', 'if (false) return row;']
+    ]) {
+        await mutant("AccountProviders.js", name, needle, replacement, sharedRule);
+        controls++;
+    }
+    const linkedRoot = folder => assert.throws(() => new (judgeIn(folder))(directory,
+        { ...env, CLAUDE_CONFIG_DIR: path.join(env.HOME, ".claude-link") }).discover(), /directory=link/);
+    linkedRoot(plugin);
+    await mutant("backend/Anchored.js", "no-follow", 'if (stat.isSymbolicLink()) return { kind: "link" };',
+        'if (stat.isSymbolicLink()) return { kind: "absent" };', linkedRoot);
+    controls++;
+
+    // The roots entry: explicit roots, then hand-added ones, and never a
+    // scanned candidate.
+    const explicitClaude = path.join(env.HOME, "explicit-claude");
+    const rootsOf = folder => {
+        const { accountRoots } = require(path.join(folder, "backend/Accounts.js"));
+        assert.deepEqual(accountRoots(directory, { ...env, CODEX_HOME: explicit, CLAUDE_CONFIG_DIR: explicitClaude }),
+            [explicitClaude, explicit, hand]);
+        assert.deepEqual(accountRoots(directory, env), [hand]);
+    };
+    rootsOf(plugin);
+    cases++;
+    for (const [name, needle, replacement] of [
+        ["roots-explicit", 'if (row.kind === "cli" && env[row.variable]) result[row.id] = env[row.variable];', ''],
+        ["roots-added", 'addedRows(path.join(stateDirectory, "accounts.json"))', '[]']
+    ]) {
+        await mutant("backend/Accounts.js", name, needle, replacement, rootsOf);
+        controls++;
+    }
 
     // A missing stand-in cannot reach a host executable.
     for (const [command, assertion] of [

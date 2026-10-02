@@ -63,7 +63,7 @@ const TABLE = {
     "media.brightness": { sentence: "Set brightness to {value}", effect: "reversible", executor: "media", command: "brightnessctl", schema: { value: { type: "integer", minimum: 1, maximum: 100 } } },
     "notify.notification": { sentence: "Show notification {title}: {body}", effect: "reversible", executor: "notify", command: "notify-send", schema: { title: text, body: text } },
     "notify.toast": { sentence: "Show notice {title}: {body}", effect: "reversible", executor: "wire", command: null, schema: { title: text, body: text } },
-    "files.list": { sentence: "List files in {path}", effect: "read", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "read"]] },
+    "files.list": { sentence: "List files in {path}", effect: "read", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "read"]], source: "file" },
     "files.read": { sentence: "Read {path}", effect: "read", executor: "files", command: null, schema: { path: absolute }, paths: [["path", "read"]], source: "file" },
     "files.search": { sentence: "Search {path} for {query}", effect: "read", executor: "files", command: null, schema: { path: absolute, query: text }, paths: [["path", "tree-read"]], source: "file" },
     "files.write": { sentence: "Write {path} with text {text}", effect: "persistent", executor: "files", command: null, schema: { path: absolute, text: { ...text, minLength: 0 } }, paths: [["path", "write"]] },
