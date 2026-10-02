@@ -140,6 +140,24 @@ function asyncControl(file) {
     };
 }
 
+/** Preserve backend imports, runtime skills and the account declaration. */
+async function pluginCopy(file, edits, check) {
+    const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "plugin-copy-"));
+    fs.cpSync(path.dirname(file), path.join(folder, "backend"), { recursive: true });
+    fs.copyFileSync(path.join(path.dirname(file), "../AccountProviders.js"), path.join(folder, "AccountProviders.js"));
+    const target = path.join(folder, "backend", path.basename(file));
+    let source = fs.readFileSync(target, "utf8");
+    for (const [needle, replacement] of edits) {
+        assert.equal(source.split(needle).length - 1, 1, path.basename(file) + " copy match");
+        const changed = source.replace(needle, replacement);
+        assert.notEqual(changed, source);
+        source = changed;
+    }
+    fs.writeFileSync(target, source);
+    try { return await check(folder); }
+    finally { fs.rmSync(folder, { recursive: true, force: true }); }
+}
+
 async function datagram(project, abstract, check) {
     const address = abstract ? "\0jarvis-pair-" + process.pid : path.join(project, "pair.sock");
     const child = cp.spawn("/usr/bin/python3", ["-I", path.join(tree, "scripts/fixtures/jarvis/sandbox-datagram.py"),
@@ -179,4 +197,4 @@ async function datagram(project, abstract, check) {
     }
 }
 
-module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, fsFaultAsync, qmlCopy, asyncControl, moduleCopy, datagram };
+module.exports = { assert, fs, path, tree, world, seed, mutant, fsFault, fsFaultAsync, qmlCopy, asyncControl, moduleCopy, pluginCopy, datagram };

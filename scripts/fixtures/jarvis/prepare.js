@@ -102,6 +102,15 @@ function floorDaemon(file) {
         'Object.defineProperty(process.versions, "node", { value: "21.0.0" });\n' + needle));
 }
 
+function shellAvailability(file, kind) {
+    assert.ok(["available", "unavailable"].includes(kind));
+    const source = fs.readFileSync(file, "utf8");
+    const needle = "async function available(options = {}) {";
+    assert.equal(source.split(needle).length - 1, 1);
+    const value = kind === "available" ? { kind } : { kind, reason: "bwrap-missing" };
+    fs.writeFileSync(file, source.replace(needle, needle + "\n    return " + JSON.stringify(value) + ";"));
+}
+
 function dropInitialReplies(file, marker) {
     const source = fs.readFileSync(file, "utf8");
     const start = '"use strict";';
@@ -272,6 +281,9 @@ if (require.main === module) {
     } else if (process.argv[2] === "--floor-daemon") {
         assert.equal(process.argv.length, 4);
         floorDaemon(process.argv[3]);
+    } else if (process.argv[2] === "--shell-availability") {
+        assert.equal(process.argv.length, 5);
+        shellAvailability(...process.argv.slice(3));
     } else if (process.argv[2] === "--task-requests") {
         assert.equal(process.argv.length, 5);
         taskRequests(process.argv[3], process.argv[4]);

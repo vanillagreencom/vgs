@@ -314,6 +314,16 @@ function accept(line, direction) {
         keys(message, ["v", "type", "gen", "revision", "commands"], "input-ready");
         if (!Array.isArray(message.commands) || !message.commands.every(command => ["wtype", "wlrctl", "ydotool"].indexOf(command) !== -1)) fail("input-commands");
         break;
+    case "shell-status":
+        if (direction !== "daemon") fail("direction-shell-status");
+        keys(message, ["v", "type", "gen", "revision", "availability"], "shell-status");
+        var availability = message.availability;
+        if (!object(availability) || ["checking", "available", "unavailable"].indexOf(availability.kind) === -1)
+            fail("shell-availability");
+        keys(availability, availability.kind === "unavailable" ? ["kind", "reason"] : ["kind"], "shell-availability");
+        if (availability.kind === "unavailable" && !printable(availability.reason, 1, FIELD_MAX))
+            fail("shell-reason");
+        break;
     case "task-answer":
         if (direction !== "daemon") fail("direction-task-answer");
         keys(message, ["v", "type", "gen", "revision", "task", "answer"], "task-answer");

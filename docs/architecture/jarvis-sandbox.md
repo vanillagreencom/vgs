@@ -2,7 +2,7 @@
 
 Covers: shell/plugins/vgs.jarvis/backend/Sandbox.js, scripts/test-jarvis-sandbox.js, scripts/fixtures/jarvis/forbidden.js, scripts/fixtures/jarvis/sandbox-child.py, scripts/fixtures/jarvis/sandbox-datagram.py
 
-[D074](../decisions/D074-jarvis-kernel-sandbox.md) refines [the action policy](jarvis-policy.md). The daemon registers no shell executor. J49 supplies the shell adapter. [The router](jarvis-approval.md) owns approval and consumes [the pre-action audit](jarvis-audit.md).
+[D074](../decisions/D074-jarvis-kernel-sandbox.md) refines [the action policy](jarvis-policy.md). The daemon registers the [shell adapter](jarvis-shell-tools.md) after its real readiness probe succeeds. [The router](jarvis-approval.md) owns approval and consumes [the pre-action audit](jarvis-audit.md).
 
 ## Kernel boundary
 
@@ -21,7 +21,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Sandbox.js, scripts/test-jarvis-sandbox
 
 | API | Consumer contract |
 |---|---|
-| `available()` | J49 probes before offering tools. Only `{ kind: "available" }` permits an offer. Missing bubblewrap, unsupported setup or unavailable namespaces returns `unavailable`. |
+| `available({ signal?, clock? })` | J49 probes before offering tools. Only `{ kind: "available" }` permits an offer. Missing bubblewrap, unsupported setup or unavailable namespaces returns `unavailable`. |
 | `run({ argv, cwd, network }, roots, { signal?, clock? })` | J49 supplies validated argv and service-owned roots from `Denied.create`'s contract. Runtime must exist. A shell line becomes `/bin/sh -c`; token scanning grants no authority. The router must rejudge lock, policy, approval and audit first. |
 | `exited` | `code`, `stdout`, `stderr`. A nonzero command status is not success. Command exit 77 remains a command result, not an unavailable sandbox. |
 | `refused` | Invalid request or refused working directory, with `reason`. |

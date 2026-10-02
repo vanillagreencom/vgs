@@ -4,7 +4,7 @@ Covers: shell/plugins/vgs.jarvis/backend/Policy.js, shell/plugins/vgs.jarvis/bac
 
 [Input facts](input-facts.md) defines the fresh core target and key observations. [Jarvis input](jarvis-input.md) defines their policy and transport consumer.
 
-[D070](../decisions/D070-jarvis-action-policy.md) records the action boundary. The [Jarvis plan § Policy](../plans/v2-jarvis-plan.md#37-policy-authority-effects-approval-audit) defines its authority. This code judges calls but executes none. The daemon registers the [desktop executors](jarvis-desktop-tools.md), the setup-verified [browser executor](jarvis-browser.md) and the [file tools](jarvis-files.md), and no brain calls them yet. It exposes no account, capture or network connection.
+[D070](../decisions/D070-jarvis-action-policy.md) records the action boundary. The [Jarvis plan § Policy](../plans/v2-jarvis-plan.md#37-policy-authority-effects-approval-audit) defines its authority. This code judges calls but executes none. The daemon registers the [desktop executors](jarvis-desktop-tools.md), the setup-verified [browser executor](jarvis-browser.md) and the [file tools](jarvis-files.md) and [confined shell tools](jarvis-shell-tools.md), and no brain calls them yet. It exposes no account, capture or network connection.
 
 ## Owners
 

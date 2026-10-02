@@ -6,7 +6,7 @@ The shared test world implements the isolation boundary in [the Jarvis plan § T
 
 The independent local-model consumer and its actual-model row are in [Jarvis local inputs](jarvis-local.md). They reuse this world for CPU behavior checks. CUDA measurement uses a network-only namespace to retain the host process identity needed by its memory sampler.
 
-The [kernel sandbox suite](jarvis-sandbox.md#evidence) runs real bubblewrap inside this world. Its absolute system bootstrap is allow-listed for that suite only. It never binds live HOME. Runtime and mask controls expose only scratch sentinels. Its network control reaches a private loopback listener.
+The [kernel sandbox suite](jarvis-sandbox.md#evidence) and [actual shell tool suite](jarvis-shell-tools.md#evidence) run real bubblewrap inside this world. Its absolute system bootstrap is allow-listed for that suite only. It never binds live HOME. Runtime and mask controls expose only scratch sentinels. Its network control reaches a private loopback listener.
 
 The [Jarvis control tests](jarvis-controls.md#evidence) use private scripted capture, brain and playback ports. They instrument only disposable daemon copies through `scripts/fixtures/jarvis/scripted.js`. File gates advance callbacks. These ports run no capture or playback process or provider and introduce no installed fixture API. The [bar widget row](jarvis-widget.md#evidence) uses the same ports. Read-only discovery still uses the shared synthetic PipeWire commands.
 

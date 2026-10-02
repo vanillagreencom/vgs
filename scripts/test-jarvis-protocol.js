@@ -20,6 +20,7 @@ const cancel = { ...intent, intent: "cancel", id };
 const shown = { v: 1, type: "shown", gen: 0, revision: hello.revision, id };
 const indicator = { v: 1, type: "indicator", gen: 0, revision: hello.revision, shown: true };
 const status = { v: 1, type: "status", gen: 0, revision: hello.revision, daemon: "ready" };
+const shellStatus = { v: 1, type: "shell-status", gen: 0, revision: hello.revision, availability: { kind: "available" } };
 const state = { v: 1, type: "state", gen: 0, revision: hello.revision, seq: 1,
     state: JSON.parse(JSON.stringify(Protocol.Session.initial())), phase: "down" };
 const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(file), "manifest.json"), "utf8"));
@@ -80,6 +81,11 @@ const cases = [
             keys: [{ ...keysReply.data.keys[0], codepoint }] } }), "shell", "input-reply"]),
     ["input-ready-direction", JSON.stringify(inputReady), "shell", "direction-input-ready"],
     ["input-ready-command", changed(inputReady, { commands: ["sudo"] }), "daemon", "input-commands"],
+    ["shell-status-direction", JSON.stringify(shellStatus), "shell", "direction-shell-status"],
+    ["shell-status-shape", changed(shellStatus, { extra: true }), "daemon", "shape-shell-status"],
+    ["shell-availability", changed(shellStatus, { availability: { kind: "ready" } }), "daemon", "shell-availability"],
+    ["shell-availability-shape", changed(shellStatus, { availability: { kind: "available", reason: "extra" } }), "daemon", "shape-shell-availability"],
+    ["shell-reason", changed(shellStatus, { availability: { kind: "unavailable", reason: "" } }), "daemon", "shell-reason"],
     ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
     ["audio-fault", changed(audioFault, { reason: "" }), "daemon", "audio-fault"],
     ["device-setting", changed(hello, { settings: { ...hello.settings, microphone: 1 } }), "shell", "device-setting"],
@@ -220,7 +226,9 @@ for (const shown of [false, true])
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, mode: "toggle" },
     keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
 for (const message of [devices, level, audioFault, taskRequest, tasks, taskAnswer, { ...tasks, count: 0 },
-    transcript, { ...transcript, role: "assistant", stage: "final", text: "a".repeat(4096), rev: 2 }])
+    transcript, { ...transcript, role: "assistant", stage: "final", text: "a".repeat(4096), rev: 2 },
+    shellStatus, { ...shellStatus, availability: { kind: "checking" } },
+    { ...shellStatus, availability: { kind: "unavailable", reason: "bwrap-missing" } }])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
 for (const message of [taskStop, tuiState, { ...tuiState, running: false }, taskReply, { ...taskReply, answer: "ok" },
     { ...taskReply, answer: "x".repeat(300) }])
@@ -317,6 +325,12 @@ try {
         ["input-symbol-floor", ' || key.codepoint < 0', '', "input-codepoint--1"],
         ["input-symbol-ceiling", ' || key.codepoint > 0x10ffff', '', "input-codepoint-1114112"],
         ["input-symbol-scalar", ' || key.codepoint >= 0xd800 && key.codepoint <= 0xdfff', '', "input-codepoint-55296"],
+        ["shell-status-direction", 'if (direction !== "daemon") fail("direction-shell-status");',
+            'if (false) fail("direction-shell-status");', "shell-status-direction"],
+        ["shell-availability", 'fail("shell-availability");', ';', "shell-availability"],
+        ["shell-availability-shape", 'keys(availability, availability.kind === "unavailable" ? ["kind", "reason"] : ["kind"], "shell-availability");',
+            'if (false) keys(availability, ["kind"], "shell-availability");', "shell-availability-shape"],
+        ["shell-reason", 'fail("shell-reason");', ';', "shell-reason"],
         ["approval-id", 'if (!approvalId(message.id)) fail("approval-id");',
             'if (false) fail("approval-id");', "confirm-id", 3],
         ["approval-digest", 'if (typeof message.digest !== "string" || !/^[0-9a-f]{64}$/.test(message.digest)) fail("approval-digest");',

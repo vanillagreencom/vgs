@@ -50,7 +50,11 @@ async function inside() {
             if (reason instanceof RegExp) assert.match(err.trim(), reason);
             else if (reason !== null) assert.equal(err.trim(), reason);
             else assert.equal(err, "");
-            assert.deepEqual(out.trim() === "" ? [] : out.trim().split("\n").map(line => JSON.parse(line)), expected);
+            const frames = out.trim() === "" ? [] : out.trim().split("\n").map(line => JSON.parse(line));
+            const shell = frames.filter(frame => frame.type === "shell-status");
+            assert.deepEqual(shell, expected.length || (typeof reason === "string" && reason.startsWith("jarvis: mute=")) ? [{ v: 1, type: "shell-status", gen: hello.gen,
+                revision: hello.revision, availability: { kind: "checking" } }] : []);
+            assert.deepEqual(frames.filter(frame => frame.type !== "shell-status"), expected);
             cases++;
         } finally { clearTimeout(timeout); if (child.exitCode === null) child.kill("SIGKILL"); }
     }

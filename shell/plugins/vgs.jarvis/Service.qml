@@ -115,6 +115,7 @@ Item {
         if (silent !== "ok") throw new Error("jarvis: " + silent);
         const inputStatus = shell.status.set("input", { tone: "warning", text: "Input tools unavailable", action: true });
         if (inputStatus !== "ok") throw new Error("jarvis: " + inputStatus);
+        shellStatus({ kind: "checking" });
         child.completion = null;
         child.stdinEnabled = true;
         publish("info", "Starting");
@@ -205,6 +206,14 @@ Item {
         console.warn("jarvis: task-stop=" + message.answer + " task=" + message.task);
         shell.toasts.show({ title: "Coding task not stopped",
             message: "Task " + message.task + ": " + message.answer, tone: "danger", icon: "mic" });
+    }
+
+    function shellStatus(availability) {
+        const value = availability.kind === "available" ? { tone: "ok", text: "Ready" }
+            : availability.kind === "checking" ? { tone: "info", text: "Checking confinement" }
+            : { tone: "warning", text: "Unavailable: " + availability.reason, action: availability.reason === "bwrap-missing" };
+        const result = shell.status.set("shell", value);
+        if (result !== "ok") throw new Error("jarvis: " + result);
     }
 
     function deliverMute() {
@@ -354,6 +363,10 @@ Item {
                     if (report !== "ok") throw new Error("jarvis: " + report);
                     continue;
                 }
+                if (message.type === "shell-status") {
+                    shellStatus(message.availability);
+                    continue;
+                }
                 if (message.type === "tasks") {
                     const reply = shell.status.set("tasks", message.count);
                     if (reply !== "ok") throw new Error("jarvis: " + reply);
@@ -411,6 +424,7 @@ Item {
         // The ended child's Session state is no longer current: neither the
         // retry wait nor a problem may show or act on it.
         sessionState = null;
+        shellStatus({ kind: "unavailable", reason: "daemon-ended" });
         const stale = shell.status.set("detail", null);
         if (stale !== "ok") throw new Error("jarvis: " + stale);
         if (permanent || retries === 5) {
@@ -452,6 +466,7 @@ Item {
             PATH: Quickshell.env("PATH"), HOME: Quickshell.env("HOME"),
             XDG_CONFIG_HOME: Quickshell.env("XDG_CONFIG_HOME"), XDG_STATE_HOME: Quickshell.env("XDG_STATE_HOME"),
             XDG_DATA_HOME: Quickshell.env("XDG_DATA_HOME"), XDG_RUNTIME_DIR: Quickshell.env("XDG_RUNTIME_DIR"),
+            CLAUDE_CONFIG_DIR: Quickshell.env("CLAUDE_CONFIG_DIR"), CODEX_HOME: Quickshell.env("CODEX_HOME"),
             HYPRLAND_INSTANCE_SIGNATURE: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"),
             // The desktop tool executors hand these to their commands alone.
             WAYLAND_DISPLAY: Quickshell.env("WAYLAND_DISPLAY"),

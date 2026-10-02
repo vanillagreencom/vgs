@@ -36,6 +36,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     const Input = require("./Input.js");
     const Browser = require("./Browser.js");
     const Files = require("./Files.js");
+    const Shell = require("./Shell.js");
     const TaskRunner = require("./TaskRunner.js");
     const ToolBridge = require("./ToolBridge.js");
     const HarnessGate = require("./HarnessGate.js");
@@ -62,6 +63,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let input = null;
     let browser = null;
     let files = null;
+    let shell = null;
     const clock = { now: () => performance.now(), set: (fn, ms) => setTimeout(fn, ms), clear: timer => clearTimeout(timer) };
     let tasks = null;
     let bridge = null;
@@ -71,6 +73,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
         // The bridge ends its connections while the router can still drop their results.
         if (bridge !== null) bridge.close();
         if (gate !== null) gate.close();
+        if (shell !== null) shell.close();
         runner.close();
         if (engine !== null) engine.close();
         if (executors !== null) executors.close();
@@ -114,15 +117,18 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     // judge from trusted roots: the daemon's XDG roots, the plugin directory
     // it runs from and the account roots, since roots and links can change
     // between calls. A failed build throws; no default stands in.
-    function denied() {
+    function trustedRoots() {
         const home = process.env.HOME;
         if (typeof home !== "string" || home === "") throw new Error("jarvis: paths=home");
-        return Denied.create({ home,
+        return { home,
             config: process.env.XDG_CONFIG_HOME || path.join(home, ".config"),
             data: process.env.XDG_DATA_HOME || path.join(home, ".local/share"),
             state: process.env.XDG_STATE_HOME || path.join(home, ".local/state"),
             runtime: process.env.XDG_RUNTIME_DIR, install: path.dirname(__dirname),
-            accountRoots: accountRoots(context.directories.state, process.env) });
+            accountRoots: accountRoots(context.directories.state, process.env) };
+    }
+
+    function denied() { return Denied.create(trustedRoots());
     }
 
     // Policy refuses every path-bearing call as path-context without it, and
@@ -324,6 +330,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                 context = message;
                 if (first) {
                     audit = Audit.create({ state: context.directories.state });
+                    fs.mkdirSync(context.directories.runtime, { recursive: true, mode: 0o700 });
                     const profile = () => runner.state.settings.policy ?? "standard";
                     const router = ToolRouter.create({ session: Session, state: () => runner.state,
                         dispatch: event => runner.dispatch(event), audit,
@@ -337,6 +344,11 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     router.register("harness", gate.executor);
                     // Executor owners register only after their real probes.
                     Object.assign(runner.ports, router.ports);
+                    shell = Shell.install({ router, roots: trustedRoots, failed: fatal,
+                        status: availability => {
+                            if (!ending) write({ v: 1, type: "shell-status", gen: runner.state.gen,
+                                revision: context.revision, availability });
+                        } });
                     requests = ShellRequests.create({ Protocol, clock, write: fields =>
                         write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
                     executors = Executors.register(router, { find: commandFile, environment: process.env, clock,

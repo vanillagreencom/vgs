@@ -188,7 +188,7 @@ function command(args, argv) {
  * bwrap option or unavailable namespace returns unavailable, never fallback.
  * This is a real kernel launch, not command presence or a version guess.
  */
-async function available() {
+async function available(options = {}) {
     const binary = executable();
     if (binary === null) return { kind: "unavailable", reason: "bwrap-missing" };
     const args = runtime(false);
@@ -196,7 +196,7 @@ async function available() {
     catch (error) {
         return { kind: "unavailable", reason: "public-runtime", error: error.code || error.message };
     }
-    const result = await launch(binary, command(args, ["/usr/bin/true"]));
+    const result = await launch(binary, command(args, ["/usr/bin/true"]), options);
     if (result.kind === "exited" && result.code === 0) return { kind: "available" };
     return { kind: "unavailable", reason: "bwrap-unavailable", detail: result };
 }
@@ -231,4 +231,6 @@ async function run(request, roots, options = {}) {
     return launch(binary, command(args, refined.call.args.argv), options);
 }
 
-module.exports = { available, run };
+// The router consumes the same deadline; no adapter owns another command timer.
+const BOUNDS = Object.freeze({ timeoutMs: DEADLINE, outputBytes: LIMIT });
+module.exports = { available, run, BOUNDS };

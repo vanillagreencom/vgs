@@ -305,6 +305,53 @@ jarvis_service="$repo/shell/plugins/vgs.jarvis/Service.qml"
 jarvis_backend="$repo/shell/plugins/vgs.jarvis/backend/jarvisd.js"
 cp -- "$jarvis_service" "$sandbox/jarvis-service-original"
 cp -- "$jarvis_backend" "$sandbox/jarvis-backend-original"
+jarvis_shell_owner="$repo/shell/plugins/vgs.jarvis/backend/Sandbox.js"
+cp -- "$jarvis_shell_owner" "$sandbox/jarvis-shell-original"
+
+# Kernel behavior is exercised through the real tool by the offline shell
+# row. These scoped readiness fixtures isolate daemon-to-service delivery.
+jarvis_shell_status() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+want = {"ready": {"tone":"ok", "text":"Ready"},
+        "missing": {"tone":"warning", "text":"Unavailable: bwrap-missing", "action":True}}[sys.argv[1]]
+print("matched" if json.load(sys.stdin)["status"].get("shell") == want else "pending")
+' "$1"
+}
+jarvis_shell_assertion() {
+  (failures=0 behaviour_failures=0
+   expect_poll "the service publishes shell readiness" matched jarvis_shell_status ready >"$sandbox/jarvis-shell-control.log"
+   echo "$failures")
+}
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --shell-availability "$jarvis_shell_owner" available
+jarvis_rescan
+jarvis_enable
+expect_poll "the service reports a confined shell executor ready" matched jarvis_shell_status ready
+jarvis_disable
+python3 - "$jarvis_service" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); source=p.read_text()
+needle='const result = shell.status.set("shell", value);'
+assert source.count(needle)==1
+changed=source.replace(needle, 'const result = false ? shell.status.set("shell", value) : "ok";')
+assert changed != source
+p.write_text(changed)
+PY
+jarvis_rescan
+jarvis_enable
+expect "removing shell status publication breaks its consumer assertion" 1 jarvis_shell_assertion
+jarvis_disable
+cp -- "$sandbox/jarvis-service-original" "$jarvis_service"
+cp -- "$sandbox/jarvis-shell-original" "$jarvis_shell_owner"
+"$node_bin" "$source_repo/scripts/fixtures/jarvis/prepare.js" --shell-availability "$jarvis_shell_owner" unavailable
+jarvis_rescan
+jarvis_enable
+expect_poll "missing confinement exposes the one-click requirement action" matched jarvis_shell_status missing
+jarvis_disable
+cp -- "$sandbox/jarvis-shell-original" "$jarvis_shell_owner"
+jarvis_rescan
+
 # The control keeps the receive branch but removes its publication. The
 # ordinary state read, not a text pin, must fail on this disposable copy.
 python3 - "$jarvis_service" <<'PY'

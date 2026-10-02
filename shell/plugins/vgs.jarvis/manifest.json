@@ -77,6 +77,7 @@
     { "command": "tesseract", "packages": { "pacman": "tesseract", "apt": "tesseract-ocr", "dnf": "tesseract" }, "optional": true, "purpose": "Reads screen text for a brain that takes no image" }
   ],
   "status": {
+    "shell": { "type": "state", "label": "Shell tools", "hint": "Commands are offered only when kernel confinement and protected paths are ready. Missing Bubblewrap can be installed here.", "action": { "label": "Install Bubblewrap", "install": ["bwrap"] } },
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },
     "detail": { "type": "data", "label": "Session" },
     "keys": { "type": "presenceList", "label": "Provider keys", "hint": "Use Add key below. This check never reads a key or unlocks the keyring." },

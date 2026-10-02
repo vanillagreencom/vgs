@@ -11,9 +11,10 @@ const { languageCode } = require("./SpeechLanguage.js");
 const MAX_LAYER_BYTES = 8192;
 const MAX_COMPOSE_BYTES = 32768;
 const ROOT = path.join(__dirname, "skills/voice");
+const Tools = require("./Tools.js");
 
-function layer(name) {
-    const file = path.join(ROOT, name);
+function layer(name, root = ROOT) {
+    const file = path.join(root, name);
     let fd;
     try {
         fd = fs.openSync(file, "r");
@@ -51,7 +52,7 @@ function compose(engine, brainClass, language) {
         if (brainClass === "local") names.push("class/local.md");
         names.push("lang/" + code + ".md");
     }
-    const content = names.map(layer);
+    const content = names.map(name => layer(name));
     const instructions = content.join("\n\n");
     if (Buffer.byteLength(instructions) > MAX_COMPOSE_BYTES) throw new Error("jarvis: guidance=compose-too-large");
     // The same core rule reaches the model again, not a second spelling of it.
@@ -59,4 +60,11 @@ function compose(engine, brainClass, language) {
     return Object.freeze({ instructions, layers: Object.freeze(names), afterToolResult });
 }
 
-module.exports = { compose };
+/** Read an installed computer-tool family through the tool contract's topics. */
+function help(topic) {
+    if (!Tools.TABLE.help.schema.properties.topic.enum.includes(topic))
+        throw new Error("jarvis: guidance=topic");
+    return layer(topic + ".md", path.join(__dirname, "skills/computer"));
+}
+
+module.exports = { compose, help };

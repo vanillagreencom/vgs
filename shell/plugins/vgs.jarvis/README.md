@@ -1,6 +1,6 @@
 # Jarvis
 
-Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API, local or Claude Code account when you request it. The installed daemon has no speech or conversation engine, so nothing calls its desktop and file tools yet.
+Jarvis runs a service-owned Node child and shows its health in Settings. The child tracks session state and saves safety records on your computer. Jarvis stores provider keys in your desktop keyring and finds account login hints. It can verify an API, local or Claude Code account when you request it. The installed daemon has no speech or conversation engine, so nothing calls its desktop, file and confined shell tools yet.
 
 ![The Jarvis daemon's status on its Settings page](../../../docs/images/plugins/vgs.jarvis-page.webp)
 
@@ -21,6 +21,8 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 - The listening bubble needs no bar widget. Its orb and text let clicks reach the application below.
 - Labelled Mute and Stop buttons use the same actions as their keys.
 - File tools list, read, search, write, move and delete files in your home folder. They refuse credential stores, account folders and VGS's own files, and never follow a link out of your home folder.
+- Shell tools keep commands inside a kernel sandbox and report failed, cancelled or bounded execution.
+- Settings shows shell readiness and offers installation when Bubblewrap is missing.
 - Settings opens Add key in a floating terminal with hidden key input.
 - Settings shows whether a referenced key is present, absent, locked or unavailable without reading it.
 - Settings and the launcher open local voice setup in a floating terminal.
@@ -41,7 +43,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 The daemon needs Node 22 or later. Key storage needs libsecret's secret-tool and a desktop Secret Service. Key presence needs busctl. Terminal flows need gum. Local setup needs uv, curl, Python and user namespaces. Its locked wheels target Linux x86_64. A CUDA tier also needs working CUDA libraries. The core's requirement notice offers installation of declared missing commands.
 
-The optional command sandbox needs bubblewrap and available user namespaces. This skeleton offers no shell tools. Opening a file or web link needs gio.
+The optional command sandbox needs bubblewrap and available user namespaces. Shell tools are absent when confinement or protected-path discovery fails. Opening a file or web link needs gio.
 
 Several coding tasks at once need tmux, which is optional. Without it, a coding task opens in a floating terminal, one task at a time. Task records need flock and Python.
 

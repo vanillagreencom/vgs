@@ -275,6 +275,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Redact.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Sandbox.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Screen.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Secrets.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Shell.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ShellRequests.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Speakable.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/SpeechLanguage.js
@@ -299,6 +300,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/skills/browser/LICENSE
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/browser/SKILL.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/input.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/vision.md
+f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/shell.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/actions.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/duplex.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/local.md

@@ -71,6 +71,7 @@ else
   if [[ $status != 0 ]]; then cat -- "$tmp/browser.err" >&2; fi
   check "installed browser setup and stub reach their real consumer" test "$status" = 0
 fi
+check "Jarvis shell reference is installed" test -e "$dest/usr/share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/shell.md"
 run_capture "$tmp/guidance.out" "$tmp/guidance.err" status "${voice_command[@]}" "$dest/usr/share/vgs"
 check "installed guidance composes every consumer without source-tree files" test "$status" = 0
 setup_standins="$tmp/setup-standins"
@@ -267,10 +268,10 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 text = pathlib.Path(sys.argv[2]).read_text()
-needle = '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/voice/*.md ]] && return 1\n'
+needle = '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/*.md ]] && return 1\n'
 if text.count(needle) != 1:
     raise SystemExit("install-control: voice exception did not occur once")
-changed = text.replace(needle, '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/voice/*.md ]] && return 0\n')
+changed = text.replace(needle, '  [[ $1 == shell/plugins/vgs.jarvis/backend/skills/*.md ]] && return 0\n')
 if changed == text:
     raise SystemExit("install-control: voice exception did not change")
 path.write_text(changed)
