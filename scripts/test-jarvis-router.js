@@ -94,8 +94,9 @@ world(() => {
         fs.writeFileSync(marker, JSON.stringify({ version: "0.38.1" }));
         try {
             const w = make(Router, Session, { browser: implementation });
-            assert.deepEqual(w.router.offer().find(row => row.id === "help").parameters.properties.topic.enum,
-                ["input", "browser"]);
+            const help = w.router.offer().find(row => row.id === "help");
+            assert.ok(help, "the shared guidance executor offers help");
+            assert.deepEqual(help.parameters.properties.topic.enum, ["input", "browser"]);
             assert.equal(w.call("help", { topic: "input" }).kind, "proposed");
             assert.equal(w.results.at(-1).results[0].item.content,
                 fs.readFileSync(path.join(backend, "skills/computer/input.md"), "utf8").trim());
