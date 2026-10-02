@@ -38,7 +38,7 @@ async function daemonLease(ending, removeClose = false) {
     fs.writeFileSync(marker, JSON.stringify({ version: "0.38.1" }));
     const folder = fs.mkdtempSync(path.join(process.env.JARVIS_TEST_ROOT, "browser-daemon-"));
     require("./audio.js").copyBackend(path.join(folder, "backend"));
-    for (const file of ["JarvisProtocol.js", "Session.js"])
+    for (const file of ["JarvisProtocol.js", "Session.js", "AccountProviders.js"])
         fs.copyFileSync(path.join(plugin, file), path.join(folder, file));
     const browserFile = path.join(folder, "backend/Browser.js");
     const original = fs.readFileSync(browserFile, "utf8");

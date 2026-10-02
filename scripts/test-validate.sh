@@ -649,7 +649,7 @@ for owner in 'audio-daemon|Jarvis audio daemon lifetime' 'browser|Jarvis browser
     browser)
       dependencies=(
         'shell/plugins/vgs.jarvis/backend/jarvisd.js|shell/plugins/vgs.jarvis/backend/*'
-        shell/plugins/vgs.jarvis/Session.js shell/plugins/vgs.jarvis/JarvisProtocol.js
+        shell/plugins/vgs.jarvis/Session.js shell/plugins/vgs.jarvis/JarvisProtocol.js shell/plugins/vgs.jarvis/AccountProviders.js
         shell/Core/Dispatch.js shell/Commons/DesktopLaunch.js bin/lib/qml-library.js bin/lib/judge-files.js
         'scripts/fixtures/jarvis/audio-tool.py|scripts/fixtures/jarvis/audio*'
         scripts/fixtures/jarvis/desktop.js) ;;
