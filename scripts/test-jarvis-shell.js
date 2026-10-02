@@ -61,7 +61,7 @@ world(async () => {
             status: value => statuses.push(value), failed: error => { throw error; },
             clock: { set: (fn, ms) => { const key = {}; deadlines.set(key, { fn, ms }); return key; },
                 clear: key => deadlines.delete(key) } });
-        runner.dispatch({ type: "snapshot", locked: false, configured: true, settings: {} });
+        runner.dispatch({ type: "snapshot", locked: false, engine: "chained", configured: true, settings: {} });
         runner.dispatch({ type: "indicator", shown: true });
         const turn = () => { runner.dispatch({ type: "talk-down" }); transcript("final", "synthetic user"); };
         turn();

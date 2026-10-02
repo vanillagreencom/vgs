@@ -16,7 +16,8 @@ function seedTaskEvents(folder, count, from = 1) {
 
 // Run the real suite and a missing-parent control in a private source export.
 // The export owns its tmp directory; no existing worktree tmp is removed.
-function freshSuite(tree, suite, root) {
+function freshSuite(tree, suite, root, timeoutMs = 180000) {
+    assert.ok(Number.isSafeInteger(timeoutMs) && timeoutMs > 0, "fresh-suite: timeout=positive-safe-integer");
     const clone = path.join(root, "f");
     const relative = "scripts/test-jarvis-" + suite + ".js";
     for (const folder of ["scripts/fixtures/jarvis", "scripts/fixtures/jarvis-brain", "scripts/lib", "scripts/smoke/rows", "bin/lib",
@@ -44,8 +45,7 @@ function freshSuite(tree, suite, root) {
     const run = () => cp.spawnSync(process.execPath, [file, "--fresh"], {
         cwd: clone, env: { PATH: "/usr/bin:/bin", HOME: clone, LC_ALL: "C",
             JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
-        // Bounds a hung suite, not a latency: the daemon suite runs real children.
-        encoding: "utf8", timeout: 180000
+        encoding: "utf8", timeout: timeoutMs
     });
     assert.equal(fs.existsSync(path.join(clone, "tmp")), false);
     const good = run();

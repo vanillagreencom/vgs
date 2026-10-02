@@ -1325,7 +1325,9 @@ async function main() {
     fs.mkdirSync(parent, { recursive: true });
     const root = fs.mkdtempSync(path.join(parent, "jd-"));
     try {
-        if (process.argv[2] !== "--fresh") freshSuite(tree, "daemon", root);
+        // node --fresh completed in 31.23s on 2026-10-02: daemon-duration-diagnostic-VGS-662.log.
+        // The outer export can report the inner suite failure before its own bound.
+        if (process.argv[2] !== "--fresh") freshSuite(tree, "daemon", root, 360000);
         const launcher = path.join(tree, "scripts/lib/jarvis-env.sh");
         standins(path.join(root, "standins"));
         desktopFixture.standins(path.join(root, "standins"));
