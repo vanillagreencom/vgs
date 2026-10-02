@@ -12,7 +12,6 @@ const { instrument } = require("./fixtures/jarvis/scripted.js");
 const { standins } = require("./fixtures/jarvis/audio.js");
 const desktopFixture = require("./fixtures/jarvis/desktop.js");
 const { instrument: instrumentDesktop } = require("./fixtures/jarvis/desktop-driver.js");
-const browserFixture = require("./fixtures/jarvis/browser.js");
 const tree = path.resolve(__dirname, "..");
 const daemon = path.join(tree, "shell/plugins/vgs.jarvis/backend/jarvisd.js");
 const source = fs.readFileSync(daemon, "utf8");
@@ -174,64 +173,6 @@ async function inside() {
     fs.writeFileSync(floorFile, source.replace(floorNeedle,
         'Object.defineProperty(process.versions, "node", { value: "21.0.0" });\n' + floorNeedle));
     await run(floorFile, [], 78, "jarvis: node=21.0.0 need=22");
-    // Force an owned browser into the otherwise unconfigured daemon fixture.
-    // Its sync double preserves the session until EOF so the teardown hook is visible.
-    async function browserLease(name, removeClose = false, signal = false) {
-        browserFixture.mode({});
-        const marker = path.join(process.env.XDG_DATA_HOME, "vgs/jarvis/browser-ready.json");
-        fs.mkdirSync(path.dirname(marker), { recursive: true });
-        fs.writeFileSync(marker, JSON.stringify({ version: "0.38.1" }));
-        const copyDir = path.join(root, name);
-        fs.mkdirSync(copyDir);
-        fs.cpSync(path.dirname(daemon), path.join(copyDir, "backend"), { recursive: true });
-        fs.writeFileSync(path.join(copyDir, "JarvisProtocol.js"), protocol);
-        fs.copyFileSync(path.join(tree, "shell/plugins/vgs.jarvis/Session.js"), path.join(copyDir, "Session.js"));
-        const browserFile = path.join(copyDir, "backend/Browser.js");
-        let browserSource = fs.readFileSync(browserFile, "utf8");
-        const eager = '    return Object.freeze({\n        sync(state) {';
-        assert.equal(browserSource.split(eager).length - 1, 1);
-        browserSource = browserSource.replace(eager,
-            '    owner().record.start({ id: "browser", args: { command: "read", args: {} } }, () => {});\n' +
-            '    return Object.freeze({\n        sync(state) { return;');
-        fs.writeFileSync(browserFile, browserSource);
-        const file = path.join(copyDir, "backend/jarvisd.js");
-        const close = "try { browser.close(); }";
-        assert.equal(source.split(close).length - 1, 1);
-        fs.writeFileSync(file, removeClose ? source.replace(close, "try { void browser; }") : source);
-        try {
-            if (signal) {
-                const child = cp.spawn("node", [file, "--tree", tree], { env: { PATH: process.env.PATH,
-                    HOME: process.env.HOME, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
-                    XDG_DATA_HOME: process.env.XDG_DATA_HOME }, stdio: ["pipe", "ignore", "pipe"] });
-                let err = "";
-                child.stderr.on("data", data => { err += data; });
-                const closed = once(child, "close");
-                const timeout = setTimeout(() => child.kill("SIGKILL"), 5000);
-                try {
-                    child.stdin.write(JSON.stringify(hello) + "\n");
-                    for (let n = 0; !browserFixture.calls().some(row => row.args.includes("snapshot")); n++) {
-                        assert.ok(n < 400, "the daemon reaches its vendor snapshot");
-                        await new Promise(resolve => setTimeout(resolve, 10));
-                    }
-                    child.kill("SIGTERM");
-                    assert.deepEqual(await closed, [0, null], "SIGTERM cleans up before exit: " + err);
-                    cases++;
-                } finally { clearTimeout(timeout); if (child.exitCode === null) child.kill("SIGKILL"); }
-            } else await run(file, [JSON.stringify(hello) + "\n"], 0, null, states([false]));
-            const session = browserFixture.calls().find(row => row.args.includes("snapshot"));
-            assert.ok(session, "the fixture starts a private vendor session");
-            assert.equal(browserFixture.calls().filter(row => row.args.at(-1) === "close").length, 1,
-                "daemon EOF closes the owned vendor session");
-            assert.equal(fs.existsSync(session.env.XDG_RUNTIME_DIR), false, "daemon EOF clears vendor data");
-        } finally { fs.rmSync(marker, { force: true }); }
-    }
-    await browserLease("browser-lease");
-    await browserLease("browser-signal", false, true);
-    await assert.rejects(() => browserLease("browser-lease-control", true), assert.AssertionError,
-        "removing daemon teardown must fail its browser lifetime assertion");
-    await assert.rejects(() => browserLease("browser-signal-control", true, true), assert.AssertionError,
-        "removing daemon teardown must fail its signal lifetime assertion");
-    controls += 2;
     async function control(name, needle, replacement, check) {
         assert.equal(source.split(needle).length - 1, 1, name + " mutation match");
         const copy = daemonCopy(name);
@@ -1129,7 +1070,6 @@ async function main() {
         desktopFixture.standins(path.join(root, "standins"));
         fs.copyFileSync(path.join(tree, "scripts/fixtures/jarvis/desktop-tool.py"), path.join(root, "standins/playerctl"));
         fs.chmodSync(path.join(root, "standins/playerctl"), 0o700);
-        browserFixture.standins(path.join(root, "standins"));
         const result = cp.spawnSync("/bin/bash", [launcher, path.join(root, "standins"), "--", "node", __filename, "--inside"],
             { env: { PATH: "/usr/bin:/bin", HOME: root, JARVIS_TEST_SCRATCH_ROOT: path.join(tree, "tmp") },
                 // Bounds a hung world, not a latency: the suite runs real children.

@@ -2,7 +2,7 @@
 // Real executor and action judge in J09, using schema-shaped vendor replies.
 "use strict";
 const { assert, fs, path, tree, world, mutant } = require("./fixtures/jarvis/policy.js");
-const { standins, mode, update, calls } = require("./fixtures/jarvis/browser.js");
+const { daemonStandins, daemonLease, mode, update, calls } = require("./fixtures/jarvis/browser.js");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const file = path.join(backend, "Browser.js");
 world(async () => {
@@ -246,6 +246,12 @@ world(async () => {
     }
     setupAfterStart(Browser);
     let controls = 0;
+    for (const ending of ["eof", "signal"]) {
+        await daemonLease(ending);
+        await assert.rejects(() => daemonLease(ending, true), assert.AssertionError,
+            "removing daemon teardown must fail its " + ending + " browser lifetime assertion");
+        controls++;
+    }
     async function control(name, needle, replacement, check) { await mutant(file, name, needle, replacement, check); controls++; }
     const one = name => implementation => check(implementation, ...cases.find(row => row[0] === name));
     await control("setup-after-start", 'if (changed && !ended) prepare();', 'void changed;', setupAfterStart);
@@ -315,5 +321,5 @@ world(async () => {
     await control("conversation-close", 'if (generation !== state.gen || state.conversation.kind === "ended") clear();',
         'if (generation !== state.gen) clear();', implementation => lifecycle(implementation, "end"));
     await control("lease-close", 'close() { closed = true; clear(); }', 'close() { closed = true; }', implementation => lifecycle(implementation, "lease"));
-    console.log("test-jarvis-browser: ok cases=" + cases.length + " controls=" + controls);
-}, standins);
+    console.log("test-jarvis-browser: ok cases=" + (cases.length + 2) + " controls=" + controls);
+}, daemonStandins);

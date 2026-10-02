@@ -31,8 +31,6 @@ function freshSuite(tree, suite, root) {
         "shell/plugins/vgs.jarvis/backend/audio-child.py", "scripts/fixtures/jarvis/audio.js",
         "scripts/fixtures/jarvis/audio-tool.py", "scripts/fixtures/jarvis/desktop.js", "scripts/fixtures/jarvis/desktop-driver.js", "scripts/fixtures/jarvis/desktop-tool.py",
         "scripts/smoke/harness.sh", "scripts/smoke/rows/jarvis-keys.sh",
-        "scripts/fixtures/jarvis/browser.js", "scripts/fixtures/jarvis/browser.py", "scripts/fixtures/jarvis/browser-gum.py",
-        "scripts/fixtures/jarvis/policy.js",
         "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Core/HyprlandLayer.js", "shell/Commons/DesktopLaunch.js",
         "scripts/fixtures/jarvis/engine.js", "scripts/fixtures/schema-check.js",
         "scripts/fixtures/jarvis-brain/openai-chat.schema.json", "scripts/fixtures/jarvis-brain/openai-chat-frames.js"])

@@ -24,4 +24,4 @@ The [router](jarvis-approval.md#evidence-and-comparison) shares inputs with the 
 
 The [local setup contract](jarvis-setup.md#evidence) adds installer controls in `tools` and a nested Settings/TUI row. The installer doubles run inside J09 and never download or install a real runtime.
 
-The [private browser suites](jarvis-browser.md#evidence-and-comparison) select from the driver owner, typed call and effect judges, stub, setup flow and their isolated fixtures. The nested browser row reads readiness and TUI completion with process doubles.
+The [private browser suites](jarvis-browser.md#evidence-and-comparison) select from the driver owner, typed call and effect judges, stub, setup flow and their isolated fixtures. The executor suite also owns daemon EOF and SIGTERM browser teardown checks. Its row selects the daemon, copied backend, protocol, Session, imported core helpers and audio and desktop fixtures. The selector's controls remove these dependency edges and require the browser consumer to disappear. The nested browser row reads readiness and TUI completion with process doubles.

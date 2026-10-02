@@ -34,7 +34,7 @@ The manifest declares the driver and Chromium as optional requirements. The core
 
 `scripts/test-jarvis-browser.js` runs the real executor and Policy in [J09](validation-jarvis.md). Its driver double follows upstream v0.38.1 JSON fields. It covers raw-flag and file-URL refusals, password fields, site grants, web taint, remote release, submit effects, redirects, bounds, version readiness and missing-driver behavior. Each new refusal and confinement rule has a behavior mutant. Existing router controls prove grant lifetime and approval binding.
 
-`scripts/test-jarvis-daemon.js` also proves that daemon lease loss or SIGTERM closes an owned vendor session and clears its temporary HOME. Its control removes the daemon teardown call.
+The same browser suite proves that daemon lease loss or SIGTERM closes an owned vendor session and clears its temporary HOME. Both cases remove the daemon teardown call as their controls. The daemon consumer uses the shared backend-copy owner and audio and desktop stand-ins inside J09. Its child bounds remain separate from the general daemon suite's source-export bound.
 
 `scripts/test-jarvis-browser-setup.js` runs the shipped setup script on a private terminal. It covers explicit download consent, verification, failed setup and the installed guidance consumer. The nested browser row uses only a status-process double and an allow-listed TUI fixture. It reads Settings status, setup argv and completion refresh. The shared status reader's controls remove refresh and retain ready after failure.
 
