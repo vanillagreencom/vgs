@@ -111,7 +111,8 @@ rm -r -- "${repo:?}/shell/Core/GalleryDeviceControl" || fail "removing the Galle
 slim_revealed() { [[ $(ipc smoke revealText window vgs.gallery ListItem "Slim 1") =~ ^[0-9.]+$ ]] && echo revealed; }
 slim_kind() { ipc smoke viewHolding window vgs.gallery "Slim 1" | py_reply 'import json,sys; v=json.load(sys.stdin); print(json.dumps([v["type"], v["contentY"], v["acceptedButtons"]]))'; }
 expect "the slim list is brought into the gallery's view" revealed slim_revealed
-expect "the slim list is a Flickable at its top that takes no mouse button" '["Flickable", 0, 0]' slim_kind
+# A plain Flickable reads as its C++ class name.
+expect "the slim list is a Flickable at its top that takes no mouse button" '["QQuickFlickable", 0, 0]' slim_kind
 expect "a mouse drag on the slim list leaves it where it was" still view_pointer window:Gallery window vgs.gallery "Slim 1" drag
 expect "a wheel notch on the slim list scrolls it" moved view_pointer window:Gallery window vgs.gallery "Slim 1" wheel
 expect "control: the probe gives the slim list Qt's left-button drag" 0 ipc smoke setViewButtons window vgs.gallery "Slim 1" 1
