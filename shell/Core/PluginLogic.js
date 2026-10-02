@@ -32,10 +32,10 @@ var TOAST_TITLE_MAX = 120;
 var TOAST_MESSAGE_MAX = 600;
 
 // Capabilities whose core object serves one plugin at a time: the session
-// lock, the polkit agent, the Bluetooth pairing agent, the monitor
-// rules and the panes holder, each a session-wide role. A second plugin
+// lock, the polkit agent, the Bluetooth pairing agent and the panes
+// holder, each a session-wide role. A second plugin
 // naming one is not built while another plugin holds it.
-var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];
+var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "panes"];
 
 // The types a settings schema entry may declare, and the keys an entry may
 // carry. `presets`, `allowCustom`, `format` and `unit` choose the Settings

@@ -500,36 +500,6 @@ function sessionLockLines() {
     ];
 }
 
-// The monitor rules: MonitorLogic.render's `hl.monitor` lines for the rules
-// monitors.json sets, after the core's own sections and before every plugin
-// section, so a user line after the loading line still wins. MONITORS is
-// { lines } or, for a document the judge refused or the shell could not
-// read, { refused } with the reason; omitted, as no rules. No rule writes no
-// section.
-var MONITORS_HEADER = "-- Monitors: the output rules monitors.json sets.";
-
-// MONITORS for render from DOCUMENT, monitors.json as
-// Capabilities.monitors last read it, and LINES, MonitorLogic.render of its
-// rules: null while the document is unread, which holds the first render
-// back, so a layer written before the read cannot drop the user's rules for
-// a moment; { refused } for a document refused or unreadable; else
-// { lines }, none for an absent document.
-function monitorInput(document, lines) {
-    if (document === null) return null;
-    if (document.rules === null) return { refused: document.error };
-    return { lines: lines };
-}
-
-function monitorLines(monitors) {
-    if (monitors === undefined) return [];
-    if (typeof monitors.refused === "string")
-        return ["", "-- Monitors: monitors.json is not applied: " + commentText(monitors.refused)];
-    if (!Array.isArray(monitors.lines))
-        throw new Error("HyprlandLayer: monitors " + JSON.stringify(monitors) + " is neither { lines } nor { refused }");
-    if (monitors.lines.length === 0) return [];
-    return ["", MONITORS_HEADER].concat(monitors.lines);
-}
-
 // The key capture pass-through's submap, KEY_PASSTHROUGH. Its two functions
 // on `hl.<table>` are what Dispatch.js asks for: `enter`
 // refuses unless a shell window has the focus and records that window, and
@@ -748,12 +718,11 @@ function optionLines(section, held, touchpads, touchpadFailure, out) {
 // section whose plugins row sets options is followed by its options
 // section, optionLines; an option two sections set goes to the first by
 // id. TOUCHPADS is the touchpad names Hyprland lists, or null while unread.
-// MONITORS gives the monitor rules' section, monitorLines, written after
-// the session lock's restore. The result also lists each option written,
+// The result also lists each option written,
 // as { id, setting, path, value }, each one skipped as a conflict, { id,
 // setting, path, heldBy }, or refused, { id, setting, path, error }, and
 // `binds`, the description of every bind written in the default submap.
-function render(sections, theme, themeName, highestScale, touchpads, touchpadFailure, monitors) {
+function render(sections, theme, themeName, highestScale, touchpads, touchpadFailure) {
     var plan = resolveBinds(sections);
     var switches = groupSwitches(sections);
     var lines = [
@@ -772,7 +741,7 @@ function render(sections, theme, themeName, highestScale, touchpads, touchpadFai
     lines.push("");
     if (switches.groups.motion.enabled) lines = lines.concat(motionLines(theme));
     else lines.push(disabledGroupLine("motion", switches.groups.motion.setting));
-    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan), [""], keyPassthroughLines(), [""], sessionLockLines(), monitorLines(monitors));
+    lines = lines.concat([""], tuiWindowLines(), [""], appWindowLines(), [""], overlayCaptureLines(plan), [""], keyPassthroughLines(), [""], sessionLockLines());
     var written = Object.create(null);
     var options = { written: [], conflicts: [], refusals: [] };
     var optionsHeld = Object.create(null);
@@ -986,32 +955,4 @@ function step(state, event, text) {
         return { state: withChanges(consentChanges(state, { phase: "asking", queued: "connect", failure: "" }), { phase: "reloading", reloadOwner: "wire" }), action: "reload" };
     }
     throw new Error("HyprlandLayer.step: unknown event " + JSON.stringify(event.type));
-}
-
-// How EVENT, one step takes, ends a write cycle, the one that carries a
-// monitors write: its failure, "" once the layer is written and reloaded,
-// or null when the cycle goes on or none runs. OWNER is state.reloadOwner
-// before the event; a reload a Connect started ends no write cycle.
-function cycleEnd(event, owner) {
-    switch (event.type) {
-    case "reloadDone":
-        return owner === "layer" ? event.failure : null;
-    case "mkdirDone":
-        return event.failure !== "" ? event.failure : null;
-    case "saveFailed":
-        return event.failure;
-    case "loaded":
-    case "loadFailed":
-    case "render":
-    case "force":
-    case "saved":
-    case "probeDone":
-    case "declineChecked":
-    case "connect":
-    case "decline":
-    case "declineDone":
-    case "wireDone":
-        return null;
-    }
-    throw new Error("HyprlandLayer.cycleEnd: unknown event " + JSON.stringify(event.type));
 }

@@ -5,18 +5,16 @@ import Quickshell.Io
 import qs.Commons
 import "PluginLogic.js" as Logic
 import "HyprlandLayer.js" as Layer
-import "MonitorLogic.js" as Monitors
 
 // The one writer of the Hyprland layer: HyprlandLayer.js renders the theme's
 // Hyprland appearance groups, the floating TUIs' window rules and every
 // enabled plugin's `hyprland` manifest data, the input options with the
-// touchpads Capabilities.hyprland reads, the monitor rules of the
-// monitors.json Capabilities.monitors reads, and this writes the text to
+// touchpads Capabilities.hyprland reads, and this writes the text to
 // `<stateDir>/hypr/vgs.lua`, only when its bytes change, then runs
 // `hyprctl reload config-only`. The radius group gets the highest monitor
 // scale here, so grouped-window tab rounding can match scaled window corners.
-// It renders again whenever the plugin set, the configuration, the monitors
-// or the theme changes, which covers enable, disable, rescan, a shell.json
+// It renders again whenever the plugin set, the configuration or the theme
+// changes, which covers enable, disable, rescan, a shell.json
 // edit and a theme apply. After the first read and any needed write in a
 // shell run, it probes hyprland.lua and raises the core notice before it wires the
 // loading line. No plugin writes the file. shell.qml builds this only in
@@ -41,14 +39,8 @@ Scope {
     // PluginLogic.hyprlandSection for every enabled plugin.
     readonly property var sections: Registry.hyprlandSections
     readonly property bool touchpadsNeeded: Layer.wantsTouchpads(root.sections)
-    // monitors.json as Capabilities.monitors last read it, null until read.
-    readonly property var monitorDocument: Capabilities.monitors.document
-    readonly property var monitorSection: Layer.monitorInput(monitorDocument, monitorDocument === null || monitorDocument.rules === null ? [] : Monitors.render(monitorDocument.rules))
-    readonly property bool inputsReady: Registry.scanned && Config.ready && Theme.fileState !== "pending" && monitorSection !== null
+    readonly property bool inputsReady: Registry.scanned && Config.ready && Theme.fileState !== "pending"
         && (!touchpadsNeeded || Capabilities.hyprland.touchpads !== null || Capabilities.hyprland.devicesFailure !== "")
-    // The document text the cycle in flight renders, which layerDone hands
-    // back to Capabilities.monitors.
-    property var cycleMonitors: null
     readonly property real highestMonitorScale: {
         let highest = 1;
         for (const screen of Quickshell.screens) {
@@ -73,7 +65,7 @@ Scope {
         hyprland: Theme.hyprland,
         motionScale: Theme.motion.scale
     })
-    readonly property var rendered: inputsReady ? Layer.render(sections, themeAppearance, Theme.name, highestMonitorScale, Capabilities.hyprland.touchpads, Capabilities.hyprland.devicesFailure, monitorSection) : null
+    readonly property var rendered: inputsReady ? Layer.render(sections, themeAppearance, Theme.name, highestMonitorScale, Capabilities.hyprland.touchpads, Capabilities.hyprland.devicesFailure) : null
 
     // What `listPlugins` and the plugin manager report beside the manifest
     // errors, as { id, dir, error }: each bind a conflict skipped and each
@@ -99,8 +91,6 @@ Scope {
         for (const section of sections)
             for (const name of section.unknownKeys)
                 out.push({ id: section.id, dir: dirOf(section.id), error: "hyprland: shell.json keys." + name + " names no bind of " + section.id });
-        if (monitorDocument !== null && monitorDocument.error !== "")
-            out.push({ id: "", dir: Capabilities.monitors.path, error: "hyprland: monitors: " + monitorDocument.error });
         if (machine.failure !== "")
             out.push({ id: "", dir: path, error: "hyprland: " + machine.failure });
         return out;
@@ -131,13 +121,6 @@ Scope {
 
     onRenderedChanged: Qt.callLater(() => feed({ type: "render" }))
 
-    // A monitors write saved its document: write and reload whatever the
-    // bytes, so a write the layer failed before is tried again.
-    Connections {
-        target: Capabilities.monitors
-        function onApplyRequested() { root.feed({ type: "force" }); }
-    }
-
     // Write the layer and reload Hyprland now, whatever the bytes, reading
     // the file first so one removed by hand is written again. A request made
     // while a step runs waits for it. `ok`, or `refused: hyprland=pending`
@@ -150,14 +133,9 @@ Scope {
 
     function feed(event) {
         const before = machine.failure;
-        const ended = Layer.cycleEnd(event, machine.reloadOwner);
         const next = Layer.step(machine, event, rendered === null ? null : rendered.text);
         machine = next.state;
         if (machine.failure !== "" && machine.failure !== before) console.error("hyprland: " + machine.failure);
-        // The cycle that ended is reported before the next one takes its
-        // place.
-        if (ended !== null) Capabilities.monitors.layerDone(cycleMonitors, ended);
-        if (next.action === "mkdir") cycleMonitors = monitorDocument.text;
         perform(next.action);
     }
 

@@ -722,7 +722,7 @@ function suite(ctx, check) {
         ["a plugin may hold what it already holds", { polkit: "acme.tune" }, ["polkit"], ""],
         ["a shared capability is never refused", { lock: "acme.other" }, ["run", "screens"], ""],
         ["the Bluetooth agent held by another plugin refuses", { bluetoothAgent: "acme.other" }, ["bluetoothAgent", "ipc"], "refused: capability=bluetoothAgent held-by=acme.other"],
-        ["the monitor rules serve one plugin", { monitors: "acme.other" }, ["monitors", "ipc"], "refused: capability=monitors held-by=acme.other"],
+        ["the outputs reading serves every plugin that names it", { monitors: "acme.other" }, ["monitors", "ipc"], ""],
         ["the panes holder serves one plugin", { panes: "acme.other" }, ["panes", "ipc"], "refused: capability=panes held-by=acme.other"],
     ];
     for (const [name, held, capabilities, want] of lendRows) {
@@ -848,10 +848,10 @@ suite(load(LOGIC), report);
 // package-manager table and the Hyprland layer's table it imports.
 const CONTROLS = [
     ["session is a known capability", '"lock", "session",', '"lock", ("session" && "planted"),'],
-    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"].concat(["session"]);'],
-    ["the Bluetooth agent is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "monitors", "panes"];'],
-    ["monitors is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "panes"];'],
-    ["panes is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors"];'],
+    ["session is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "panes"].concat(["session"]);'],
+    ["the Bluetooth agent is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "panes"];'],
+    ["monitors is not exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "monitors", "panes"];'],
+    ["panes is exclusive", 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent", "panes"];', 'var EXCLUSIVE_CAPABILITIES = ["lock", "polkit", "bluetoothAgent"];'],
     ["monitors is a capability", "\"hyprland\", \"bluetoothAgent\", \"monitors\"];", "\"hyprland\", \"bluetoothAgent\"];"],
     ["optionsFrom needs a string", "if (entry.type !== \"string\")\n                return at + \".optionsFrom needs type string\";", "if (false)\n                return at + \".optionsFrom needs type string\";"],
     ["hyprland options need the capability", "if (options !== undefined && capabilities.indexOf(\"hyprland\") === -1)\n        return \"hyprland.options needs capability hyprland\";", "if (false)\n        return \"hyprland.options needs capability hyprland\";"],

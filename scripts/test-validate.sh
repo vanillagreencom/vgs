@@ -41,7 +41,9 @@ fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 
 # A fresh scratch repository at $1: trunk holds the script, the loader, the
 # md-refs checker with an exclusion list that keeps its own copy out of its
-# scope, a settings file naming trunk as the base branch and one clean file;
+# scope, a settings file naming trunk as the base branch, one clean file and
+# one under each root an install ships, bin/, shell/ and config/, each at a
+# path the tree holds, so a fixture that copies the tree in replaces it;
 # refs/remotes/origin/trunk points at it; HEAD is a feature branch on top.
 fresh() {
   local dir="$1"
@@ -52,6 +54,8 @@ fresh() {
   printf '# kendex-guard-dialect: legacy-glob\n.agents/*\tcopies of checkers, whose citations name their own repository\n' >"$dir/tools/md-excludes"
   printf '[env]\nWORKTREE_DEFAULT_BRANCH = "trunk"\n' >"$dir/kendex.settings.toml"
   printf 'clean\n' >"$dir/clean.txt"
+  mkdir -p "$dir/bin/lib" "$dir/shell/Core" "$dir/config/system/udev"
+  printf 'clean\n' | tee "$dir/bin/lib/logo.txt" "$dir/shell/Core/qmldir" >"$dir/config/system/udev/60-vgs-apple-displays.rules"
   "${base_env[@]}" git -C "$dir" init -q -b trunk
   "${base_env[@]}" git -C "$dir" add -A
   "${base_env[@]}" git -C "$dir" commit -q -m base
@@ -218,6 +222,50 @@ d="$tmp/runtime-unreadable"; fresh "$d"; mkdir -p "$d/bin"; printf 'x\n' >"$d/bi
 row "a file under bin/ the boundary check cannot read is an error, not a pass" "$d" 1 "" \
   "validate: unreadable: runtime-reads-scripts status=1"
 
+# The monitor-rule writer check: one file planted per row, untracked unless
+# the row says committed. An `hl.monitor` call under bin/, shell/ or config/
+# is refused with the count and the line, as code or as the text a renderer
+# would write; prose that names it, another `hl` call and a file outside the
+# three roots, where the nested test compositor's configuration lives, pass
+# with the count of files read. A root that lists no file is an error.
+monitor_cases=(
+  'call|shell/Core/Layer.lua|untracked|1|hl.monitor({ output = "DP-1", disabled = true })'
+  'committed call|shell/Core/Layer.lua|committed|1|hl.monitor({ output = "DP-1", disabled = true })'
+  'rendered line|shell/Core/MonitorLogic.js|untracked|1|        return "hl.monitor({ " + fields.join(", ") + " })";'
+  'spaced call|bin/vgsh-monitor-guard|untracked|1|hyprctl eval '"'"'hl.monitor ({ output = "" })'"'"
+  'call in a configuration file|config/hyprland.lua|untracked|1|hl.monitor{} hl.monitor({ output = "", mode = "preferred" })'
+  'comment naming the call|shell/Core/MonitorLogic.js|untracked|0|// The user sets each output with hl.monitor in hyprland.lua.'
+  'window rule|shell/Core/Layer.lua|untracked|0|hl.window_rule({ name = "vgs:monitor(1)" })'
+  'call outside the shipped roots|scripts/smoke/harness.sh|untracked|0|hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })'
+)
+for spec in "${monitor_cases[@]}"; do
+  IFS='|' read -r name file state want text <<<"$spec"
+  d="$tmp/monitor-${name// /-}"; fresh "$d"
+  mkdir -p -- "$d/$(dirname -- "$file")"
+  printf '%s\n' "$text" >"$d/$file"
+  if [[ $state == committed ]]; then
+    "${base_env[@]}" git -C "$d" add -- "$file"
+    "${base_env[@]}" git -C "$d" commit -q -m planted
+  fi
+  files=3
+  [[ $file == scripts/* ]] || files=4
+  if [[ $want == 1 ]]; then
+    row "an hl.monitor $name under $file is refused" "$d" 1 "" \
+      "validate: refused: monitor-rule-writer=1" "$file:1:$text"
+  else
+    row "a $name under $file passes" "$d" 0 "" "validate: no shipped file writes a monitor rule files=$files"
+  fi
+done
+
+d="$tmp/monitor-no-root"; fresh "$d"
+"${base_env[@]}" git -C "$d" rm -q -- config/system/udev/60-vgs-apple-displays.rules
+row "a shipped root that lists no file is an error, not a pass" "$d" 1 "" \
+  "validate: unreadable: monitor-rule-writer root=config files=0"
+
+d="$tmp/monitor-unreadable"; fresh "$d"; printf 'x\n' >"$d/config/locked"; chmod 000 "$d/config/locked"
+row "a file under config/ the monitor-rule writer check cannot read is an error, not a pass" "$d" 1 "" \
+  "validate: unreadable: monitor-rule-writer status=1"
+
 # The private-key check: one PEM key planted per row, header, a body marker
 # and footer, untracked unless the row says committed or ignored. An ignored
 # row lists tmp/ in the fixture's .gitignore. The shape is a block of three
@@ -301,7 +349,7 @@ row "a broken smoke fixture manifest fails the offline manifest area" "$d" 1 "" 
 
 # Selection is checked through the command the caller will run. Expected
 # plans name consumers independently of the dependency table under test.
-repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts\nprivate_keys_check\nmd_refs_check'
+repo_plan=$'whitespace_check\nrows_cover_tests\nruntime_reads_no_scripts\nruntime_writes_no_monitor_rule\nprivate_keys_check\nmd_refs_check'
 install_plan=$'scripts/test-install-tree.sh\n'"$repo_plan"
 installer_plan=$'scripts/test-install-tree.sh\nscripts/test-vgsh-self.sh\nscripts/test-install-sh.sh\nscripts/test-release.sh\n'"$repo_plan"
 # The README check reads VERSION, bin/vgsh, install.sh, the Arch recipes,

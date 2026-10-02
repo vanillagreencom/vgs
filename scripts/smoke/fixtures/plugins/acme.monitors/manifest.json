@@ -1,12 +1,11 @@
 {
     "schemaVersion": 1,
     "id": "acme.monitors",
-    "name": "Monitor rules",
+    "name": "Monitor outputs",
     "version": "0.1.0",
     "author": "Smoke",
-    "description": "Writes monitor rules through the monitors capability and reads them back",
+    "description": "Reads the outputs Hyprland lists through the monitors capability",
     "kinds": ["service"],
     "entryPoints": { "service": "Service.qml" },
-    "capabilities": ["monitors", "shortcut", "ipc"],
-    "hyprland": { "binds": [{ "shortcut": "ping", "key": "SUPER+F10" }] }
+    "capabilities": ["monitors"]
 }

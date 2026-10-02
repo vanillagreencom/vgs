@@ -10,8 +10,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [layers.md](layers.md): read before drawing a passive surface that takes no keyboard, or touching the `layers` capability or its host.
 - [hyprland.md](hyprland.md): read before touching the Hyprland layer, a manifest's `hyprland` key, a `plugins[].keys` entry or `vgsh hypr`.
 - [hyprland-options.md](hyprland-options.md): read before touching a manifest's `hyprland.options`, the option table or the `hyprland` capability.
-- [hyprland-monitors.md](hyprland-monitors.md): read before touching `monitors.json`, its judge, the layer's monitor rules or the `monitors` capability.
-- [hyprland-monitors-preview.md](hyprland-monitors-preview.md): read before touching a monitor preview, its record, its guard or `bin/vgsh-monitor-guard`.
+- [hyprland-monitors.md](hyprland-monitors.md): read before touching the `monitors` capability, its outputs reading or the check that VGS writes no monitor rule.
 - [status.md](status.md): read before touching plugin status or the Settings page's Status rows.
 - [status-actions.md](status-actions.md): read before touching a setup step a user takes and its one-click rule, a status action, a manifest's `secrets` or the core's libsecret writer.
 - [jarvis.md](jarvis.md): read before implementing a Jarvis plan consumer of a landed core contract.
@@ -64,7 +63,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [runtime-hyprland-nested.md](runtime-hyprland-nested.md): read before touching the nested sandbox's outputs, `scripts/smoke/shot.sh` or a fault that names the nested window.
 - [runtime-hyprland-capture.md](runtime-hyprland-capture.md): read before touching the overlay keyboard capture, the key capture pass-through, their submaps or `scripts/smoke/rows/overlay-capture.sh`, `key-capture.sh` and `key-passthrough.sh`.
 - [runtime-hyprland-input.md](runtime-hyprland-input.md): read before relying on a Hyprland input option, a device, a bind reading or `switchxkblayout`.
-- [runtime-hyprland-monitors.md](runtime-hyprland-monitors.md): read before relying on an `hl.monitor` field, rule matching, the `monitors -j` reply or a monitor event.
+- [runtime-hyprland-monitors.md](runtime-hyprland-monitors.md): read before relying on the `monitors -j` reply, a `desc:` selector or a monitor event.
 - [runtime-pointer.md](runtime-pointer.md): read before touching a pointer handler, a cursor, a hover reading or a popup.
 - [validation.md](validation.md), [validation-qml-unit.md](validation-qml-unit.md), [validation-smoke.md](validation-smoke.md), [validation-smoke-harness.md](validation-smoke-harness.md) and [validation-smoke-input.md](validation-smoke-input.md): read before touching `scripts/validate`, the nested sandbox, the HiDPI smoke row, its harness or a smoke row's verdict.
 - [validation-jarvis.md](validation-jarvis.md): read before touching the shared Jarvis test world, `scripts/lib/jarvis-env.sh` or a Jarvis suite's private services.

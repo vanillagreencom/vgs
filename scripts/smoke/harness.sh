@@ -1590,26 +1590,6 @@ hidpi_mode_of() {
   mode="$(unscaled_mode_of "$1")" || return 1
   echo "$((${mode%x*} * 2))x$((${mode#*x} * 2))"
 }
-# layer_mode_reads NAME MODE SCALE: output NAME reads MODE at SCALE under
-# the rule the Hyprland layer writes for it. A host configure moves the
-# output off it (mode-hold.sh's held_mode_state), so a reading of another
-# mode applies the rule again through a configuration reload, which runs
-# the layer file, up to mode_attempts times. Prints `held` or the last
-# reading. rows/monitor-rules.sh and rows/monitor-preview.sh read through
-# it.
-layer_mode_reads() {
-  local output="$1" want="$2 scale=$3" got="" attempt reply
-  for ((attempt = 1; attempt <= mode_attempts; attempt++)); do
-    for _ in $(seq 1 25); do
-      got="$(mode_scale_of "$output")" || got=unreadable
-      if [[ $got == "$want" ]]; then echo held; return 0; fi
-      sleep 0.2
-    done
-    reply="$(hypr reload config-only)" || reply="status=$?"
-    if [[ $reply != ok ]]; then echo "reload=[$reply]"; return 0; fi
-  done
-  echo "attempts=$mode_attempts got=[$got]"
-}
 # solid_png PATH WIDTH HEIGHT R G B: a PNG of one colour written to PATH,
 # for the images the wallpaper rows draw.
 solid_png() {
