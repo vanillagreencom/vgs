@@ -129,13 +129,15 @@ function environmentOf(environment, directory) {
 /**
  * The argv every harness conversation starts with. Built-in tools are off,
  * the bridge is the only MCP server and its tools run without a prompt, since
- * the router is the gate. Hooks, slash commands and session files are off.
+ * the router is the gate. Hooks, slash commands and session files are off,
+ * and the account's own settings, CLAUDE.md, rules, skills and agents do not
+ * load: only the project source remains, and the working directory is empty.
  */
 function argvOf({ config, instructions, model }) {
     const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
         "--tools", "", "--strict-mcp-config", "--mcp-config", config,
         "--allowedTools", "mcp__" + SERVER, "--permission-mode", "dontAsk",
-        "--settings", JSON.stringify({ disableAllHooks: true }),
+        "--settings", JSON.stringify({ disableAllHooks: true }), "--setting-sources", "project",
         "--disable-slash-commands", "--no-session-persistence"];
     if (instructions !== "") args.push("--system-prompt", instructions);
     if (model !== "") args.push("--model", model);

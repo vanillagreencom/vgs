@@ -39,7 +39,7 @@ function refuse(reason) {
 }
 // Each flag the stand-in reads takes one value; the rest are switches.
 const VALUED = new Set(["--input-format", "--output-format", "--tools", "--mcp-config", "--allowedTools",
-    "--permission-mode", "--settings", "--system-prompt", "--model"]);
+    "--permission-mode", "--settings", "--setting-sources", "--system-prompt", "--model"]);
 const flags = new Map();
 for (let index = 0; index < args.length; index++) {
     const name = args[index];

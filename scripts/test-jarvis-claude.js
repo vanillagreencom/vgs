@@ -15,12 +15,14 @@ const accountsFile = path.join(backend, "Accounts.js");
 const stub = path.join(tree, "scripts/fixtures/jarvis-claude/claude");
 
 // The argv contract, pinned here and not derived from the adapter: built-in
-// tools off, only the bridge, its tools unprompted, no hooks, slash commands
-// or session files. CONFIG and the trailing prompt flags vary per case.
+// tools off, only the bridge, its tools unprompted, no hooks, no user setting
+// source, slash commands or session files. CONFIG and the trailing prompt
+// flags vary per case.
 const ARGV = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--tools", "", "--strict-mcp-config", "--mcp-config", "CONFIG",
     "--allowedTools", "mcp__vgs-jarvis", "--permission-mode", "dontAsk",
-    "--settings", "{\"disableAllHooks\":true}", "--disable-slash-commands", "--no-session-persistence"];
+    "--settings", "{\"disableAllHooks\":true}", "--setting-sources", "project", "--disable-slash-commands",
+    "--no-session-persistence"];
 const ENVIRONMENT = ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CONFIG_DIR", "HOME", "LANG", "PATH",
     "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "XDG_STATE_HOME"];
 // Keys, tokens and a runner pid planted in the environment handed to the
@@ -486,6 +488,7 @@ world(async () => {
             ["strict-mcp", '"--strict-mcp-config", ', "", "replay"],
             ["no-hooks", '"--settings", JSON.stringify({ disableAllHooks: true }),', "", "replay"],
             ["no-session-files", ', "--no-session-persistence"', "", "replay"],
+            ["no-user-settings", '"--setting-sources", "project",', "", "replay"],
             ["token-file", '"--mcp-config", config,', '"--mcp-config", fs.readFileSync(config, "utf8"),', "replay"],
             ["environment", "for (const name of ENVIRONMENT)", "for (const name of Object.keys(environment))", "replay"],
             ["environment-key", '"XDG_CACHE_HOME", "XDG_RUNTIME_DIR"];', '"XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "ANTHROPIC_API_KEY"];', "replay"],

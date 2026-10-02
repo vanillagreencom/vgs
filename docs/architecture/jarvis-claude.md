@@ -37,10 +37,11 @@ The adapter starts `claude` from the daemon's `PATH` with this argv. Each flag i
 | `--allowedTools mcp__vgs-jarvis` | The bridge's tools run without a Claude Code prompt. The router is the gate. |
 | `--permission-mode dontAsk` | Anything else that would prompt is denied. |
 | `--settings {"disableAllHooks":true}` | The user's hooks would run commands outside the gate. |
+| `--setting-sources project` | The account's own `settings.json`, its `env` block included, and its CLAUDE.md, rules, skills and agents stay unloaded ([Agent SDK settingSources](https://code.claude.com/docs/en/agent-sdk/claude-code-features), fetched 2026-10-02). The reference lists `user`, `project` and `local`; `project` alone drops the user source and CLAUDE.local.md files. Login is no source's file; J59 confirms it holds. |
 | `--disable-slash-commands --no-session-persistence` | No skills or commands, and no session file in the account directory. |
 | `--system-prompt <instructions>`, `--model <model>` | Shipped guidance, when not empty; the chosen model, when not empty. |
 
-- The MCP configuration is `mcp.json`, mode 0600, beside the working directory `cwd/` in a fresh directory of mode 0700 under `parent`. It holds the launch contract, so the bridge token stays out of argv, as the bridge's contract requires. The working directory is empty, so no project file loads.
+- The MCP configuration is `mcp.json`, mode 0600, beside the working directory `cwd/` in a fresh directory of mode 0700 under `parent`. It holds the launch contract, so the bridge token stays out of argv, as the bridge's contract requires. The working directory is empty, so the project source finds no file in it.
 - The child's whole environment is `LANG`, the daemon's `PATH`, `HOME` and XDG directories, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. No key variable, token or runner pid passes.
 - The child leads its own process group. A fault kills the group; close sends SIGTERM, then SIGKILL after 2 s. Stderr is drained and never kept: it can echo conversation text.
 - The program owns its login and its sockets. Jarvis opens no Claude credential file and copies no token.
@@ -89,7 +90,7 @@ A Claude subscription account verifies through `ClaudeCode.verify`: the same arg
 
 ## Residual risk
 
-Managed settings an organisation installs can still configure hooks or servers the user flags do not remove. The program's own network traffic is outside `net.js`; release judges what Jarvis hands it, and its recipient is Anthropic. Stream-json is typed, not schema-published, so a vendor change can fail the turn closed. Real program behaviour is J59's hand check.
+Managed settings an organisation installs can still configure hooks or servers the user flags do not remove. Some account files load whatever the setting sources: the `.claude.json` global configuration, whose servers `--strict-mcp-config` ignores, and auto memory, keyed by a working directory that is new per conversation and so holds none. The documentation places installed plugins under no setting source, so they may load; a plugin's tool still fails the init check. The project source reads CLAUDE.md in the working directory's parents, which lie under the user's runtime directory. The program's own network traffic is outside `net.js`; release judges what Jarvis hands it, and its recipient is Anthropic. Stream-json is typed, not schema-published, so a vendor change can fail the turn closed. Real program behaviour is J59's hand check.
 
 ## Evidence
 
