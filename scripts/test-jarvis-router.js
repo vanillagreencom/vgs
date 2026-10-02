@@ -110,8 +110,8 @@ world(() => {
         } finally { fs.rmSync(marker, { force: true }); }
     }
     browserHelp(Browser);
-    mutant(path.join(backend, "Browser.js"), "browser-help-consumer", 'router.register("guidance",',
-        'router.register("wire",', (implementation, folder) => {
+    mutant(path.join(backend, "Browser.js"), "browser-help-consumer", 'router.register("guidance", guidance);',
+        '', (implementation, folder) => {
             fs.cpSync(path.join(backend, "skills"), path.join(folder, "skills"), { recursive: true });
             browserHelp(implementation);
         });
