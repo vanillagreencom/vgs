@@ -772,9 +772,13 @@ Item {
 
     // ------------------------------------------------------------ panel
 
+    // The summon host judges whether the panel is open, as it does for the
+    // core's IPC toggle; panelMode follows the panel for the clocks and
+    // the subtitle and never decides an open.
     function togglePanel() {
-        if (panelOpen) return closePanel();
-        return showPanel("inbox");
+        const reply = shell.surfaces.toggle("panel", JSON.stringify({ mode: "inbox" }));
+        if (reply !== "ok") console.warn("notifications: panel " + reply);
+        return reply;
     }
 
     function showPanel(mode) {
