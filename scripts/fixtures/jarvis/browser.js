@@ -9,10 +9,13 @@ function standins(directory) {
 }
 function mode(value) {
     fs.rmSync(path.join(process.env.JARVIS_TEST_ROOT, "browser-open-completed"), { force: true });
-    fs.writeFileSync(path.join(process.env.JARVIS_TEST_ROOT, "browser-mode.json"), JSON.stringify(value));
+    update(value);
     fs.writeFileSync(path.join(process.env.JARVIS_TEST_ROOT, "browser-calls.jsonl"), "");
+}
+function update(value) {
+    fs.writeFileSync(path.join(process.env.JARVIS_TEST_ROOT, "browser-mode.json"), JSON.stringify(value));
 }
 function calls() {
     return fs.readFileSync(path.join(process.env.JARVIS_TEST_ROOT, "browser-calls.jsonl"), "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
 }
-module.exports = { standins, mode, calls };
+module.exports = { standins, mode, update, calls };

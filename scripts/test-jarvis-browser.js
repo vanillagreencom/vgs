@@ -2,7 +2,7 @@
 // Real executor and action judge in J09, using schema-shaped vendor replies.
 "use strict";
 const { assert, fs, path, tree, world, mutant } = require("./fixtures/jarvis/policy.js");
-const { standins, mode, calls } = require("./fixtures/jarvis/browser.js");
+const { standins, mode, update, calls } = require("./fixtures/jarvis/browser.js");
 const backend = path.join(tree, "shell/plugins/vgs.jarvis/backend");
 const file = path.join(backend, "Browser.js");
 world(async () => {
@@ -14,14 +14,24 @@ world(async () => {
     const marker = path.join(environment.XDG_DATA_HOME, "vgs/jarvis/browser-ready.json");
     const call = (command, args = {}) => ({ id: "browser", args: { command, args } });
     const run = (owner, command, args = {}) => new Promise(resolve => owner.record.start(call(command, args), resolve));
-    async function check(implementation, name, fixture, command, args, outcome, reason) {
+    async function check(implementation, name, fixture, command, args, outcome, reason, changed) {
         mode(fixture);
         const owner = implementation.create({ environment });
         try {
-            if (["click", "fill", "submit"].includes(command)) owner.record.observe(call(command, args));
+            if (["click", "fill", "submit"].includes(command)) {
+                const observation = owner.record.observe(call(command, args));
+                if (changed !== undefined) {
+                    assert.deepEqual(observation, { target: { kind: "site", id: "https://first.test", password: false, submit: false },
+                        ref: args.ref, type: "text" }, name + " observes the ordinary control before approval");
+                    update(changed);
+                }
+            }
             const answer = await run(owner, command, args);
             assert.equal(answer.outcome, outcome, name + ": " + answer.content);
             assert.match(answer.content, reason, name);
+            if (changed !== undefined)
+                assert.equal(calls().some(row => row.args.includes("click") || row.args.includes("fill")), false,
+                    name + " changed target starts no input command");
             return answer;
         } finally { owner.close(); }
     }
@@ -34,6 +44,8 @@ world(async () => {
         ["password", { type: "password" }, "fill", { ref: "@e1", text: "private" }, "failed", /browser=password/],
         ["reference", {}, "click", { ref: "@e999" }, "failed", /browser=reference/],
         ["site-race", { attributeSite: "https://second.test/" }, "click", { ref: "@e2" }, "failed", /browser=target-changed/],
+        ["changed-click", {}, "click", { ref: "@e1" }, "failed", /browser=target-changed/, { type: "submit" }],
+        ["changed-fill", {}, "fill", { ref: "@e1", text: "literal value" }, "failed", /browser=target-changed/, { type: "submit" }],
         ["redirect", { redirect: "file:///fixture/secret" }, "open", { url: "https://first.test/" }, "failed", /browser=page-url/],
         ["reply-json", { malformed: true }, "read", {}, "failed", /browser=reply-json/],
         ["command-failed", { fail: true }, "read", {}, "failed", /browser=command-failed/]
@@ -84,7 +96,7 @@ world(async () => {
             assert.equal(row.policy.default, "deny");
             for (const denied of category ? [category] : ["eval", "upload", "download", "state", "network"])
                 assert.ok(row.policy.deny.includes(denied));
-            assert.deepEqual(row.policy.allow, ["navigate", "snapshot", "get", "click", "fill"]);
+            assert.deepEqual(row.policy.allow, ["navigate", "snapshot", "url", "getattribute", "click", "fill", "close"]);
             const second = implementation.create({ environment });
             try {
                 await run(second, "read");
@@ -105,9 +117,15 @@ world(async () => {
     }
     readiness(Browser, { version: "0.37.9" }, "warning");
     mode({});
-    const verified = Browser.create({ environment });
-    verified.verify();
-    assert.equal(Browser.status(environment).tone, "ok");
+    function verification(implementation) {
+        mode({});
+        const verified = implementation.create({ environment });
+        try {
+            assert.doesNotThrow(() => verified.verify(), "the vendor policy permits verification and close");
+            assert.equal(implementation.status(environment).tone, "ok");
+        } finally { verified.close(); }
+    }
+    verification(Browser);
     assert.deepEqual(calls().filter(row => row.args.includes("--json")).map(row => row.args.slice(row.args.indexOf("--json") + 1)),
         [["open", "about:blank"], ["get", "url"], ["close"]]);
     readiness(Browser, { version: "0.38.2" }, "warning");
@@ -130,7 +148,7 @@ world(async () => {
         next.guidance(); next.close();
         assert.equal(calls().filter(row => row.args[0] === "skills").length, 1,
             "the daemon reuses one version guide across private sessions");
-        fs.writeFileSync(path.join(process.env.JARVIS_TEST_ROOT, "browser-mode.json"), JSON.stringify({ version: "0.38.3" }));
+        update({ version: "0.38.3" });
         const updated = implementation.create({ environment });
         updated.guidance(); updated.close();
         assert.equal(calls().filter(row => row.args[0] === "skills").length, 2,
@@ -245,6 +263,9 @@ world(async () => {
     await control("scrub-env", "const env = { PATH:", "const env = { ...environment, PATH:", confinement);
     await control("boundaries", '"--content-boundaries", "--max-output"', '"--debug", "--max-output"', confinement);
     await control("max-output", 'String(OUTPUT_BYTES), "--json"', '"999999", "--json"', confinement);
+    await control("policy-url", '"url", "getattribute"', '"get", "getattribute"', verification);
+    await control("policy-attribute", '"getattribute", "click"', '"get", "click"', one("fill"));
+    await control("policy-close", '"fill", "close"', '"fill"', verification);
     for (const category of ["eval", "upload", "download", "state", "network"])
         await control("deny-" + category, '"' + category + '"', '"fixture-' + category + '"', implementation => confinement(implementation, category));
     await control("output-bound", "bytes.length <= OUTPUT_BYTES", "true", bounded);
@@ -253,6 +274,7 @@ world(async () => {
     await control("page-url", 'if (refined.kind !== "call") throw new Error("jarvis: browser=page-url");',
         'if (false) throw new Error("jarvis: browser=page-url");', one("redirect"));
     await control("target-race", "site !== page(before) ||", "false ||", one("site-race"));
+    await control("observed-target", "JSON.stringify(fresh) !== JSON.stringify(observation)", "false", one("changed-click"));
     await control("submit", 'type === "submit" || type === "image"', 'type === "fixture-submit" || type === "image"', implementation => {
         // textbox role isolates explicit type from the button default rule.
         mode({ type: "submit" }); const owner = implementation.create({ environment });

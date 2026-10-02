@@ -13,7 +13,7 @@ const VENDOR_BYTES = 65536;
 const COMMAND_MS = 10000;
 // One bounded guide persists across private sessions, keyed by the CLI version.
 let guidanceCache = null;
-const ACTION_POLICY = Object.freeze({ default: "deny", allow: ["navigate", "snapshot", "get", "click", "fill"],
+const ACTION_POLICY = Object.freeze({ default: "deny", allow: ["navigate", "snapshot", "url", "getattribute", "click", "fill", "close"],
     deny: ["eval", "upload", "download", "state", "network"] });
 
 /** Probe the installed CLI without opening a browser. */

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # Synthetic v0.38.1 CLI replies, source: cli/src/native/actions.rs and
 # cli/src/output.rs at vercel-labs/agent-browser v0.38.1, read 2026-10-02.
+# Literal action checks follow cli/src/native/policy.rs; CLI mappings follow
+# cli/src/commands.rs. A CLI command group is not a policy action.
 # Logs argv, explicit environment and policy. Opens no browser or network.
 import json, os, pathlib, sys, time
 home = pathlib.Path(os.environ.get('HOME', '/nonexistent'))
@@ -26,6 +28,19 @@ if args == ['install']:
     sys.exit(mode.get('installExit', 0))
 # Remove only fixed global options. This pins the actual CLI call sequence.
 command = args[args.index('--json') + 1:]
+action = {('open',): 'navigate', ('snapshot',): 'snapshot', ('get', 'url'): 'url',
+          ('get', 'attr'): 'getattribute', ('click',): 'click', ('fill',): 'fill',
+          ('close',): 'close'}.get(tuple(command[:2] if command[0] == 'get' else command[:1]))
+policy = row['policy']
+allow = policy.get('allow')
+denied = action in policy.get('deny', [])
+if allow:
+    denied |= action not in allow and policy.get('default', 'deny').lower() == 'deny'
+elif allow is None:
+    denied |= policy.get('default', '').lower() == 'deny'
+if denied:
+    print(json.dumps({'success': False, 'error': "Action '{}' denied by policy".format(action)}))
+    sys.exit(1)
 url_path = home / ('fixture-url-' + os.environ['AGENT_BROWSER_NAMESPACE'])
 url = url_path.read_text() if url_path.exists() else 'https://first.test/page'
 if mode.get('missing') and command[0] == 'open':
