@@ -345,8 +345,28 @@ recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging
 # An Arch recipe is also the README's source for the AUR commands.
 # The release suite's parity rows build the Arch recipes' host side.
 arch_recipe_plan=$'node scripts/check-packaging.js\nnode scripts/test-check-packaging.js\n'"$readme_rows"$'scripts/test-release.sh\nscripts/test-publish-aur.sh\n'"$repo_plan"
+settings_core_prefix=$'node scripts/test-plugin-logic.js\nnode scripts/test-plugin-status.js\nnode scripts/test-plugin-extras.js\nnode scripts/test-key-capture.js\nnode scripts/test-tui-logic.js\nnode scripts/test-ipc-logic.js\nnode scripts/test-notice-logic.js\nnode scripts/test-hyprland-layer.js\nnode scripts/test-hyprland-state.js\nnode scripts/test-input-facts.js\n'
+settings_theme_rows=$'bin/vgsh-theme-judge packages themes\nbin/vgsh-theme-judge catalog-check themes\n'
+settings_plugin_rows=$'node scripts/test-themes-setup.js\nnode scripts/test-notifications-logic.js\n'
+settings_catalog_rows=$'node scripts/check-devtools-catalog.js\nnode scripts/test-check-devtools-catalog.js\n'
+settings_reply_row='node scripts/test-settings-reply.js'
 cases=(
   "devtools-window|shell/plugins/vgs.devtools/Window.qml|logic|node scripts/test-devtools-view.js"
+  "settings-reply-window|shell/plugins/vgs.settings/Window.qml|logic|node scripts/test-settings-reply.js"
+  "settings-reply-page|shell/plugins/vgs.settings/PluginPage.qml|logic|node scripts/test-settings-reply.js"
+  "settings-reply-input|shell/plugins/vgs.settings/Reply.js|logic|node scripts/test-settings-reply.js"
+  "settings-reply-suite|scripts/test-settings-reply.js|logic|node scripts/test-settings-reply.js"
+  "settings-reply-key-label|shell/plugins/vgs.settings/KeyField.qml|logic|$settings_reply_row"
+  "settings-reply-launcher|shell/plugins/vgs.launcher/Service.qml|logic|$settings_reply_row"
+  "settings-reply-probe|scripts/smoke/Probe.qml|logic|$settings_reply_row"
+  "settings-reply-shots|scripts/sandbox-shots.sh|logic|$settings_reply_row"
+  "settings-reply-fixture|scripts/smoke/fixtures/plugins/acme.hyprland/manifest.json|logic|$settings_reply_row"
+  "settings-reply-layer-binding|shell/Core/HyprlandLayer.qml|logic|$settings_reply_row"
+  "settings-reply-producer|shell/Core/PluginLogic.js|logic|$settings_core_prefix$settings_theme_rows$settings_plugin_rows$settings_reply_row"
+  "settings-reply-layer|shell/Core/HyprlandLayer.js|logic|$settings_core_prefix"$'node scripts/test-dispatch.js\n'"$settings_theme_rows$settings_plugin_rows$settings_reply_row"
+  "settings-reply-values|shell/Commons/SettingValues.js|logic|$settings_core_prefix"$'node scripts/test-setting-values.js\n'"$settings_theme_rows$settings_plugin_rows$settings_reply_row"
+  "settings-reply-packages|shell/Core/PackageManagers.js|logic|$settings_core_prefix$settings_theme_rows$settings_plugin_rows$settings_catalog_rows$settings_reply_row"
+  "settings-reply-icons|shell/Ui/icons/Lucide.js|logic|$settings_core_prefix"$'node scripts/test-icon-bounds.js\n'"$settings_theme_rows"$'node scripts/test-lucide-data.js\n'"$settings_plugin_rows"$'node scripts/test-jarvis-widget.js\n'"$settings_catalog_rows"$'node scripts/test-agent-warden-view.js\n'"$settings_reply_row"
   "orb-source|shell/Ui/feedback/shaders/voiceorb.frag|all|$orb_shader_plan"
   "orb-pack|shell/Ui/feedback/shaders/voiceorb.frag.qsb|all|$orb_shader_plan"
   "orb-compiler|scripts/check-voiceorb-shader.py|offline|$orb_check_plan"

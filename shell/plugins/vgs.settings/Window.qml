@@ -86,7 +86,7 @@ FocusScope {
         const next = Object.assign({}, replies);
         if (Reply.isOk(reply)) delete next[step];
         else {
-            next[step] = reply;
+            next[step] = Reply.line(reply);
             console.warn("settings: " + step + " " + reply);
         }
         replies = next;
@@ -106,7 +106,7 @@ FocusScope {
         if (payload.plugin === undefined) showList(Qt.ShortcutFocusReason);
         else if (rowOf(payload.plugin) === null) {
             showList(Qt.ShortcutFocusReason);
-            notice = "No plugin named " + payload.plugin + "; every plugin is listed below.";
+            notice = "No plugin named " + payload.plugin + " is available.";
         } else openPlugin(payload.plugin, Qt.ShortcutFocusReason);
         Qt.callLater(() => { root.sliding = true; });
     }
@@ -199,7 +199,7 @@ FocusScope {
     // the manager; a refusal stays over the list until a later add opens.
     function addPlugin() {
         const reply = shell.manager.add();
-        notice = Reply.isOk(reply) ? "" : reply;
+        notice = Reply.line(reply);
         if (notice !== "") console.warn("settings: add " + reply);
         return reply;
     }

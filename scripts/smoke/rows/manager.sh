@@ -648,7 +648,7 @@ expect_poll "the reset removes the shell.json entry" absent user_key
 expect_poll "the reset binds SUPER+M again" '[[64, "M"]]' settings_binds
 expected_errors+=('settings: vgs\.settings refused: key=toggle has an empty part')
 expect "a malformed key typed in the Keys row is sent" applied ipc smoke invokeInstance window vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle","key":"SUPER+"}'
-expect "the page shows the key's refusal" '{"vgs.settings":"refused: key=toggle has an empty part: \"SUPER+\""}' ipc smoke readInstance window vgs.settings replies
+expect "the page shows the key's refusal" '{"vgs.settings":"The shortcut needs a key. Select the field and press its new keys."}' ipc smoke readInstance window vgs.settings replies
 expect "the refused key left shell.json alone" absent user_key
 expect "a reset after the refusal is applied" applied ipc smoke invokeInstance window vgs.settings applyKey '{"id":"vgs.settings","shortcut":"toggle"}'
 expect "the accepted key clears the page's refusal" '{}' ipc smoke readInstance window vgs.settings replies
@@ -672,17 +672,19 @@ os.replace(path + ".tmp", path)
 PY
 }
 listed_problem() { ipc shell listPlugins | py_reply 'import json,sys; print(json.dumps([e["error"] for e in json.load(sys.stdin)["errors"] if "vgs.settings" in e["error"]]))'; }
+settings_error_text() { ipc smoke itemTexts window vgs.settings PluginPage | py_reply 'import json,sys; rows=json.load(sys.stdin); texts=[text for row in rows for text in row]; print(json.dumps([sys.argv[1] in texts, sys.argv[2] not in texts]))' "$1" "$2"; }
 settings_badge() { ipc smoke itemTexts window vgs.settings ListItem | py_reply 'import json,sys; print(json.dumps([t for t in json.load(sys.stdin) if t[0] == "Settings"]))'; }
 settings_keys_row '{"nope": "SUPER+F9"}'
 expect_poll "a keys name no bind declares is among the plugin's errors" '[["hyprland: shell.json keys.nope names no bind of vgs.settings"]]' row_of vgs.settings errors
 expect "listPlugins reads the same problem" '["hyprland: shell.json keys.nope names no bind of vgs.settings"]' listed_problem
+expect_poll "the page explains the stale shortcut without exposing its diagnostic" '[true, true]' settings_error_text "VGS ignored a saved shortcut that this plugin no longer supports." "hyprland: shell.json keys.nope names no bind of vgs.settings"
 
 # Back: the back button and Escape pop the page; Escape on the list hides
 # the window.
 settings_click IconButton "Back to the plugin list" || fail "the click on the back button failed"
 expect_poll "the back button returns to the list" '""' settings_page
 expect_poll "Tab after the pop stays on the list" '["ListPage"]' focus_pages 12
-expect_poll "the list's row carries a badge counting the error" '[["Settings", "0.1.0  Bundled", "1"]]' settings_badge
+expect_poll "the list's row carries a badge counting the error" '[["Settings", "0.1.0  Included", "1"]]' settings_badge
 settings_keys_row '{}'
 expect_poll "the plugin's errors clear with the problem" '[[]]' row_of vgs.settings errors
 
@@ -956,7 +958,7 @@ expect_poll "the window shows the fixture disabled" '{"acme.bare": true, "acme.p
 # The window logs each refusal it shows on a page.
 expected_errors+=('settings: acme\.probe refused: disabled=acme\.probe' 'settings: acme\.probe refused: setting=tags undeclared' 'settings: acme\.probe refused: setting=size want=at-most:40')
 expect "the window refuses a setting for a disabled plugin" "refused: disabled=acme.probe" ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"x"}'
-expect "the page shows the refusal" '{"acme.probe":"refused: disabled=acme.probe"}' ipc smoke readInstance window vgs.settings replies
+expect "the page shows the refusal" '{"acme.probe":"Turn on this plugin before you change it."}' ipc smoke readInstance window vgs.settings replies
 expect "the window toggles the fixture back on" ok ipc smoke invokeInstance window vgs.settings toggle acme.probe
 expect_poll "listPlugins reads the fixture enabled" True plugin_enabled acme.probe
 expect "the window writes the fixture's setting" ok ipc smoke invokeInstance window vgs.settings applySetting '{"id":"acme.probe","key":"label","value":"via-manager"}'

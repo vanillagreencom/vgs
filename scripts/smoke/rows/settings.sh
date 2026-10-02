@@ -118,10 +118,10 @@ expect "the manager refuses an act the token does not call for" "refused: action
 expect "the manager refuses an act the check does not call for" "refused: action=check reason=not-offered" settings_act acme.status check
 expect "the refused acts started no terminal" absent recorded
 expect "the refused acts raised no notice" null notice_shown
-expect_poll "the refusal reads under the Token line" '["Token", "Present", "refused: action=token reason=not-offered", "Show command"]' token_drawn
+expect_poll "the refusal reads under the Token line" '["Token", "Present", "This setup step is not needed now.", "Show command"]' token_drawn
 expect "the fixture publishes its token absent" ok ipc acme.status invoke set 'token="absent"'
 expect_poll "an absent token offers Set up token and the check offers nothing" '[["token", "Set up token", true], ["check", "Install the tool", false]]' offered_actions acme.status
-expect_poll "the Token row draws its Set up token button" '["Token", "Absent", "refused: action=token reason=not-offered", "Set up token", "Show command"]' token_drawn
+expect_poll "the Token row draws its Set up token button" '["Token", "Absent", "This setup step is not needed now.", "Set up token", "Show command"]' token_drawn
 settings_press "Set up token" || fail "the click on Set up token failed"
 expect_poll "Set up token hands the terminal the fixture's setup TUI" "$(words acme.status/setup tui/setup.sh)" recorded_tail
 expect_poll "the step that ran clears the Token line's refusal" '["Token", "Absent", "Needed for the fixture'"'"'s sync", "Set up token", "Show command"]' token_drawn

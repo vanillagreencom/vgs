@@ -33,10 +33,10 @@ Field {
         if (capture === null || shown === "") return "";
         const found = capture.conflicts(shown, pluginId, String(bind.shortcut));
         const holders = found.plugins.map(p => nameOf(p.id) + " (" + p.shortcut + ")")
-            .concat(found.user ? ["your Hyprland config"] : []);
-        const held = holders.length === 0 ? "" : "Also bound to " + holders.join(", ") + ".";
-        const unread = found.binds === "failed" ? "Your Hyprland binds could not be read, so another bind may hold this key." : "";
-        return [held, unread].filter(line => line !== "").join(" ");
+            .concat(found.user ? ["your other shortcuts"] : []);
+        const unread = found.binds === "failed";
+        if (holders.length === 0) return unread ? "VGS could not check your other shortcuts." : "";
+        return "Also used by " + holders.join(", ") + (unread ? " (VGS could not check other shortcuts)." : ".");
     }
 
     function nameOf(id) {
@@ -44,8 +44,8 @@ Field {
         return row === null ? id : row.name;
     }
 
-    label: String(bind.shortcut)
-    hint: (bind.description ? String(bind.description) + ". " : "") + (bind.key === bind["default"] ? "The manifest's key." : "The manifest's key is " + bind["default"] + ".")
+    label: bind.description ? String(bind.description) : String(bind.shortcut)
+    hint: "Default shortcut: " + bind["default"] + "."
     inline: true
 
     ShortcutField {

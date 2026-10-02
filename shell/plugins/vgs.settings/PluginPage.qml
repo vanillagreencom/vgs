@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "Reply.js" as Reply
 
 // One plugin's page, drawn from its manager row alone. The header holds a
 // back button, which returns to the list, and the plugin's name as a title
@@ -154,7 +155,7 @@ FocusScope {
                 Label {
                     required property string modelData
                     role: "hint"
-                    text: modelData
+                    text: Reply.line(modelData)
                     color: Theme.color.danger
                     width: body.width
                     wrapMode: Text.Wrap
@@ -179,7 +180,7 @@ FocusScope {
                     width: parent.width
                     label: "Enabled"
                     inline: true
-                    hint: page.isSelf ? "Disabling Settings closes this window and takes its gear from the bar." : page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to change its settings and keys." : ""
+                    hint: page.isSelf ? "Turning off Settings closes this window." : page.row !== null && !page.row.enabled ? "Turn on " + page.row.name + " to change its settings and shortcuts." : ""
                     Switch {
                         size: "sm"
                         checked: page.row !== null && page.row.enabled
@@ -205,7 +206,7 @@ FocusScope {
                     label: "Show in bar"
                     inline: true
                     visible: page.row !== null && page.row.kinds.indexOf("bar-widget") !== -1 && page.row.kinds.some(kind => kind !== "bar" && kind !== "bar-widget")
-                    hint: page.row !== null && !page.row.enabled ? "Enable " + page.row.name + " to show it in the bar." : ""
+                    hint: page.row !== null && !page.row.enabled ? "Turn on " + page.row.name + " to show it in the bar." : ""
                     Switch {
                         size: "sm"
                         checked: page.row !== null && page.row.placed
@@ -218,7 +219,7 @@ FocusScope {
                 }
 
                 Repeater {
-                    model: page.row === null ? [] : [["Author", page.row.author], ["Version", page.row.version], ["License", page.row.license], ["Source", page.row.source === "bundled" ? "Bundled with the shell" : "Installed"]].filter(pair => pair[1] !== "")
+                    model: page.row === null ? [] : [["Author", page.row.author], ["Version", page.row.version], ["License", page.row.license], ["Source", page.row.source === "bundled" ? "Included with VGS" : "Installed"]].filter(pair => pair[1] !== "")
                     Field {
                         id: detail
                         required property var modelData
@@ -235,7 +236,7 @@ FocusScope {
                     label: "Manage"
                     inline: true
                     visible: page.row !== null && page.row.source === "installed"
-                    hint: "Each opens a terminal that asks before it changes anything."
+                    hint: "You can review changes before you apply them."
                     Row {
                         spacing: Theme.stack.inline
                         Button {
@@ -292,7 +293,7 @@ FocusScope {
                 width: parent.width
                 visible: page.row !== null && page.row.requirements.length > 0
                 title: "Requirements"
-                description: "Commands the plugin runs, looked up on PATH at the last scan"
+                description: "Tools this plugin needs"
 
                 // Each command is one group, and the Install row after them.
                 GroupList {
@@ -316,7 +317,7 @@ FocusScope {
                         label: "Missing"
                         inline: true
                         visible: page.requirementMissing
-                        hint: "Opens a terminal that names each package and asks before it installs them."
+                        hint: "Review the missing tools before you install them."
                         Button {
                             text: "Install"
                             iconName: "download"
@@ -367,7 +368,7 @@ FocusScope {
                 width: parent.width
                 visible: page.row !== null && page.row.binds.length > 0
                 title: "Keys"
-                description: "Select a key and press the new combo; written to shell.json"
+                description: "Select a shortcut and press its new keys."
 
                 Repeater {
                     model: ScriptModel {

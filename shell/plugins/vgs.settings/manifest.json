@@ -4,7 +4,7 @@
   "name": "Settings",
   "version": "0.1.0",
   "author": "VanillaGreen",
-  "description": "Every plugin the shell found, with a page for each: its details, its settings and its keys. Open it with SUPER+M, its gear in the bar or IPC.",
+  "description": "Manage your plugins, settings and shortcuts.",
   "license": "MIT",
   "icon": "settings",
   "kinds": [

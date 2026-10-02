@@ -148,7 +148,7 @@ FocusScope {
                 required property int index
                 width: layout.contentWidth
                 text: modelData.name
-                secondary: modelData.version + "  " + (modelData.source === "bundled" ? "Bundled" : "Installed")
+                secondary: modelData.version + "  " + (modelData.source === "bundled" ? "Included" : "Installed")
                 iconName: modelData.icon
                 highlighted: index === page.current
                 cursor: plate

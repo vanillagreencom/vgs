@@ -75,7 +75,7 @@ expect "Tab presses reach the Keys row's field" true key_field focus
 expect "the field shows its focus ring for the Tab focus" true key_field visualFocus
 
 kc_capture "SUPER+SPACE" SUPER+SPACE "$sandbox/key-capture-space" -M logo -k space -m logo
-expect_poll "the field names the Launcher shortcut and the user bind holding SUPER+SPACE" '"Also bound to Launcher (toggle), your Hyprland config."' key_field conflict
+expect_poll "the field names the Launcher shortcut and the user bind holding SUPER+SPACE" '"Also used by Launcher (toggle), your other shortcuts."' key_field conflict
 kc_typed "SUPER+SPACE typed" "super+space" SUPER+SPACE
 kc_capture "CTRL+ALT+T" CTRL+ALT+T "$sandbox/key-capture-t" -M ctrl -M alt -k t -m alt -m ctrl
 kc_typed "CTRL+ALT+T typed" "ctrl+alt+t" CTRL+ALT+T
@@ -84,7 +84,7 @@ kc_typed "F5 typed" "F5" F5
 
 expect "enabling Themes, whose shortcut asks for SUPER+T, is allowed" ok ipc shell setPluginEnabled vgs.themes true
 kc_capture "SUPER+T" SUPER+T "$sandbox/key-capture-none" -M logo -k t -m logo
-expect_poll "the field names the Themes shortcut asking for SUPER+T" '"Also bound to Themes (themes)."' key_field conflict
+expect_poll "the field names the Themes shortcut asking for SUPER+T" '"Also used by Themes (themes)."' key_field conflict
 kc_reveal_unbind() { local at; at="$(ipc smoke revealText window vgs.settings IconButton Unbind)" || return; [[ $at != absent ]] && echo shown || echo absent; }
 expect "the Unbind button is scrolled into view" shown kc_reveal_unbind
 click_in window:Settings window vgs.settings IconButton Unbind || fail "the click on the field's Unbind button failed"
