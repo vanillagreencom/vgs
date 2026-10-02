@@ -416,11 +416,18 @@ async function inside() {
     const scripted = daemonCopy("scripted");
     const gates = path.join(root, "gates");
     instrument(scripted, gates);
-    async function desktopDriver(file, directory) {
+    async function desktopDriver(file, directory, mappedIndicator = false) {
         await conversation(file, async w => {
             fs.writeFileSync(path.join(directory, "call.json"), JSON.stringify({
                 id: "fixture-toast", tool: "notify.toast", arguments: { title: "Fixture", body: "Notice" }
             }));
+            if (mappedIndicator) {
+                const waiting = await w.wait(message => message.state.input.kind === "held");
+                assert.equal(waiting.state.capture.kind, "closed", "the driver waits for the mapped indicator");
+                const results = path.join(directory, "results.jsonl");
+                assert.equal(fs.existsSync(results), false, "the driver retains demand instead of reporting no-turn");
+                w.indicator(true);
+            }
             await w.wait(() => w.messages.some(message => message.type === "request" && message.kind === "toast"));
             const request = w.messages.find(message => message.type === "request" && message.kind === "toast");
             const { v, gen, revision, id, kind } = request;
@@ -438,6 +445,25 @@ async function inside() {
         desktopDriverFile, driverRoot], { env: { PATH: process.env.PATH, HOME: process.env.HOME }, encoding: "utf8" });
     assert.equal(driver.status, 0, driver.stderr);
     await desktopDriver(desktopDriverFile, driverRoot);
+    const mappedDriverFile = daemonCopy("desktop-driver-mapped");
+    instrument(mappedDriverFile, path.join(root, "desktop-driver-mapped-gates"), "chained", true);
+    const mappedDriverRoot = path.join(root, "desktop-driver-mapped-results");
+    const mappedDriver = cp.spawnSync(process.execPath,
+        [path.join(tree, "scripts/fixtures/jarvis/desktop-driver.js"), mappedDriverFile, mappedDriverRoot],
+        { env: { PATH: process.env.PATH, HOME: process.env.HOME }, encoding: "utf8" });
+    assert.equal(mappedDriver.status, 0, mappedDriver.stderr);
+    await desktopDriver(mappedDriverFile, mappedDriverRoot, true);
+    const mappedDriverFixture = path.join(path.dirname(mappedDriverFile), "desktop-driver-fixture.js");
+    const mappedDriverSource = fs.readFileSync(mappedDriverFixture, "utf8");
+    const captureWait = 'if (turnRequest === "held" && runner.state.capture.kind === "open")';
+    assert.equal(mappedDriverSource.split(captureWait).length - 1, 1);
+    const earlyRelease = mappedDriverSource.replace(captureWait, 'if (turnRequest === "held")');
+    assert.notEqual(earlyRelease, mappedDriverSource);
+    fs.writeFileSync(mappedDriverFixture, earlyRelease);
+    fs.rmSync(path.join(mappedDriverRoot, "results.jsonl"));
+    await assert.rejects(() => desktopDriver(mappedDriverFile, mappedDriverRoot, true), assert.AssertionError,
+        "a driver that releases demand before presentation must fail the mapped-indicator assertion");
+    controls++;
     const driverSource = fs.readFileSync(desktopDriverFile, "utf8");
     const driverCall = '                    require("./desktop-driver-fixture.js").drive('
         + JSON.stringify(driverRoot) + ', runner, router);\n';

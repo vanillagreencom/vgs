@@ -30,6 +30,7 @@ function drive(root, runner, router) {
         fs.unlinkSync(file);
         busy = true;
         const started = Date.now();
+        let turnRequest = "new";
         const attempt = () => {
             // Executors register after their own Hyprland probe.
             if (!router.offer().some(tool => tool.id === call.tool)) {
@@ -39,8 +40,18 @@ function drive(root, runner, router) {
                 return;
             }
             if (runner.state.turn.kind !== "thinking") {
-                runner.dispatch({ type: "talk-down" });
-                runner.dispatch({ type: "talk-up" });
+                if (turnRequest === "new") {
+                    turnRequest = "held";
+                    runner.dispatch({ type: "talk-down" });
+                }
+                if (turnRequest === "held" && runner.state.capture.kind === "open") {
+                    turnRequest = "released";
+                    runner.dispatch({ type: "talk-up" });
+                }
+                if (runner.state.turn.kind !== "thinking" && Date.now() - started < 5000) {
+                    setTimeout(attempt, 20);
+                    return;
+                }
             }
             const turn = runner.state.turn;
             if (turn.kind !== "thinking") record({ id: call.id, outcome: "no-turn", content: JSON.stringify(turn) });
