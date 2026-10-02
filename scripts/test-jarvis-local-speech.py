@@ -23,6 +23,8 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 PLUGIN = REPO / "shell/plugins/vgs.jarvis"
 SOURCE = PLUGIN / "backend/local-speech.py"
+# Loading the sidecar must leave no bytecode in the plugin tree.
+sys.dont_write_bytecode = True
 
 
 def namespace_entry():
@@ -253,17 +255,17 @@ def wire_cases(m):
                     ({"type": "end", "id": 3},)], speech(m, [], 80000))
     if [h for h, _ in out] != [{"type": "final", "id": 3, "text": ""}]:
         raise AssertionError(f"abort {out}")
-    out = serve(m, [({"type": "speak", "id": 4, "text": "Hello."},)], model)
+    out = serve(m, [({"type": "speak", "id": 4}, "Hello.".encode())], model)
     audio = b"".join(p for h, p in out if h["type"] == "audio")
     if out[-1][0] != {"type": "spoken", "id": 4, "rate": 22050} or array("f", audio).tolist() != [0.25] * 2205:
         raise AssertionError(f"speak {[h for h, _ in out]}")
-    out = serve(m, [({"type": "speak", "id": 5, "text": "Hello."},)],
+    out = serve(m, [({"type": "speak", "id": 5}, "Hello.".encode())],
                 speech(m, [], 80000, voice=Voice(error=RuntimeError("voice"))))
     if [h for h, _ in out] != [{"type": "failed", "id": 5, "cause": "synthesis-failed"}]:
         raise AssertionError(f"synthesis failure {out}")
     for name, voice, cause in [("rate", Voice(rate=16000), "synthesis-rate value=16000"),
                                ("silent", Voice(samples=[0.0] * 10), "synthesis-empty")]:
-        out = serve(m, [({"type": "speak", "id": 6, "text": "Hi."},)], speech(m, [], 80000, voice=voice))
+        out = serve(m, [({"type": "speak", "id": 6}, "Hi.".encode())], speech(m, [], 80000, voice=voice))
         if [h for h, _ in out] != [{"type": "failed", "id": 6, "cause": cause}]:
             raise AssertionError(f"{name}: {out}")
 
@@ -283,8 +285,10 @@ VIOLATIONS = [
     ("payload on end", [frame({"type": "end", "id": 1}, b"abcd")], "message=invalid type=end"),
     ("audio without payload", [frame({"type": "audio", "id": 1})], "message=invalid type=audio"),
     ("boolean id", [frame({"type": "end", "id": True})], "id=invalid"),
-    ("reused speak id", [frame({"type": "end", "id": 3}), frame({"type": "speak", "id": 3, "text": "a"})],
+    ("reused speak id", [frame({"type": "end", "id": 3}), frame({"type": "speak", "id": 3}, b"a")],
      "speak=invalid"),
+    ("blank sentence", [frame({"type": "speak", "id": 1}, b" ")], "speak=invalid"),
+    ("sentence not UTF-8", [frame({"type": "speak", "id": 1}, b"\xff")], "speak=invalid"),
     ("partial sample", [frame({"type": "audio", "id": 1}, b"abc")], "audio=partial-sample"),
     ("oversized header", [struct.pack(">II", 4097, 0) + b"{" * 4097], "frame=too-large"),
     ("oversized payload", [struct.pack(">II", 2, 65537) + b"{}" + bytes(65537)], "frame=too-large"),
@@ -423,6 +427,44 @@ CONTROLS = [
 ]
 
 
+RUNNER = REPO / "scripts/check-jarvis-local-speech.sh"
+GUARD = 'if [[ -z $models || -z $python || ! -x $python || ! -d $models ]]; then'
+
+
+def runner_case(source):
+    """The real-model row: 77 without prepared inputs; resolved paths and the
+    consumer's status pass through. A stand-in world owner and interpreter."""
+    with tempfile.TemporaryDirectory() as name:
+        root = Path(name).resolve()
+        (root / "scripts/lib").mkdir(parents=True)
+        runner = root / "scripts/check-jarvis-local-speech.sh"
+        runner.write_text(source)
+        (root / "scripts/lib/jarvis-env.sh").write_text('#!/bin/bash\nshift 2\nexec "$@"\n')
+        (root / "prepared/models").mkdir(parents=True)
+        (root / "prepared/venv/bin").mkdir(parents=True)
+        (root / "prepared/interpreter").write_text('#!/bin/bash\nprintf "%s\\n" "$0" "$@" > "$(dirname "$0")/../../argv"\nexit 3\n')
+        (root / "prepared/venv/bin/python").symlink_to(root / "prepared/interpreter")
+        for path in (runner, root / "scripts/lib/jarvis-env.sh", root / "prepared/interpreter"):
+            path.chmod(0o755)
+        # validate runs this row on the host, outside the world, so it gets the
+        # system tools; the stand-ins above reach no model, device or network.
+        env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "HOME": str(root)}
+        result = subprocess.run([str(runner)], cwd=root, env=env, capture_output=True, text=True, check=False)
+        if result.returncode != 77 or "reason=prepared-inputs-unavailable" not in result.stdout:
+            raise AssertionError(f"no inputs: {result.returncode} {result.stdout!r}")
+        env.update(JARVIS_LOCAL_MODELS="prepared/models", JARVIS_LOCAL_PYTHON="prepared/venv/bin/python")
+        result = subprocess.run([str(runner)], cwd=root, env=env, capture_output=True, text=True, check=False)
+        argv = (root / "prepared/argv").read_text().splitlines() if (root / "prepared/argv").exists() else []
+        if result.returncode != 3 or argv != [str(root / "prepared/venv/bin/python"),
+                                               str(root / "scripts/fixtures/jarvis-local-speech/real.py"),
+                                               str(root), str(root / "prepared/models")]:
+            raise AssertionError(f"prepared inputs: {result.returncode} {argv} {result.stderr!r}")
+        env["JARVIS_LOCAL_MODELS"] = "prepared/missing"
+        result = subprocess.run([str(runner)], cwd=root, env=env, capture_output=True, text=True, check=False)
+        if result.returncode != 77:
+            raise AssertionError(f"missing models: {result.returncode}")
+
+
 class LocalSpeech(unittest.TestCase):
     def test_plans(self):
         m = load()
@@ -448,6 +490,9 @@ class LocalSpeech(unittest.TestCase):
     def test_entry_point(self):
         main_cases(SOURCE.read_text())
 
+    def test_runner(self):
+        runner_case(RUNNER.read_text())
+
     def test_controls(self):
         for name, needle, replacement, case in CONTROLS:
             with self.subTest(control=name):
@@ -458,7 +503,14 @@ class LocalSpeech(unittest.TestCase):
         text = SOURCE.read_text()
         with self.assertRaises(AssertionError, msg="must-fail control stayed green: parent check"):
             main_cases(text.replace("if os.getppid() != args.parent:", "if False:", 1))
-        print(f"jarvis-local-speech: controls={len(CONTROLS) + 1}", flush=True)
+        source = RUNNER.read_text()
+        for needle, replacement in ((GUARD, "if false; then"),
+                                    ('models="$(cd -- "$models" && pwd -P)"', 'models="$models"'),
+                                    ('python="$python_dir/$(basename -- "$python")"', 'python="$(readlink -f -- "$python")"')):
+            self.assertEqual(source.count(needle), 1, needle)
+            with self.assertRaises(AssertionError, msg="must-fail control stayed green: " + needle):
+                runner_case(source.replace(needle, replacement))
+        print(f"jarvis-local-speech: controls={len(CONTROLS) + 4}", flush=True)
 
 
 if __name__ == "__main__":
