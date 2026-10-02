@@ -5,7 +5,7 @@ const Tools = require("./Tools.js");
 
 /** @typedef {{kind: "clean"}|{kind: "tainted"}} Taint */
 /** @typedef {import("./Tools.js").Effect} Effect */
-/** @typedef {{kind: "allow", effect: Effect}|{kind: "confirm", effect: Effect, physical: boolean, scope?: string}|{kind: "refuse", reason: string}} Decision */
+/** @typedef {{kind: "allow", effect: Effect}|{kind: "confirm", effect: Effect, physical: boolean, scope?: string}|{kind: "refuse", reason: string, cause?: string}} Decision */
 
 const PROFILES = {
     cautious: { read: "allow", reversible: "allow", input: "confirm", persistent: "confirm", exec: "confirm", external: "confirm", destructive: "physical" },
@@ -139,8 +139,10 @@ function textChord(bound, symbols) {
  * Decide one model call using executor-owned facts.
  *
  * context: {profile, locked, taint, denied, input?, grants?}. Missing or
- * unknown lock refuses. denied is Denied.create's current snapshot; it is
- * read only when the call carries a path, so a producer may build it lazily.
+ * unknown lock refuses. denied is Denied.create's current snapshot, or
+ * {kind: "unavailable", cause} when it could not be built, refused as
+ * path-context with that cause; it is read only when the call carries a
+ * path, so a producer may build it lazily.
  * J47/J51 supply input {target:{kind,id,password?}, key?} at send time.
  * For a key, key is {request, chord, effective, emitted, emittedEffective}.
  * Each identity is a layout-resolved {modifiers, keycode} record. J47 uses the core key
@@ -166,6 +168,7 @@ function decide(call, context) {
     // builds it on that read.
     if (refined.paths.length > 0) {
         const denied = context.denied;
+        if (denied?.kind === "unavailable") return { kind: "refuse", reason: "path-context", cause: denied.cause };
         if (!denied || typeof denied.inspectPaths !== "function")
             return { kind: "refuse", reason: "path-context" };
         // A field holds one path, or a list a harness program proposes at once.

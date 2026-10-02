@@ -110,6 +110,11 @@ world(() => {
     refuse(Policy, effects.read, { ...context, profile: "unknown" }, "policy-profile");
     refuse(Policy, effects.read, { ...context, taint: null }, "turn-taint");
     refuse(Policy, effects.read, { ...context, denied: null }, "path-context");
+    // An unbuilt snapshot refuses the path call with its keyed cause.
+    const unbuilt = { ...context, denied: { kind: "unavailable", cause: "paths=home" } };
+    const unbuiltCause = Logic => assert.deepEqual(Logic.decide(effects.read, unbuilt),
+        { kind: "refuse", reason: "path-context", cause: "paths=home" });
+    unbuiltCause(Policy);
     // The snapshot is read only for a call that carries a path.
     const unread = Logic => {
         let reads = 0;
@@ -236,6 +241,8 @@ world(() => {
     control("path-context", 'return { kind: "refuse", reason: "path-context" };',
         'return { kind: "allow", effect: "read" };',
         logic => refuse(logic, effects.read, { ...context, denied: null }, "path-context"));
+    control("unbuilt-cause", 'return { kind: "refuse", reason: "path-context", cause: denied.cause };',
+        'return { kind: "refuse", reason: "path-context" };', unbuiltCause);
     control("denied-answer", 'if (judged.kind === "refuse") {', 'if (false) {',
         logic => refuse(logic, call("files.read", { path: path.join(home, ".ssh", "absent") }), context, "protected-path"));
     control("lazy-snapshot", "if (refined.paths.length > 0) {", "if (void context.denied, refined.paths.length > 0) {", unread);

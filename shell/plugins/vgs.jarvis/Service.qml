@@ -17,6 +17,9 @@ Item {
     property string outputTail: ""
     property string errorTail: ""
     property string cause: ""
+    // Why the daemon's protected path list last failed to build, "" while it
+    // builds. Only path calls refuse; the daemon keeps running.
+    property string pathCause: ""
     property var audioHealth: ({ kind: "reading" })
     property var sessionState: null
     // The request handlers, built on the first request; see requestHandlers().
@@ -90,12 +93,19 @@ Item {
         if (reply !== "ok") throw new Error("jarvis: " + reply);
     }
 
+    function publishReady() {
+        const text = lockObservation() ? "Locked; no capture" : "Ready; no capture";
+        if (pathCause === "") publish("info", text);
+        else publish("warning", text + "; protected paths unavailable: " + pathCause);
+    }
+
     function start() {
         childSerial += 1;
         lifetime = { kind: "starting", pendingMute: lifetime.pendingMute === "none" ? "none" : "waiting" };
         outputTail = "";
         errorTail = "";
         cause = "";
+        pathCause = "";
         audioHealth = { kind: "reading" };
         sessionState = null;
         indicatorDelivery = { kind: "unknown" };
@@ -354,6 +364,12 @@ Item {
                     if (report !== "ok") throw new Error("jarvis: " + report);
                     continue;
                 }
+                if (message.type === "paths") {
+                    pathCause = message.cause === null ? "" : message.cause;
+                    if (pathCause !== "") console.warn("jarvis: denied=unavailable cause=" + pathCause);
+                    if (lifetime.kind === "ready") publishReady();
+                    continue;
+                }
                 if (message.type === "tasks") {
                     const reply = shell.status.set("tasks", message.count);
                     if (reply !== "ok") throw new Error("jarvis: " + reply);
@@ -394,7 +410,7 @@ Item {
                 if (message.daemon !== (lockObservation() ? "locked" : "ready")) continue;
                 lifetime = { kind: "ready", pendingMute: lifetime.pendingMute };
                 helloDeadline.stop();
-                publish("info", message.daemon === "locked" ? "Locked; no capture" : "Ready; no capture");
+                publishReady();
                 sendTuiState();
                 Qt.callLater(() => sendIndicator(indicatorPresented));
             }

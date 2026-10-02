@@ -15,8 +15,8 @@ const path = require("node:path");
  * ROOT/call.json holds {id, tool, arguments, kind?}; the driver consumes it.
  * kind "approval" routes a harness program's request, which no brain is
  * offered; the default is a brain's "tool-call". ROOT/results.jsonl gets
- * {id, route, reason?} when the router answers the call, reason naming a
- * refusal, and {id, outcome, content} when its result reaches the brain port.
+ * {id, route, reason?, cause?} when the router answers the call, reason
+ * naming a refusal and cause why its judge could not run, and {id, outcome, content} when its result reaches the brain port.
  */
 function drive(root, runner, router) {
     fs.mkdirSync(root, { recursive: true });
@@ -61,7 +61,8 @@ function drive(root, runner, router) {
             else {
                 const answer = router.route({ kind, id: call.id, tool: call.tool, arguments: call.arguments },
                     { gen: turn.gen, op: turn.op });
-                record({ id: call.id, route: answer.kind, ...(answer.kind === "refuse" ? { reason: answer.reason } : {}) });
+                record({ id: call.id, route: answer.kind, ...(answer.kind !== "refuse" ? {}
+                    : { reason: answer.reason, ...(answer.cause === undefined ? {} : { cause: answer.cause }) }) });
             }
             busy = false;
         };

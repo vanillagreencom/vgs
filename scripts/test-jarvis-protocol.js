@@ -41,6 +41,7 @@ const devices = { v: 1, type: "devices", gen: 0, revision: hello.revision,
     microphones: [{ label: "Microphone", value: "fixture.mic" }], speakers: [] };
 const level = { v: 1, type: "level", gen: 0, revision: hello.revision, level: { capture: 0.5, playback: 0 } };
 const audioFault = { v: 1, type: "audio-fault", gen: 0, revision: hello.revision, reason: "discovery-exit" };
+const paths = { v: 1, type: "paths", gen: 0, revision: hello.revision, cause: "paths=home" };
 const request = { v: 1, type: "request", gen: 0, revision: hello.revision, id: 1, kind: "compositor.moveWindow", args: ["0xa1", -10, 20] };
 const reply = { v: 1, type: "reply", gen: 0, revision: hello.revision, id: 1, kind: "compositor.moveWindow", answer: "ok", data: null };
 const entry = { id: "org.example.App", name: "Example", startupClass: "example" };
@@ -82,6 +83,12 @@ const cases = [
     ["input-ready-command", changed(inputReady, { commands: ["sudo"] }), "daemon", "input-commands"],
     ["audio-fault-direction", JSON.stringify(audioFault), "shell", "direction-audio-fault"],
     ["audio-fault", changed(audioFault, { reason: "" }), "daemon", "audio-fault"],
+    ["paths-direction", JSON.stringify(paths), "shell", "direction-paths"],
+    ["paths-shape", changed(paths, { extra: true }), "daemon", "shape-paths"],
+    ["paths-cause-empty", changed(paths, { cause: "" }), "daemon", "paths-cause"],
+    ["paths-cause-line", changed(paths, { cause: "ENOENT\njarvis: forged" }), "daemon", "paths-cause"],
+    ["paths-cause-long", changed(paths, { cause: "a".repeat(81) }), "daemon", "paths-cause"],
+    ["paths-cause-type", changed(paths, { cause: 2 }), "daemon", "paths-cause"],
     ["device-setting", changed(hello, { settings: { ...hello.settings, microphone: 1 } }), "shell", "device-setting"],
     ["devices-direction", JSON.stringify(devices), "shell", "direction-devices"],
     ["choices", changed(devices, { microphones: {} }), "daemon", "choices"],
@@ -219,7 +226,8 @@ for (const shown of [false, true])
     assert.equal(Protocol.accept(changed(indicator, { shown }), "shell").shown, shown);
 assert.equal(Protocol.accept(changed(hello, { settings: { ...hello.settings, mode: "toggle" },
     keys: { talk: null, mute: null, stop: null } }), "shell").settings.mode, "toggle");
-for (const message of [devices, level, audioFault, taskRequest, tasks, taskAnswer, { ...tasks, count: 0 },
+for (const message of [devices, level, audioFault, paths, { ...paths, cause: null }, { ...paths, cause: "ENOENT" },
+    { ...paths, cause: "a".repeat(80) }, taskRequest, tasks, taskAnswer, { ...tasks, count: 0 },
     transcript, { ...transcript, role: "assistant", stage: "final", text: "a".repeat(4096), rev: 2 }])
     assert.equal(JSON.stringify(Protocol.accept(JSON.stringify(message), "daemon")), JSON.stringify(message));
 for (const message of [taskStop, tuiState, { ...tuiState, running: false }, taskReply, { ...taskReply, answer: "ok" },
@@ -341,6 +349,11 @@ try {
         ["audio-fault-direction", 'if (direction !== "daemon") fail("direction-audio-fault");',
             'if (false) fail("direction-audio-fault");', "audio-fault-direction"],
         ["audio-fault", 'fail("audio-fault");', ';', "audio-fault"],
+        ["paths-direction", 'if (direction !== "daemon") fail("direction-paths");', 'if (false) fail("direction-paths");', "paths-direction"],
+        ["paths-shape", 'keys(message, ["v", "type", "gen", "revision", "cause"], "paths");', 'void message;', "paths-shape"],
+        ["paths-cause-type", '(typeof message.cause !== "string" || ', '(', "paths-cause-type"],
+        ["paths-cause-text", '!/^[A-Za-z0-9_=-]{1,80}$/.test(message.cause)', 'false', "paths-cause-line"],
+        ["paths-cause-bound", '{1,80}$/.test(message.cause)', '{0,}$/.test(message.cause)', "paths-cause-long"],
         ["transcript-direction", 'if (direction !== "daemon") fail("direction-transcript");', 'if (false) fail("direction-transcript");', "transcript-direction"],
         ["transcript-role", 'fail("transcript-role");', ";", "transcript-role"],
         ["transcript-stage", 'fail("transcript-stage");', ";", "transcript-stage"],

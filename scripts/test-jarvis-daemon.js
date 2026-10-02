@@ -482,56 +482,85 @@ async function inside() {
         "an engine port replacement must not discard the driver's result sink");
     controls++;
     // The shipped daemon judges a Codex file change's paths through Denied: a
-    // protected root refuses and a workspace path reaches its proposal. A
-    // snapshot that cannot be built refuses as path-context with one keyed line.
+    // protected root refuses and a workspace path reaches its proposal.
     const deniedResults = path.join(root, "denied-results");
-    const deniedCheck = async (file, expected, error = "") => {
+    const deniedRows = () => fs.existsSync(path.join(deniedResults, "results.jsonl"))
+        ? fs.readFileSync(path.join(deniedResults, "results.jsonl"), "utf8").trim().split("\n").map(JSON.parse) : [];
+    const routeFile = async (w, id, target) => {
+        fs.writeFileSync(path.join(deniedResults, "call.json"), JSON.stringify({ id, kind: "approval",
+            tool: "harness.files", arguments: { write: [target], move: [], remove: [], diff: "+fixture\n" } }));
+        await w.wait(() => deniedRows().some(row => row.id === id && row.route !== undefined));
+        return deniedRows().find(row => row.id === id && row.route !== undefined);
+    };
+    const targets = [["protected", path.join(process.env.HOME, ".ssh/id_fixture")],
+        ["workspace", path.join(process.env.HOME, "project/new")]];
+    const deniedCheck = async (file, expected, after = async () => {}) => {
         fs.mkdirSync(deniedResults, { recursive: true });
         fs.rmSync(path.join(deniedResults, "results.jsonl"), { force: true });
-        const routed = id => fs.existsSync(path.join(deniedResults, "results.jsonl"))
-            ? fs.readFileSync(path.join(deniedResults, "results.jsonl"), "utf8").trim().split("\n").map(JSON.parse)
-                .find(row => row.id === id && row.route !== undefined) : undefined;
         await conversation(file, async w => {
-            for (const [id, target] of [["protected", path.join(process.env.HOME, ".ssh/id_fixture")],
-                ["workspace", path.join(process.env.HOME, "project/new")]]) {
-                fs.writeFileSync(path.join(deniedResults, "call.json"), JSON.stringify({ id, kind: "approval",
-                    tool: "harness.files", arguments: { write: [target], move: [], remove: [], diff: "+fixture\n" } }));
-                await w.wait(() => routed(id) !== undefined);
-            }
-            assert.deepEqual(["protected", "workspace"].map(routed), expected);
-        }, "hold", 0, error);
+            const routed = [];
+            for (const [id, target] of targets) routed.push(await routeFile(w, id, target));
+            assert.deepEqual(routed, expected);
+            await after(w);
+        });
     };
     const deniedDaemon = daemonCopy("denied-driver");
     instrument(deniedDaemon, path.join(root, "denied-gates"));
     instrumentDesktop(deniedDaemon, deniedResults);
-    await deniedCheck(deniedDaemon, [{ id: "protected", route: "refuse", reason: "protected-path" },
-        { id: "workspace", route: "proposed" }]);
-    const unbuilt = [{ id: "protected", route: "refuse", reason: "path-context" },
-        { id: "workspace", route: "refuse", reason: "path-context" }];
-    // A dangling linked configuration root fails Denied's root resolution;
-    // each of the two judgements logs its keyed line.
+    const built = [{ id: "protected", route: "refuse", reason: "protected-path" }, { id: "workspace", route: "proposed" }];
+    await deniedCheck(deniedDaemon, built, async w => {
+        assert.deepEqual(w.messages.filter(m => m.type === "paths"), [], "a list that builds reports no cause");
+    });
+    // A dangling linked configuration root fails Denied's root resolution.
+    // Each path call refuses as path-context with the keyed cause, which
+    // stdout's paths message names once while stderr stays empty: the
+    // service reads any stderr line as the daemon's end. Once the root is
+    // fixed the next call builds the list again and the paths cause clears.
+    const unbuilt = [{ id: "protected", route: "refuse", reason: "path-context", cause: "ENOENT" },
+        { id: "workspace", route: "refuse", reason: "path-context", cause: "ENOENT" }];
     const configRoot = path.join(process.env.HOME, ".config");
     assert.equal(fs.existsSync(configRoot), false, "the scratch home has no configuration root");
+    const causes = w => w.messages.filter(m => m.type === "paths").map(m => m.cause);
     const unbuiltCheck = async file => {
         fs.symlinkSync(path.join(process.env.HOME, "absent-config"), configRoot);
         try {
-            await deniedCheck(file, unbuilt, Array(2).fill("jarvis: denied=unavailable cause=ENOENT").join("\n"));
-        } finally { fs.rmSync(configRoot); }
+            await deniedCheck(file, unbuilt, async w => {
+                assert.deepEqual(causes(w), ["ENOENT"], "the failed build's cause reaches the status channel once");
+                fs.rmSync(configRoot);
+                assert.deepEqual(await routeFile(w, "fixed", targets[1][1]), { id: "fixed", route: "proposed" },
+                    "the next call after the home is fixed builds the list again");
+                for (let attempts = 0; attempts < 300 && causes(w).length < 2; attempts++)
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                assert.deepEqual(causes(w), ["ENOENT", null], "a successful build clears the reported cause");
+            });
+        } finally { fs.rmSync(configRoot, { force: true }); }
     };
     await unbuiltCheck(deniedDaemon);
-    for (const [name, needle, replacement, check] of [
-        ["denied-wired", "get denied() { return deniedOrNull(); } }),", "denied: null }),", file => deniedCheck(file,
-            [{ id: "protected", route: "refuse", reason: "protected-path" }, { id: "workspace", route: "proposed" }])],
-        ["denied-refuses", "            return null;\n        }\n    }\n\n    // hyprctl",
-            "            throw error;\n        }\n    }\n\n    // hyprctl", unbuiltCheck]
+    console.log("test-jarvis-daemon: case=denied-unbuilt-not-fatal ok");
+    for (const [name, needle, replacement, check, red] of [
+        ["denied-wired", "get denied() { return deniedFact(); } }),", "denied: null }),", file => deniedCheck(file, built)],
+        // A failed build that ends the daemon instead of refusing the call.
+        ["denied-refuses", "catch { return Object.freeze({ kind: \"unavailable\", cause: deniedCause }); }",
+            "catch (error) { throw error; }", unbuiltCheck],
+        // The cause also written to stderr, which the service treats as fatal.
+        ["denied-stderr", "        deniedCause = cause;\n",
+            "        deniedCause = cause;\n        if (cause !== null) process.stderr.write(\"jarvis: denied=unavailable cause=\" + cause + \"\\n\");\n",
+            unbuiltCheck, /jarvis: denied=unavailable cause=ENOENT/],
+        // A failure remembered instead of a fresh build on the next call.
+        ["denied-rebuild", "try { return denied(); }", "try { if (deniedCause !== null) throw null; return denied(); }",
+            unbuiltCheck],
+        // A successful build that leaves the old cause on the status.
+        ["denied-clear", "        reportDenied(null);\n", "", unbuiltCheck]
     ]) {
         const file = daemonCopy("denied-" + name);
         const before = fs.readFileSync(file, "utf8");
         assert.equal(before.split(needle).length - 1, 1, name + " match");
         fs.writeFileSync(file, before.replace(needle, replacement));
+        assert.notEqual(fs.readFileSync(file, "utf8"), before, name + " edit");
         instrument(file, path.join(root, "denied-gates"));
         instrumentDesktop(file, deniedResults);
-        await assert.rejects(() => check(file), assert.AssertionError, name + " must turn red");
+        await assert.rejects(() => check(file), error => error instanceof assert.AssertionError
+            && (red === undefined || red.test(error.message)), name + " must turn red");
         controls++;
         console.log("test-jarvis-daemon: control=" + name + " detected");
     }

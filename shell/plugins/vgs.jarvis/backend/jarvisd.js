@@ -4,6 +4,8 @@
 // message exits 65. Task-store or confirmation-audit failure exits 74. Node below 22 or a
 // mute-store failure exits 78. Stdout carries v1 status/state
 // messages and shell requests judged by JarvisProtocol; stderr carries keyed jarvis: failures.
+// A protected path list that cannot be built refuses only the call that needed
+// it; stdout's paths message names the cause until a later build succeeds.
 // A reply for a request that awaits none exits 65 like any refused message.
 // Startup validates coding-task records and publishes their durable producer,
 // then TaskRunner observes them; tasks outlive this process and EOF stops
@@ -66,6 +68,8 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     let tasks = null;
     let bridge = null;
     let gate = null;
+    // The protected path list's cause last reported on stdout, null while it builds.
+    let deniedCause = null;
 
     function teardown() {
         // The bridge ends its connections while the router can still drop their results.
@@ -113,26 +117,42 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
     // The one producer of the protected path snapshot, rebuilt for every
     // judge from trusted roots: the daemon's XDG roots, the plugin directory
     // it runs from and the account roots, since roots and links can change
-    // between calls. A failed build throws; no default stands in.
+    // between calls. A failed build throws; no default stands in. Each change
+    // of the build's outcome is one paths message on stdout, never stderr,
+    // which the service reads as the daemon's end.
     function denied() {
-        const home = process.env.HOME;
-        if (typeof home !== "string" || home === "") throw new Error("jarvis: paths=home");
-        return Denied.create({ home,
-            config: process.env.XDG_CONFIG_HOME || path.join(home, ".config"),
-            data: process.env.XDG_DATA_HOME || path.join(home, ".local/share"),
-            state: process.env.XDG_STATE_HOME || path.join(home, ".local/state"),
-            runtime: process.env.XDG_RUNTIME_DIR, install: path.dirname(__dirname),
-            accountRoots: accountRoots(context.directories.state, process.env) });
+        let snapshot;
+        try {
+            const home = process.env.HOME;
+            if (typeof home !== "string" || home === "") throw new Error("jarvis: paths=home");
+            snapshot = Denied.create({ home,
+                config: process.env.XDG_CONFIG_HOME || path.join(home, ".config"),
+                data: process.env.XDG_DATA_HOME || path.join(home, ".local/share"),
+                state: process.env.XDG_STATE_HOME || path.join(home, ".local/state"),
+                runtime: process.env.XDG_RUNTIME_DIR, install: path.dirname(__dirname),
+                accountRoots: accountRoots(context.directories.state, process.env) });
+        } catch (error) {
+            const keyed = /^jarvis(?:-[a-z]+)?: ([a-z-]{1,30}=[a-z0-9-]{1,40})/.exec(String(error?.message))?.[1];
+            reportDenied(keyed ?? (typeof error?.code === "string" && /^[A-Z0-9_]{1,40}$/.test(error.code)
+                ? error.code : "unknown"));
+            throw error;
+        }
+        reportDenied(null);
+        return snapshot;
     }
 
-    // Policy refuses every path-bearing call as path-context without it, and
-    // the daemon logs the cause as one keyed line.
-    function deniedOrNull() {
-        try { return denied(); } catch (error) {
-            const cause = /^jarvis(?:-[a-z]+)?: ([a-z-]+=[a-z0-9-]+)/.exec(error.message)?.[1] ?? error.code ?? "unknown";
-            process.stderr.write("jarvis: denied=unavailable cause=" + cause + "\n");
-            return null;
-        }
+    function reportDenied(cause) {
+        if (cause === deniedCause) return;
+        deniedCause = cause;
+        if (!ending && context !== null) write({ v: 1, type: "paths", gen: runner.state.gen,
+            revision: context.revision, cause });
+    }
+
+    // Policy refuses the path-bearing call that reads an unbuilt snapshot as
+    // path-context with its cause; the next call builds again.
+    function deniedFact() {
+        try { return denied(); }
+        catch { return Object.freeze({ kind: "unavailable", cause: deniedCause }); }
     }
 
     // hyprctl finds this session's socket from these alone.
@@ -327,7 +347,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                     const profile = () => runner.state.settings.policy ?? "standard";
                     const router = ToolRouter.create({ session: Session, state: () => runner.state,
                         dispatch: event => runner.dispatch(event), audit,
-                        context: () => ({ profile: profile(), locked: context.locked, get denied() { return deniedOrNull(); } }),
+                        context: () => ({ profile: profile(), locked: context.locked, get denied() { return deniedFact(); } }),
                         result: value => gate.deliver(value) || bridge.deliver(value) || runner.ports.brain.outcome(value) });
                     // A harness brain opens the bridge's session for its conversation;
                     // until one is selected no socket exists.

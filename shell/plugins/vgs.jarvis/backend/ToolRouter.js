@@ -98,9 +98,11 @@ function create({ session, state, dispatch, context, audit, result }) {
         return { id: request.id, item: answer(JSON.stringify({ kind: "interrupted", outcome: progress }), null) };
     }
 
-    function refuse(value, reason, final = true) {
+    // cause names why a judge could not run, such as an unbuilt Denied snapshot.
+    function refuse(value, reason, final = true, cause = undefined) {
         const written = record(value, "refuse", "cancelled");
-        const refusal = { kind: "refuse", reason: written.kind === "refuse" ? written.reason : reason };
+        const refusal = written.kind === "refuse" ? { kind: "refuse", reason: written.reason }
+            : { kind: "refuse", reason, ...(cause === undefined ? {} : { cause }) };
         deliver(value, "cancelled", JSON.stringify(refusal), null, final);
         return refusal;
     }
@@ -202,7 +204,7 @@ function create({ session, state, dispatch, context, audit, result }) {
     function propose(value, decision) {
         const turn = value.turn;
         value.decision = decision;
-        if (decision.kind === "refuse") return refuse(value, decision.reason);
+        if (decision.kind === "refuse") return refuse(value, decision.reason, true, decision.cause);
         if (decision.scope !== undefined && !grants.has(decision.scope) && grants.size >= GRANT_SCOPES)
             return refuse(value, "grant-limit");
         const id = crypto.randomUUID();
@@ -253,14 +255,15 @@ function create({ session, state, dispatch, context, audit, result }) {
             || accepted && fresh.kind === "confirm" && fresh.effect === prior.effect
                 && fresh.physical === prior.physical && fresh.scope === prior.scope;
         if (!authorized) {
-            return { kind: "refuse", reason: fresh.kind === "refuse" ? fresh.reason : "policy-changed" };
+            return fresh.kind !== "refuse" ? { kind: "refuse", reason: "policy-changed" }
+                : { kind: "refuse", reason: fresh.reason, ...(fresh.cause === undefined ? {} : { cause: fresh.cause }) };
         }
         return { kind: "allow" };
     }
 
     function startJudged(e, done, value, fresh) {
         const authority = authorize(value, e, fresh);
-        if (authority.kind === "refuse") { value.refusal = authority.reason; done("failed"); return; }
+        if (authority.kind === "refuse") { value.refusal = authority; done("failed"); return; }
         const prior = value.decision;
         const accepted = e.confirmed !== undefined;
         value.confirmed = !accepted ? "none" : e.confirmed === "voice" ? "voice" : "physical";
@@ -280,7 +283,7 @@ function create({ session, state, dispatch, context, audit, result }) {
                     done(answer.outcome);
                 }, input => {
                     const answer = authorize(value, e, decide(value, input));
-                    if (answer.kind === "refuse") value.refusal = answer.reason;
+                    if (answer.kind === "refuse") value.refusal = answer;
                     return answer;
                 });
             } catch (error) {
@@ -289,7 +292,7 @@ function create({ session, state, dispatch, context, audit, result }) {
             }
         });
         if (admitted.kind === "refuse") {
-            value.refusal = admitted.reason;
+            value.refusal = { reason: admitted.reason };
             done("failed");
         }
     }
@@ -300,7 +303,7 @@ function create({ session, state, dispatch, context, audit, result }) {
             throw new Error("jarvis: router=outcome-identity");
         // Unknown timeout retains Session's serial slot until actual completion.
         const final = state().action.kind === "none";
-        if (value.refusal !== undefined) refuse(value, value.refusal, final);
+        if (value.refusal !== undefined) refuse(value, value.refusal.reason, final, value.refusal.cause);
         else {
             const written = record(value, value.decision.kind, e.outcome);
             deliver(value, e.outcome, written.kind === "refuse" ? JSON.stringify(written)

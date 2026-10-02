@@ -39,7 +39,11 @@ world(() => {
                 return timer;
             }, clear: timer => timers.delete(timer) }, () => {});
         let builds = 0;
-        const denied = () => { builds++; return Denied.create(fixtures.roots); };
+        let unbuilt = null;
+        const denied = () => {
+            builds++;
+            return unbuilt === null ? Denied.create(fixtures.roots) : { kind: "unavailable", cause: unbuilt };
+        };
         let target = { kind: "application", id: "editor" };
         const router = implementation.create({ session, state: () => runner.state,
             dispatch: e => runner.dispatch(e), context: () => ({
@@ -87,6 +91,7 @@ world(() => {
                 due[1].fn();
             },
             time: value => { at = value; }, lock: value => { locked = value; }, target: value => { target = value; },
+            unbuilt: value => { unbuilt = value; },
             builds: () => builds };
     }
     function browserHelp(implementation) {
@@ -370,6 +375,22 @@ world(() => {
             assert.equal(changed.refusal().reason, "protected-path");
             fs.unlinkSync(folder);
         }],
+        ["unbuilt-cause", implementation => {
+            // An unbuilt snapshot refuses only the path call, with its cause,
+            // at the first judge and at the start's rejudge.
+            const unbuilt = { kind: "refuse", reason: "path-context", cause: "ENOENT" };
+            const existing = path.join(fixtures.project, "existing");
+            const w = make(implementation); w.unbuilt("ENOENT");
+            assert.deepEqual(w.call("files.read", { path: existing }), unbuilt);
+            assert.deepEqual(w.refusal(), unbuilt);
+            w.unbuilt(null);
+            assert.equal(w.call("files.read", { path: existing }).kind, "proposed", "the next call builds again");
+            const held = make(implementation);
+            held.call("files.delete", { path: existing }); held.show(); held.time(700);
+            held.unbuilt("ENOENT"); held.confirm();
+            assert.equal(held.starts.length, 0);
+            assert.deepEqual(held.refusal(), unbuilt);
+        }],
         ["target-rejudge", implementation => {
             const w = make(implementation);
             w.call("input.text", text); w.show(); w.time(700);
@@ -615,6 +636,10 @@ world(() => {
             ["outcomes", "record(value, value.decision.kind, e.outcome)", 'record(value, value.decision.kind, "unknown")', "outcome-lifetime"],
             ["grants", "grants.add(prior.scope);", "void prior.scope;", "grants"],
             ["grant-bound", "grants.size >= GRANT_SCOPES", "(false && grants.size >= GRANT_SCOPES)", "grant-bound"],
+            ["refusal-cause", "...(cause === undefined ? {} : { cause }) };", "};", "unbuilt-cause"],
+            ["rejudge-cause", "...(fresh.cause === undefined ? {} : { cause: fresh.cause }) };", "};", "unbuilt-cause"],
+            ["outcome-cause", "refuse(value, value.refusal.reason, final, value.refusal.cause);",
+                "refuse(value, value.refusal.reason, final);", "unbuilt-cause"],
             ["target-rejudge", "fresh.scope === prior.scope", "(true || fresh.scope === prior.scope)", "target-rejudge"],
             ["digest", 'value.call.id + "\\n" + canonical(value.call.args)', 'value.call.id + "\\n" + "{}"', "immutable-digest"],
             ["sentence", 'sentence(value.call, decision.scope)', '"model text"', "typed-sentence"],
