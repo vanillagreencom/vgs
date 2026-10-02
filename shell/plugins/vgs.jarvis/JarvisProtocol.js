@@ -8,6 +8,8 @@
 // a rising rev; final closes the segment.
 var MAX_LINE_BYTES = 256 * 1024;
 var TASK_TERMINALS = ["auto", "tmux", "floating"];
+// The manifest's cloudVision options; Policy.recipients judges the same set.
+var CLOUD_VISION = ["ask", "allow", "never"];
 var TRANSCRIPT_CHARS = 4096;
 
 // Requests the daemon sends and the service answers, one reply each. `args`
@@ -233,10 +235,13 @@ function accept(line, direction) {
     case "hello":
         if (direction !== "shell") fail("direction-hello");
         keys(message, ["v", "type", "gen", "settings", "directories", "revision", "locked", "keys"], "hello");
-        keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal"], "settings");
+        keys(message.settings, ["mode", "microphone", "speaker", "brain", "taskTerminal", "cloudVision", "privateWindows"], "settings");
         if (typeof message.settings.brain !== "string") fail("shape-settings");
         if (message.settings.mode !== "hold" && message.settings.mode !== "toggle") fail("mode");
         if (TASK_TERMINALS.indexOf(message.settings.taskTerminal) === -1) fail("task-terminal");
+        if (CLOUD_VISION.indexOf(message.settings.cloudVision) === -1) fail("cloud-vision");
+        if (typeof message.settings.privateWindows !== "string"
+                || !/^[^\x00-\x1f\x7f]{0,1024}$/.test(message.settings.privateWindows)) fail("private-windows");
         for (var setting of ["microphone", "speaker"])
             if (typeof message.settings[setting] !== "string"
                     || !/^[^\x00-\x1f\x7f]{0,200}$/.test(message.settings[setting])) fail("device-setting");

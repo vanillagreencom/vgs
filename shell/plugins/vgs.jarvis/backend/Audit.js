@@ -37,6 +37,24 @@ function encode(record) {
     return line;
 }
 
+// A vision capture's facts: the layout box it read, the image's size and
+// SHA-256, and how many private areas were painted. Numbers and a digest
+// only, so no pixel or text of the image can enter the store.
+function captureRecord(kind, tool, capture) {
+    const whole = value => Number.isSafeInteger(value);
+    if (kind !== "action" || !Object.hasOwn(Tools.TABLE, tool) || Tools.TABLE[tool].executor !== "vision"
+            || capture === null || typeof capture !== "object"
+            || Object.keys(capture).sort().join(",") !== "box,bytes,height,masks,scale,sha256,width"
+            || !Array.isArray(capture.box) || capture.box.length !== 4 || !capture.box.every(whole)
+            || capture.box[2] < 1 || capture.box[3] < 1 || typeof capture.scale !== "number"
+            || !Number.isFinite(capture.scale) || capture.scale <= 0
+            || ![capture.width, capture.height].every(value => whole(value) && value > 0)
+            || ![capture.bytes, capture.masks].every(value => whole(value) && value >= 0)
+            || typeof capture.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(capture.sha256)) fail("capture");
+    return { box: capture.box.slice(), scale: capture.scale, width: capture.width, height: capture.height,
+        bytes: capture.bytes, sha256: capture.sha256, masks: capture.masks };
+}
+
 function eventRecord(event, time) {
     if (event === null || typeof event !== "object") fail("event-shape");
     const { kind, gen, op, tool, effect, decision, confirmed, outcome } = event;
@@ -49,7 +67,8 @@ function eventRecord(event, time) {
     if (!["pending", "completed", "failed", "unknown", "cancelled"].includes(outcome)) fail("outcome");
     return { time, kind, gen, op,
         tool: kind === "release" ? "release" : Object.hasOwn(Tools.TABLE, tool) ? tool : "unknown",
-        args: Redact.argumentsFor(kind, tool, event.args), effect, decision, confirmed, outcome };
+        args: Redact.argumentsFor(kind, tool, event.args), effect, decision, confirmed, outcome,
+        ...(event.capture === undefined ? {} : { capture: captureRecord(kind, tool, event.capture) }) };
 }
 
 /**

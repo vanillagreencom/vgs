@@ -51,6 +51,9 @@ Recommends:     iproute
 Recommends:     chromium
 Recommends:     tmux
 Recommends:     ImageMagick
+Recommends:     grim
+Recommends:     slurp
+Recommends:     tesseract
 Conflicts:      vgs-shell
 # end runtime dependencies
 

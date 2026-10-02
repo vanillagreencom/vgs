@@ -26,7 +26,8 @@ function sentence(call, scope) {
  * create({session, state, dispatch, context, audit, result}) owns the daemon's
  * action lifetime. state/dispatch belong to SessionRunner. context returns
  * current trusted profile, locked and denied facts, never model metadata.
- * result receives {gen, op, outcome, final, kind:"tool-results", results:[{id,item}]};
+ * result receives {gen, op, outcome, final, kind:"tool-results", results:[{id,item,image?}]},
+ * image {type, item} an executor's picture labelled as its text item;
  * final is false only for a timeout whose actual completion is still to come.
  * A generation change clears grants. Each new turn starts with clean taint.
  */
@@ -50,10 +51,12 @@ function create({ session, state, dispatch, context, audit, result }) {
         }
     }
 
+    // A capture's facts (target box, size, hash) enter the audit; its image never does.
     function record(value, decision, outcome) {
+        const capture = value.answer?.capture;
         return audit.record({ kind: "action", gen: value.turn.gen, op: value.turn.op,
             tool: value.call.id, args: value.call.args, effect: value.decision?.effect ?? null,
-            decision, confirmed: value.confirmed ?? "none", outcome });
+            decision, confirmed: value.confirmed ?? "none", outcome, ...(capture === undefined ? {} : { capture }) });
     }
 
     // One result item shape for every answer a brain receives for a call.
@@ -66,12 +69,14 @@ function create({ session, state, dispatch, context, audit, result }) {
 
     // final is false only while Session still holds a timed-out action, whose
     // actual completion delivers again under the same call id.
-    function deliver(value, outcome, content, source = null, final = true) {
+    function deliver(value, outcome, content, source = null, final = true, image = undefined) {
         const s = state();
         if (source !== null && s.gen === value.turn.gen && s.turn.kind === "thinking" && s.turn.op === value.turn.op)
             taint = Policy.observe(taint, source);
+        const item = answer(content, source);
         result({ gen: value.turn.gen, op: value.turn.op, outcome, final, kind: "tool-results",
-            results: [{ id: value.request, item: answer(content, source) }] });
+            results: [{ id: value.request, item, ...(image === undefined ? {}
+                : { image: Object.freeze({ type: image.type, item: Policy.item(image.bytes, item.labels) }) }) }] });
     }
 
     /**
@@ -267,7 +272,9 @@ function create({ session, state, dispatch, context, audit, result }) {
             try {
                 value.executor.start(value.call, answer => {
                     if (closed) return;
-                    if (!answer || !["completed", "failed", "unknown"].includes(answer.outcome) || typeof answer.content !== "string")
+                    if (!answer || !["completed", "failed", "unknown"].includes(answer.outcome) || typeof answer.content !== "string"
+                            || (answer.image !== undefined && (answer.outcome !== "completed" || answer.image === null
+                                || answer.image.type !== "image/png" || !(answer.image.bytes instanceof Uint8Array))))
                         throw new Error("jarvis: router=outcome");
                     value.answer = answer;
                     done(answer.outcome);
@@ -297,7 +304,8 @@ function create({ session, state, dispatch, context, audit, result }) {
         else {
             const written = record(value, value.decision.kind, e.outcome);
             deliver(value, e.outcome, written.kind === "refuse" ? JSON.stringify(written)
-                : value.answer?.content ?? "tool-outcome:" + e.outcome, value.refined.source, final);
+                : value.answer?.content ?? "tool-outcome:" + e.outcome, value.refined.source, final,
+                written.kind === "refuse" ? undefined : value.answer?.image);
         }
         if (final) pending = null;
     }

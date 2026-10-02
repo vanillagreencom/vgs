@@ -384,7 +384,7 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
             turn.phase = "streaming";
             const after = c.plan.brain.guidance.afterToolResult;
             void respond(c, turn, { kind: "tool-results", ...(after === null ? {} : { instructions: after }),
-                results: turn.calls.map(value => ({ id: value.id, item: turn.answers.get(value.id) })) });
+                results: turn.calls.map(value => ({ id: value.id, ...turn.answers.get(value.id) })) });
             return;
         }
         turn.routing = call;
@@ -449,7 +449,7 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
                 // Every call in history gets an answer, so the next request is
                 // valid. A running call's real outcome follows on a later turn.
                 if (routing && c.brain !== null) c.brain.record({ kind: "tool-results", results: turn.calls.map(call => {
-                    if (turn.answers.has(call.id)) return { id: call.id, item: turn.answers.get(call.id) };
+                    if (turn.answers.has(call.id)) return { id: call.id, ...turn.answers.get(call.id) };
                     if (turn.routing === call) {
                         c.late.set(call.id, { call, op: turn.op });
                         return router.interrupted(call, "running");
@@ -469,10 +469,11 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
         outcome(value) {
             const c = conversation;
             if (c === null || c.gen !== value.gen || value.results.length !== 1) return;
-            const { id, item } = value.results[0];
+            const { id, item, image } = value.results[0];
             const turn = c.turn;
             if (turn !== null && turn.op === value.op && turn.phase === "routing" && turn.routing?.id === id) {
-                turn.answers.set(id, item);
+                // A result's image stays with its text for the tool-results turn.
+                turn.answers.set(id, image === undefined ? { item } : { item, image });
                 turn.routing = null;
                 next(c, turn);
                 return;
@@ -508,6 +509,11 @@ function create({ session, state, audit, router, accounts, policy, fault, harnes
             return plan.kind === "ready" ? { kind: "ready" } : plan;
         },
         observe(s) { if (conversation !== null && s.gen !== conversation.gen) end(); },
+        /** Whether the conversation's brain, or the next one's, takes images. */
+        images() {
+            const current = conversation !== null ? conversation.plan : plan;
+            return current.kind === "ready" && current.brain.provider.images;
+        },
         // A live collection adopts the new utterance; otherwise it waits
         // unbound, replacing and abandoning any earlier unbound one.
         captureSink(e) {

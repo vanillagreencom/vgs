@@ -321,26 +321,41 @@ function create({ Dispatch, Launch, request, environment, clock, bounds = BOUNDS
         for (const child of children) child.kill("SIGKILL");
     }
 
-    return Object.freeze({ records, probe: state, close });
+    // The vision executor's reading of the same state: {kind:"state", state}
+    // or {kind:"failed", content}, content naming the failed read.
+    function reading() {
+        return state().then(value => ({ kind: "state", state: value }), error => {
+            if (error instanceof Ended) return { kind: "failed", content: error.value.content };
+            throw error;
+        });
+    }
+
+    return Object.freeze({ records, probe: state, reading, close });
 }
 
 /**
  * install(options) registers the wire executor at once and the Hyprland
  * executors once one state read answers, the probe that proves hyprctl
- * reaches this session. Without it those tools stay unoffered.
+ * reaches this session. Without it those tools stay unoffered. The lifetime
+ * lends its reader to the vision executor: ready resolves whether the probe
+ * registered the Hyprland executors, read is create's reading, readMs one
+ * read's bound.
  */
 function install({ router, ...options }) {
     const desktop = create(options);
     let lifetime = "open";
     router.register("wire", desktop.records.wire);
-    desktop.probe().then(() => {
-        if (lifetime !== "open") return;
+    const ready = desktop.probe().then(() => {
+        if (lifetime !== "open") return false;
         for (const id of ["windows", "compositor", "apps"]) router.register(id, desktop.records[id]);
+        return true;
     }, () => {
         // No reachable Hyprland: its tools stay unoffered, as a missing
         // command's do. The router refuses a call for them as unavailable.
+        return false;
     });
-    return { close() { lifetime = "closed"; desktop.close(); } };
+    return { ready, read: desktop.reading, readMs: (options.bounds || BOUNDS).hyprctlMs,
+        close() { lifetime = "closed"; desktop.close(); } };
 }
 
 module.exports = { create, install };

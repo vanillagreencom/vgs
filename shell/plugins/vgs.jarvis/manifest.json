@@ -11,7 +11,8 @@
   "entryPoints": { "bar-widget": "Widget.qml", "service": "Service.qml" },
   "capabilities": ["compositor", "ipc", "run", "session", "status", "toasts", "tui", "shortcut", "layers", "hyprland"],
   "defaultSection": "right",
-  "settings": { "mode": "hold", "microphone": "", "speaker": "", "brain": "", "taskTerminal": "auto" },
+  "settings": { "mode": "hold", "microphone": "", "speaker": "", "brain": "", "taskTerminal": "auto", "cloudVision": "ask",
+    "privateWindows": "1password, bitwarden, keepass, proton pass, enpass, pinentry, seahorse, private browsing, incognito" },
   "schema": {
     "mode": { "type": "enum", "label": "Talk mode", "group": "Listening",
       "options": ["hold", "toggle"],
@@ -23,7 +24,14 @@
       "description": "Found accounts are not proof of inference access. An unavailable saved selection is retained." },
     "taskTerminal": { "type": "enum", "label": "Task terminal", "group": "Tasks",
       "options": ["auto", "tmux", "floating"],
-      "description": "Where a coding task's terminal opens. Auto uses tmux when it is installed, which runs several tasks at once; the floating terminal shows one task at a time." }
+      "description": "Where a coding task's terminal opens. Auto uses tmux when it is installed, which runs several tasks at once; the floating terminal shows one task at a time." },
+    "cloudVision": { "type": "enum", "label": "Screen to cloud", "group": "Safety",
+      "options": ["ask", "allow", "never"],
+      "description": "Whether a screenshot or its text goes to a brain or voice outside this computer. Allow sends it, Never withholds it, Ask withholds it unless granted for the conversation. A brain on this computer always receives it. Changing it ends the conversation." },
+    "privateWindows": { "type": "string", "label": "Private windows", "group": "Safety",
+      "presets": [ { "value": "1password, bitwarden, keepass, proton pass, enpass, pinentry, seahorse, private browsing, incognito", "label": "Password managers and private browsing" }, { "value": "", "label": "None" } ],
+      "allowCustom": true,
+      "description": "Comma-separated words. A window whose class or title contains one is painted black before a screenshot leaves Jarvis. This is limited protection: a title cannot reliably identify private browsing." }
   },
   "hyprland": {
     "binds": [
@@ -62,7 +70,11 @@
     { "command": "tmux", "packages": { "pacman": "tmux", "apt": "tmux", "dnf": "tmux" }, "optional": true, "purpose": "Runs several coding tasks at once, each in its own session" },
     {"command": "wtype", "packages": {"pacman": "wtype", "apt": "wtype", "dnf": "wtype"}, "optional": true, "purpose": "Types text and key chords through the Wayland virtual keyboard"},
     {"command": "wlrctl", "packages": {"aur": "wlrctl", "apt": "wlrctl"}, "optional": true, "purpose": "Sends pointer clicks and scrolling without an input service"},
-    {"command": "ydotool", "packages": {"pacman": "ydotool", "apt": "ydotool", "dnf": "ydotool"}, "optional": true, "purpose": "Pointer fallback only while its input service already runs"}
+    {"command": "ydotool", "packages": {"pacman": "ydotool", "apt": "ydotool", "dnf": "ydotool"}, "optional": true, "purpose": "Pointer fallback only while its input service already runs"},
+    { "command": "grim", "packages": { "pacman": "grim", "apt": "grim", "dnf": "grim" }, "optional": true, "purpose": "Takes the screenshots Jarvis reads; screen tools also need magick" },
+    { "command": "slurp", "packages": { "pacman": "slurp", "apt": "slurp", "dnf": "slurp" }, "optional": true, "purpose": "Lets you draw the screen area Jarvis reads" },
+    { "command": "magick", "packages": { "pacman": "imagemagick", "dnf": "ImageMagick" }, "optional": true, "purpose": "Paints private windows black before a screenshot leaves Jarvis" },
+    { "command": "tesseract", "packages": { "pacman": "tesseract", "apt": "tesseract-ocr", "dnf": "tesseract" }, "optional": true, "purpose": "Reads screen text for a brain that takes no image" }
   ],
   "status": {
     "daemon": { "type": "state", "label": "Daemon", "hint": "The service starts no audio capture." },

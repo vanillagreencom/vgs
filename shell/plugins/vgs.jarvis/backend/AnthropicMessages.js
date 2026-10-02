@@ -138,6 +138,12 @@ function reader(names) {
         return { kind: "continue" };
     };
 }
+// One image block, or the release marker in its place.
+function imageBlock(image) {
+    return image.decision.kind === "send"
+        ? { type: "image", source: { type: "base64", media_type: image.type, data: image.decision.content.toString("base64") } }
+        : { type: "text", text: image.decision.content };
+}
 const protocol = {
     driver: "anthropic-messages", path: "/messages",
     auth: { header: "x-api-key", prefix: "" }, headers: { "anthropic-version": "2023-06-01" },
@@ -148,14 +154,11 @@ const protocol = {
     // A fixed output allowance, not a model-window claim. The session owns
     // context budgeting; a response that reaches this allowance fails.
     request: (model, system, messages) => ({ model, system, messages, max_tokens: 4096, stream: true }),
-    user: (texts, images) => ({ role: "user", content: [
-        ...texts.map(text => ({ type: "text", text })),
-        ...images.map(image => image.decision.kind === "send"
-            ? { type: "image", source: { type: "base64", media_type: image.type, data: image.decision.content.toString("base64") } }
-            : { type: "text", text: image.decision.content })] }),
+    user: (texts, images) => ({ role: "user", content: [...texts.map(text => ({ type: "text", text })), ...images.map(imageBlock)] }),
     assistant: entry => ({ role: "assistant", content: entry.content }),
-    results: results => [{ role: "user", content: results.map(result =>
-        ({ type: "tool_result", tool_use_id: result.id, content: result.content })) }]
+    // A result's image is a block of its own tool_result's content.
+    results: results => [{ role: "user", content: results.map(result => ({ type: "tool_result", tool_use_id: result.id,
+        content: result.image === null ? result.content : [{ type: "text", text: result.content }, imageBlock(result.image)] })) }]
 };
 /** Create the Messages implementation of the shared brain contract. */
 function create(options) { return WireBrain.create(options, protocol); }

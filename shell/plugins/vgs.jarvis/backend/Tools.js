@@ -75,6 +75,8 @@ const TABLE = {
     "vision.monitor": { sentence: "Read monitor {monitor}", effect: "read", executor: "vision", command: "grim", schema: { monitor: text }, source: "screen" },
     "vision.window": { sentence: "Read window {window}", effect: "read", executor: "vision", command: "grim", schema: { window: windowId }, source: "screen" },
     "vision.region": { sentence: "Read screen region {x}, {y}, {width} by {height}", effect: "read", executor: "vision", command: "grim", schema: { x: integer, y: integer, width: positive, height: positive }, source: "screen" },
+    // Only when the user asks about "this area": slurp lets them draw it.
+    "vision.area": { sentence: "Read a screen area the user selects now", effect: "read", executor: "vision", command: "slurp", schema: {}, source: "screen" },
     "task.start": { sentence: "Start task {goal} in {cwd}, agent {agent}, account {account}", effect: "exec", executor: "task", command: null, schema: { goal: text, cwd: absolute, agent: text, account: text }, optional: ["agent", "account"], paths: [["cwd", "workspace"]], source: "agent" },
     "browser": { sentence: "Browser {command} with {args}", executor: "browser", command: "agent-browser", schema: { command: text, args: objectValue } },
     // Proposed by a harness brain's own program through its approval

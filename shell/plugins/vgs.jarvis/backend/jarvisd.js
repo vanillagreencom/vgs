@@ -341,7 +341,11 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         write({ v: 1, type: "request", gen: runner.state.gen, revision: context.revision, ...fields }) });
                     executors = Executors.register(router, { find: commandFile, environment: process.env,
                         desktop: { Dispatch, Launch, request: requests.send, clock,
-                            environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) } });
+                            environment: hyprctlEnvironment(), commands: ["gio"].filter(onPath) },
+                        // The engine exists before the first turn that could route a capture.
+                        vision: { directory: path.join(context.directories.runtime, "vision"), state: () => runner.state,
+                            route: () => engine.images() ? "image" : "text",
+                            privateWindows: () => context.settings.privateWindows } });
                     const environment = hyprctlEnvironment();
                     for (const name of ["WAYLAND_DISPLAY", "YDOTOOL_SOCKET"])
                         if (process.env[name] !== undefined) environment[name] = process.env[name];
@@ -373,10 +377,9 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
                         failed: fatal,
                         clock: { now: Date.now, set: (fn, ms) => setTimeout(fn, ms).unref(), clear: timer => clearTimeout(timer) } });
                     const state = context.directories.state;
-                    // cloudVision has no setting yet; "ask" is the plan's default.
                     engine = ChainedEngine.create({ session: Session, state: () => runner.state, audit, router,
                         accounts: () => new Accounts(state, process.env),
-                        policy: () => ({ profile: profile(), cloudVision: "ask" }), fault,
+                        policy: () => ({ profile: profile(), cloudVision: context.settings.cloudVision }), fault,
                         harness: { bridge, gate, env: process.env, runtime: () => context.directories.runtime } });
                     runner.ports.brain = engine.brain;
                     runner.ports.capture = { ...runner.ports.capture, collect: engine.collect };

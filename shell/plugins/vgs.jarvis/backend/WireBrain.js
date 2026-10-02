@@ -50,6 +50,14 @@ function create({ provider, model, net, recipients, key }, protocol) {
         context = { instructions: value.instructions, tools, names };
         history = [];
     }
+    // A user or tool-result image: a PNG or JPEG item, for a provider whose
+    // endpoint documents image input.
+    function imageOf(image) {
+        if (!provider.images) fail("images-unsupported");
+        if (!plain(image) || !IMAGE_TYPES.includes(image.type)) fail("image-type");
+        if (!image.item || !(image.item.content instanceof Uint8Array)) fail("image-bytes");
+        return { type: image.type, item: image.item };
+    }
     function pending() {
         const last = history.at(-1);
         return last !== undefined && last.role === "assistant" ? last.calls : [];
@@ -62,26 +70,23 @@ function create({ provider, model, net, recipients, key }, protocol) {
             const images = turn.images ?? [];
             if (!Array.isArray(turn.items) || !Array.isArray(images) || turn.items.length + images.length === 0)
                 fail("turn");
-            if (images.length !== 0 && !provider.images) fail("images-unsupported");
-            for (const image of images) {
-                if (!plain(image) || !IMAGE_TYPES.includes(image.type)) fail("image-type");
-                if (!image.item || !(image.item.content instanceof Uint8Array)) fail("image-bytes");
-            }
-            return { role: "user", items: turn.items.map(textItem),
-                images: images.map(image => ({ type: image.type, item: image.item })) };
+            return { role: "user", items: turn.items.map(textItem), images: images.map(imageOf) };
         }
         case "tool-results": {
             const calls = pending();
             const results = turn.results;
             if (calls.length === 0 || !Array.isArray(results) || results.length !== calls.length) fail("tool-results");
-            const byId = new Map(results.map(result => [result?.id, result?.item]));
+            const byId = new Map(results.map(result => [result?.id, result]));
             if (byId.size !== calls.length || !calls.every(call => byId.has(call.id))) fail("tool-results");
             // Shipped guidance restated after a result, never a released item.
             const instructions = turn.instructions ?? null;
             if (instructions !== null && (typeof instructions !== "string" || protocol.instruction === undefined))
                 fail("instructions");
-            return { role: "tool-results", instructions,
-                results: calls.map(call => ({ id: call.id, item: textItem(byId.get(call.id)) })) };
+            return { role: "tool-results", instructions, results: calls.map(call => {
+                const result = byId.get(call.id);
+                return { id: call.id, item: textItem(result.item),
+                    image: result.image === undefined ? null : imageOf(result.image) };
+            }) };
         }
         default: return fail("turn");
         }
@@ -112,8 +117,9 @@ function create({ provider, model, net, recipients, key }, protocol) {
                 messages.push(protocol.assistant(entry));
                 break;
             case "tool-results":
-                messages.push(...protocol.results(entry.results.map(result =>
-                    ({ id: result.id, content: released(result.item).content }))));
+                messages.push(...protocol.results(entry.results.map(result => ({ id: result.id,
+                    content: released(result.item).content,
+                    image: result.image === null ? null : { type: result.image.type, decision: released(result.image.item) } }))));
                 if (entry.instructions !== null) messages.push(protocol.instruction(entry.instructions));
                 break;
             default: throw new Error("jarvis: brain=history-role");

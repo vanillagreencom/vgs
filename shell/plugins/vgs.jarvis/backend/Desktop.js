@@ -1,5 +1,6 @@
 // Executors for the Tools rows of the clipboard, media and notify executors
-// that ARGV maps. media.brightness has no entry: vgs.displays owns brightness
+// that ARGV maps, and the one runner of a desktop command, which the vision
+// executor shares. media.brightness has no entry: vgs.displays owns brightness
 // (D083), and Jarvis routes that row through its service once it exists.
 // ARGV is the one map from a frozen call to the arguments and stdin of the
 // command its Tools row names. Each command runs as a bounded Child, without a
@@ -37,7 +38,12 @@ const ENVIRONMENT = {
     "wl-copy": ["WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"],
     "playerctl": ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"],
     "wpctl": ["XDG_RUNTIME_DIR"],
-    "notify-send": ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"]
+    "notify-send": ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"],
+    // Vision.js's commands. magick and tesseract read and write files only.
+    "grim": ["WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"],
+    "slurp": ["WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"],
+    "magick": [],
+    "tesseract": []
 };
 
 // clipboard.read lists the offered types before it reads any byte.
@@ -83,6 +89,21 @@ function failure(call, command, result) {
     }
 }
 
+/**
+ * Run one desktop command: file is the absolute path the PATH lookup found
+ * for command, a key of ENVIRONMENT. plan is {args, input?, output?, env?};
+ * env holds fixed variables the caller sets, never the daemon's own.
+ * environment is the daemon's; ENVIRONMENT picks from it. Answers Child.run.
+ */
+function runCommand(file, name, plan, { environment, signal, clock, deadline = DEADLINE, limit = LIMIT }) {
+    const env = { LC_ALL: "C.UTF-8" };
+    for (const variable of ["PATH", ...ENVIRONMENT[name]])
+        if (environment[variable] !== undefined) env[variable] = environment[variable];
+    Object.assign(env, plan.env);
+    return Child.run("setpriv", ["--pdeathsig", "KILL", "--", file, ...plan.args], { env, limit,
+        deadline, group: true, input: plan.input, output: plan.output, signal, clock });
+}
+
 const emptySelection = result => result.kind === "exited" && result.code !== 0
     && EMPTY_SELECTION.includes(result.stderr.split("\n")[0].trim());
 
@@ -97,14 +118,10 @@ function create(id, { commands, environment, clock }) {
     if (rows.length === 0) throw new Error("jarvis: desktop=executor id=" + id);
     const running = new Map();
 
-    function run(command, plan, signal) {
-        const file = commands.get(command);
-        if (file === undefined) throw new Error("jarvis: desktop=command-absent command=" + command);
-        const env = { LC_ALL: "C.UTF-8" };
-        for (const name of ["PATH", ...ENVIRONMENT[command]])
-            if (environment[name] !== undefined) env[name] = environment[name];
-        return Child.run("setpriv", ["--pdeathsig", "KILL", "--", file, ...plan.args], { env, limit: LIMIT,
-            deadline: DEADLINE, group: true, input: plan.input, output: plan.output, signal, clock });
+    function run(name, plan, signal) {
+        const file = commands.get(name);
+        if (file === undefined) throw new Error("jarvis: desktop=command-absent command=" + name);
+        return runCommand(file, name, plan, { environment, signal, clock });
     }
 
     async function perform(call, signal) {
@@ -144,4 +161,4 @@ function create(id, { commands, environment, clock }) {
         cancel: call => { running.get(call)?.abort(); } };
 }
 
-module.exports = { create, TOOLS };
+module.exports = { create, runCommand, failure, TOOLS };

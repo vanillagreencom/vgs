@@ -216,11 +216,17 @@ function create({ router, state, audit, directory, clock = { set: setTimeout, cl
         if (entry.answered || entry.connection.closed) return true;
         entry.answered = true;
         const released = Policy.release(answer.item, entry.recipients);
+        // The router labels an image as its text, so one decision covers both.
+        const pictured = answer.image === undefined ? null : Policy.release(answer.image.item, entry.recipients);
+        if (pictured !== null && pictured.kind !== released.kind) throw new Error("jarvis: bridge=image-release");
+        const image = pictured === null ? null : pictured.kind === "send"
+            ? { kind: "image", data: pictured.content.toString("base64"), mimeType: answer.image.type }
+            : { kind: "marker", text: pictured.content };
         const recipients = [entry.recipients.brain, ...entry.recipients.speech].map(recipient => recipient.provider);
         const admitted = audit.before({ kind: "release", gen: value.gen, op: value.op, tool: "release",
             args: { labels: released.labels, recipients }, effect: null, decision: released.kind,
             confirmed: "none", outcome: "pending" }, () => write(entry.connection,
-            Mcp.content(entry.request, released.content.toString(), value.outcome !== "completed")));
+            Mcp.content(entry.request, released.content.toString(), value.outcome !== "completed", image)));
         if (admitted.kind === "refuse")
             write(entry.connection, Mcp.content(entry.request, JSON.stringify({ kind: "refuse", reason: admitted.reason }), true));
         return true;

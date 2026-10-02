@@ -76,6 +76,12 @@ function outcome(finish, count) {
     default: return fail("chunk-shape");
     }
 }
+// One image content part, or the release marker in its place.
+function imagePart(image) {
+    return image.decision.kind === "send"
+        ? { type: "image_url", image_url: { url: "data:" + image.type + ";base64," + image.decision.content.toString("base64") } }
+        : { type: "text", text: image.decision.content };
+}
 function reader(names) {
     const calls = assembler(names);
     let text = "";
@@ -103,10 +109,7 @@ const protocol = {
         ({ model, messages: [{ role: "system", content: instructions }, ...messages], stream: true }),
     user(texts, images) {
         return { role: "user", content: images.length === 0 ? texts.join("\n\n") : [
-            ...texts.map(text => ({ type: "text", text })),
-            ...images.map(image => image.decision.kind === "send"
-                ? { type: "image_url", image_url: { url: "data:" + image.type + ";base64," + image.decision.content.toString("base64") } }
-                : { type: "text", text: image.decision.content })] };
+            ...texts.map(text => ({ type: "text", text })), ...images.map(imagePart)] };
     },
     assistant(entry) {
         const message = { role: "assistant", content: entry.text === "" ? null : entry.text };
@@ -114,7 +117,14 @@ const protocol = {
             ({ id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } }));
         return message;
     },
-    results: results => results.map(result => ({ role: "tool", tool_call_id: result.id, content: result.content })),
+    // A tool message carries text parts only, so the results' images follow
+    // them in one user message, each after a line naming its call.
+    results(results) {
+        const pictured = results.filter(result => result.image !== null);
+        return [...results.map(result => ({ role: "tool", tool_call_id: result.id, content: result.content })),
+            ...(pictured.length === 0 ? [] : [{ role: "user", content: pictured.flatMap(result =>
+                [{ type: "text", text: "Image from tool call " + result.id + ":" }, imagePart(result.image)]) }])];
+    },
     instruction: text => ({ role: "system", content: text })
 };
 /** Create the OpenAI-compatible implementation of the shared brain contract. */

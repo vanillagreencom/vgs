@@ -37,9 +37,16 @@ function error(id, code, message) {
         : { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-/** A tool result: one text block. A refusal or failed outcome sets isError. */
-function content(id, text, isError) {
-    return result(id, { content: [{ type: "text", text }], isError });
+/**
+ * A tool result: one text block, then an image block {data, mimeType} when
+ * one is given, or a second text block holding the release marker in its
+ * place. A refusal or failed outcome sets isError.
+ */
+function content(id, text, isError, image = null) {
+    const blocks = [{ type: "text", text }];
+    if (image !== null) blocks.push(image.kind === "image" ? { type: "image", data: image.data, mimeType: image.mimeType }
+        : { type: "text", text: image.text });
+    return result(id, { content: blocks, isError });
 }
 
 /**

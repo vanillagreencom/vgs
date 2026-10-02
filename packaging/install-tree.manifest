@@ -275,6 +275,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Private.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Providers.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Redact.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Sandbox.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Screen.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Secrets.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ShellRequests.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Speakable.js
@@ -285,6 +286,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/Tasks.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ToolBridge.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/ToolRouter.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/Tools.js
+f share/vgs/shell/plugins/vgs.jarvis/backend/Vision.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/WireBrain.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/accounts.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/audio-child.py
@@ -298,6 +300,7 @@ f share/vgs/shell/plugins/vgs.jarvis/backend/session-runner.js
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/browser/LICENSE
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/browser/SKILL.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/input.md
+f share/vgs/shell/plugins/vgs.jarvis/backend/skills/computer/vision.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/actions.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/duplex.md
 f share/vgs/shell/plugins/vgs.jarvis/backend/skills/voice/class/local.md
