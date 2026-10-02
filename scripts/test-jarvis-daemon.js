@@ -507,19 +507,19 @@ async function inside() {
         { id: "workspace", route: "proposed" }]);
     const unbuilt = [{ id: "protected", route: "refuse", reason: "path-context" },
         { id: "workspace", route: "refuse", reason: "path-context" }];
-    // A linked configuration root fails the account scan that feeds Denied;
+    // A dangling linked configuration root fails Denied's root resolution;
     // each of the two judgements logs its keyed line.
     const configRoot = path.join(process.env.HOME, ".config");
     assert.equal(fs.existsSync(configRoot), false, "the scratch home has no configuration root");
     const unbuiltCheck = async file => {
         fs.symlinkSync(path.join(process.env.HOME, "absent-config"), configRoot);
         try {
-            await deniedCheck(file, unbuilt, Array(2).fill("jarvis: denied=unavailable cause=directory=link").join("\n"));
+            await deniedCheck(file, unbuilt, Array(2).fill("jarvis: denied=unavailable cause=ENOENT").join("\n"));
         } finally { fs.rmSync(configRoot); }
     };
     await unbuiltCheck(deniedDaemon);
     for (const [name, needle, replacement, check] of [
-        ["denied-wired", "denied: protectedRoots() }),", "denied: null }),", file => deniedCheck(file,
+        ["denied-wired", "get denied() { return deniedOrNull(); } }),", "denied: null }),", file => deniedCheck(file,
             [{ id: "protected", route: "refuse", reason: "protected-path" }, { id: "workspace", route: "proposed" }])],
         ["denied-refuses", "            return null;\n        }\n    }\n\n    // hyprctl",
             "            throw error;\n        }\n    }\n\n    // hyprctl", unbuiltCheck]

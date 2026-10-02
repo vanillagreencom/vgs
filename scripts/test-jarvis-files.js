@@ -770,17 +770,13 @@ world(async () => {
         fs.mkdirSync(folder);
         fs.writeFileSync(path.join(folder, "notes"), "beta protected secret\n");
     }
-    // The scratch HOME lies inside this checkout, the daemon's install root,
-    // so the daemon runs from a minimal VGS tree copy beside HOME.
+    // The daemon's install root is the plugin directory it runs from: a
+    // disposable copy beside HOME, so a read inside it is outside HOME
+    // unless the producer protects it.
     async function daemon(name, edit) {
-        const install = path.join(process.env.JARVIS_TEST_ROOT, "tree-" + name);
-        for (const entry of ["bin/lib/qml-library.js", "bin/lib/judge-files.js", "shell/Core/Dispatch.js", "shell/Commons/DesktopLaunch.js"]) {
-            fs.mkdirSync(path.dirname(path.join(install, entry)), { recursive: true });
-            fs.copyFileSync(path.join(tree, entry), path.join(install, entry));
-        }
-        fs.writeFileSync(path.join(install, "VERSION"), "beta protected secret\n");
-        const folder = path.join(install, "shell/plugins/vgs.jarvis");
-        fs.mkdirSync(folder, { recursive: true });
+        const folder = path.join(process.env.JARVIS_TEST_ROOT, "plugin-" + name);
+        fs.mkdirSync(folder);
+        fs.writeFileSync(path.join(folder, "VERSION"), "beta protected secret\n");
         for (const entry of ["JarvisProtocol.js", "Session.js", "AccountProviders.js"])
             fs.copyFileSync(path.join(plugin, entry), path.join(folder, entry));
         fs.cpSync(backend, path.join(folder, "backend"), { recursive: true });
@@ -802,7 +798,7 @@ world(async () => {
         fs.writeFileSync(path.join(state, "accounts.json"), JSON.stringify([{ provider: "codex", directory: daemonHand, label: "hand" }]));
         const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8", CLAUDE_CONFIG_DIR: daemonExplicit };
         for (const variable of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"]) env[variable] = process.env[variable];
-        const child = cp.spawn(process.execPath, [daemonFile, "--tree", install], { env, stdio: ["pipe", "ignore", "pipe"] });
+        const child = cp.spawn(process.execPath, [daemonFile, "--tree", tree], { env, stdio: ["pipe", "ignore", "pipe"] });
         let stderr = "";
         child.stderr.on("data", data => { stderr += data; });
         const closed = once(child, "close");
@@ -811,7 +807,7 @@ world(async () => {
         const outcomes = {};
         const reads = [["ordinary", path.join(t, "notes.txt")], ["account", path.join(home, ".claude-team", "notes")],
             ["explicit", path.join(daemonExplicit, "notes")], ["hand", path.join(daemonHand, "notes")],
-            ["config", path.join(roots.config, "vgs", "shell.json")], ["install", path.join(install, "VERSION")]];
+            ["config", path.join(roots.config, "vgs", "shell.json")], ["install", path.join(folder, "VERSION")]];
         try {
             child.stdin.write(JSON.stringify({ v: 1, type: "hello", gen: 0, revision: "a".repeat(64), locked: false,
                 settings: { mode: "hold", microphone: "", speaker: "", brain: "", taskTerminal: "auto" },
@@ -862,7 +858,7 @@ world(async () => {
         ["config: process.env.XDG_CONFIG_HOME || path.join(home, \".config\"),", "config: path.join(home, \".config\"),"]);
     refusal(defaultConfig.config, "outside-home");
     controls++;
-    const noInstall = await daemon("no-install", ["install: process.argv[3],", "install: path.join(home, \"absent-install\"),"]);
+    const noInstall = await daemon("no-install", ["install: path.dirname(__dirname),", "install: path.join(home, \"absent-install\"),"]);
     refusal(noInstall.install, "outside-home");
     controls++;
 

@@ -134,6 +134,7 @@ if (Number(process.versions.node.split(".")[0]) < 22) {
             return null;
         }
     }
+
     // hyprctl finds this session's socket from these alone.
     function hyprctlEnvironment() {
         const environment = { PATH: process.env.PATH || "/usr/bin:/bin", LANG: "C.UTF-8" };
