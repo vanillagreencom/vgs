@@ -43,15 +43,16 @@
 # of the shells the run starts up to rows/diagnostics.sh: each shell a row
 # stopped, read at its stop, and the one that row reads (shell_memory_note
 # in scripts/smoke/harness.sh). A row that stops and starts the shell
-# therefore hides no shell from the ceiling;
-# docs/architecture/validation-latency.md holds the readings. It catches a
-# startup allocation blow-up and nothing else: a run
-# this short cannot see the slow growth docs/architecture/memory.md
-# describes, and the reading carries the machine's graphics stack. The
-# default is twice the rss_kib this script printed on the owner's machine
-# (host cachy, AMD Ryzen 9 9950X) on 2026-09-25 with the one bundled plugin,
-# the bar, plus the fixtures this run installs, on one nested monitor. The
-# high-water mark is printed beside it as the reproducible reading.
+# therefore hides no shell from the ceiling. It catches an allocation
+# blow-up at startup or in a row and nothing else: a run this short cannot
+# see the slow growth docs/architecture/memory.md describes, the largest
+# reading grows with the rows the run holds, and it carries the machine's
+# graphics stack. The default is twice the highest rss_peak_kib of three
+# runs of this script on the owner's machine (host cachy, AMD Ryzen 9
+# 9950X) on 2026-10-02, at load average 5 to 12, on one nested monitor:
+# 576964 to 587008 KiB, each the shell that ran the rows up to the first
+# stop in rows/monitor-preview.sh. docs/architecture/validation-latency.md
+# holds the readings. Each reading prints its high-water mark beside it.
 #
 # VGSH_SMOKE_FIRST_BAR_BUDGET_MS: ceiling on the time from the runner's exec
 # to the first bar surface with a client in the compositor's layer list,
@@ -111,7 +112,7 @@ fi
 
 self="$(readlink -f -- "${BASH_SOURCE[0]}")"
 repo="$(cd -- "$(dirname -- "$self")/.." && pwd)"
-rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-574064}"
+rss_ceiling_kib="${VGSH_SMOKE_RSS_CEILING_KIB:-1174016}"
 first_bar_budget_ms="${VGSH_SMOKE_FIRST_BAR_BUDGET_MS:-620}"
 default_first_bar_budget_ms="${VGSH_SMOKE_DEFAULT_FIRST_BAR_BUDGET_MS:-542}"
 reconcile_budget_ms="${VGSH_SMOKE_RECONCILE_BUDGET_MS:-30}"

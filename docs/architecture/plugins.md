@@ -64,7 +64,7 @@ A capability is a core API named in the manifest's `capabilities` and delivered 
 
 ## Budgets
 
-- `scripts/qml-smoke.sh` runs the shell with its fixture plugins in the nested sandbox and asserts what each host built and each instance received, plus the ceilings its header states: resident size, exec to first bar, and a `setPluginEnabled` reply to the build records. The resident-size ceiling catches a startup allocation blow-up and nothing else.
+- `scripts/qml-smoke.sh` runs the shell with its fixture plugins in the nested sandbox and asserts what each host built and each instance received, plus the ceilings its header states: resident size, exec to first bar, and a `setPluginEnabled` reply to the build records. The resident-size ceiling catches an allocation blow-up and nothing else.
 - A service owns every watcher, poller and subprocess it starts, one owner per source, inside its own tree.
 - A plugin holds no cache keyed by data other applications supply without a ceiling.
 - The latency ceilings measure the whole shell. No row measures one plugin's latency or memory.
