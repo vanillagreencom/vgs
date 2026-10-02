@@ -310,6 +310,7 @@ rows=(
   "tools|Jarvis local artifact controls|python3 scripts/test-jarvis-local.py|shell/plugins/vgs.jarvis/* scripts/lib/jarvis-env.sh scripts/check-jarvis-local.sh scripts/fixtures/jarvis-local/*"
   "tools|Jarvis local setup controls|python3 scripts/test-jarvis-setup.py|shell/plugins/vgs.jarvis/setup-local shell/plugins/vgs.jarvis/requirements-local*.lock shell/plugins/vgs.jarvis/tui/setup-local.sh shell/plugins/vgs.jarvis/artifacts.json shell/plugins/vgs.jarvis/measure-local shell/plugins/vgs.jarvis/fixtures/* scripts/lib/jarvis-env.sh scripts/fixtures/jarvis-setup/* bin/lib/tui.sh scripts/test-install-tree.sh"
   "tools|Jarvis actual local models|scripts/check-jarvis-local.sh|shell/plugins/vgs.jarvis/* scripts/lib/jarvis-env.sh scripts/fixtures/jarvis-local/*"
+  "tools|Jarvis local speech sidecar controls|python3 scripts/test-jarvis-local-speech.py|shell/plugins/vgs.jarvis/backend/local-speech.py shell/plugins/vgs.jarvis/setup-local shell/plugins/vgs.jarvis/measure-local shell/plugins/vgs.jarvis/artifacts.json shell/plugins/vgs.jarvis/fixtures/* scripts/lib/jarvis-env.sh"
   "repo|whitespace errors against the base|whitespace_check|"
   "repo|every test file has a row|rows_cover_tests|"
   "repo|the runtime loads nothing under scripts/|runtime_reads_no_scripts|"
