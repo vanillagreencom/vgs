@@ -3,11 +3,16 @@
 // The duplex speech port, 2026-10-01, emits one caption per transcript gate
 // through the callbacks of the session it opened, live or closed. A
 // hold-flush file holds the flush acknowledgement until the flush gate.
+// The brain port, 2026-10-02, hands one assistant caption per reply-caption
+// gate to the daemon's own transcript port, for the turn that is thinking.
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
 
-function ports(root) {
+// Longer than the bubble's three lines at its widest card.
+const REPLY = Array(24).fill("scripted reply").join(" ");
+
+function ports(root, caption) {
     fs.mkdirSync(root, { recursive: true });
     const waiting = new Map();
     let collect = null;
@@ -48,6 +53,7 @@ function ports(root) {
         brain: {
             send: (e, done) => {
                 record("brain-send", e);
+                wait("reply-caption", () => caption({ gen: e.gen, role: "assistant", text: REPLY, stage: "partial", rev: 1 }));
                 wait("brain", () => {
                     record("brain-callback", e);
                     done("play", { interruptible: true }); done("brain-done");
@@ -57,10 +63,11 @@ function ports(root) {
                 record("brain-cancel", e);
                 const late = waiting.get("brain");
                 waiting.delete("brain");
+                waiting.delete("reply-caption");
                 if (late !== undefined) wait("late-brain", late);
                 done();
             },
-            close: e => { record("brain-close", e); waiting.delete("brain"); },
+            close: e => { record("brain-close", e); waiting.delete("brain"); waiting.delete("reply-caption"); },
             outcome: () => { throw new Error("scripted: unexpected-tool"); }
         },
         playback: {
@@ -111,7 +118,7 @@ function instrument(file, root, engine = "chained", mappedIndicator = false) {
     const changes = [
         ['engine: "chained",', "engine: " + JSON.stringify(engine) + ","],
         ['audio.playbackSource = engine.playbackSource;',
-            'audio.playbackSource = engine.playbackSource;\n                    const scripted = require("./scripted-fixture.js").ports(' + JSON.stringify(root) + ');\n' +
+            'audio.playbackSource = engine.playbackSource;\n                    const scripted = require("./scripted-fixture.js").ports(' + JSON.stringify(root) + ', e => runner.ports.transcript(e));\n' +
             '                    runner.ports.speech = scripted.speech;\n' +
             '                    Object.assign(runner.ports, { capture: scripted.capture, brain: scripted.brain, playback: scripted.playback });'],
         ['configured: configuration.kind === "ready", settings: context.settings',

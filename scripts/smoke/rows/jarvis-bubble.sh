@@ -63,6 +63,30 @@ print(sum(pixels[i:i+3]==c for i in range(0,len(pixels),3)))
   [[ $count =~ ^[0-9]+$ ]] || return 1
   [[ $count -gt 0 ]] && echo drawn || echo blank
 }
+# The fixture's assistant caption as the bubble draws it: one visible label
+# holding the whole text, cut at the token's three lines.
+jarvis_bubble_words() {
+  ipc smoke layerItems vgs.jarvis Label text,visible,lineCount,truncated | py_reply '
+import json,sys
+shown=[v for s,r,v in json.load(sys.stdin) if v["visible"] and v["text"]==sys.argv[1]]
+print("absent" if not shown else "three-lines" if len(shown)==1 and shown[0]["lineCount"]==3 and shown[0]["truncated"] else "unbounded")
+' "$jarvis_bubble_reply"
+}
+jarvis_bubble_caption() {
+  ipc smoke jarvisProcess | py_reply '
+import json,sys
+s=json.load(sys.stdin)["status"]; t=s.get("transcript")
+print("none" if t is None else "current" if t["gen"]==s["detail"]["state"]["gen"] else "stale")
+'
+}
+# After jarvis_bubble_begin: one thinking turn, with its caption on request.
+jarvis_bubble_think() { # [caption]
+  jarvis_key_talk_up
+  jarvis_key_commit
+  [[ ${1-} == caption ]] || return 0
+  jarvis_key_gate reply-caption
+  expect_poll "the service publishes this conversation's assistant caption" current jarvis_bubble_caption
+}
 jarvis_bubble_no_capture() {
   expect_poll "an unavailable indicator releases capture" closed jarvis_key_state capture
   expect "the daemon records indicator gone" gone jarvis_key_state indicator
@@ -149,6 +173,23 @@ jarvis_key_mute
 expect_poll "explicit unmute does not restore capture" off jarvis_key_state mute
 expect "unmute still leaves no capture" closed jarvis_key_state capture
 
+jarvis_bubble_reply="$(python3 -c 'print(" ".join(["scripted reply"] * 24))')"
+jarvis_bubble_begin
+jarvis_bubble_think caption
+expect_poll "the bubble draws Jarvis's words within three lines" three-lines jarvis_bubble_words
+expect "the worded bubble keeps its presented indicator" presented jarvis_bubble_state
+geometry expect_poll "the worded bubble stays at bottom centre" bottom-centre jarvis_bubble_geometry
+read -r words_x words_y < <(python3 -c 'import json,sys; x,y,w,h=json.loads(sys.argv[1]); print(round(x+w/2),round(y+h/2))' "$(control_box vgs:layer vgs.jarvis Label text "$jarvis_bubble_reply")")
+jarvis_bubble_pass "$words_x" "$words_y"
+jarvis_key_stop
+jarvis_key_stop_assertion
+jarvis_bubble_begin
+jarvis_bubble_think
+expect "the status still holds the ended conversation's caption" stale jarvis_bubble_caption
+expect "a new conversation draws none of the last one's words" absent jarvis_bubble_words
+jarvis_key_stop
+jarvis_key_stop_assertion
+
 jarvis_bubble_begin
 jarvis_bubble_launcher="$(ipc smoke jarvisProcess | jarvis_launcher_pid)" || exit 1
 jarvis_bubble_daemon="$(jarvis_descendants "$jarvis_bubble_launcher")" || exit 1
@@ -198,17 +239,21 @@ jarvis_key_stop
 jarvis_disable
 
 # Retain the actual host and key. Ignore only mapping/presentation in a
-# disposable plugin copy; the same lost-host assertion must turn red.
+# disposable plugin copy; the same lost-host assertion must turn red. The
+# words controls keep the caption on the wire and break one bubble rule each.
 jarvis_bubble_file="$repo/shell/plugins/vgs.jarvis/Bubble.qml"
 cp -- "$jarvis_bubble_file" "$sandbox/jarvis-bubble-before"
-for jarvis_bubble_mutant in geometry focus; do
+for jarvis_bubble_mutant in geometry focus words lines generation; do
   python3 - "$jarvis_bubble_file" "$jarvis_bubble_mutant" <<'PY'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); assert not p.is_symlink()
 needle,replacement={
     "geometry": ("anchors.bottomMargin: Theme.voiceBubble.margin", "anchors.bottomMargin: Theme.voiceBubble.margin + Theme.voiceBubble.gap"),
-    "focus": ("screen.name === service.focusedOutput", "true")
+    "focus": ("screen.name === service.focusedOutput", "true"),
+    "words": ('caption.role === "assistant"', "false"),
+    "lines": ("maximumLineCount: Theme.voiceBubble.textLines", "maximumLineCount: Theme.voiceBubble.textLines + 1"),
+    "generation": ("caption.gen === state.gen", "true")
 }[sys.argv[2]]
 s=p.read_text(); assert s.count(needle)==1
 changed=s.replace(needle,replacement); assert changed!=s
@@ -217,14 +262,29 @@ PY
   jarvis_rescan
   jarvis_enable
   jarvis_bubble_begin
-  if [[ $jarvis_bubble_mutant == geometry ]]; then
-    expect "control: a wrong bottom margin fails the same geometry reader" wrong-geometry jarvis_bubble_geometry
-  else
-    expect "control: add another output without changing focus" ok hypr output create headless SMOKE-JARVIS
-    expect_poll "control: ignoring focus fails the same output reader" wrong-output jarvis_bubble_focused
-    expect "control: remove the second output" ok hypr output remove SMOKE-JARVIS
-  fi
-  jarvis_key_talk_up
+  case "$jarvis_bubble_mutant" in
+    geometry)
+      expect "control: a wrong bottom margin fails the same geometry reader" wrong-geometry jarvis_bubble_geometry
+      jarvis_key_talk_up ;;
+    focus)
+      expect "control: add another output without changing focus" ok hypr output create headless SMOKE-JARVIS
+      expect_poll "control: ignoring focus fails the same output reader" wrong-output jarvis_bubble_focused
+      expect "control: remove the second output" ok hypr output remove SMOKE-JARVIS
+      jarvis_key_talk_up ;;
+    words)
+      jarvis_bubble_think caption
+      expect "control: dropping the consumer fails the same words reader" absent jarvis_bubble_words ;;
+    lines)
+      jarvis_bubble_think caption
+      expect_poll "control: a fourth line fails the same words reader" unbounded jarvis_bubble_words ;;
+    generation)
+      jarvis_bubble_think caption
+      jarvis_key_stop
+      jarvis_key_stop_assertion
+      jarvis_bubble_begin
+      jarvis_bubble_think
+      expect_poll "control: ignoring the conversation fails the same words reader" three-lines jarvis_bubble_words ;;
+  esac
   jarvis_key_stop
   jarvis_disable
   cp -- "$sandbox/jarvis-bubble-before" "$jarvis_bubble_file"

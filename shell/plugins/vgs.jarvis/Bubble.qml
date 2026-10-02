@@ -27,6 +27,13 @@ Item {
         : phase[0].toUpperCase() + phase.slice(1)
     readonly property var levels: service === null || service.shell === null ? {}
         : service.shell.status.values.level || {}
+    readonly property var caption: service === null || service.shell === null ? null
+        : service.shell.status.values.transcript || null
+    // The user's words while they arrive, then Jarvis's for this conversation.
+    // The status keeps an ended conversation's caption until the next one.
+    readonly property string words: state === null ? ""
+        : state.turn.kind === "collecting" ? state.turn.partial
+        : caption !== null && caption.role === "assistant" && caption.gen === state.gen ? caption.text : ""
 
     visible: shown
     Component.onCompleted: if (service !== null) service.attachBubble(root)
@@ -71,7 +78,7 @@ Item {
                         Layout.fillWidth: true
                         visible: text !== ""
                         role: "body"
-                        text: root.state !== null && root.state.turn.kind === "collecting" ? root.state.turn.partial : ""
+                        text: root.words
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                         maximumLineCount: Theme.voiceBubble.textLines
