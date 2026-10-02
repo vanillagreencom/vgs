@@ -1897,6 +1897,35 @@ builds() { ipc smoke buildCount; }
 plugin_known() { ipc shell listPlugins | python3 -c 'import json,sys; print(any(p["id"]==sys.argv[1] for p in json.load(sys.stdin)["plugins"]))' "$1"; }
 plugin_enabled() { ipc shell listPlugins | python3 -c 'import json,sys; rows=[p["enabled"] for p in json.load(sys.stdin)["plugins"] if p["id"]==sys.argv[1]]; print(rows[0] if rows else "absent")' "$1"; }
 record_exists() { ipc shell built | python3 -c 'import json,sys; print(any(r["id"]==sys.argv[1] for rows in json.load(sys.stdin).values() for r in rows))' "$1"; }
+# window_panes: the ids of the panes the window host's records hold, the
+# one a panes holder mounted.
+window_panes() { ipc shell built | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin).get("window", []) if r["kind"] == "pane"], separators=(",", ":")))'; }
+# install_plugin_copy SOURCE ID NAME [ORDER [GROUP]]: the fixture plugin
+# SOURCE under scripts/smoke/fixtures/plugins installed as plugin ID named
+# NAME in the user's plugins directory, replacing any copy there; a pane
+# fixture's `pane` takes ORDER, 10 by default, and GROUP when given. The
+# shell finds it on the next rescan, disabled, as every installed plugin
+# starts.
+install_plugin_copy() { # SOURCE ID NAME [ORDER [GROUP]]
+  local source="$1" id="$2" name="$3" order="${4:-10}" group="${5:-}" target
+  target="$home/.config/vgs/plugins/$id"
+  rm -rf -- "${target:?}"
+  mkdir -p -- "$target"
+  cp -R "$repo/scripts/smoke/fixtures/plugins/$source/." "$target/"
+  python3 - "$target/manifest.json" "$id" "$name" "$order" "$group" <<'PY'
+import json, os, sys
+path, plugin_id, name, order, group = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4]), sys.argv[5]
+doc = json.load(open(path))
+doc["id"] = plugin_id
+doc["name"] = name
+if "pane" in doc:
+    doc["pane"]["order"] = order
+    if group:
+        doc["pane"]["group"] = group
+json.dump(doc, open(path + ".tmp", "w"))
+os.replace(path + ".tmp", path)
+PY
+}
 
 # Floating TUIs reach a stand-in xdg-terminal-exec in the shell's own PATH
 # directory, which terminal_stand_in writes and no row writes otherwise

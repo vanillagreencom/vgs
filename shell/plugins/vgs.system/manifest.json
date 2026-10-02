@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.system",
+  "name": "System",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "One window for every System section, such as sound, displays and network: a sidebar of the enabled sections and the chosen section beside it. Open it with SUPER+COMMA or a section's own Settings link.",
+  "license": "MIT",
+  "icon": "sliders-horizontal",
+  "kinds": [
+    "window",
+    "service"
+  ],
+  "entryPoints": {
+    "window": "Window.qml",
+    "service": "Service.qml"
+  },
+  "capabilities": [
+    "ipc",
+    "panes",
+    "run",
+    "screens",
+    "shortcut",
+    "surfaces"
+  ],
+  "settings": {},
+  "hyprland": {
+    "binds": [
+      { "shortcut": "toggle", "key": "SUPER+COMMA" }
+    ]
+  }
+}

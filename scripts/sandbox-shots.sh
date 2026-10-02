@@ -15,8 +15,8 @@
 #
 
 # SCENE is gallery, settings, focus, plugin-pages, manager, launcher,
-# notifications, bar, panels, devtools, dialog, lock, polkit, narrow,
-# theme-browser, wallpaper-browser or automations. settings takes the
+# notifications, bar, panels, devtools, system, dialog, lock, polkit,
+# narrow, theme-browser, wallpaper-browser or automations. settings takes the
 # automations' and the Jarvis pages among the plugin pages, each when the
 # tree ships its plugin. plugin-pages, taken only when named, opens every
 # plugin the Settings window lists, in that window's order, and captures
@@ -25,7 +25,8 @@
 # hover; panels is the Agent Warden panel, the updates flyout and the
 # themes panel, each opened from its widget over planted status or
 # packages, the themes panel's apply held and answered by a stand-in
-# runner that changes no theme; devtools is the Dev Tools window; focus is
+# runner that changes no theme; devtools is the Dev Tools window; system
+# is the System window as it opens with no System section enabled; focus is
 # the keyboard focus proof set; dialog is the core's requirement notice;
 # lock is the vgs.lock screen, locked and after wrong attempts; polkit is
 # the vgs.polkit prompt, asking and after a failed attempt; narrow holds a
@@ -143,7 +144,7 @@ while [[ $# -gt 0 ]]; do
     --keep) keep=true; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
 
-    gallery|settings|focus|plugin-pages|manager|launcher|notifications|bar|panels|devtools|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser|automations) scenes+=("$1"); shift ;;
+    gallery|settings|focus|plugin-pages|manager|launcher|notifications|bar|panels|devtools|system|dialog|lock|polkit|narrow|theme-browser|wallpaper-browser|automations) scenes+=("$1"); shift ;;
     *) printf 'sandbox-shots: refused: argument=%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -221,6 +222,7 @@ scene_ships() {
     bar) ships_plugin vgs.bar vgs.launcher vgs.agent-warden vgs.updates vgs.themes ;;
     panels) ships_plugin vgs.agent-warden vgs.updates vgs.themes ;;
     devtools) ships_plugin vgs.devtools ;;
+    system) ships_plugin vgs.system ;;
     theme-browser|wallpaper-browser) ships_plugin vgs.themes ;;
     dialog) [[ -f $tree/shell/Hosts/NoticeHost.qml ]] ;;
     lock) ships_plugin vgs.lock ;;
@@ -234,7 +236,7 @@ if [[ ${#scenes[@]} -eq 0 ]]; then
     scenes=(gallery)
     [[ -z $manager_scene ]] || scenes+=("$manager_scene")
   else
-    for scene in gallery settings focus launcher notifications bar panels devtools dialog lock polkit automations narrow; do
+    for scene in gallery settings focus launcher notifications bar panels devtools system dialog lock polkit automations narrow; do
       if scene_ships "$scene"; then scenes+=("$scene"); fi
     done
   fi
@@ -1482,6 +1484,22 @@ scene_devtools() { # MODE
   done
   expect "the Dev Tools window hides" ok ipc shell hide window vgs.devtools
   expect_poll "the Dev Tools window is gone" hidden devtools_shown
+}
+
+# The System window as it opens with no System section enabled: the
+# sidebar holds Shell & Plugins alone and the page its empty state. The
+# sandbox starts the plugin disabled, so the scene enables it for the shot
+# and disables it again.
+system_shown() { [[ $(ipc smoke instanceGeometry window vgs.system) != absent ]] && echo shown || echo hidden; }
+scene_system() { # MODE
+  expect "enabling vgs.system for its shot is allowed" ok ipc shell setPluginEnabled vgs.system true
+  expect "the System window summons" ok ipc shell summon window vgs.system '{}'
+  expect_poll "the System window is shown" shown system_shown
+  park_pointer
+  take "system-$1"
+  expect "the System window hides" ok ipc shell hide window vgs.system
+  expect_poll "the System window is gone" hidden system_shown
+  expect "disabling vgs.system after its shot is allowed" ok ipc shell setPluginEnabled vgs.system false
 }
 
 # The core's requirement notice, raised by enabling the acme.needs

@@ -9,29 +9,13 @@ pane_saved="$sandbox/shell-before-panes.json"
 pane_bar_key=""
 cp -- "$pane_file" "$pane_saved"
 
-install_plugin_copy() { # SOURCE ID NAME [ORDER]
-  local source="$1" id="$2" name="$3" order="${4:-10}" target
-  target="$home/.config/vgs/plugins/$id"
-  rm -rf -- "${target:?}"
-  mkdir -p -- "$target"
-  cp -R "$repo/scripts/smoke/fixtures/plugins/$source/." "$target/"
-  python3 - "$target/manifest.json" "$id" "$name" "$order" <<'PY'
-import json, os, sys
-path, plugin_id, name, order = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
-doc = json.load(open(path))
-doc["id"] = plugin_id
-doc["name"] = name
-if "pane" in doc:
-    doc["pane"]["order"] = order
-json.dump(doc, open(path + ".tmp", "w"))
-os.replace(path + ".tmp", path)
-PY
-}
-
+# The fixture holder needs the exclusive `panes` capability, which
+# vgs.system holds while enabled, as it is in the default set
+# rows/start-order.sh leaves; the restore below puts its state back.
+expect "disabling vgs.system, the shipped panes holder, is allowed" ok ipc shell setPluginEnabled vgs.system false
 host_list() { ipc smoke readInstance window acme.panehost paneRows | py_reply 'import json,sys; print(json.dumps(json.loads(json.load(sys.stdin)), separators=(",", ":")))'; }
 host_list_ids() { host_list | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin)], separators=(",", ":")))'; }
 host_list_placed() { host_list | py_reply 'import json,sys; print(json.dumps([r["placed"] for r in json.load(sys.stdin) if r["id"] == "acme.pane"][0]))'; }
-window_panes() { ipc shell built | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin).get("window", []) if r["kind"] == "pane"], separators=(",", ":")))'; }
 pane_idle_watches() { ipc shell lent | py_reply 'import json,sys; print(json.dumps(sorted(w["id"] for w in json.load(sys.stdin)["idle"] if w["id"].startswith("acme.pane")), separators=(",", ":")))'; }
 settings_pane_label() { ipc smoke readInstance window vgs.settings plugins | py_reply 'import json,sys; print(json.dumps([p["settings"]["label"] for p in json.load(sys.stdin) if p["id"] == "acme.pane"][0]))'; }
 

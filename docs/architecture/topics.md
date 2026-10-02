@@ -28,6 +28,7 @@ One line per architecture document: the change to read it before. [overview.md](
 - [jarvis.md](jarvis.md): read before implementing a Jarvis core boundary or its voice service.
 - [lock-polkit.md](lock-polkit.md): read before touching `vgsh lock`, `vgs.lock`, its PAM stack or sleep hook, the `idle` capability, `vgs.polkit` or their smoke rows.
 - [manager.md](manager.md): read before touching enablement, install, update, remove or the Settings window.
+- [system-window.md](system-window.md): read before touching `vgs.system`, the System window that holds the `panes` capability.
 - [placement.md](placement.md): read before touching whether a bar widget is placed, `setPlaced` or the Show in bar switch.
 - [configuration.md](configuration.md): read before touching the configuration files or their judge.
 - [design-system.md](design-system.md): read before touching a token, the theme judge, `Theme`, or any value a surface draws with.

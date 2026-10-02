@@ -398,6 +398,11 @@ f share/vgs/shell/plugins/vgs.settings/StatusRow.qml
 f share/vgs/shell/plugins/vgs.settings/Widget.qml
 f share/vgs/shell/plugins/vgs.settings/Window.qml
 f share/vgs/shell/plugins/vgs.settings/manifest.json
+f share/vgs/shell/plugins/vgs.system/Memory.js
+f share/vgs/shell/plugins/vgs.system/Service.qml
+f share/vgs/shell/plugins/vgs.system/Sidebar.qml
+f share/vgs/shell/plugins/vgs.system/Window.qml
+f share/vgs/shell/plugins/vgs.system/manifest.json
 f share/vgs/shell/plugins/vgs.themes/Background.qml
 f share/vgs/shell/plugins/vgs.themes/Browser.qml
 f share/vgs/shell/plugins/vgs.themes/BrowserLogic.js

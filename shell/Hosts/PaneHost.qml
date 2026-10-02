@@ -20,7 +20,12 @@ Scope {
             required property string holderHostKey
             property bool sawInstance: false
 
+            // The item fills the holder's container and takes the pane's
+            // implicit size as its own, so a holder can size a scrolling
+            // container to the pane.
             anchors.fill: parent
+            implicitWidth: slot.instance === null ? 0 : slot.instance.implicitWidth
+            implicitHeight: slot.instance === null ? 0 : slot.instance.implicitHeight
 
             function focusInitial() {
                 const item = slot.instance;

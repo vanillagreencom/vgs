@@ -247,6 +247,9 @@ smoke_row key-capture
 smoke_row key-passthrough
 # This row restarts the shell for its controls, so it runs with the tail rows that do the same.
 smoke_row panes
+# After panes, which removes its fixture holder: vgs.system holds `panes`
+# here, and this row restarts the shell for a control too.
+smoke_row system-window
 # After every row that opens a TUI: the stand-in terminal ran no plugin
 # script but a fixture's.
 smoke_row tui-guard
