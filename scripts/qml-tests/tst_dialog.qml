@@ -15,10 +15,11 @@ import qs.Unit
 // an initial focus field taking the focus and the typing, its Enter and
 // Escape answering and Tab cycling through it; a Select listed in
 // `tabItems` taking Tab and Backtab ahead of the field, and skipped while
-// hidden; and a theme change reaching the card and the roles.
+// hidden; the card taking the press, the hover and the wheel from what lies
+// under it; and a theme change reaching the card and the roles.
 Item {
     id: root
-    width: 500
+    width: 800
     height: 600
 
     Button { id: outside; text: "Outside" }
@@ -45,7 +46,7 @@ Item {
     }
     Dialog {
         id: emptyBody
-        x: 260
+        x: 400
         y: 300
         title: "Download wallpaper?"
         message: "The file is ready."
@@ -53,7 +54,7 @@ Item {
     }
     Dialog {
         id: hiddenBody
-        x: 260
+        x: 400
         y: 420
         title: "Apply theme?"
         actions: [{ label: "Cancel", role: "cancel" }, { label: "Apply", role: "accept" }]
@@ -61,7 +62,7 @@ Item {
     }
     Dialog {
         id: prompt
-        x: 260
+        x: 400
         y: 40
         title: "Authenticate"
         initialFocus: secret
@@ -70,7 +71,7 @@ Item {
     }
     Dialog {
         id: chooser
-        x: 260
+        x: 400
         y: 180
         title: "Authenticate"
         initialFocus: chooserSecret
@@ -81,7 +82,7 @@ Item {
     }
     Dialog {
         id: disclosed
-        x: 260
+        x: 400
         y: 320
         title: "Needs one command"
         tabItems: [shown.toggle, shown.copyButton]
@@ -436,6 +437,36 @@ Item {
             verify(screenHeight > 0, "the test window has a screen");
             tryCompare(made, "maximumHeight", screenHeight * Theme.dialog.maxHeightShare);
             window.destroy();
+        }
+
+        // A dialog over an area that takes every button, the hover and the
+        // wheel, as a scrim does: a press of either button, the hover and
+        // the wheel on the card's empty space, its top padding, reach
+        // nothing under it, while a press beside the card reaches the area.
+        function test_its_card_takes_the_pointer_from_what_lies_under_it() {
+            const stage = Qt.createQmlObject("import QtQuick\nimport qs.Ui\nItem {\n"
+                + "    width: 400; height: 500\n"
+                + "    property int presses: 0\n"
+                + "    property int wheels: 0\n"
+                + "    property alias beneath: beneath\n"
+                + "    property alias dialog: covering\n"
+                + "    MouseArea { id: beneath; anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onPressed: parent.presses++; onWheel: wheel => parent.wheels++ }\n"
+                + "    Dialog { id: covering; width: 360; title: \"Covering\"; actions: [{ label: \"Cancel\", role: \"cancel\" }] }\n"
+                + "}", root);
+            const x = stage.dialog.width / 2;
+            tryVerify(() => stage.dialog.height > 0 && stage.dialog.height < stage.height - 10, 1000, "the dialog leaves room beside it");
+            mouseMove(stage, x, 3);
+            wait(50);
+            verify(!stage.beneath.containsMouse, "the area under the card is hovered");
+            mouseClick(stage, x, 3);
+            mouseClick(stage, x, 3, Qt.RightButton);
+            mouseWheel(stage, x, 3, 0, -120);
+            wait(50);
+            compare(stage.presses, 0, "a press on the card reaches the area");
+            compare(stage.wheels, 0, "the wheel on the card reaches the area");
+            mouseClick(stage, x, stage.height - 5);
+            compare(stage.presses, 1, "a press beside the card reaches the area");
+            stage.destroy();
         }
 
         function test_theme_change_reaches_the_card_and_the_roles() {

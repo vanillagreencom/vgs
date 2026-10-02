@@ -7,7 +7,10 @@ import "../foundation/KeyNavLogic.js" as KeyNavLogic
 // A confirmation card: a title, a message, the content declared inside it
 // and a row of actions. It is a card, not a window: the host places it in
 // its own surface and owns its lifetime, so `accepted` and `rejected`
-// report the answer and the dialog hides nothing.
+// report the answer and the dialog hides nothing. Its card takes the
+// presses, the hover and the wheel that land on it and that no control in
+// it takes, so nothing under it answers, such as a scrim that rejects the
+// dialog on a click away.
 //
 // `actions` is a list of `{ label, role, variant, enabled }`. `role` is
 // `accept` or `cancel`, and pressing the action emits `accepted` or
@@ -202,6 +205,17 @@ FocusScope {
         color: Theme.dialog.background
         border.width: Theme.border.thin
         border.color: Theme.dialog.border
+
+        // pointer-cursor-exempt: the card's empty space, not a control
+        // keyboard-path: the card takes no action; its actions take Tab, Enter and Escape
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            // A MouseArea passes hover, and a wheel no handler accepts, to
+            // the items under it.
+            hoverEnabled: true
+            onWheel: wheel => { wheel.accepted = true; }
+        }
     }
 
     Pane {
