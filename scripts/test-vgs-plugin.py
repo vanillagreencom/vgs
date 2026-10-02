@@ -97,7 +97,7 @@ def pointer_cursor_rows(tmp):
         if status:
             found = missing == [f"cursor-missing {entry}:7 MouseArea: it declares no PointerCursor and carries no exemption"]
         else:
-            found = not missing and "check-pointer-cursor: ok files=1 clickable=1 exempt=0" in lines
+            found = not missing and "check-pointer-cursor: ok files=1 clickable=1 exempt=0 views=0" in lines
         report(name, checked.returncode == status and lines[-1] == last and found, f"exit={checked.returncode}\n{checked.stdout}{checked.stderr}")
 
 
