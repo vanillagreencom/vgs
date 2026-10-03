@@ -11,6 +11,7 @@ vgs.notifications-inbox.webp	notifications	notifications-dark-inbox	content
 vgs.notifications-toasts.webp	notifications	notifications-dark-toasts	content
 vgs.polkit-prompt.webp	polkit	polkit-dark	full
 vgs.settings-page.webp	settings	settings-dark-keys	content
+vgs.displays-pane.webp	system	system-dark-displays	content
 vgs.system-window.webp	system	system-dark	content
 vgs.themes-browser.webp	theme-browser	theme-browser-dark-installed-frankenstein	full
 vgs.updates-flyout.webp	panels	panels-dark-updates-open	content

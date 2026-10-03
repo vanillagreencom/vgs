@@ -12,6 +12,10 @@ Item {
 
     onSystemStateChanged: publish()
 
+    // The plugin's own Allow, as a section's pane presses it: the
+    // `status` capability's act on KEY, scoped to this plugin.
+    function statusAct(key) { return shell.status.act(key); }
+
     function publish() {
         if (systemState === null) return;
         const step = systemState["apple-displays"];

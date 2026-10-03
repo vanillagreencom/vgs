@@ -428,15 +428,23 @@ class Hid(Case):
                 self.assertEqual((world.stored("hidraw0"), world.stored("hidraw2")), (None, "0150c300000000"))
 
     def test_s08_world_without_usb_parent(self):
+        # The smoke world: a Pro Display XDR and two Studio Displays with one
+        # serial, which only their HID devices' own directories tell apart.
         world = self.world()
         world.start(S08_WORLD)
-        shown = self.only(world.listing(), "hidraw")
-        self.assertEqual(shown, {"id": "hidraw:class/hidraw/hidraw0/device", "backend": "hidraw",
-                                 "label": "Apple Pro Display XDR", "state": "ready", "percent": 50, "outputs": [],
-                                 "product": XDR, "identity": {"parent": "class/hidraw/hidraw0/device",
-                                                              "serial": "VGSSMOKEXDR01"}})
-        self.assertEqual(world.set(shown["id"], 50), (0, {"id": shown["id"], "percent": 50}))
+        shown = [d for d in world.listing()["displays"] if d["backend"] == "hidraw"]
+        parent = "class/hidraw/{}/device".format
+        self.assertEqual(shown, [
+            {"id": "hidraw:" + parent("hidraw0"), "backend": "hidraw", "label": "Apple Pro Display XDR", "state": "ready",
+             "percent": 50, "outputs": [], "product": XDR, "identity": {"parent": parent("hidraw0"), "serial": "VGSSMOKEXDR01"}},
+            {"id": "hidraw:" + parent("hidraw1"), "backend": "hidraw", "label": "Apple Studio Display", "state": "ready",
+             "percent": 50, "outputs": [], "product": STUDIO, "identity": {"parent": parent("hidraw1"), "serial": "VGSSMOKESTUDIO"}},
+            {"id": "hidraw:" + parent("hidraw2"), "backend": "hidraw", "label": "Apple Studio Display", "state": "ready",
+             "percent": 70, "outputs": [], "product": STUDIO, "identity": {"parent": parent("hidraw2"), "serial": "VGSSMOKESTUDIO"}}])
+        self.assertEqual(world.set(shown[0]["id"], 50), (0, {"id": shown[0]["id"], "percent": 50}))
         self.assertEqual(world.stored("hidraw0"), "01706200000000")
+        self.assertEqual(world.set(shown[2]["id"], 100), (0, {"id": shown[2]["id"], "percent": 100}))
+        self.assertEqual((world.stored("hidraw1"), world.stored("hidraw2")), (None, "0160ea00000000"))
 
     def test_output_mapping(self):
         xdr1 = {"name": "DP-1", "model": "ProDisplayXDR", "serial": "S1"}

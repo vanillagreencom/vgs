@@ -168,8 +168,12 @@ Singleton {
         layers: ctx => ({
             show: component => Layers.show(ctx, component)
         }),
+        // `act` runs the calling plugin's own status action, judged and run
+        // as the manager's act is for that plugin; a key of another plugin
+        // is one this manifest does not declare.
         status: ctx => ({
             set: (key, value) => PluginStatus.set(ctx, key, value),
+            act: key => root.managerAct(ctx.id, key),
             get values() { return PluginStatus.valuesOf(ctx.id); },
             get revision() { return PluginStatus.revisionOf(ctx.id); }
         }),

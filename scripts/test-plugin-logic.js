@@ -154,7 +154,7 @@ function suite(ctx, check) {
         ["format names datetime", { settings: { a: "HH:mm" }, schema: { a: { type: "string", label: "A", presets: [{ value: "HH:mm" }], format: "strftime" } } }, "schema.a.format must be one of datetime"],
         ["datetime presets are judged", { settings: { a: "HH:mm" }, schema: { a: { type: "string", label: "A", presets: [{ value: "'abc" }], format: "datetime" } } }, "schema.a.presets.0.value does not fit its schema: want=datetime-format reason=unclosed-quote"],
         ["unit needs number", { settings: { a: "x" }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }], unit: "seconds" } } }, "schema.a.unit needs type number"],
-        ["unit is known", { settings: { a: 2 }, schema: { a: { type: "number", label: "A", unit: "weeks" } } }, "schema.a.unit must be one of seconds, minutes, hours, days"],
+        ["unit is known", { settings: { a: 2 }, schema: { a: { type: "number", label: "A", unit: "weeks" } } }, "schema.a.unit must be one of seconds, minutes, hours, days, %"],
         ["schema entry without a default", { schema: { a: { type: "string", label: "A", presets: [{ value: "x" }] } } }, "schema.a has no default in settings"],
         ["default of the wrong type", { settings: { a: 3 }, schema: { a: { type: "string", label: "A", presets: [{ value: "x" }] } } }, "settings.a does not fit its schema: want=string"],
         ["enum default outside its options", { settings: { a: "z" }, schema: { a: { type: "enum", label: "A", options: ["x", "y"] } } }, "settings.a does not fit its schema: want=one-of:x|y"],

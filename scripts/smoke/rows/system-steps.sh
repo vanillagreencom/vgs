@@ -1,12 +1,13 @@
 # System steps, D081, over the sandbox's device fakes
 # (docs/architecture/validation-smoke-devices.md). bin/vgsh-system pins its
 # PATH to the system directories and derives every path from its
-# `prefix=` line, so before the fixture is enabled the row rewrites the
-# sandbox copy's line to a tree of its own. That tree's sys and dev are
-# links to the fakes' sysfs and device trees, whose HID fake plants one
-# Pro Display XDR as hidraw0; the row closes that node to the user and
-# gives its mode back at the end. Its udevadm, systemctl and gum are links
-# to the fakes' stand-ins, answering from device_reply; for the trigger
+# `prefix=` line, so before the fixture is enabled devices_system_tree
+# rewrites the sandbox copy's line to the fakes' tree. That tree's sys and
+# dev are links to the fakes' sysfs and device trees, whose HID fake plants
+# a Pro Display XDR as hidraw0 beside two Studio Displays; the row closes
+# hidraw0 to the user and gives its mode back at the end. Its udevadm,
+# systemctl and gum are links to
+# the fakes' stand-ins, answering from device_reply; for the trigger
 # the row stands over the udevadm stand-in with a script that opens the
 # node while the VGS rule exists and then runs the stand-in, which
 # records the call. The rest of the tree is not a device: the records,
@@ -31,7 +32,10 @@
 # the step reads ready until a plugin scan ends, then needed. The refusals
 # are the row's controls: a disabled fixture's act and a ready step's act
 # are refused and start no terminal, and the readings before the run's end
-# and before the scan show each flip is that re-probe's.
+# and before the scan show each flip is that re-probe's. The fixture's own
+# Allow then goes through `status.act`, scoped to the calling plugin: the
+# same step opens core/system, and an act on the status fixture's `token`
+# reads undeclared and starts no terminal, its control.
 # rows/auth-sentinel.sh, the last row, reads the log empty. Every reading
 # is expect_poll's: 25 reads 0.2 s apart.
 set -euo pipefail
@@ -41,23 +45,15 @@ if ! command -v unshare >/dev/null 2>&1 || ! unshare -r true 2>/dev/null; then
   return 0
 fi
 command -v script >/dev/null 2>&1 || { fail "system steps: script(1) is missing"; return 0; }
-system_root="$sandbox/system-root"
+system_root="$devices_system_root"
 system_bin="$system_root/usr/bin"
 system_hidraw="$devices_dev_root/hidraw0"
 system_rule="$system_root/etc/udev/rules.d/60-vgs-apple-displays.rules"
 system_calls="$sandbox/system-sudo.calls"
 system_question="Run these commands as root?"
-mkdir -p "$system_bin" "$system_root/etc/udev/rules.d" "$system_root/var/lib" "$system_root/proc/sys/kernel/random"
-ln -s -- "$devices_sysfs_root" "$system_root/sys"
-ln -s -- "$devices_dev_root" "$system_root/dev"
-for tool in awk bash cat chmod env flock id install mkdir mv readlink rm sed sha256sum sleep kill tee touch; do
-  tool_bin="$(command -v "$tool")" || { fail "system steps: $tool is missing"; return 0; }
-  ln -s -- "$tool_bin" "$system_bin/$tool"
-done
-for tool in udevadm systemctl gum; do ln -s -- "$shim/$tool" "$system_bin/$tool"; done
+expect "the sandbox copy's system steps resolve in the fakes' tree" prefixed devices_system_tree
 system_hidraw_mode="$(stat -c %a -- "$system_hidraw")" || { fail "system steps: the HID fake planted no hidraw0"; return 0; }
 chmod 0000 "$system_hidraw"
-printf '11111111-2222-3333-4444-555555555555\n' >"$system_root/proc/sys/kernel/random/boot_id"
 printf '#!/bin/sh\nout="$(%q "$@")" || exit $?\nprintf "%%s\\n" "$out" | sed "s/^%s /0 /"\n' "$(command -v stat)" "$(id -u)" >"$system_bin/stat"
 chmod 755 "$system_bin/stat"
 cp -- "$shim/sudo" "$system_bin/sudo"
@@ -68,17 +64,6 @@ done
 device_reply gum 0 "" confirm -- "$system_question"
 device_reply udevadm 0 "" control --reload
 device_reply udevadm 0 "" trigger --subsystem-match=hidraw --action=change --settle
-system_prefix() { python3 - "$repo/bin/vgsh-system" "$system_root" <<'PY'
-import sys
-path, root = sys.argv[1:]
-text = open(path).read()
-if text.count("\nprefix=\n") != 1:
-    print("prefix-line-count=%d" % text.count("\nprefix=\n")); sys.exit()
-open(path, "w").write(text.replace("\nprefix=\n", "\nprefix=" + root + "\n"))
-print("prefixed")
-PY
-}
-expect "the sandbox copy's system steps resolve in the row's tree" prefixed system_prefix
 sentinel_of() { if grep -q -F -- "$auth_log" "$1"; then echo sentinel; else echo replaced; fi; }
 expect "the tree's sudo is the harness's sentinel" sentinel sentinel_of "$system_bin/sudo"
 
@@ -150,6 +135,21 @@ chmod 0000 "$system_hidraw"
 expect "the core reads the step ready until a scan ends" "ready granted" system_core
 expect "a rescan with the node closed again answers ok" ok ipc shell rescanPlugins
 expect_poll "a plugin scan's end probes again and the step reads needed" "needed hidraw-denied" system_core
+# The plugin's own Allow, as a section's pane presses it: `status.act`
+# judges the key against the calling plugin's manifest alone, so the
+# status fixture's `token`, an action of another plugin, is undeclared.
+system_act() { ipc smoke invokeInstance service acme.system statusAct "$1"; }
+forget_record
+expect "the fixture's act on another plugin's key is refused" "refused: action=token reason=undeclared" system_act token
+expect "the refused act on another plugin's key started no terminal" absent recorded
+expect_poll "the needed step offers the fixture's own Allow again" '{"apple": {"tone": "warning", "text": "needed hidraw-denied", "action": true}}' system_status
+hold_runs
+expect "the fixture's own Allow, through status.act, answers ok" ok system_act apple
+expect_poll "status.act hands the terminal vgsh system apply with its step" \
+  "$(core_words core/system "System setup" org.vgs.tui system apply apple-displays)" recorded
+release_runs
+expect_run_end "the status.act core/system run ends" core/system
+forget_record
 expect "disabling the system fixture is allowed" ok ipc shell setPluginEnabled acme.system false
 expect_poll "no plugin holds system once the fixture is disabled" '[]' system_holders
 expect "the manager refuses Allow while the fixture is disabled" "refused: action=apple reason=disabled" settings_act acme.system apple

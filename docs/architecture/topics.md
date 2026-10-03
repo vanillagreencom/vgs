@@ -71,7 +71,8 @@ One line per architecture document: the change to read it before. [overview.md](
 - [validation-smoke-host.md](validation-smoke-host.md): read before touching a sentinel, the stand-in terminal, a host command's stand-in in the shell's stand-in directory or a row that presses a button which opens a TUI.
 - [validation-smoke-devices.md](validation-smoke-devices.md): read before touching a device fake, a device command's stand-in, the device guard or a System row.
 - [runtime-devices.md](runtime-devices.md): read before a plugin reads Quickshell's `Bluetooth`, `Networking` or `Pipewire`.
-- [displays.md](displays.md): read before touching `vgs.displays` or its brightness helper, a display's identity or output mapping, or a brightness access state.
+- [displays.md](displays.md): read before touching the `vgs.displays` brightness helper, a display's identity or output mapping, or a brightness access state.
+- [displays-plugin.md](displays-plugin.md): read before touching the `vgs.displays` service, widget, flyout, pane, brightness keys, on-screen display or assignments file.
 - [validation-smoke-faults.md](validation-smoke-faults.md): read before touching a sandbox fault the smoke excuses, a mode a row holds on the nested output, or `scripts/smoke/verdict.sh`.
 - [validation-smoke-shots.md](validation-smoke-shots.md): read before touching `scripts/sandbox-shots.sh`, a scene it takes, `scripts/smoke/shot.sh` or the held mode a shot reads.
 - [validation-latency.md](validation-latency.md): read before touching a latency the smoke reads or its budget.

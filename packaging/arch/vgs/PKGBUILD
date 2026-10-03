@@ -57,6 +57,8 @@ optdepends=(
   'uv: installs the locked Jarvis local voice runtime'
   'glib2: gio, opens files and web links for Jarvis'
   'nvidia-utils: verifies a selected Jarvis CUDA local voice tier'
+  'ddcutil: brightness of external displays in the Displays plugin'
+  'brightnessctl: brightness of a laptop built-in display in the Displays plugin'
   'vsys: the agent dashboard and warden the Agent Warden plugin reads'
   'mise: Dev Tools installs, updates and removes developer tools'
   'cronie: crontab, which schedules automations where no systemd user manager answers'

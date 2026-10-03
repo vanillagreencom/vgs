@@ -1269,6 +1269,14 @@ Scope {
             return -1;
         }
         function invokeInstance(hostKey: string, id: string, name: string, arg: string): string { return root.invoke(hostKey, id, name, arg); }
+        // Calls the instance's member NAME with ARG COUNT times in one turn,
+        // as a burst of input events lands between two frames: the answers,
+        // one JSON list.
+        function invokeBurst(hostKey: string, id: string, name: string, arg: string, count: int): string {
+            const answers = [];
+            for (let i = 0; i < count; i++) answers.push(root.invoke(hostKey, id, name, arg));
+            return root.json(answers);
+        }
         // Every StatusRow under an instance, in tree order, as the type
         // names of its descendants that take an edit: a text input, a text
         // edit that is not read-only, a checkable control, or an item with

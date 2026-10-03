@@ -86,6 +86,7 @@ Fedora follows in 0.1.x through the COPR `vanillagreen/vgs`. Debian, Ubuntu, ope
 | [Bar](shell/plugins/vgs.bar/README.md) | Shows workspaces, the clock and plugin buttons at the top of each screen. |
 | [Settings](shell/plugins/vgs.settings/README.md) | A window that lists every plugin and opens a page for each, with its details, settings and keys. `SUPER+M` or the gear in the bar opens it. |
 | [System](shell/plugins/vgs.system/README.md) | Change sound, displays, network and other system settings in one window. `SUPER+COMMA` opens it. |
+| [Displays](shell/plugins/vgs.displays/README.md) | Set the brightness of each display, from the bar, the brightness keys or System → Displays. Apple Pro Display XDR and Studio Display work too. |
 | [Themes](shell/plugins/vgs.themes/README.md) | Choose themes and wallpapers for your desktop and supported applications. |
 | [Launcher](shell/plugins/vgs.launcher/README.md) | A search field over the screen that finds applications, menu entries and files. `SUPER+SPACE` opens it. |
 | [Notifications](shell/plugins/vgs.notifications/README.md) | The desktop notification daemon: notifications at the top of every screen, an Inbox and History panel, and Silence. `SUPER+N` opens the panel. |

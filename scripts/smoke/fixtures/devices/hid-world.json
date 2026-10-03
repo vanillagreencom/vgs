@@ -1,6 +1,10 @@
 {
   "devices": [
     { "name": "hidraw0", "vendor": "05ac", "product": "9243", "hidName": "Apple Inc. Pro Display XDR", "serial": "VGSSMOKEXDR01",
-      "reports": { "1": "01a86100000000" } }
+      "reports": { "1": "01a86100000000" } },
+    { "name": "hidraw1", "vendor": "05ac", "product": "1114", "hidName": "Apple Inc. Studio Display", "serial": "VGSSMOKESTUDIO",
+      "reports": { "1": "01f87500000000" } },
+    { "name": "hidraw2", "vendor": "05ac", "product": "1114", "hidName": "Apple Inc. Studio Display", "serial": "VGSSMOKESTUDIO",
+      "reports": { "1": "0188a400000000" } }
   ]
 }

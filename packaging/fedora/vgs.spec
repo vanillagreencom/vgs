@@ -54,6 +54,8 @@ Recommends:     ImageMagick
 Recommends:     grim
 Recommends:     slurp
 Recommends:     tesseract
+Recommends:     ddcutil
+Recommends:     brightnessctl
 Conflicts:      vgs-shell
 # end runtime dependencies
 

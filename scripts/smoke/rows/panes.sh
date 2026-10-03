@@ -13,6 +13,9 @@ cp -- "$pane_file" "$pane_saved"
 # vgs.system holds while enabled, as it is in the default set
 # rows/start-order.sh leaves; the restore below puts its state back.
 expect "disabling vgs.system, the shipped panes holder, is allowed" ok ipc shell setPluginEnabled vgs.system false
+# The default set enables the shipped sections too, which the holder
+# would list beside the fixture; the restore below enables them again.
+expect "disabling vgs.displays, a shipped section, is allowed" ok ipc shell setPluginEnabled vgs.displays false
 host_list() { ipc smoke readInstance window acme.panehost paneRows | py_reply 'import json,sys; print(json.dumps(json.loads(json.load(sys.stdin)), separators=(",", ":")))'; }
 host_list_ids() { host_list | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin)], separators=(",", ":")))'; }
 host_list_placed() { host_list | py_reply 'import json,sys; print(json.dumps([r["placed"] for r in json.load(sys.stdin) if r["id"] == "acme.pane"][0]))'; }

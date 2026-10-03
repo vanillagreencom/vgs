@@ -19,7 +19,9 @@ function verify(values) {
         ["48 hours", 48, "hours", "2 days"],
         ["1 day", 1, "days", "1 day"],
         ["0 seconds", 0, "seconds", "0 seconds"],
-        ["120 minutes", 120, "minutes", "2 hours"]
+        ["120 minutes", 120, "minutes", "2 hours"],
+        ["5 percent", 5, "%", "5%"],
+        ["100 percent", 100, "%", "100%"]
     ];
     for (const [name, value, unit, want] of quantities)
         assert.equal(values.quantityText(value, unit), want, "quantityText: " + name);
@@ -48,6 +50,7 @@ verify(load(file));
 const CONTROLS = [
     ["unit conversion", "if (value % factor === 0) {", "if (false) {"],
     ["zero keeps declared unit", "if (value !== 0) {", "if (true) {"],
+    ["percent is drawn with its sign", "if (unit === \"%\") return String(value) + \"%\";", "if (unit === \"%\") return String(value) + \" percent\";"],
     ["datetime field letters", "if (!quoted && DATETIME_FIELD.test(ch))", "if (false)"],
     ["quoted text", "quoted = !quoted;", "quoted = quoted;"],
     ["problem text table", "\"no-field\": \"Use at least one date or time field, such as HH, mm or ddd.\"", "\"no-field\": \"\""],

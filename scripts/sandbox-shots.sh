@@ -26,7 +26,8 @@
 # themes panel, each opened from its widget over planted status or
 # packages, the themes panel's apply held and answered by a stand-in
 # runner that changes no theme; devtools is the Dev Tools window; system
-# is the System window as it opens with no System section enabled; focus is
+# is the System window as it opens with no System section enabled, then
+# System → Displays over the device fakes when the tree ships it; focus is
 # the keyboard focus proof set; dialog is the core's requirement notice;
 # lock is the vgs.lock screen, locked and after wrong attempts; polkit is
 # the vgs.polkit prompt, asking and after a failed attempt; narrow holds a
@@ -1489,9 +1490,15 @@ scene_devtools() { # MODE
 # The System window as it opens with no System section enabled: the
 # sidebar holds Shell & Plugins alone and the page its empty state. The
 # sandbox starts the plugin disabled, so the scene enables it for the shot
-# and disables it again.
+# and disables it again. A tree that ships vgs.displays then takes System
+# → Displays, system-<mode>-displays, over the device fakes' Pro Display
+# XDR, placed on the output by the pane's own choice, and two Studio
+# Displays the helper cannot place; the fakes' system tree keeps the
+# core's step probe off the host's /sys and /dev.
 system_shown() { [[ $(ipc smoke instanceGeometry window vgs.system) != absent ]] && echo shown || echo hidden; }
+displays_listed() { ipc smoke readInstance service vgs.displays values | py_reply 'import json,sys; print(len(json.load(sys.stdin)["displays"]["items"]))'; }
 scene_system() { # MODE
+  local status=0 tree_state first_output
   expect "enabling vgs.system for its shot is allowed" ok ipc shell setPluginEnabled vgs.system true
   expect "the System window summons" ok ipc shell summon window vgs.system '{}'
   expect_poll "the System window is shown" shown system_shown
@@ -1499,6 +1506,27 @@ scene_system() { # MODE
   take "system-$1"
   expect "the System window hides" ok ipc shell hide window vgs.system
   expect_poll "the System window is gone" hidden system_shown
+  if ships_plugin vgs.displays; then
+    devices_up || status=$?
+    if ((status != 0)); then
+      fail "the device fakes for the Displays shot did not start: $devices_state"
+    elif ! tree_state="$(devices_system_tree)"; then
+      fail "the fakes' system tree for the Displays shot: $tree_state"
+    else
+      expect "enabling vgs.displays for its shot is allowed" ok ipc shell setPluginEnabled vgs.displays true
+      expect_poll "the displays service lists the three fake displays" 3 displays_listed
+      first_output="$(ipc smoke readInstance service vgs.displays outputs | py_reply 'import json,sys; print(json.load(sys.stdin)[0]["identifier"])')" || fail "the outputs the displays service reads are unreadable"
+      expect "the pane's choice puts the XDR on the output" ok ipc vgs.displays invoke assign "{\"device\":\"usb:class/hidraw/hidraw0/device#VGSSMOKEXDR01\",\"output\":\"$first_output\"}"
+      expect "System → Displays summons" ok ipc shell summon window vgs.system '{"pane":"vgs.displays"}'
+      expect_poll "System → Displays is shown" '["vgs.displays"]' window_panes
+      park_pointer
+      take "system-$1-displays"
+      expect "the System window hides after Displays" ok ipc shell hide window vgs.system
+      expect_poll "the System window is gone after Displays" hidden system_shown
+      expect "disabling vgs.displays after its shot is allowed" ok ipc shell setPluginEnabled vgs.displays false
+      rm -f -- "${home:?}/.local/state/vgs/plugins/vgs.displays/assignments.json"
+    fi
+  fi
   expect "disabling vgs.system after its shot is allowed" ok ipc shell setPluginEnabled vgs.system false
 }
 

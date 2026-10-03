@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "vgs.displays",
+  "name": "Displays",
+  "version": "0.1.0",
+  "author": "VanillaGreen",
+  "description": "Set the brightness of each display. Apple Pro Display XDR and Studio Display work too.",
+  "license": "MIT",
+  "icon": "sun",
+  "kinds": ["service", "bar-widget", "panel", "pane"],
+  "entryPoints": { "service": "Service.qml", "bar-widget": "Widget.qml", "panel": "Panel.qml", "pane": "Pane.qml" },
+  "capabilities": ["configure", "ipc", "layers", "monitors", "requirements", "screens", "shortcut", "status", "surfaces", "system"],
+  "defaultSection": "right",
+  "pane": { "group": "Hardware", "order": 20 },
+  "requirements": [
+    { "command": "ddcutil", "packages": { "pacman": "ddcutil", "apt": "ddcutil", "dnf": "ddcutil", "xbps": "ddcutil", "emerge": "app-misc/ddcutil", "nix": "ddcutil" }, "optional": true, "purpose": "Sets the brightness of external displays" },
+    { "command": "brightnessctl", "packages": { "pacman": "brightnessctl", "apt": "brightnessctl", "dnf": "brightnessctl", "xbps": "brightnessctl", "emerge": "app-misc/brightnessctl", "nix": "brightnessctl" }, "optional": true, "purpose": "Sets the brightness of a laptop's built-in display" }
+  ],
+  "systemSteps": ["apple-displays", "i2c-dev"],
+  "settings": {
+    "brightnessStep": 5,
+    "keysTarget": "focused",
+    "linked": false
+  },
+  "schema": {
+    "brightnessStep": { "type": "number", "label": "Brightness step", "description": "How much one key press or scroll changes the brightness", "min": 1, "max": 25, "step": 1, "unit": "%", "group": "Brightness" },
+    "keysTarget": { "type": "enum", "label": "Brightness keys change", "description": "The display the brightness keys change", "options": ["focused", "all"], "group": "Brightness" },
+    "linked": { "type": "boolean", "label": "Link displays", "description": "Change every display by the same amount", "group": "Brightness" }
+  },
+  "hyprland": {
+    "binds": [
+      { "shortcut": "brightness-up", "key": "XF86MonBrightnessUp" },
+      { "shortcut": "brightness-down", "key": "XF86MonBrightnessDown" }
+    ]
+  },
+  "status": {
+    "displays": { "type": "data", "label": "Displays" },
+    "assignments": { "type": "data", "label": "Display choices" },
+    "appleAccess": { "type": "state", "label": "Apple displays", "group": "Access", "action": { "label": "Allow", "system": "apple-displays" }, "command": "vgsh system apply apple-displays" },
+    "ddcAccess": { "type": "state", "label": "External displays", "group": "Access", "action": { "label": "Allow", "system": "i2c-dev" }, "command": "vgsh system apply i2c-dev" },
+    "ddcTool": { "type": "state", "label": "External display support", "group": "Access", "action": { "label": "Install", "install": ["ddcutil"] } },
+    "backlightTool": { "type": "state", "label": "Built-in display support", "group": "Access", "action": { "label": "Install", "install": ["brightnessctl"] } }
+  }
+}

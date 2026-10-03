@@ -238,6 +238,40 @@ for fd in os.listdir(f"/proc/{pid}/fd"):
 print(json.dumps(sorted(held)))
 PY
 }
+# devices_system_tree: the tree the sandbox copy of bin/vgsh-system
+# resolves every path and command in, $sandbox/system-root, and the
+# copy's `prefix=` line rewritten to it, so the core's system-step probe
+# reads the fakes and never the host's /sys and /dev. Its sys and dev link
+# the fakes' sysfs and device trees, usr/bin links the coreutils the steps
+# run and the udevadm, systemctl and gum stand-ins, and it holds the rules
+# and record directories and a boot id. Prints `prefixed` once the copy
+# names the tree, made on the first call and kept; else the first problem,
+# `missing=<tool>` or `prefix-line-count=<n>`, and returns 1. The harness
+# makes it before the first shell starts; a row that applies a step adds
+# its own sudo and stat to usr/bin.
+devices_system_root="$sandbox/system-root"
+devices_system_tree() {
+  local tool found bin="$devices_system_root/usr/bin"
+  if grep -q -x -F -- "prefix=$devices_system_root" "$repo/bin/vgsh-system"; then echo prefixed; return 0; fi
+  mkdir -p -- "$bin" "$devices_system_root/etc/udev/rules.d" "$devices_system_root/var/lib" "$devices_system_root/proc/sys/kernel/random"
+  ln -sfn -- "$devices_sysfs_root" "$devices_system_root/sys"
+  ln -sfn -- "$devices_dev_root" "$devices_system_root/dev"
+  for tool in awk bash cat chmod env flock id install mkdir mv readlink rm sed sha256sum sleep kill tee touch; do
+    found="$(command -v "$tool")" || { echo "missing=$tool"; return 1; }
+    ln -sfn -- "$found" "$bin/$tool"
+  done
+  for tool in udevadm systemctl gum; do ln -sfn -- "$shim/$tool" "$bin/$tool"; done
+  printf '11111111-2222-3333-4444-555555555555\n' >"$devices_system_root/proc/sys/kernel/random/boot_id"
+  python3 - "$repo/bin/vgsh-system" "$devices_system_root" <<'PY'
+import sys
+path, root = sys.argv[1:]
+text = open(path).read()
+if text.count("\nprefix=\n") != 1:
+    print("prefix-line-count=%d" % text.count("\nprefix=\n")); sys.exit(1)
+open(path, "w").write(text.replace("\nprefix=\n", "\nprefix=" + root + "\n"))
+print("prefixed")
+PY
+}
 # hid_fake_call DEVICE IOCTL HEX: one request to the HID fake, as the
 # brightness helper sends it, and the reply as one JSON line.
 hid_fake_call() { # DEVICE IOCTL HEX

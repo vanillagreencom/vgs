@@ -1,6 +1,9 @@
 .pragma library
 
-var UNITS = ["seconds", "minutes", "hours", "days"];
+// A number's units: the time units, which a value converts between, and
+// `%`, a share drawn as the number and the sign.
+var TIME_UNITS = ["seconds", "minutes", "hours", "days"];
+var UNITS = TIME_UNITS.concat(["%"]);
 var FORMATS = ["datetime"];
 var PROBLEM_TEXT = {
     empty: "Enter a date or time format.",
@@ -20,20 +23,21 @@ function unitStep(unit) {
     case "hours": return 3600;
     case "days": return 86400;
     }
-    throw new Error("SettingValues.quantityText: unit " + JSON.stringify(unit) + " is not one of " + UNITS.join(", "));
+    throw new Error("SettingValues.quantityText: unit " + JSON.stringify(unit) + " is not one of " + TIME_UNITS.join(", "));
 }
 
 function quantityText(value, unit) {
     if (UNITS.indexOf(unit) === -1)
         throw new Error("SettingValues.quantityText: unit " + JSON.stringify(unit) + " is not one of " + UNITS.join(", "));
+    if (unit === "%") return String(value) + "%";
     var base = unitStep(unit);
     var chosen = unit;
     var shown = value;
     if (value !== 0) {
-        for (var i = UNITS.indexOf(unit) + 1; i < UNITS.length; i++) {
-            var factor = unitStep(UNITS[i]) / base;
+        for (var i = TIME_UNITS.indexOf(unit) + 1; i < TIME_UNITS.length; i++) {
+            var factor = unitStep(TIME_UNITS[i]) / base;
             if (value % factor === 0) {
-                chosen = UNITS[i];
+                chosen = TIME_UNITS[i];
                 shown = value / factor;
             }
         }

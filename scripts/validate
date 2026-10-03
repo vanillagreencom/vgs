@@ -152,6 +152,7 @@ rows=(
   "logic|polkit prompt model|node scripts/test-polkit-model.js|shell/plugins/vgs.polkit/PolkitModel.js bin/lib/qml-library.js"
   "logic|Bluetooth agent transcripts|node scripts/test-bluetooth-agent.js|shell/Core/BluetoothAgentModel.js bin/lib/qml-library.js"
   "logic|updates logic|node scripts/test-updates-logic.js|shell/plugins/vgs.updates/UpdatesLogic.js bin/lib/qml-library.js"
+  "logic|displays logic|node scripts/test-displays-logic.js|shell/plugins/vgs.displays/DisplaysLogic.js bin/lib/qml-library.js"
   "logic|automations judge|node scripts/test-automations-logic.js|shell/plugins/vgs.automations/AutomationsLogic.js bin/lib/qml-library.js"
   "logic|Jarvis Session|node scripts/test-jarvis-session.js|shell/plugins/vgs.jarvis/Session.js bin/lib/qml-library.js"
   "logic|Jarvis Session effect owner|node scripts/test-jarvis-session-runner.js|shell/plugins/vgs.jarvis/Session.js shell/plugins/vgs.jarvis/backend/session-runner.js bin/lib/qml-library.js"

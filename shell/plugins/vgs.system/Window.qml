@@ -266,7 +266,9 @@ FocusScope {
                 id: mountBox
                 readonly property Item mounted: children.length > 0 ? children[children.length - 1] : null
                 width: page.contentWidth
-                height: mounted === null ? 0 : Math.max(page.bodyRoom, mounted.implicitHeight)
+                // The page goes first when the window is torn down while a
+                // section still changes its height.
+                height: mounted === null || page === null ? 0 : Math.max(page.bodyRoom, mounted.implicitHeight)
             }
         }
     }

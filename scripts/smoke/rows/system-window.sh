@@ -105,6 +105,9 @@ PY
 # the restore puts that back.
 sys_was="$(plugin_enabled vgs.system)" || fail "vgs.system's enabled state is unreadable"
 expect "no fixture panes holder is installed" absent plugin_enabled acme.panehost
+# The sidebar lists the fixture sections alone: the shipped sections the
+# default set enables stay disabled until the restore below.
+expect "disabling vgs.displays, a shipped section, is allowed" ok ipc shell setPluginEnabled vgs.displays false
 
 install_plugin_copy acme.pane acme.pane "Pane" 10
 # Pane Alt sorts before Pane by order and after it by name.

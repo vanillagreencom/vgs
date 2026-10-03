@@ -1,8 +1,8 @@
 # Displays
 
-Covers: shell/plugins/vgs.displays/, scripts/test-displays-brightness.py
+Covers: shell/plugins/vgs.displays/helper/, scripts/test-displays-brightness.py
 
-`vgs.displays` reads and sets display brightness. Today it holds one part: the brightness helper `shell/plugins/vgs.displays/helper/brightness.py`. The plugin has no manifest, service or surface yet. Why a helper and not QML, and the udev rule the Apple displays need: [D083](../decisions/D083-brightness-helper-and-uaccess-rule.md). The plan is [v2-system-plan.md § 3.5](../plans/v2-system-plan.md#35-displays--vgsdisplays-s15s17-s24).
+`vgs.displays` reads and sets display brightness. This page is its brightness helper, `shell/plugins/vgs.displays/helper/brightness.py`; the service, the widget, the flyout, the pane, the keys and the assignments file that run it are [displays-plugin.md](displays-plugin.md). Why a helper and not QML, and the udev rule the Apple displays need: [D083](../decisions/D083-brightness-helper-and-uaccess-rule.md). The plan is [v2-system-plan.md § 3.5](../plans/v2-system-plan.md#35-displays--vgsdisplays-s15s17-s24).
 
 ## Helper
 
@@ -82,7 +82,7 @@ Outputs that share `make`, `model` and a non-empty `serial` are one monitor. The
 
 The serial rule does not fire on the Studio Display or the Pro Display XDR. Hyprland reports the EDID binary serial in hex, `0x030B1303` for the XDR and `0xE6BB516A` for the Studio Display, while the USB serial is `C020106008NJLC0AX` and `00008030-0003681A3685802E`. Their EDIDs, read from `/sys/class/drm/*/edid` on 2026-10-01, hold no serial string descriptor (tag `0xFF`) and no copy of the USB serial, so no EDID field links the two. v1 compared the USB serial with that string descriptor (`bin/vshell_helper.py:10391-10419,10479-10500`) and matched neither display either. The model rule maps them.
 
-An unassigned display waits for the user's choice, which S16 stores.
+An unassigned display waits for the user's choice, which the plugin keeps in its assignments file ([displays-plugin.md § Assignments](displays-plugin.md#assignments)).
 
 ## Access states
 
@@ -118,6 +118,5 @@ An unassigned display waits for the user's choice, which S16 stores.
 
 ## Not yet built
 
-- S16: the plugin's manifest, the service that coalesces writes, the per-screen widget, the flyout, the brightness keys, the OSD, the `apple-displays` and `i2c-dev` steps, and the assignments file `${XDG_STATE_HOME}/vgs/plugins/vgs.displays/assignments.json`.
 - S17: the arrangement and output pane, with the monitor preview.
 - S21: the owner's acceptance on both Apple displays and the release-to-write time.

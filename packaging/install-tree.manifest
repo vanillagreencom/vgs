@@ -228,7 +228,16 @@ f share/vgs/shell/plugins/vgs.devtools/tui/devtools.sh
 f share/vgs/shell/plugins/vgs.devtools/tui/install.sh
 f share/vgs/shell/plugins/vgs.devtools/tui/remove.sh
 f share/vgs/shell/plugins/vgs.devtools/tui/update.sh
+f share/vgs/shell/plugins/vgs.displays/DisplayRow.qml
+f share/vgs/shell/plugins/vgs.displays/DisplaysLogic.js
+f share/vgs/shell/plugins/vgs.displays/Identify.qml
+f share/vgs/shell/plugins/vgs.displays/Osd.qml
+f share/vgs/shell/plugins/vgs.displays/Pane.qml
+f share/vgs/shell/plugins/vgs.displays/Panel.qml
+f share/vgs/shell/plugins/vgs.displays/Service.qml
+f share/vgs/shell/plugins/vgs.displays/Widget.qml
 f share/vgs/shell/plugins/vgs.displays/helper/brightness.py
+f share/vgs/shell/plugins/vgs.displays/manifest.json
 f share/vgs/shell/plugins/vgs.gallery/Gallery.qml
 f share/vgs/shell/plugins/vgs.gallery/manifest.json
 f share/vgs/shell/plugins/vgs.gallery/sample-emoji.png

@@ -310,6 +310,13 @@ auth_sentinels=(sudo doas run0 pkexec su loginctl secret-tool)
 # (scripts/smoke/devices.sh), so no shell reaches the host's rfkill,
 # browser opener or service manager.
 devices_write_stand_ins
+# Every shell's system-step probe reads the fakes' tree, whichever plugins
+# the set starts with: a holder of `system` would otherwise probe the
+# host's /sys and /dev.
+if [[ -e $repo/bin/vgsh-system ]] && ! devices_tree_state="$(devices_system_tree)"; then
+  printf 'qml-smoke: system-tree=failed %s\n' "$devices_tree_state"
+  exit 1
+fi
 # A row that needs one of the sentinels to answer its own way stands over
 # it with sentinel_stand_over FILE, the script on stdin, and puts it back
 # with sentinel_restore FILE. The first stand-over keeps the sentinel; a
