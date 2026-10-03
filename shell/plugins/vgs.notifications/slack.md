@@ -8,8 +8,6 @@ A direct message shows its sender. A group message shows several senders. More p
 
 A workspace icon appears beside the title when Slack has saved it. Otherwise, the notification keeps its original title. Slack notifications from a browser use the same display. If VGS cannot identify the workspace, it keeps the original title and sender initials.
 
-When Slack and a browser send the same message, VGS shows one notification. The Slack application copy supplies the workspace name.
-
 ## Custom emoji
 
 A custom emoji appears as an image when Slack has saved it for that workspace. An unknown emoji stays as text. Emoji from another workspace stay as text.

@@ -6,7 +6,8 @@
 # split on white space with the file last, falls back to xdg-open with
 # EDITOR unset, hands on the editor's failure, and refuses by key a
 # relative path, a file it cannot read, a missing opener, a wrong argument
-# count and a run outside the presenter. Each run has no controlling
+# count and a run outside the presenter. Presented refusal keys stay in
+# the diagnostic log. Child stdout and stderr remain unchanged. Each run has no controlling
 # terminal and a PATH of the stand-ins and a few host tools.
 #
 # The controls at the end edit a copy of the script, one rule at a time, and
@@ -34,12 +35,14 @@ fail() { failures=$((failures + 1)); printf '  FAIL  %s\n' "$*"; }
 tools="$TMP_ROOT/tools"
 opener="$TMP_ROOT/opener"
 mkdir -p "$tools" "$opener"
-for tool in bash cat; do ln -s -- "$(command -v "$tool")" "$tools/$tool"; done
+for tool in bash cat mkdir; do ln -s -- "$(command -v "$tool")" "$tools/$tool"; done
 # The stand-ins log `<name> <argv>` and exit with $TMP_ROOT/exit's code.
 for name in editor xdg-open; do
   cat >"$opener/$name" <<SH
 #!/usr/bin/env bash
 printf '%s %s\n' "$name" "\$*" >>"$TMP_ROOT/calls"
+printf 'child: key=value\n'
+printf 'child error: reason=fixture\n' >&2
 exit "\$(<"$TMP_ROOT/exit")"
 SH
   chmod 755 "$opener/$name"
@@ -49,7 +52,8 @@ mkdir -p "$(dirname -- "$file")"
 printf 'transcript\n' >"$file"
 
 # open SCRIPT PATH_HEAD EXIT [NAME=VALUE...] -- ARGS...: the status in
-# $status, stderr's first line in $first, the stand-ins' calls in $calls.
+# $status, visible streams in $visible/$output, the logged key in $diagnostic,
+# and the stand-ins' calls in $calls.
 open_file() {
   local copy="$1" head="$2" code="$3"
   shift 3
@@ -58,8 +62,13 @@ open_file() {
   shift
   printf '%s\n' "$code" >"$TMP_ROOT/exit"
   : >"$TMP_ROOT/calls"
+  mkdir -p "$TMP_ROOT/state/vgs/notifications"
+  : >"$TMP_ROOT/state/vgs/notifications/diagnostics.log"
   status=0
-  setsid -w env -i PATH="$head:$tools" HOME="$TMP_ROOT" VGS_TUI_LIB="$repo/bin/lib/tui.sh" "${env[@]}" bash "$copy" "$@" >/dev/null 2>"$TMP_ROOT/err" </dev/null || status=$?
+  setsid -w env -i PATH="$head:$tools" HOME="$TMP_ROOT" XDG_STATE_HOME="$TMP_ROOT/state" VGS_TUI_LIB="$repo/bin/lib/tui.sh" "${env[@]}" bash "$copy" "$@" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" </dev/null || status=$?
+  visible="$(cat "$TMP_ROOT/err")"
+  output="$(cat "$TMP_ROOT/out")"
+  diagnostic="$(cat "$TMP_ROOT/state/vgs/notifications/diagnostics.log")"
   first="$(head -n 1 "$TMP_ROOT/err" 2>/dev/null || true)"
   calls="$(cat "$TMP_ROOT/calls")"
 }
@@ -70,27 +79,27 @@ case_editor_with_its_words() {
 }
 case_xdg_open_without_an_editor() {
   open_file "$1" "$opener" 0 -- "$file"
-  [[ $status == 0 && $calls == "xdg-open $file" ]]
+  [[ $status == 0 && $calls == "xdg-open $file" && $output == "child: key=value" && $visible == "child error: reason=fixture" ]]
 }
 case_the_editor_failure() {
   open_file "$1" "$opener" 4 "EDITOR=$opener/editor" -- "$file"
-  [[ $status == 4 && $calls == "editor $file" ]]
+  [[ $status == 4 && $calls == "editor $file" && $output == "child: key=value" && $visible == "child error: reason=fixture" ]]
 }
 case_refuses_a_relative_path() {
   open_file "$1" "$opener" 0 "EDITOR=$opener/editor" -- "-R"
-  [[ $status == 2 && $first == "notifications: refused: path=-R reason=relative" && -z $calls ]]
+  [[ $status == 2 && $diagnostic == "notifications: refused: path=-R reason=relative" && -n $visible && $visible != *"notifications: refused:"* && -z $calls ]]
 }
 case_refuses_a_missing_file() {
   open_file "$1" "$opener" 0 "EDITOR=$opener/editor" -- "$TMP_ROOT/gone.log"
-  [[ $status == 1 && $first == "notifications: refused: file=unreadable path=$TMP_ROOT/gone.log" && -z $calls ]]
+  [[ $status == 1 && $diagnostic == "notifications: refused: file=unreadable path=$TMP_ROOT/gone.log" && -n $visible && $visible != *"notifications: refused:"* && $visible == *"missing"* && $visible != *"opened"* && -z $calls ]]
 }
 case_refuses_without_an_opener() {
   open_file "$1" "$TMP_ROOT/empty" 0 -- "$file"
-  [[ $status == 1 && $first == "notifications: refused: opener=missing" ]]
+  [[ $status == 1 && $diagnostic == "notifications: refused: opener=missing" && -n $visible && $visible != *"notifications: refused:"* ]]
 }
 case_refuses_two_arguments() {
   open_file "$1" "$opener" 0 "EDITOR=$opener/editor" -- "$file" "$file"
-  [[ $status == 2 && $first == "notifications: refused: argument=2" && -z $calls ]]
+  [[ $status == 2 && $diagnostic == "notifications: refused: argument=2" && -n $visible && $visible != *"notifications: refused:"* && -z $calls ]]
 }
 case_refuses_outside_the_presenter() {
   status=0
@@ -110,6 +119,9 @@ CONTROL_NEEDLES=('"${editor[@]}" "$file"' 'xdg-open "$file"' '[[ $file == /* ]] 
   exit')
 CONTROL_REPLACEMENTS=('"$EDITOR" "$file"' 'true' 'true || refuse 2' 'true || refuse 1' '  "${editor[@]}" "$file" || true
   exit')
+CONTROL_CASES+=(case_refuses_a_missing_file case_refuses_a_missing_file case_refuses_a_missing_file case_the_editor_failure)
+CONTROL_NEEDLES+=('>>"$dir/diagnostics.log"' "printf 'notifications: refused: %s\n' \"\$2\" >>\"\$dir/diagnostics.log\"" "printf '%s\n' \"\$@\" >&2 ;;" '  "${editor[@]}" "$file"')
+CONTROL_REPLACEMENTS+=('>&2' ':' "printf 'The file opened.\n' >&2 ;;" '  "${editor[@]}" "$file" >/dev/null 2>/dev/null')
 for i in "${!CONTROL_CASES[@]}"; do
   case="${CONTROL_CASES[i]}"
   copy="$TMP_ROOT/copy.sh"
