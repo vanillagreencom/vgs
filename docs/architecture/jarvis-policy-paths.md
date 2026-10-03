@@ -6,7 +6,7 @@ The protected path judge that [the action policy](jarvis-policy.md) reads for ev
 
 ## Real paths
 
-`Denied.create({ home, config, data, state, runtime, install, accountRoots })` takes absolute trusted roots. HOME must exist as a directory. `accountRoots` must be a list: the explicit `CLAUDE_CONFIG_DIR` and `CODEX_HOME` roots and the hand-added roots from `Accounts.js::accountRoots`. Construction fails only when a root cannot be resolved: an invalid or relative path, a dangling or looping link, or an unreadable component on the way to it. It reads no folder's entries. The daemon's one producer is described in [Jarvis file tools](jarvis-files.md#owners).
+`Denied.create({ home, config, data, state, runtime, install, accountRoots })` takes absolute trusted roots. HOME must exist as a directory. `accountRoots` must be a list: the explicit `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `COPILOT_HOME` roots and the hand-added roots from `Accounts.js::accountRoots`. Construction fails only when a root cannot be resolved: an invalid or relative path, a dangling or looping link, or an unreadable component on the way to it. It reads no folder's entries. The daemon's one producer is described in [Jarvis file tools](jarvis-files.md#owners).
 
 Its `inspect(path, role)` returns `{ kind: "path", path, exists, execution }` or `{ kind: "refuse", reason, error? }`. The tool table owns path roles. Callers do not select them. Resolution uses filesystem metadata only.
 
