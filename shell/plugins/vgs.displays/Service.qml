@@ -1,7 +1,7 @@
 import QtQuick
-import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
+import qs.Commons
 import "DisplaysLogic.js" as Logic
 
 // Owns vgs.displays: every run of the brightness helper, the assignments
@@ -18,8 +18,8 @@ import "DisplaysLogic.js" as Logic
 // system step's access or of the plugin's commands. A list hands the
 // helper the outputs the monitors capability read from Hyprland; the
 // helper maps each display it can to the outputs it lights, and the
-// assignments file, ${XDG_STATE_HOME}/vgs/plugins/vgs.displays/
-// assignments.json, maps the rest, as the user chose in the pane
+// assignments file, plugins/vgs.displays/assignments.json under
+// Paths.stateDir, maps the rest, as the user chose in the pane
 // (DisplaysLogic.resolve). A file the judge refuses is logged and read as
 // no choices; the next choice replaces it.
 Item {
@@ -58,7 +58,7 @@ Item {
         fileError === "" ? null : fileError, listState)
     readonly property string focusedOutput: Hyprland.focusedMonitor === null ? "" : Hyprland.focusedMonitor.name
     readonly property int step: shell === null ? 5 : shell.settings.brightnessStep
-    readonly property string assignmentsPath: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/vgs/plugins/vgs.displays/assignments.json"
+    readonly property string assignmentsPath: Paths.stateDir + "/plugins/vgs.displays/assignments.json"
     readonly property string helperPath: String(Qt.resolvedUrl("helper/brightness.py")).replace(/^file:\/\//, "")
 
     onShellChanged: start()
@@ -172,8 +172,11 @@ Item {
     }
 
     // Each change of CHANGES, the first one's level on the on-screen display
-    // of the outputs its display lights when OSD holds.
+    // of the outputs its display lights when OSD holds. A change to the
+    // display Identify flashes is the user's level, which Identify's end
+    // keeps.
     function apply(changes, osdShown) {
+        if (flashed !== null && changes.some(c => c.id === flashed.id)) flashed = null;
         for (const change of changes) requestSet(change.id, change.percent);
         if (osdShown && changes.length > 0) {
             const display = Logic.displayById(current, changes[0].id);
@@ -210,6 +213,8 @@ Item {
         } else {
             if (display === undefined) return "refused: assign=" + request.device + " reason=absent";
             if (!outputs.some(o => o.identifier === request.output)) return "refused: assign=" + request.device + " output=" + request.output + " reason=absent";
+            if (!Logic.screenChoices(resolved.displays, outputs).some(c => c.value === request.output))
+                return "refused: assign=" + request.device + " output=" + request.output + " reason=taken";
             entries = Logic.setAssignment(entries, request.device, display.label, request.output, resolved.displays.map(d => d.device));
         }
         if (fileError !== "") console.warn("displays: assignments replaced: file=" + assignmentsPath + " was " + fileError);
@@ -220,11 +225,12 @@ Item {
 
     // Identify: every screen shows its name for Logic.IDENTIFY_MS while the
     // display ID, when ready, shows its other level, so the user sees which
-    // screen it is; it then goes back.
+    // screen it is; it then goes back. A press during Identify ends the one
+    // running first, so its level is read after the previous return waits.
     function identify(id) {
-        const display = Logic.displayById(current, id);
-        if (display === null) return "refused: identify=" + id + " reason=absent";
+        if (Logic.displayById(current, id) === null) return "refused: identify=" + id + " reason=absent";
         endIdentify();
+        const display = Logic.displayById(current, id);
         identifying = true;
         if (display.state === "ready") {
             flashed = { id: id, percent: display.percent };

@@ -37,9 +37,6 @@ Item {
         return reply;
     }
 
-    // Write the `linked` setting; answers the core's reply.
-    function setLinked(linked) { return answered(shell.configure.set("linked", linked)); }
-
     // Open the plugin's pane in the System window; answers the core's reply.
     function openSettings() { return answered(shell.surfaces.summon("pane", "{}")); }
 
@@ -89,9 +86,9 @@ Item {
 
         Label {
             width: layout.contentWidth
-            visible: root.rows.length === 0
+            visible: text !== ""
             role: "hint"
-            text: root.list.state === "failed" ? "Displays could not be read." : root.list.state === "pending" ? "Reading displays" : "No display with brightness control"
+            text: Logic.listText(root.list.state, root.rows.length)
             wrapMode: Text.Wrap
         }
 
@@ -100,16 +97,11 @@ Item {
                 width: layout.contentWidth
                 spacing: Theme.stack.group
 
-                FormRow {
+                LinkRow {
                     width: parent.width
-                    label: "Link displays"
                     visible: root.rows.length > 1
-                    Switch {
-                        size: "sm"
-                        checked: root.shell !== null && root.shell.settings.linked === true
-                        Accessible.name: "Link displays"
-                        onToggled: root.setLinked(checked)
-                    }
+                    shell: root.shell
+                    onReplied: reply => root.answered(reply)
                 }
                 Label {
                     width: parent.width

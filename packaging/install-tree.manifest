@@ -231,6 +231,7 @@ f share/vgs/shell/plugins/vgs.devtools/tui/update.sh
 f share/vgs/shell/plugins/vgs.displays/DisplayRow.qml
 f share/vgs/shell/plugins/vgs.displays/DisplaysLogic.js
 f share/vgs/shell/plugins/vgs.displays/Identify.qml
+f share/vgs/shell/plugins/vgs.displays/LinkRow.qml
 f share/vgs/shell/plugins/vgs.displays/Osd.qml
 f share/vgs/shell/plugins/vgs.displays/Pane.qml
 f share/vgs/shell/plugins/vgs.displays/Panel.qml

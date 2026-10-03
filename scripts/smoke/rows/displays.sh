@@ -8,24 +8,29 @@
 #
 # Rows: the service lists the three displays and places none, so neither
 # bar shows the widget; on the keyboard alone, in System → Displays, Up
-# raises the XDR and Down on its Screen choice puts it on the main output;
-# the pane's IPC puts Studio A on SMOKE-DISPLAYS, so each bar's widget
-# controls its own display, and a burst of 20 scroll notches on the
-# SMOKE-DISPLAYS widget makes at most 2 helper runs, leaves the burst's
-# last level in the fake and changes neither other display; the on-screen
-# display maps on that screen alone; a brightness key acts on the
-# focused output, first the main one, then SMOKE-DISPLAYS; the flyout
-# lists its screen's display first; Identify shows every screen's name
-# and flashes the display, then puts it back; a closed hidraw2 reads
-# no-access after a plugin scan, the Apple access entry offers Allow, and
-# the pane's Allow, through `status.act`, hands the stand-in terminal
-# `vgsh system apply apple-displays`; the choices persist in the
-# assignments file and come back after the service is rebuilt, and the
-# second Studio Display still waits for its own.
+# raises the XDR, its slider follows a level set elsewhere so the next Up
+# steps from that level, and Down on its Screen choice puts it on the
+# main output; the pane's IPC puts Studio A on SMOKE-DISPLAYS, so each
+# bar's widget controls its own display, and a burst of 10 scroll notches
+# from 1 % on the SMOKE-DISPLAYS widget makes at most 2 helper runs,
+# leaves the burst's summed level, 51 %, in the fake and changes neither
+# other display; the on-screen display maps on that screen alone; a
+# brightness key acts on the focused output, first the main one, then
+# SMOKE-DISPLAYS; the flyout lists its screen's display first; Identify
+# shows every screen's name and flashes the display, then puts it back,
+# also after a second press during the first, and keeps a level set while
+# it runs; a closed hidraw2 reads no-access after a plugin scan, the Apple
+# access entry offers Allow, the pane's access row reads it through
+# `status.rows`, and the pane's Allow, through `status.act`, hands the
+# stand-in terminal `vgsh system apply apple-displays`; the choices
+# persist in the assignments file and come back after the service is
+# rebuilt, and the second Studio Display still waits for its own.
 #
-# Control: the same 20 notches, each sent once the run before it ended,
-# make 20 helper runs, so the burst's reading is the coalescing's and not
-# a counter that cannot see more. The helper runs and their levels are
+# Control: the same 10 notches from 1 %, each sent once the run before it
+# ended, make 10 helper runs and reach the same 51 %, so the burst's
+# reading is the coalescing's and not a counter that cannot see more, and
+# a lost or repeated notch shows in the level, which stays under the 100 %
+# ceiling. The helper runs and their levels are
 # read from the HID fake's log, every feature report it served. Every
 # reading is expect_poll's: 25 reads 0.2 s apart. The row puts back the
 # user file, so vgs.system and vgs.displays are as it found them, and
@@ -83,6 +88,12 @@ disp_focus() { ipc smoke focused window vgs.system | py_reply 'import json,sys; 
 disp_widget_id() { disp_widget "$1" display | py_reply 'import json,sys; print(json.dumps(json.load(sys.stdin)["id"]))'; }
 disp_other_sets() { echo "$(disp_sets hidraw0) $(disp_sets hidraw2)"; }
 disp_panel_rows() { ipc smoke readInstance panel vgs.displays rows | py_reply 'import json,sys; print(json.dumps([r["id"] for r in json.load(sys.stdin)]))'; }
+# The pane's access row for an entry, as `status.rows` lends it: [tone,
+# text, action label, offered].
+disp_access_row() { ipc smoke readInstance window vgs.displays accessRows | py_reply '
+import json, sys
+row = [r for r in json.load(sys.stdin) if r["key"] == sys.argv[1]]
+print(json.dumps([row[0]["tone"], row[0]["value"]["text"], row[0]["action"]["label"], row[0]["action"]["offered"]]) if row else "absent")' "$1"; }
 disp_file_entries() { python3 -c 'import json,sys; print(json.dumps(sorted([e["device"], e["output"]] for e in json.load(open(sys.argv[1]))["assignments"])))' "$disp_file"; }
 
 disp_main="$(hypr -j monitors | py_reply 'import json,sys; print(sorted(json.load(sys.stdin), key=lambda m: m["id"])[0]["name"])')" || { fail "displays: the main output is unreadable"; return 0; }
@@ -113,10 +124,16 @@ disp_xdr_sets="$(disp_sets hidraw0)"
 type_keys -k Up || fail "typing Up on the XDR's slider failed"
 expect_poll "Up on the slider raises the XDR to 41" '["hidraw0", "ready", 41, [], false]' disp_item hidraw0
 expect_poll "the helper wrote the XDR once" "$((disp_xdr_sets + 1))" disp_sets hidraw0
+# A level set elsewhere moves the slider's handle, so the next Up steps
+# from it and not from the handle's old place.
+expect "the XDR is set to 30 % while the pane is open" ok ipc vgs.displays invoke set "{\"id\":\"$disp_xdr\",\"percent\":30}"
+expect_poll "the service shows the XDR at 30 %" '["hidraw0", "ready", 30, [], false]' disp_item hidraw0
+type_keys -k Up || fail "typing Up on the XDR's slider again failed"
+expect_poll "Up after the outside change raises the XDR to 31" '["hidraw0", "ready", 31, [], false]' disp_item hidraw0
 type_keys -k Tab || fail "typing Tab in the pane failed"
 expect_poll "Tab reaches the XDR's Screen choice" '["Select", "Screen for Apple Pro Display XDR"]' disp_focus
 type_keys -k Down || fail "typing Down on the Screen choice failed"
-expect_poll "Down on the Screen choice puts the XDR on the main output" "[\"hidraw0\", \"ready\", 41, [\"$disp_main\"], true]" disp_item hidraw0
+expect_poll "Down on the Screen choice puts the XDR on the main output" "[\"hidraw0\", \"ready\", 31, [\"$disp_main\"], true]" disp_item hidraw0
 expect_poll "the main bar's widget shows for the XDR" true disp_widget "$disp_main" visible
 expect "hiding the System window after the keyboard path is allowed" ok ipc shell hide window vgs.system
 expect_poll "the System window is gone" 0 window_count System
@@ -135,48 +152,52 @@ expect_poll "the new bar's widget controls Studio A" "\"$disp_a\"" disp_widget_i
 expect "the second Studio Display still waits for its own choice" '["hidraw2", "ready", 70, [], false]' disp_item hidraw2
 expect "an output no display could take is refused" "refused: assign=$disp_a_key output=DP-404 reason=absent" ipc vgs.displays invoke assign "{\"device\":\"$disp_a_key\",\"output\":\"DP-404\"}"
 
-# A burst of 20 scroll notches up on the new bar's widget, in one turn as
-# a fast drag lands between two frames: at most two helper runs, the last
-# carrying the burst's level, 100 %; neither other display changes.
+# A burst of 10 scroll notches up from 1 % on the new bar's widget, in one
+# turn as a fast drag lands between two frames: at most two helper runs,
+# the last carrying the burst's level, 1 + 10 × 5 = 51 %; neither other
+# display changes.
+expect "Studio A is set to 1 % for the burst" ok ipc vgs.displays invoke set "{\"id\":\"$disp_a\",\"percent\":1}"
 expect_poll "the helper is idle before the burst" True disp_idle
 disp_a_sets="$(disp_sets hidraw1)"
 disp_xdr_sets="$(disp_sets hidraw0)"
 disp_b_sets="$(disp_sets hidraw2)"
-expect "the burst's 20 notches each answer ok" "$(python3 -c 'import json; print(json.dumps(["ok"] * 20, separators=(",", ":")))')" ipc smoke invokeBurst "bar:$disp_output" vgs.displays scroll 1 20
+expect "the burst's 10 notches each answer ok" "$(python3 -c 'import json; print(json.dumps(["ok"] * 10, separators=(",", ":")))')" ipc smoke invokeBurst "bar:$disp_output" vgs.displays scroll 1 10
 expect_poll "the helper is idle after the burst" True disp_idle
 disp_burst_runs() { echo "$(( $(disp_sets hidraw1) - disp_a_sets ))"; }
 disp_burst_at_most_two() { local runs; runs="$(disp_burst_runs)"; if ((runs >= 1 && runs <= 2)); then echo "1-2"; else echo "$runs"; fi; }
-expect "the 20-notch burst made one or two helper runs" "1-2" disp_burst_at_most_two
-expect "the fake holds the burst's last level, 100 %" 0160ea00000000 disp_report hidraw1
-expect "the service shows Studio A at 100 %" "[\"hidraw1\", \"ready\", 100, [\"$disp_output\"], true]" disp_item hidraw1
+expect "the 10-notch burst made one or two helper runs" "1-2" disp_burst_at_most_two
+# The Studio Display's report for 51 %: 400 + 51 % of 400..60000, 30796,
+# little-endian after report id 1 (helper/brightness.py raw_from_percent).
+expect "the fake holds the burst's summed level, 51 %" 014c7800000000 disp_report hidraw1
+expect "the service shows Studio A at 51 %" "[\"hidraw1\", \"ready\", 51, [\"$disp_output\"], true]" disp_item hidraw1
 expect "the burst wrote no other display" "$disp_xdr_sets $disp_b_sets" disp_other_sets
 expect_poll "the on-screen display maps on the new output alone" "[[\"$disp_output\"], []]" disp_layers
 expect_poll "the on-screen display goes after its time" "[[], []]" disp_layers
 
-# Control: the same 20 notches, each once the run before it ended, make
-# 20 runs.
+# Control: the same 10 notches, each once the run before it ended, make
+# 10 runs and reach the same level.
 expect "Studio A is set to 1 % for the control" ok ipc vgs.displays invoke set "{\"id\":\"$disp_a\",\"percent\":1}"
 expect_poll "the helper is idle before the control" True disp_idle
 disp_a_sets="$(disp_sets hidraw1)"
-for _ in $(seq 1 20); do
+for _ in $(seq 1 10); do
   expect "control: one notch answers ok" ok ipc smoke invokeInstance "bar:$disp_output" vgs.displays scroll 1
   expect_poll "control: the helper is idle after the notch" True disp_idle
 done
-expect "control: 20 paced notches made 20 helper runs" 20 disp_burst_runs
-expect "control: the fake holds the paced notches' level, 100 %" 0160ea00000000 disp_report hidraw1
+expect "control: 10 paced notches made 10 helper runs" 10 disp_burst_runs
+expect "control: the fake holds the paced notches' level, 51 %" 014c7800000000 disp_report hidraw1
 
 # A brightness key acts on the focused output.
 expect "the main output takes the focus" ok hypr dispatch "hl.dsp.focus({ monitor = \"$disp_main\" })"
 expect_poll "the service reads the main output focused" "\"$disp_main\"" disp_read focusedOutput
 expect "the brightness-up key is pressed" ok hypr dispatch 'hl.dsp.global("vgs.displays:brightness-up")'
-expect_poll "the key raises the XDR on the focused output" "[\"hidraw0\", \"ready\", 46, [\"$disp_main\"], true]" disp_item hidraw0
-expect "the key leaves Studio A" "[\"hidraw1\", \"ready\", 100, [\"$disp_output\"], true]" disp_item hidraw1
+expect_poll "the key raises the XDR on the focused output" "[\"hidraw0\", \"ready\", 36, [\"$disp_main\"], true]" disp_item hidraw0
+expect "the key leaves Studio A" "[\"hidraw1\", \"ready\", 51, [\"$disp_output\"], true]" disp_item hidraw1
 expect_poll "the key's on-screen display maps on the main output alone" "[[\"$disp_main\"], []]" disp_layers
 expect "the new output takes the focus" ok hypr dispatch "hl.dsp.focus({ monitor = \"$disp_output\" })"
 expect_poll "the service reads the new output focused" "\"$disp_output\"" disp_read focusedOutput
 expect "the brightness-down key is pressed" ok hypr dispatch 'hl.dsp.global("vgs.displays:brightness-down")'
-expect_poll "the key dims Studio A on the focused output" "[\"hidraw1\", \"ready\", 95, [\"$disp_output\"], true]" disp_item hidraw1
-expect "the key leaves the XDR" "[\"hidraw0\", \"ready\", 46, [\"$disp_main\"], true]" disp_item hidraw0
+expect_poll "the key dims Studio A on the focused output" "[\"hidraw1\", \"ready\", 46, [\"$disp_output\"], true]" disp_item hidraw1
+expect "the key leaves the XDR" "[\"hidraw0\", \"ready\", 36, [\"$disp_main\"], true]" disp_item hidraw0
 expect_poll "the helper is idle after the keys" True disp_idle
 
 # The flyout on the new output lists Studio A first.
@@ -192,11 +213,25 @@ expect "hiding the flyout is allowed" ok ipc shell hide panel vgs.displays
 disp_a_sets="$(disp_sets hidraw1)"
 expect "Identify answers ok" ok ipc vgs.displays invoke identify "$disp_a"
 expect_poll "Identify shows on every screen" "$(python3 -c 'import json,sys; print(json.dumps([[], sorted(sys.argv[1:])]))' "$disp_main" "$disp_output")" disp_layers
-expect_poll "Identify flashes Studio A at 10 %" "[\"hidraw1\", \"ready\", 10, [\"$disp_output\"], true]" disp_item hidraw1
+expect_poll "Identify flashes Studio A, below 50 %, at 100 %" "[\"hidraw1\", \"ready\", 100, [\"$disp_output\"], true]" disp_item hidraw1
 expect_poll "Identify ends" "[[], []]" disp_layers
-expect_poll "Identify puts Studio A back at 95 %" "[\"hidraw1\", \"ready\", 95, [\"$disp_output\"], true]" disp_item hidraw1
+expect_poll "Identify puts Studio A back at 46 %" "[\"hidraw1\", \"ready\", 46, [\"$disp_output\"], true]" disp_item hidraw1
 expect_poll "the helper is idle after Identify" True disp_idle
 expect "Identify wrote Studio A twice" "$((disp_a_sets + 2))" disp_sets hidraw1
+# A second press during the first still puts back the user's level, not
+# the first press's flash level.
+expect "Identify answers ok again" ok ipc vgs.displays invoke identify "$disp_a"
+expect "a second Identify during the first answers ok" ok ipc vgs.displays invoke identify "$disp_a"
+expect_poll "the second Identify ends" "[[], []]" disp_layers
+expect_poll "the helper is idle after the second Identify" True disp_idle
+expect "two presses put Studio A back at 46 %" "[\"hidraw1\", \"ready\", 46, [\"$disp_output\"], true]" disp_item hidraw1
+# A level set while Identify runs is the one that stays.
+expect "Identify answers ok a third time" ok ipc vgs.displays invoke identify "$disp_a"
+expect_poll "Identify flashes Studio A again" "[\"hidraw1\", \"ready\", 100, [\"$disp_output\"], true]" disp_item hidraw1
+expect "Studio A is set to 60 % during Identify" ok ipc vgs.displays invoke set "{\"id\":\"$disp_a\",\"percent\":60}"
+expect_poll "the third Identify ends" "[[], []]" disp_layers
+expect_poll "the helper is idle after the third Identify" True disp_idle
+expect "Identify keeps the level set while it ran, 60 %" "[\"hidraw1\", \"ready\", 60, [\"$disp_output\"], true]" disp_item hidraw1
 
 # A display the user may not open: after a plugin scan probes the steps
 # again, Studio B reads no-access and the Apple entry offers Allow, which
@@ -210,6 +245,7 @@ terminal_stand_in
 terminal_ready "displays"
 expect "the deep link opens System → Displays again" ok ipc shell summon window vgs.system '{"pane":"vgs.displays"}'
 expect_poll "the System window mounts the displays pane again" '["vgs.displays"]' window_panes
+expect_poll "the pane's Apple access row, from status.rows, offers Allow in the warning tone" '["warning", "Needs your permission", "Allow", true]' disp_access_row appleAccess
 forget_record
 expect "the pane's Allow, through status.act, answers ok" ok ipc smoke invokeInstance window vgs.displays runAction appleAccess
 expect_poll "Allow hands the terminal vgsh system apply apple-displays" \
@@ -228,8 +264,8 @@ expect "the assignments file holds both choices" "$(python3 -c 'import json,sys;
 expect "disabling vgs.displays is allowed" ok ipc shell setPluginEnabled vgs.displays false
 expect_poll "the displays service is gone" False record_exists vgs.displays
 expect "enabling vgs.displays again is allowed" ok ipc shell setPluginEnabled vgs.displays true
-expect_poll "the rebuilt service puts Studio A on the new output from the file" "[\"hidraw1\", \"ready\", 95, [\"$disp_output\"], true]" disp_item hidraw1
-expect "the rebuilt service puts the XDR on the main output from the file" "[\"hidraw0\", \"ready\", 46, [\"$disp_main\"], true]" disp_item hidraw0
+expect_poll "the rebuilt service puts Studio A on the new output from the file" "[\"hidraw1\", \"ready\", 60, [\"$disp_output\"], true]" disp_item hidraw1
+expect "the rebuilt service puts the XDR on the main output from the file" "[\"hidraw0\", \"ready\", 36, [\"$disp_main\"], true]" disp_item hidraw0
 expect "the second Studio Display still waits after the rebuild" '["hidraw2", "ready", 70, [], false]' disp_item hidraw2
 
 expect "disabling vgs.displays at the end is allowed" ok ipc shell setPluginEnabled vgs.displays false

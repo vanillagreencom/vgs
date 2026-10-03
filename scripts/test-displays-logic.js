@@ -3,7 +3,8 @@
 // (shell/plugins/vgs.displays/DisplaysLogic.js): the helper's answers
 // judged, the coalescing of the helper's runs, what a brightness key and a
 // linked slider change, the assignments file's judge and how its entries,
-// stale ones included, apply, and the status the surfaces read. Expected
+// stale ones included, apply, the pane's Screen choices, and the status
+// and sentences the surfaces read. Expected
 // values are written here by hand. Controls edit one rule in a copy of the
 // logic and require this suite to fail on each copy.
 "use strict";
@@ -57,6 +58,9 @@ function verify(logic) {
     ["not JSON", "{", "refused: list=unparsed"],
     ["helper failure", JSON.stringify({ error: "usage" }), "refused: list=helper error=\"usage\""],
     ["unknown backend state", broken(a => { a.backends.ddc.state = "fine"; }), "refused: list=shape backend=ddc"],
+    ["unknown display backend", broken(a => { a.displays[0].backend = "usb"; }), "refused: list=shape display=0 field=backend"],
+    ["empty label", broken(a => { a.displays[0].label = ""; }), "refused: list=shape display=0 field=label"],
+    ["percent below 0", broken(a => { a.displays[0].percent = -1; }), "refused: list=shape display=0 field=percent"],
     ["repeated id", broken(a => { a.displays[1].id = XDR; }), "refused: list=shape display=1 field=id"],
     ["ready without a percent", broken(a => { a.displays[0].percent = null; }), "refused: list=shape display=0 field=percent"],
     ["percent past 100", broken(a => { a.displays[0].percent = 101; }), "refused: list=shape display=0 field=percent"],
@@ -71,6 +75,8 @@ function verify(logic) {
   same(logic.parseSet(JSON.stringify({ error: "state", state: "no-access", id: XDR }), XDR),
     { ok: false, error: "refused: set=helper error=\"state\" state=\"no-access\"" });
   same(logic.parseSet(JSON.stringify({ id: STUDIO_A, percent: 40 }), XDR), { ok: false, error: "refused: set=shape id=\"" + STUDIO_A + "\" percent=40" });
+  for (const percent of [-1, 101])
+    same(logic.parseSet(JSON.stringify({ id: XDR, percent: percent }), XDR), { ok: false, error: "refused: set=shape id=\"" + XDR + "\" percent=" + percent }, "parseSet: percent " + percent);
 
   // --- Runs: latest wins per display, one run in flight --------------------
   let runs = logic.emptyRuns();
@@ -80,6 +86,7 @@ function verify(logic) {
   taken = logic.takeRun(runs);
   same(taken.run, { verb: "set", id: XDR, percent: 1 });
   runs = taken.runs;
+  assert.equal(logic.pendingPercent(runs, XDR), 1, "the level in flight is shown while no newer one waits");
   // A 20-event drag while the first run is in flight: 2 runs in all, the
   // last one carrying the drag's final value.
   const started = [taken.run];
@@ -114,10 +121,12 @@ function verify(logic) {
     ["an entry key too many", JSON.stringify({ assignments: [Object.assign(entry(KEY_A, "DP-2"), { x: 1 })] }), "refused: assignment=0 keys=[\"device\",\"label\",\"output\",\"x\"] want=device,label,output"],
     ["an empty output", JSON.stringify({ assignments: [entry(KEY_A, "")] }), "refused: assignment=0 output=\"\""],
     ["a control character", JSON.stringify({ assignments: [entry("a\nb", "DP-2")] }), "refused: assignment=0 device=\"a\\nb\""],
+    ["an output past 512 characters", JSON.stringify({ assignments: [entry(KEY_A, "D".repeat(513))] }), "refused: assignment=0 output=\"" + "D".repeat(56) + "..."],
     ["one device twice", JSON.stringify({ assignments: [entry(KEY_A, "DP-2"), entry(KEY_A, "DP-3")] }), "refused: assignment=1 device=\"" + KEY_A + "\" reason=repeated"],
     ["past the ceiling", JSON.stringify({ assignments: Array.from({ length: 65 }, (_, i) => entry("d" + i, "DP-2")) }), "refused: assignments=too-many count=65 max=64"]
   ];
   for (const [name, text, want] of fileRefusals) same(logic.parseAssignments(text), { ok: false, error: want }, "parseAssignments: " + name);
+  same(logic.parseAssignments(JSON.stringify({ assignments: [entry(KEY_A, "D".repeat(512))] })), { ok: true, entries: [entry(KEY_A, "D".repeat(512))] }, "512 characters is the longest text");
   assert.equal(logic.assignmentsText(valid.assignments), JSON.stringify(valid, null, 2) + "\n");
 
   const entries = [
@@ -139,6 +148,25 @@ function verify(logic) {
   const tiled = logic.resolve(listed.displays.map(d => d.id === XDR ? Object.assign({}, d, { outputs: [] }) : d), OUTPUTS,
     [entry("usb:devices/usb1/1-2#C02", "desc:Apple ProDisplayXDR 0x03")]);
   same(tiled.displays[0].outputs, ["DP-1", "DP-5"]);
+  // An output another display lights takes no second one: the helper's
+  // XDR and laptop panel keep theirs, and of two unplaced displays on one
+  // output the first entry wins.
+  const contested = [
+    ["the helper's tiled XDR", [entry(KEY_B, "desc:Apple ProDisplayXDR 0x03")], ["unused"], [[], []]],
+    ["the helper's laptop panel", [entry(KEY_B, "eDP-1")], ["unused"], [[], []]],
+    ["two unplaced displays", [entry(KEY_A, "DP-3"), entry(KEY_B, "DP-3")], ["applied", "unused"], [["DP-3"], []]]
+  ];
+  for (const [name, choices, states, outputs] of contested) {
+    const r = logic.resolve(listed.displays, OUTPUTS, choices);
+    same([r.assignments.map(e => e.state), [r.displays[1].outputs, r.displays[2].outputs]], [states, outputs], "resolve: " + name);
+  }
+  same(resolved.displays.map(d => logic.placeable(d)), [false, true, true, false, false], "only an unplaced or user-placed display takes a Screen choice");
+  same(logic.screenChoices(resolved.displays, OUTPUTS), [
+    { label: "Choose a screen", value: "" }, { label: "DP-2: Apple M", value: "DP-2" }, { label: "DP-3: Apple M", value: "DP-3" }],
+    "a screen the helper lit is no choice; one a user's choice lit stays");
+  same(logic.screenChoices([], [output("DP-1", "tile"), output("DP-5", "tile"), { name: "HDMI-A-2", identifier: "HDMI-A-2", make: "", model: "", serial: "" }]), [
+    { label: "Choose a screen", value: "" }, { label: "DP-1 + DP-5: Apple M", value: "tile" }, { label: "HDMI-A-2", value: "HDMI-A-2" }],
+    "one choice per identifier, named by its outputs and product");
 
   const present = resolved.displays.map(d => d.device);
   same(logic.setAssignment(entries, KEY_B, "Apple Studio Display", "DP-3", present).map(e => [e.device, e.output]), [
@@ -151,7 +179,8 @@ function verify(logic) {
   const capped = logic.setAssignment(full, KEY_B, "L", "DP-3", [KEY_A, KEY_B]);
   same([capped.length, capped[0].device, capped[1].device, capped[63].device], [64, KEY_A, "gone-2", KEY_B], "past the ceiling the oldest absent device's entry goes");
   same(logic.parseAssignRequest(JSON.stringify({ device: KEY_A, output: "" })), { ok: true, device: KEY_A, output: "" });
-  same(logic.parseAssignRequest(JSON.stringify({ device: KEY_A })), { ok: false, error: "refused: assign=shape want={device,output}" });
+  for (const request of [{ device: KEY_A }, { device: "", output: "DP-2" }])
+    same(logic.parseAssignRequest(JSON.stringify(request)), { ok: false, error: "refused: assign=shape want={device,output}" }, "parseAssignRequest: " + JSON.stringify(request));
 
   // --- Keys, scrolls and links ----------------------------------------------
   const shown = logic.displaysValue(resolved, logic.emptyRuns());
@@ -167,6 +196,8 @@ function verify(logic) {
   same(logic.keyChanges(shown, "DP-1", "all", "up", 5, false),
     [{ id: XDR, percent: 55 }, { id: STUDIO_A, percent: 35 }, { id: STUDIO_B, percent: 100 }, { id: "backlight:intel_backlight", percent: 4 }],
     "keysTarget all moves every ready display by its own step");
+  same(logic.keyChanges(shown, "DP-2", "all", "up", 5, false).map(c => c.id), [STUDIO_A, XDR, STUDIO_B, "backlight:intel_backlight"],
+    "keysTarget all changes the focused output's display first, where the on-screen display shows");
   same(logic.keyChanges(shown, "eDP-1", "focused", "up", 5, true),
     [{ id: "backlight:intel_backlight", percent: 4 }, { id: XDR, percent: 51 }, { id: STUDIO_A, percent: 31 }, { id: STUDIO_B, percent: 96 }],
     "a linked key moves the others by the focused display's change");
@@ -183,11 +214,14 @@ function verify(logic) {
   assert.equal(logic.scrollTarget(50, -60, 1), 1);
   same(logic.panelOrder(shown, "DP-2").map(d => d.id), [STUDIO_A, XDR, STUDIO_B, "ddc:HDMI-A-1", "backlight:intel_backlight"], "the flyout's own screen first");
   same(logic.parseSetRequest(JSON.stringify({ id: XDR, percent: 140, osd: true })), { ok: true, id: XDR, percent: 100, osd: true });
-  same(logic.parseSetRequest(JSON.stringify({ id: XDR, percent: "60" })), { ok: false, error: "refused: set=shape want={id,percent,osd?}" });
+  for (const request of [{ id: XDR, percent: "60" }, { id: XDR, percent: 60, osd: "yes" }])
+    same(logic.parseSetRequest(JSON.stringify(request)), { ok: false, error: "refused: set=shape want={id,percent,osd?}" }, "parseSetRequest: " + JSON.stringify(request));
 
   // --- Status ----------------------------------------------------------------
   let waiting = logic.queueSet(logic.emptyRuns(), XDR, 80);
   assert.equal(logic.displaysValue(resolved, waiting)[0].percent, 80, "a display shows the level waiting for it");
+  const inFlight = logic.takeRun(waiting).runs;
+  assert.equal(logic.displaysValue(resolved, inFlight)[0].percent, 80, "a display shows the level in flight for it");
   const steps = { "apple-displays": { state: "needed", reason: "hidraw-denied" }, "i2c-dev": { state: "denied", reason: "no-uaccess-rule" } };
   const values = logic.statusValues(resolved, listed.backends, logic.emptyRuns(), steps, ["ddcutil"], null, "ready");
   same(Object.keys(values), ["displays", "assignments", "appleAccess", "ddcAccess", "ddcTool", "backlightTool"]);
@@ -198,15 +232,42 @@ function verify(logic) {
   same(values.ddcAccess, { tone: "danger", text: "DDC access isn't supported on this system", action: false });
   same(values.ddcTool, { tone: "warning", text: "Not installed", action: true });
   same(values.backlightTool, { tone: "ok", text: "Installed", action: false });
+  const noTool = { ddc: { state: "ready" }, backlight: { state: "missing" } };
+  same(logic.statusValues(resolved, noTool, logic.emptyRuns(), steps, ["brightnessctl"], null, "ready").backlightTool,
+    { tone: "warning", text: "Not installed", action: true }, "Install is offered while a backlight needs brightnessctl");
+  const texts = { absent: "absent text", denied: "denied text" };
+  const stepStates = [
+    ["ready", { tone: "ok", text: "Allowed", action: false }],
+    ["needed", { tone: "warning", text: "Needs your permission", action: true }],
+    ["nixos", { tone: "warning", text: "Needs your NixOS configuration", action: true }],
+    ["absent", { tone: "info", text: "absent text", action: false }],
+    ["denied", { tone: "danger", text: "denied text", action: false }],
+    ["unknown", { tone: "warning", text: "Access could not be checked", action: false }]
+  ];
+  for (const [state, want] of stepStates) same(logic.stepState({ state: state, reason: "r" }, texts), want, "stepState: " + state);
+  same(logic.stepState(null, texts), stepStates[5][1], "an unprobed step reads unknown");
+  assert.throws(() => logic.stepState({ state: "maybe" }, texts), /step state "maybe"/);
   const unread = logic.statusValues(null, null, logic.emptyRuns(), null, ["brightnessctl"], "refused: assignments=unparsed", "failed");
   same([unread.displays, unread.assignments.error, unread.appleAccess.text, unread.backlightTool], [{ state: "failed", items: [] }, "refused: assignments=unparsed",
     "Access could not be checked", { tone: "info", text: "Not needed", action: false }]);
   same(logic.statusWrites({ displays: values.displays, ddcTool: { tone: "ok", text: "Installed", action: false } }, values).map(w => w.key),
     ["assignments", "appleAccess", "ddcAccess", "ddcTool", "backlightTool"], "only changed values are written");
-  const ddc = shown[3];
-  same(logic.displayAction(ddc, { ddcAccess: { tone: "warning", text: "", action: true } }), { key: "ddcAccess", label: "Allow" });
-  same(logic.displayAction(ddc, { ddcAccess: { tone: "danger", text: "", action: false } }), null, "Allow shows only while the entry offers it");
-  same(logic.displayAction(shown[0], values), null, "a ready display needs no Allow");
+  const noAccess = (backend) => ({ id: backend + ":x", backend: backend, state: "no-access" });
+  const accessKeys = [[noAccess("hidraw"), "appleAccess"], [noAccess("ddc"), "ddcAccess"], [noAccess("backlight"), null], [shown[0], null]];
+  for (const [display, want] of accessKeys) same(logic.accessKey(display), want, "accessKey: " + display.backend + " " + display.state);
+  assert.throws(() => logic.accessKey(noAccess("usb")), /backend "usb"/);
+  const listTexts = [
+    ["pending", 0, "Reading displays"], ["ready", 0, "No display with brightness control"], ["ready", 2, ""],
+    ["failed", 0, "Displays could not be read."], ["failed", 2, "Displays could not be read again, so these may be out of date."]
+  ];
+  for (const [state, count, want] of listTexts) assert.equal(logic.listText(state, count), want, `listText(${state}, ${count})`);
+  assert.throws(() => logic.listText("gone", 0), /list state "gone"/);
+  const savedTexts = [
+    [null, "These displays or screens are not connected now."],
+    ["refused: assignments=unwritten error=3", "Your choice could not be saved and will be lost when VGS restarts."],
+    ["refused: assignments=unparsed", "The saved choices could not be read. Your next choice replaces them."]
+  ];
+  for (const [error, want] of savedTexts) assert.equal(logic.savedChoicesText(error), want, "savedChoicesText: " + error);
   assert.equal(logic.stateText("no-access"), "Needs your permission");
   assert.equal(logic.clampPercent(0), 1);
   assert.equal(logic.clampPercent(NaN), null);
@@ -221,12 +282,31 @@ const CONTROLS = [
   ["the key ignores the focused output", "        if (displays[i].state === \"ready\" && displays[i].outputs.indexOf(name) !== -1) return displays[i];", "        if (displays[i].state === \"ready\") return displays[i];"],
   ["no fine steps at the dark end", "    var size = fine ? 1 : step;", "    var size = step;"],
   ["linked displays take the level, not the delta", "changes.push({ id: d.id, percent: clampPercent(d.percent + delta) });", "changes.push({ id: d.id, percent: wanted });"],
-  ["a stale entry whose output is gone applies", "if (display === null || !hasOwn(byIdentifier, e.output)) {", "if (display === null) {"],
-  ["an entry places a display the helper placed", "} else if (display.outputs.length > 0 || byIdentifier", "} else if (byIdentifier"],
+  ["a stale entry whose output is gone applies", "if (display === null || group === null) {", "if (display === null) {"],
+  ["an entry places a display the helper placed", "} else if (display.outputs.length > 0 || group", "} else if (group"],
   ["the judge takes one device twice", "if (hasOwn(devices, e.device)) return", "if (false) return"],
   ["a new choice drops stale entries", "return e.device !== device && !(e.output === output && present.indexOf(e.device) !== -1);", "return e.device !== device && e.output !== output;"],
   ["a level of 0 turns a panel off", "return Math.max(MIN_PERCENT, Math.min(MAX_PERCENT, Math.round(value)));", "return Math.max(0, Math.min(MAX_PERCENT, Math.round(value)));"],
-  ["a needed step offers no Allow", "case \"needed\": return { tone: \"warning\", text: \"Needs your permission\", action: true };", "case \"needed\": return { tone: \"warning\", text: \"Needs your permission\", action: false };"]
+  ["a needed step offers no Allow", "case \"needed\": return { tone: \"warning\", text: \"Needs your permission\", action: true };", "case \"needed\": return { tone: \"warning\", text: \"Needs your permission\", action: false };"],
+  ["an allowed step offers Allow", "case \"ready\": return { tone: \"ok\", text: \"Allowed\", action: false };", "case \"ready\": return { tone: \"ok\", text: \"Allowed\", action: true };"],
+  ["an entry takes an output another display lights", "group.names.some(function (name) { return lit[name] === true; })", "group.names.some(function (name) { return false; })"],
+  ["the level in flight is not shown", "runs.busy.id === id) return runs.busy.percent;", "runs.busy.id === id) return null;"],
+  ["a no-access Apple display offers the DDC step", "case \"hidraw\": return \"appleAccess\";", "case \"hidraw\": return \"ddcAccess\";"],
+  ["brightnessctl is never offered", "backends !== null && backends.backlight.state === \"missing\"", "false"],
+  ["a screen the helper lit is a choice", "return helperLit[name] === true;", "return false;"],
+  ["a screen a user's choice lit is no choice", "if (!d.assigned) d.outputs.forEach(", "if (true) d.outputs.forEach("],
+  ["a user-placed display takes no Screen choice", "return display.outputs.length === 0 || display.assigned;", "return display.outputs.length === 0;"],
+  ["keysTarget all ignores the focused output's order", "return panelOrder(displays, focused).filter(", "return displays.filter("],
+  ["a failed list with items says nothing", "\"Displays could not be read again, so these may be out of date.\"", "\"\""],
+  ["a failed write reads as an unread file", "if (error.indexOf(\"refused: assignments=unwritten \") === 0)", "if (false)"],
+  ["the list judge takes an unknown backend", "if (BACKENDS.indexOf(d.backend) === -1) return bad(\"backend\");", "if (false) return bad(\"backend\");"],
+  ["the list judge takes an empty label", "if (typeof d.label !== \"string\" || d.label === \"\") return", "if (typeof d.label !== \"string\") return"],
+  ["the list judge takes a negative percent", "Number.isInteger(d.percent) && d.percent >= 0 && d.percent <= 100", "Number.isInteger(d.percent) && d.percent <= 100"],
+  ["the set judge takes a percent past 100", "answer.percent < 0 || answer.percent > 100)", "answer.percent < 0)"],
+  ["the set judge takes a negative percent", "!Number.isInteger(answer.percent) || answer.percent < 0 ||", "!Number.isInteger(answer.percent) ||"],
+  ["assignment text has no length cap", "value.length <= ASSIGNMENT_TEXT_MAX && ", ""],
+  ["a set request takes any osd", "(hasOwn(r, \"osd\") && typeof r.osd !== \"boolean\")", "false"],
+  ["an assign request takes an empty device", "!isPlainObject(r) || !isText(r.device) ||", "!isPlainObject(r) ||"]
 ];
 
 const source = fs.readFileSync(file, "utf8");

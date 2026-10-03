@@ -27,7 +27,7 @@ var IDENTIFY_MS = 3000;
 // How long the on-screen display stays after the last change.
 var OSD_MS = 1500;
 // The assignments file holds at most this many entries; past it, the
-// oldest stale entries go first.
+// oldest entry of an absent device goes.
 var ASSIGNMENTS_MAX = 64;
 var ASSIGNMENT_TEXT_MAX = 512;
 
@@ -248,6 +248,25 @@ function assignmentsText(entries) {
     return JSON.stringify({ assignments: entries }, null, 2) + "\n";
 }
 
+// OUTPUTS, the monitors capability's list, as one group per output
+// identifier in the order each was first seen: [{ identifier, names,
+// product }], NAMES every output of that identifier (a tiled Pro Display
+// XDR has two) and PRODUCT the first one's make and model.
+function outputGroups(outputs) {
+    var groups = [];
+    outputs.forEach(function (o) {
+        var group = groupOf(groups, o.identifier);
+        if (group === null) groups.push({ identifier: o.identifier, names: [o.name], product: (o.make + " " + o.model).trim() });
+        else group.names.push(o.name);
+    });
+    return groups;
+}
+
+function groupOf(groups, identifier) {
+    for (var g = 0; g < groups.length; g++) if (groups[g].identifier === identifier) return groups[g];
+    return null;
+}
+
 // LISTED, the helper's displays, with the assignments ENTRIES applied over
 // OUTPUTS, the monitors capability's list: { displays, assignments }.
 // Each display gains `device`, its deviceKey, and `assigned`, whether an
@@ -257,12 +276,7 @@ function assignmentsText(entries) {
 // reported { device, label, output, state }, `state` `applied`, `stale`
 // (its device or its output is gone; kept, never applied) or `unused`.
 function resolve(listed, outputs, entries) {
-    var byIdentifier = {};
-    for (var o = 0; o < outputs.length; o++) {
-        var id = outputs[o].identifier;
-        if (!hasOwn(byIdentifier, id)) byIdentifier[id] = [];
-        byIdentifier[id].push(outputs[o].name);
-    }
+    var groups = outputGroups(outputs);
     var displays = listed.map(function (d) {
         var out = clone(d);
         out.device = deviceKey(d);
@@ -274,13 +288,14 @@ function resolve(listed, outputs, entries) {
     var reported = entries.map(function (e) {
         var display = null;
         for (var i = 0; i < displays.length; i++) if (displays[i].device === e.device) display = displays[i];
+        var group = groupOf(groups, e.output);
         var state;
-        if (display === null || !hasOwn(byIdentifier, e.output)) {
+        if (display === null || group === null) {
             state = "stale";
-        } else if (display.outputs.length > 0 || byIdentifier[e.output].some(function (name) { return lit[name] === true; })) {
+        } else if (display.outputs.length > 0 || group.names.some(function (name) { return lit[name] === true; })) {
             state = "unused";
         } else {
-            display.outputs = byIdentifier[e.output].slice();
+            display.outputs = group.names.slice();
             display.assigned = true;
             display.outputs.forEach(function (name) { lit[name] = true; });
             state = "applied";
@@ -288,6 +303,31 @@ function resolve(listed, outputs, entries) {
         return { device: e.device, label: e.label, output: e.output, state: state };
     });
     return { displays: displays, assignments: reported };
+}
+
+// Whether the pane offers DISPLAY a Screen choice and Identify: the helper
+// left it unplaced, or a user's choice placed it.
+function placeable(display) {
+    return display.outputs.length === 0 || display.assigned;
+}
+
+// The Screen choices for DISPLAYS, as resolve or the `displays` status
+// lists them, over OUTPUTS: no choice first, then one { label, value } per
+// output identifier that no display the helper placed lights, VALUE the
+// identifier an assignment names and LABEL its outputs' names and product.
+// An output a user's choice lit stays, since a new choice there moves it
+// (setAssignment); the service's `assign` refuses any other identifier.
+function screenChoices(displays, outputs) {
+    var helperLit = {};
+    displays.forEach(function (d) {
+        if (!d.assigned) d.outputs.forEach(function (name) { helperLit[name] = true; });
+    });
+    var choices = [{ label: "Choose a screen", value: "" }];
+    outputGroups(outputs).forEach(function (g) {
+        if (g.names.some(function (name) { return helperLit[name] === true; })) return;
+        choices.push({ label: g.names.join(" + ") + (g.product === "" ? "" : ": " + g.product), value: g.identifier });
+    });
+    return choices;
 }
 
 // ENTRIES with DEVICE, labelled LABEL, put on output identifier OUTPUT: the
@@ -368,12 +408,13 @@ function keyStep(current, direction, step) {
 // What a brightness key in DIRECTION changes: [{ id, percent }]. TARGET
 // `focused` moves the ready display on FOCUSED, the output Hyprland
 // focuses, and, while LINKED, every other ready display by as much; `all`
-// moves every ready display by its own step. No ready display there
+// moves every ready display by its own step, the one on FOCUSED first, so
+// the on-screen display shows on the focused screen. No ready display there
 // changes nothing.
 function keyChanges(displays, focused, target, direction, step, linked) {
     if (KEY_TARGETS.indexOf(target) === -1) throw new Error("displays: keysTarget " + JSON.stringify(target) + " is not one of " + KEY_TARGETS.join(", "));
     if (target === "all") {
-        return displays.filter(function (d) { return d.state === "ready"; })
+        return panelOrder(displays, focused).filter(function (d) { return d.state === "ready"; })
             .map(function (d) { return { id: d.id, percent: keyStep(d.percent, direction, step) }; });
     }
     var display = displayOn(displays, focused);
@@ -491,14 +532,39 @@ function stateText(state) {
     throw new Error("displays: display state " + JSON.stringify(state) + " is not one of " + DISPLAY_STATES.join(", "));
 }
 
-// The status action that makes DISPLAY ready, { key, label }, while
-// VALUES, the published status, offers it: Allow on the access entry of
-// its backend for a display the user may not open. Else null.
-function displayAction(display, values) {
+// The status entry whose action makes DISPLAY ready: the access entry of
+// its backend for a display the user may not open, else null. The manifest
+// declares no access entry for a backlight. Whether the entry offers its
+// action, and its label, are the core's status rows' (`status.rows`).
+function accessKey(display) {
     if (display.state !== "no-access") return null;
-    var key = display.backend === "hidraw" ? "appleAccess" : display.backend === "ddc" ? "ddcAccess" : null;
-    if (key === null || !hasOwn(values, key) || values[key].action !== true) return null;
-    return { key: key, label: "Allow" };
+    switch (display.backend) {
+    case "hidraw": return "appleAccess";
+    case "ddc": return "ddcAccess";
+    case "backlight": return null;
+    }
+    throw new Error("displays: backend " + JSON.stringify(display.backend) + " is not one of " + BACKENDS.join(", "));
+}
+
+// The line the flyout and the pane show for the `displays` status: STATE
+// its list state and COUNT its items, "" for none. A failed list keeps the
+// last good items, so the line says they may be out of date.
+function listText(state, count) {
+    switch (state) {
+    case "pending": return count === 0 ? "Reading displays" : "";
+    case "ready": return count === 0 ? "No display with brightness control" : "";
+    case "failed": return count === 0 ? "Displays could not be read." : "Displays could not be read again, so these may be out of date.";
+    }
+    throw new Error("displays: list state " + JSON.stringify(state) + " is not one of pending, ready, failed");
+}
+
+// The Saved choices sentence for ERROR, the `assignments` status's keyed
+// refusal or null. A write failure leaves the choice in force until VGS
+// restarts; any other refusal is a file the service did not read.
+function savedChoicesText(error) {
+    if (error === null) return "These displays or screens are not connected now.";
+    if (error.indexOf("refused: assignments=unwritten ") === 0) return "Your choice could not be saved and will be lost when VGS restarts.";
+    return "The saved choices could not be read. Your next choice replaces them.";
 }
 
 // The line a surface shows for REPLY, an answer from the service or the

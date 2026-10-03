@@ -4,7 +4,7 @@
 
 ![The System window with no section enabled: the sidebar holds Shell & Plugins, and the page its empty state](../../../docs/images/plugins/vgs.system-window.webp)
 
-Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2. No section plugin ships yet, so the window shows its empty state.
+Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the default theme at scale 2. The sandbox takes the shot with every System section disabled, so the window shows its empty state. The [Displays README](../vgs.displays/README.md) shows System → Displays with a section open.
 
 ## Opening it
 

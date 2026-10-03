@@ -258,8 +258,8 @@ smoke_row panes
 # here, and this row restarts the shell for a control too.
 smoke_row system-window
 # After system-window, whose vgs.system it enables again for the displays
-# pane, and after system-steps, whose prefixed tree keeps the core's step
-# probe on the device fakes.
+# pane, and after device-fakes, which leaves the XDR's report at 40 %, the
+# level the row reads first.
 smoke_row displays
 # After every row that opens a TUI: the stand-in terminal ran no plugin
 # script but a fixture's.

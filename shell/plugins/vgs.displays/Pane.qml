@@ -13,7 +13,8 @@ import "DisplaysLogic.js" as Logic
 // status publishes, each with its action while offered. The holder draws
 // the title, the inset and the scrolling. It draws the status the service
 // publishes and asks the service, or the core through `status.act`, for
-// every change; it runs nothing itself. Tab moves through the controls in
+// every change; it runs nothing itself. Each access entry's tone and
+// offered action come from the core's status rows (`status.rows`). Tab moves through the controls in
 // reading order; the arrows move a slider and a closed Select.
 FocusScope {
     id: root
@@ -24,26 +25,13 @@ FocusScope {
     readonly property var assignments: values.assignments === undefined ? ({ entries: [], error: null }) : values.assignments
     readonly property var stale: assignments.entries.filter(e => e.state === "stale")
     readonly property var outputs: shell === null || shell.monitors.outputs === null ? [] : shell.monitors.outputs
-    // One choice per output identifier, as an assignment names it; the
-    // first entry is no choice.
-    readonly property var screenChoices: {
-        const out = [{ label: "Choose a screen", value: "" }];
-        for (const o of outputs) {
-            const known = out.find(c => c.value === o.identifier);
-            const product = (o.make + " " + o.model).trim();
-            if (known !== undefined) known.names.push(o.name);
-            else out.push({ names: [o.name], product: product, value: o.identifier });
-        }
-        for (const choice of out) {
-            if (choice.names === undefined) continue;
-            choice.label = choice.names.join(" + ") + (choice.product === "" ? "" : ": " + choice.product);
-        }
-        return out;
-    }
-    readonly property var accessKeys: ["appleAccess", "ddcAccess", "ddcTool", "backlightTool"]
+    readonly property var screenChoices: Logic.screenChoices(list.items, outputs)
+    // The access entries the service has published, as the Settings page
+    // draws them.
+    readonly property var accessRows: shell === null ? [] : shell.status.rows.filter(r => r.group === "Access" && r.report === "reported")
     // The refusal the last step was answered with, "" for none.
     property string problem: ""
-    readonly property Item initialFocus: displaysColumn.firstFocus !== null ? displaysColumn.firstFocus : linkSwitch
+    readonly property Item initialFocus: displaysColumn.firstFocus !== null ? displaysColumn.firstFocus : linkRow.toggle
 
     function open(payloadJson) {
         problem = "";
@@ -60,7 +48,6 @@ FocusScope {
     // answers the service's reply.
     function assign(device, output) { return answered(shell.ipc.call("assign", JSON.stringify({ device: device, output: output }))); }
     function identify(id) { return answered(shell.ipc.call("identify", id)); }
-    function setLinked(linked) { return answered(shell.configure.set("linked", linked)); }
     function runAction(key) { return answered(shell.status.act(key)); }
 
     // The Select index of the choice that names IDENTIFIER, 0 for none.
@@ -73,16 +60,6 @@ FocusScope {
     function chosenOutput(device) {
         const entry = assignments.entries.find(e => e.device === device && e.state === "applied");
         return entry === undefined ? "" : entry.output;
-    }
-
-    function badgeTone(tone) {
-        switch (tone) {
-        case "ok": return "success";
-        case "info": return "info";
-        case "warning": return "warning";
-        case "danger": return "danger";
-        }
-        throw new Error("displays pane: tone " + JSON.stringify(tone) + " is not one of ok, info, warning, danger");
     }
 
     implicitWidth: Theme.size.window.width
@@ -120,7 +97,7 @@ FocusScope {
                         id: entry
                         required property var modelData
                         required property int index
-                        readonly property bool placeable: modelData.outputs.length === 0 || modelData.assigned
+                        readonly property bool placeable: Logic.placeable(modelData)
                         width: displaysColumn.width
                         spacing: Theme.stack.row
 
@@ -176,22 +153,17 @@ FocusScope {
 
             Label {
                 width: parent.width
-                visible: root.list.items.length === 0
+                visible: text !== ""
                 role: "hint"
-                text: root.list.state === "failed" ? "Displays could not be read." : root.list.state === "pending" ? "Reading displays" : "No display with brightness control"
+                text: Logic.listText(root.list.state, root.list.items.length)
                 wrapMode: Text.Wrap
             }
 
-            FormRow {
+            LinkRow {
+                id: linkRow
                 width: parent.width
-                label: "Link displays"
-                Switch {
-                    id: linkSwitch
-                    size: "sm"
-                    checked: root.shell !== null && root.shell.settings.linked === true
-                    Accessible.name: "Link displays"
-                    onToggled: root.setLinked(checked)
-                }
+                shell: root.shell
+                onReplied: reply => root.answered(reply)
             }
 
             Label {
@@ -213,7 +185,7 @@ FocusScope {
             SectionHeader {
                 width: parent.width
                 text: "Saved choices"
-                description: root.assignments.error !== null ? "The saved choices could not be read. Your next choice replaces them." : "These displays or screens are not connected now."
+                description: Logic.savedChoicesText(root.assignments.error)
             }
 
             Repeater {
@@ -261,16 +233,16 @@ FocusScope {
             }
 
             Repeater {
-                model: root.accessKeys
+                model: ScriptModel {
+                    values: root.accessRows
+                    objectProp: "key"
+                }
 
                 FormRow {
                     id: accessRow
-                    required property string modelData
-                    readonly property var reading: root.values[modelData] === undefined ? ({ tone: "info", text: "", action: false }) : root.values[modelData]
-                    readonly property var declared: root.shell === null ? ({ label: "", action: { label: "" } }) : root.shell.manifest.status[modelData]
+                    required property var modelData
                     width: accessColumn.width
-                    visible: root.values[modelData] !== undefined
-                    label: declared.label
+                    label: modelData.label
 
                     Row {
                         width: parent.width
@@ -278,16 +250,16 @@ FocusScope {
 
                         Badge {
                             anchors.verticalCenter: parent.verticalCenter
-                            text: accessRow.reading.text
-                            tone: root.badgeTone(accessRow.reading.tone)
+                            text: accessRow.modelData.value.text
+                            tone: accessRow.modelData.tone
                         }
                         Button {
-                            visible: accessRow.reading.action === true
+                            visible: accessRow.modelData.action !== null && accessRow.modelData.action.offered
                             anchors.verticalCenter: parent.verticalCenter
                             variant: "secondary"
                             size: "sm"
-                            text: accessRow.declared.action.label
-                            onClicked: root.runAction(accessRow.modelData)
+                            text: accessRow.modelData.action === null ? "" : accessRow.modelData.action.label
+                            onClicked: root.runAction(accessRow.modelData.key)
                         }
                     }
                 }

@@ -10,7 +10,7 @@ Screenshot made with `scripts/readme-shots.sh` in the nested sandbox, with the d
 
 - A brightness item in each bar. It controls the display on its own screen: scroll to change the brightness, click to open the flyout. It hides while no display it can control lights that screen.
 - A flyout with one slider per display, the bar's own display first, Link displays, and Display Settings.
-- The brightness keys change the display you work on, or every display, as Brightness keys change sets. An on-screen display shows the new level on that screen.
+- The brightness keys change the display you work on, or every display, as Brightness keys change sets. An on-screen display shows the new level on the screen you work on, or, when no display there changed, on the first display that did.
 - System → Displays: each display's brightness, the screen a display shows on when VGS cannot tell, Identify, Link displays, and the access each kind of display needs.
 
 ## How it works

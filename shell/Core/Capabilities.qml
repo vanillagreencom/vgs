@@ -170,10 +170,13 @@ Singleton {
         }),
         // `act` runs the calling plugin's own status action, judged and run
         // as the manager's act is for that plugin; a key of another plugin
-        // is one this manifest does not declare.
+        // is one this manifest does not declare. `rows` lends the plugin's
+        // own Status rows as the Settings page draws them, so its surfaces
+        // take each entry's tone and offered action from the one owner.
         status: ctx => ({
             set: (key, value) => PluginStatus.set(ctx, key, value),
             act: key => root.managerAct(ctx.id, key),
+            get rows() { return Logic.statusRows(Registry.activeManifestOf(ctx.id), PluginStatus.valuesOf(ctx.id)); },
             get values() { return PluginStatus.valuesOf(ctx.id); },
             get revision() { return PluginStatus.revisionOf(ctx.id); }
         }),
